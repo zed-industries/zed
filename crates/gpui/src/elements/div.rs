@@ -1276,19 +1276,10 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        // TODO: this check should be slightly more advanced, e.g. we shouldn't check
-                        // the refinements by themselves but rather see how they would affect the overall
-                        // style.
                         let should_occlude = self.occlude_mouse
                             || style.should_occlude()
-                            || self
-                                .hover_style
-                                .as_ref()
-                                .map_or(false, |style| style.should_occlude())
-                            || self
-                                .group_hover_style
-                                .as_ref()
-                                .map_or(false, |group| group.style.should_occlude());
+                            || self.hover_style.is_some()
+                            || self.group_hover_style.is_some();
                         let occlusion = should_occlude.then(|| cx.occlude(bounds));
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, occlusion, cx);

@@ -1,8 +1,8 @@
 use crate::{
-    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
-    ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
-    LayoutId, LayoutIndex, Model, PaintIndex, Pixels, Render, Style, TextStyle, ViewContext,
-    VisualContext, WeakModel,
+    seal::Sealed, AfterLayoutIndex, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds,
+    ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
+    FocusableView, IntoElement, LayoutId, Model, PaintIndex, Pixels, Render, Style, TextStyle,
+    ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -23,7 +23,7 @@ impl<V> Sealed for View<V> {}
 
 struct AnyViewState {
     root_style: Style,
-    layout_range: Range<LayoutIndex>,
+    after_layout_range: Range<AfterLayoutIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewCacheKey,
 }
@@ -309,7 +309,8 @@ impl Element for AnyView {
                         let element_state = Some(AnyViewState {
                             root_style: cx.layout_style(layout_id).unwrap().clone(),
                             cache_key: ViewCacheKey::default(),
-                            layout_range: LayoutIndex::default()..LayoutIndex::default(),
+                            after_layout_range: AfterLayoutIndex::default()
+                                ..AfterLayoutIndex::default(),
                             paint_range: PaintIndex::default()..PaintIndex::default(),
                         });
                         ((layout_id, Some(element)), element_state)
@@ -338,7 +339,7 @@ impl Element for AnyView {
                     |element_state, cx| {
                         let mut element_state = element_state.unwrap().unwrap();
 
-                        let layout_start = cx.window.next_frame.layout_index();
+                        let after_layout_start = cx.window.next_frame.after_layout_index();
                         let content_mask = cx.content_mask();
                         let text_style = cx.text_style();
 
@@ -349,7 +350,7 @@ impl Element for AnyView {
                             && element_state.cache_key.content_mask == content_mask
                             && element_state.cache_key.text_style == text_style
                         {
-                            cx.reuse_layout(element_state.layout_range.clone());
+                            cx.reuse_after_layout(element_state.after_layout_range.clone());
                             None
                         } else {
                             let mut element = (self.render)(self, cx);
@@ -363,8 +364,8 @@ impl Element for AnyView {
                             Some(element)
                         };
 
-                        let layout_end = cx.window.next_frame.layout_index();
-                        element_state.layout_range = layout_start..layout_end;
+                        let after_layout_end = cx.window.next_frame.after_layout_index();
+                        element_state.after_layout_range = after_layout_start..after_layout_end;
                         element_state.cache_key.bounds = bounds;
                         element_state.cache_key.content_mask = content_mask;
                         element_state.cache_key.text_style = text_style;

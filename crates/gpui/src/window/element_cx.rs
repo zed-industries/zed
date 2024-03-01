@@ -86,7 +86,7 @@ pub(crate) struct Frame {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct LayoutIndex {
+pub(crate) struct AfterLayoutIndex {
     occlusions_index: usize,
     tooltips_index: usize,
 }
@@ -135,8 +135,8 @@ impl Frame {
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
-    pub(crate) fn layout_index(&self) -> LayoutIndex {
-        LayoutIndex {
+    pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
+        AfterLayoutIndex {
             occlusions_index: self.occlusions.len(),
             tooltips_index: self.tooltip_requests.len(),
         }
@@ -342,6 +342,24 @@ impl<'a> ElementContext<'a> {
             tooltip_element = Some(element);
         }
 
+        for (occlusion_ix, occlusion) in self
+            .window
+            .next_frame
+            .occlusions
+            .iter()
+            .cloned()
+            .enumerate()
+            .collect::<Vec<_>>()
+        {
+            let color = crate::hsla(
+                (occlusion_ix as f32 * 10.0) % 360.0, // Hue based on index
+                0.5,                                  // Saturation at 50%
+                0.5,                                  // Lightness at 50%
+                0.5,                                  // Alpha at 50% for transparency
+            );
+            self.paint_quad(crate::fill(occlusion.bounds.clone(), color));
+        }
+
         // Now actually paint the elements.
         self.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
             // We need to use cx.cx here so we can utilize borrow splitting
@@ -356,17 +374,17 @@ impl<'a> ElementContext<'a> {
                 }
             }
 
-            root_element.paint(cx)
+            // root_element.paint(cx)
         });
 
-        if let Some(mut drag_element) = active_drag_element {
-            drag_element.paint(self);
-        } else if let Some(mut tooltip_element) = tooltip_element {
-            tooltip_element.paint(self);
-        }
+        // if let Some(mut drag_element) = active_drag_element {
+        //     drag_element.paint(self);
+        // } else if let Some(mut tooltip_element) = tooltip_element {
+        //     tooltip_element.paint(self);
+        // }
     }
 
-    pub(crate) fn reuse_layout(&mut self, range: Range<LayoutIndex>) {
+    pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
         let window = &mut self.window;
         window.next_frame.occlusions.extend(
             window.rendered_frame.occlusions
@@ -407,7 +425,6 @@ impl<'a> ElementContext<'a> {
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut window.rendered_frame.dispatch_tree,
         );
-        dbg!(&grafted_view_ids);
         for view_id in grafted_view_ids {
             assert!(self.window.next_frame.reused_views.insert(view_id));
 

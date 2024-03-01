@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use gpui::{
     overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
     ElementContext, ElementId, IntoElement, LayoutId, ManagedView, MouseButton, MouseDownEvent,
-    OcclusionId, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    Occlusion, OcclusionId, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -96,7 +96,7 @@ pub struct MenuHandleFrameState {
 
 impl<M: ManagedView> Element for RightClickMenu<M> {
     type BeforeLayout = MenuHandleFrameState;
-    type AfterLayout = ();
+    type AfterLayout = Occlusion;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -141,11 +141,13 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
     fn after_layout(
         &mut self,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) {
+    ) -> Occlusion {
         cx.with_element_id(Some(self.id.clone()), |cx| {
+            let occlusion = cx.occlude(bounds);
+
             if let Some(child) = before_layout.child_element.as_mut() {
                 child.after_layout(cx);
             }
@@ -153,6 +155,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             if let Some(menu) = before_layout.menu_element.as_mut() {
                 menu.after_layout(cx);
             }
+
+            occlusion
         })
     }
 
@@ -160,7 +164,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         &mut self,
         bounds: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        occlusion: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -183,11 +187,11 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let child_layout_id = before_layout.child_layout_id.clone();
             let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
-            let occlusion: OcclusionId = todo!();
+            let occlusion_id = occlusion.id;
             cx.on_mouse_event(move |event: &MouseDownEvent, moused_occlusion, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == MouseButton::Right
-                    && moused_occlusion == Some(occlusion)
+                    && moused_occlusion == Some(occlusion_id)
                 {
                     cx.stop_propagation();
                     cx.prevent_default();
