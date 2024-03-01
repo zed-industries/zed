@@ -12,6 +12,7 @@ use crate::motion::Motion;
 pub enum Mode {
     Normal,
     Insert,
+    Replace,
     Visual,
     VisualLine,
     VisualBlock,
@@ -22,6 +23,7 @@ impl Display for Mode {
         match self {
             Mode::Normal => write!(f, "NORMAL"),
             Mode::Insert => write!(f, "INSERT"),
+            Mode::Replace => write!(f, "REPLACE"),
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
@@ -32,7 +34,7 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Mode::Normal | Mode::Insert => false,
+            Mode::Normal | Mode::Insert | Mode::Replace => false,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
         }
     }
@@ -154,17 +156,20 @@ impl EditorState {
                     CursorShape::Underscore
                 }
             }
+            Mode::Replace => CursorShape::Underscore,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
 
     pub fn vim_controlled(&self) -> bool {
-        !matches!(self.mode, Mode::Insert)
+        let result = (!matches!(self.mode, Mode::Insert) && !matches!(self.mode, Mode::Replace))
             || matches!(
                 self.operator_stack.last(),
                 Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
-            )
+            );
+        println!("result is {:?}", result);
+        result
     }
 
     pub fn should_autoindent(&self) -> bool {
@@ -173,7 +178,9 @@ impl EditorState {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => false,
+            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
+                false
+            }
             Mode::Normal => true,
         }
     }
@@ -190,6 +197,7 @@ impl EditorState {
                 Mode::Normal => "normal",
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
                 Mode::Insert => "insert",
+                Mode::Replace => "replace",
             },
         );
 

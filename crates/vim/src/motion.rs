@@ -293,7 +293,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, count, cx),
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
-        Mode::Insert => {
+        Mode::Insert | Mode::Replace => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
     }

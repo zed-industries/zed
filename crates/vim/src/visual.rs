@@ -26,6 +26,7 @@ actions!(
         ToggleVisual,
         ToggleVisualLine,
         ToggleVisualBlock,
+        ToggleReplace,
         VisualDelete,
         VisualYank,
         OtherEnd,
@@ -46,6 +47,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             toggle_mode(Mode::VisualBlock, cx)
         },
     );
+    workspace.register_action(|_, _: &ToggleReplace, cx: &mut ViewContext<Workspace>| {
+        toggle_mode(Mode::Replace, cx)
+    });
     workspace.register_action(other_end);
     workspace.register_action(delete);
     workspace.register_action(yank);
