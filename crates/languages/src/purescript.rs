@@ -26,7 +26,7 @@ pub struct PurescriptLspAdapter {
 }
 
 impl PurescriptLspAdapter {
-    // todo!(linux): remove
+    // todo(linux): remove
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         Self { node }

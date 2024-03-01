@@ -1052,7 +1052,7 @@ impl CollabPanel {
         .indent_step_size(px(20.))
         .selected(is_selected)
         .on_click(cx.listener(move |_this, _, _cx| {
-            // todo!()
+            // todo()
         }))
         .start_slot(
             h_flex()
@@ -1531,7 +1531,7 @@ impl CollabPanel {
                         id: _id,
                         name: _name,
                     } => {
-                        // todo!()
+                        // todo()
                     }
 
                     ListEntry::OutgoingRequest(_) => {}

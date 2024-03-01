@@ -132,7 +132,7 @@ impl WaylandWindowState {
                 size: Size {
                     width: 500,
                     height: 500,
-                }, //todo!(implement)
+                }, // todo(implement)
             },
             WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as i32),
         };
@@ -200,7 +200,7 @@ impl WaylandWindowState {
     pub fn set_decoration_state(&self, state: WaylandDecorationState) {
         self.inner.borrow_mut().decoration_state = state;
         log::trace!("Window decorations are now handled by {:?}", state);
-        // todo!(linux) - Handle this properly
+        // todo(linux) - Handle this properly
     }
 
     pub fn close(&self) {
@@ -250,7 +250,7 @@ impl HasDisplayHandle for WaylandWindow {
 }
 
 impl PlatformWindow for WaylandWindow {
-    //todo!(linux)
+    // todo(linux)
     fn bounds(&self) -> WindowBounds {
         WindowBounds::Maximized
     }
@@ -267,32 +267,32 @@ impl PlatformWindow for WaylandWindow {
         self.0.inner.borrow_mut().scale
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn titlebar_height(&self) -> Pixels {
         unimplemented!()
     }
 
-    // todo!(linux)
+    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Light
     }
 
-    // todo!(linux)
+    // todo(linux)
     fn display(&self) -> Rc<dyn PlatformDisplay> {
         Rc::new(WaylandDisplay {})
     }
 
-    // todo!(linux)
+    // todo(linux)
     fn mouse_position(&self) -> Point<Pixels> {
         Point::default()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn modifiers(&self) -> Modifiers {
         crate::Modifiers::default()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn as_any_mut(&mut self) -> &mut dyn Any {
         unimplemented!()
     }
@@ -305,7 +305,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.inner.borrow_mut().input_handler.take()
     }
 
-    //todo!(linux)
+    // todo(linux)
     fn prompt(
         &self,
         level: PromptLevel,
@@ -317,7 +317,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn set_title(&mut self, title: &str) {
@@ -325,23 +325,23 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_edited(&mut self, edited: bool) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn show_character_palette(&self) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn minimize(&self) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn zoom(&self) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn toggle_full_screen(&self) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -361,7 +361,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        //todo!(linux)
+        // todo(linux)
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
@@ -377,10 +377,10 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        //todo!(linux)
+        // todo(linux)
     }
 
-    // todo!(linux)
+    // todo(linux)
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
         false
     }
