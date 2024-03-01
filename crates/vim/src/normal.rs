@@ -1026,4 +1026,22 @@ mod test {
             .await;
         cx.assert_all("let result = curried_funˇ(ˇ)ˇ(ˇ)ˇ;").await;
     }
+
+    #[gpui::test]
+    async fn test_end_of_line_with_neovim(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // goes to current line end
+        cx.set_shared_state(indoc! {"ˇaa\nbb\ncc"}).await;
+        cx.simulate_shared_keystrokes(["$"]).await;
+        cx.assert_shared_state(indoc! {"aˇa\nbb\ncc"}).await;
+
+        // goes to next line end
+        cx.simulate_shared_keystrokes(["2", "$"]).await;
+        cx.assert_shared_state("aa\nbˇb\ncc").await;
+
+        // try to exceed the final line.
+        cx.simulate_shared_keystrokes(["4", "$"]).await;
+        cx.assert_shared_state("aa\nbb\ncˇc").await;
+    }
 }

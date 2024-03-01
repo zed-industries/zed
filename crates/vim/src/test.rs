@@ -164,6 +164,10 @@ async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
     // goes to next line end
     cx.simulate_keystrokes(["2", "$"]);
     cx.assert_editor_state("aa\nbˇb\ncc");
+
+    // try to exceed the final line.
+    cx.simulate_keystrokes(["4", "$"]);
+    cx.assert_editor_state("aa\nbb\ncˇc");
 }
 
 #[gpui::test]
