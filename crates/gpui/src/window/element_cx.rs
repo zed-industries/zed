@@ -38,10 +38,26 @@ use crate::{
     SUBPIXEL_VARIANTS,
 };
 
-struct MouseListener {
-    occlusion_id: OcclusionId,
-    invert_occlusion: bool,
-    callback: Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>,
+pub(crate) struct MouseListener {
+    pub(crate) occlusion_id: OcclusionId,
+    pub(crate) invert_occlusion: bool,
+    pub(crate) callback: Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>,
+}
+
+impl MouseListener {
+    pub(crate) fn dispatch(
+        &mut self,
+        event: &dyn Any,
+        phase: DispatchPhase,
+        mouse_occlusion: &Occlusion,
+        cx: &mut WindowContext,
+    ) {
+        if (self.occlusion_id == mouse_occlusion.id) != self.invert_occlusion {
+            cx.with_element_context(|cx| {
+                (self.callback)(event, phase, cx);
+            });
+        }
+    }
 }
 
 pub(crate) struct RequestedInputHandler {
@@ -54,7 +70,7 @@ pub(crate) struct TooltipRequest {
     pub(crate) tooltip: AnyTooltip,
 }
 
-struct CursorStyleRequest {
+pub(crate) struct CursorStyleRequest {
     pub(crate) occlusion_id: OcclusionId,
     pub(crate) style: CursorStyle,
 }
@@ -64,7 +80,7 @@ pub(crate) struct OcclusionId(usize);
 
 /// Identifies an occlusion, see [ElementContext::insert_occlusion] for more details.
 #[derive(Clone, Deref)]
-pub(crate) struct Occlusion {
+pub struct Occlusion {
     pub(crate) id: OcclusionId,
     #[deref]
     pub(crate) bounds: Bounds<Pixels>,

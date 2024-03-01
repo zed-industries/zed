@@ -1143,12 +1143,12 @@ impl<'a> WindowContext<'a> {
             return;
         };
 
+        let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
+
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
         // special purposes, such as detecting events outside of a given Bounds.
-        for listener in &mut self.window.rendered_frame.mouse_listeners {
-            self.with_element_context(|cx| {
-                handler(event, DispatchPhase::Capture, cx);
-            });
+        for listener in &mut mouse_listeners {
+            listener.dispatch(event, DispatchPhase::Capture, &mouse_occlusion, self);
             if !self.app.propagate_event {
                 break;
             }
@@ -1156,20 +1156,15 @@ impl<'a> WindowContext<'a> {
 
         // Bubble phase, where most normal handlers do their work.
         if self.app.propagate_event {
-            for (_, _, handler) in handlers.iter_mut().rev() {
-                self.with_element_context(|cx| {
-                    handler(event, DispatchPhase::Bubble, cx);
-                });
+            for listener in mouse_listeners.iter_mut().rev() {
+                listener.dispatch(event, DispatchPhase::Bubble, &mouse_occlusion, self);
                 if !self.app.propagate_event {
                     break;
                 }
             }
         }
 
-        self.window
-            .rendered_frame
-            .mouse_listeners
-            .insert(event.type_id(), handlers);
+        self.window.rendered_frame.mouse_listeners = mouse_listeners;
 
         if self.app.propagate_event && self.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
