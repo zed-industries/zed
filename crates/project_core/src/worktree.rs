@@ -1024,9 +1024,22 @@ impl LocalWorktree {
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let entry = self.refresh_entry(path.clone(), None, cx);
+        let max_file_size = ProjectSettings::get_global(cx).max_file_size;
 
         cx.spawn(|this, mut cx| async move {
             let abs_path = abs_path?;
+            let file_size = fs.size(&abs_path).await?;
+            let file_size_in_mb = file_size as f64 / (1024.0 * 1024.0); // Convert from bytes to MB
+            let max_file_size_in_mb = max_file_size as f64 / 1024.0; // Convert from kb to MB
+
+            if file_size_in_mb > max_file_size_in_mb {
+                return Err(anyhow::anyhow!(
+                    "File size of {:.2} MB exceeds maximum allowed size: {:.2} MB",
+                    file_size_in_mb,
+                    max_file_size_in_mb,
+                ));
+            }
+
             let text = fs.load(&abs_path).await?;
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;

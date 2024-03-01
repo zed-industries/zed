@@ -1633,6 +1633,66 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     }
 }
 
+// Test if fails when oppening a file that exceeds the maximum file size
+#[gpui::test]
+async fn test_max_file_size(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.max_file_size = 1;
+            });
+        });
+    });
+    let fs = Arc::new(RealFs);
+    let temp_root = temp_tree(json!({
+        "big_file.rs": "1".repeat(1025),
+        "small_file.rs": "1".repeat(1024),
+    }));
+
+    let tree = Worktree::local(
+        build_client(cx),
+        temp_root.path(),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let big_file_result = tree
+        .update(cx, |tree, cx| {
+            tree.as_local_mut().unwrap().load_buffer(
+                BufferId::new(1).unwrap(),
+                "big_file.rs".as_ref(),
+                cx,
+            )
+        })
+        .await;
+
+    assert!(
+        big_file_result.is_err(),
+        "Expected an error when opening a file that exceeds the max file size"
+    );
+
+    let small_file_result = tree
+        .update(cx, |tree, cx| {
+            tree.as_local_mut().unwrap().load_buffer(
+                BufferId::new(1).unwrap(),
+                "small_file.rs".as_ref(),
+                cx,
+            )
+        })
+        .await;
+
+    assert!(
+        small_file_result.is_ok(),
+        "Expected no error when opening a file that does not exceed the max file size"
+    );
+}
+
 // The worktree's `UpdatedEntries` event can be used to follow along with
 // all changes to the worktree's snapshot.
 fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Worktree>) {

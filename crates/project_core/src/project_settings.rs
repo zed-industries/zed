@@ -39,6 +39,9 @@ pub struct ProjectSettings {
     /// Treat the files matching these globs as `.env` files.
     /// Default: [ "**/.env*" ]
     pub private_files: Option<Vec<String>>,
+
+    /// Maximum file size in bytes to open in the editor.
+    pub max_file_size: usize,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

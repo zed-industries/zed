@@ -54,6 +54,7 @@ pub trait Fs: Send + Sync {
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
+    async fn size(&self, path: &Path) -> Result<usize>;
     async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
         &self,
@@ -178,6 +179,11 @@ impl Fs for RealFs {
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
         Ok(Box::new(std::fs::File::open(path)?))
+    }
+
+    async fn size(&self, path: &Path) -> Result<usize> {
+        let metadata = smol::fs::metadata(path).await?;
+        Ok(metadata.len() as usize)
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
@@ -1083,6 +1089,14 @@ impl Fs for FakeFs {
         Ok(Box::new(io::Cursor::new(text)))
     }
 
+    async fn size(&self, path: &Path) -> Result<usize> {
+        let path = normalize_path(path);
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        Ok(entry.file_content(&path)?.len())
+    }
+
     async fn load(&self, path: &Path) -> Result<String> {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
@@ -1396,10 +1410,11 @@ mod tests {
                 },
                 "dir2": {
                     "c": "C",
+                    "d": "12345",
                     "dir3": {
                         "d": "D"
                     }
-                }
+                },
             }),
         )
         .await;
@@ -1410,6 +1425,7 @@ mod tests {
                 PathBuf::from("/root/dir1/a"),
                 PathBuf::from("/root/dir1/b"),
                 PathBuf::from("/root/dir2/c"),
+                PathBuf::from("/root/dir2/d"),
                 PathBuf::from("/root/dir2/dir3/d"),
             ]
         );
@@ -1433,5 +1449,6 @@ mod tests {
             fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
             "D",
         );
+        assert_eq!(fs.size("/root/dir2/d".as_ref()).await.unwrap(), 5);
     }
 }

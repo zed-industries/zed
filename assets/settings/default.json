@@ -333,6 +333,9 @@
     "**/.classpath",
     "**/.settings"
   ],
+  // The maximum size in kilobytes of a file that Zed will open. Files larger than this will not be opened.
+  // The default is 10MB, some users may want to increase this, but be aware that large files can slow down or crash Zed.
+  "max_file_size": 10240,
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
