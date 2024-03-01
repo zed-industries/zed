@@ -1,4 +1,4 @@
-use ai::providers::open_ai::OPEN_AI_API_URL;
+use ai::providers::open_ai::{AzureOpenAiApiVersion, OPEN_AI_API_URL};
 use anyhow::anyhow;
 use gpui::Pixels;
 use schemars::JsonSchema;
@@ -215,7 +215,7 @@ pub struct AzureOpenAiProviderSettings {
     /// The Azure OpenAI API base URL to use when starting new conversations.
     pub api_url: Option<String>,
     /// The Azure OpenAI API version.
-    pub api_version: Option<String>,
+    pub api_version: Option<AzureOpenAiApiVersion>,
     /// The Azure OpenAI API deployment ID.
     pub deployment_id: Option<String>,
 }
@@ -225,7 +225,7 @@ pub struct AzureOpenAiProviderSettingsContent {
     /// The Azure OpenAI API base URL to use when starting new conversations.
     pub api_url: Option<String>,
     /// The Azure OpenAI API version.
-    pub api_version: Option<String>,
+    pub api_version: Option<AzureOpenAiApiVersion>,
     /// The Azure OpenAI deployment ID.
     pub deployment_id: Option<String>,
 }
