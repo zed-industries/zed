@@ -265,8 +265,8 @@ impl OpenAiCompletionProviderKind {
                 deployment_id,
                 api_version,
             } => {
-                // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#completions
-                format!("{api_url}/openai/deployments/{deployment_id}/completions?api-version={api_version}")
+                // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#chat-completions
+                format!("{api_url}/openai/deployments/{deployment_id}/chat/completions?api-version={api_version}")
             }
         }
     }
