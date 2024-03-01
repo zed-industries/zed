@@ -384,10 +384,7 @@ impl<'a> ElementContext<'a> {
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         let window = &mut self.cx.window;
-        let grafted_view_ids = window.next_frame.dispatch_tree.reuse_subtree(
-            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
-            &mut window.rendered_frame.dispatch_tree,
-        );
+
         window.next_frame.cursor_styles.extend(
             window.rendered_frame.cursor_styles
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]
@@ -406,6 +403,11 @@ impl<'a> ElementContext<'a> {
             window.next_frame.scene.push(primitive.clone());
         }
 
+        let grafted_view_ids = window.next_frame.dispatch_tree.reuse_subtree(
+            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+            &mut window.rendered_frame.dispatch_tree,
+        );
+        dbg!(&grafted_view_ids);
         for view_id in grafted_view_ids {
             assert!(self.window.next_frame.reused_views.insert(view_id));
 

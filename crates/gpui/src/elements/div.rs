@@ -1416,7 +1416,7 @@ impl Interactivity {
     }
 
     fn paint_debug_info(&mut self, occlusion: &Occlusion, style: &Style, cx: &mut ElementContext) {
-        // TODO: Ensure that an occlusion is present when painting debug info.
+        // todo!("ensure that an occlusion is present when painting debug info").
         let occlusion_id = occlusion.id;
 
         #[cfg(debug_assertions)]

@@ -316,9 +316,11 @@ impl Element for AnyView {
                     },
                 )
             } else {
-                let mut element = (self.render)(self, cx);
-                let layout_id = element.before_layout(cx);
-                (layout_id, Some(element))
+                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                    let mut element = (self.render)(self, cx);
+                    let layout_id = element.before_layout(cx);
+                    (layout_id, Some(element))
+                })
             }
         })
     }
@@ -329,7 +331,6 @@ impl Element for AnyView {
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
-        let layout_start = cx.window.next_frame.layout_index();
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache {
                 cx.with_element_state::<AnyViewState, _>(
@@ -337,36 +338,38 @@ impl Element for AnyView {
                     |element_state, cx| {
                         let mut element_state = element_state.unwrap().unwrap();
 
-                        if let Some(mut element) = element.take() {
+                        let layout_start = cx.window.next_frame.layout_index();
+                        let content_mask = cx.content_mask();
+                        let text_style = cx.text_style();
+
+                        let element = if let Some(mut element) = element.take() {
                             element.after_layout(cx);
-                            let layout_end = cx.window.next_frame.layout_index();
-                            element_state.cache_key.bounds = bounds;
-                            element_state.cache_key.content_mask = cx.content_mask();
-                            element_state.cache_key.text_style = cx.text_style();
-                            element_state.layout_range = layout_start..layout_end;
-                            (Some(element), Some(element_state))
+                            Some(element)
                         } else if element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == cx.content_mask()
-                            && element_state.cache_key.text_style == cx.text_style()
+                            && element_state.cache_key.content_mask == content_mask
+                            && element_state.cache_key.text_style == text_style
                         {
                             cx.reuse_layout(element_state.layout_range.clone());
-                            (None, Some(element_state))
+                            None
                         } else {
-                            element_state.cache_key.bounds = bounds;
-                            element_state.cache_key.content_mask = cx.content_mask();
-                            element_state.cache_key.text_style = cx.text_style();
-
                             let mut element = (self.render)(self, cx);
                             let layout_id = element.before_layout(cx);
                             cx.compute_layout(layout_id, bounds.size.into());
                             element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
+                            cx.with_absolute_element_offset(bounds.origin, |cx| {
+                                element.after_layout(cx)
+                            });
 
-                            element.after_layout(cx);
-                            let layout_end = cx.window.next_frame.layout_index();
-                            element_state.layout_range = layout_start..layout_end;
+                            Some(element)
+                        };
 
-                            (Some(element), Some(element_state))
-                        }
+                        let layout_end = cx.window.next_frame.layout_index();
+                        element_state.layout_range = layout_start..layout_end;
+                        element_state.cache_key.bounds = bounds;
+                        element_state.cache_key.content_mask = content_mask;
+                        element_state.cache_key.text_style = text_style;
+
+                        (element, Some(element_state))
                     },
                 )
             } else {
@@ -386,7 +389,6 @@ impl Element for AnyView {
         element: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        let paint_start_ix = cx.window.next_frame.paint_index();
         cx.paint_view(self.entity_id(), |cx| {
             if self.cache {
                 cx.with_element_state::<AnyViewState, _>(
@@ -394,13 +396,16 @@ impl Element for AnyView {
                     |element_state, cx| {
                         let mut element_state = element_state.unwrap().unwrap();
 
+                        let paint_start = cx.window.next_frame.paint_index();
+
                         if let Some(element) = element {
-                            element_state.paint_range.start = paint_start_ix;
                             element.paint(cx);
-                            element_state.paint_range.end = cx.window.next_frame.paint_index();
                         } else {
                             cx.reuse_paint(element_state.paint_range.clone());
                         }
+
+                        let paint_end = cx.window.next_frame.paint_index();
+                        element_state.paint_range = paint_start..paint_end;
 
                         ((), Some(element_state))
                     },
