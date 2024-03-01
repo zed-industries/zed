@@ -1,0 +1,17 @@
+[package]
+name = "tab_switcher"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/tab_switcher.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+picker.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
