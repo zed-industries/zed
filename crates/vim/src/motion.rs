@@ -493,7 +493,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             EndOfLine { display_lines } => (
-                end_of_line_cmd(map, *display_lines, point, times),
+                end_of_line(map, *display_lines, point, times),
                 SelectionGoal::None,
             ),
             StartOfParagraph => (
@@ -950,8 +950,12 @@ pub(crate) fn start_of_line(
 pub(crate) fn end_of_line(
     map: &DisplaySnapshot,
     display_lines: bool,
-    point: DisplayPoint,
+    mut point: DisplayPoint,
+    times: usize,
 ) -> DisplayPoint {
+    if times > 1 {
+        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+    }
     if display_lines {
         map.clip_point(
             DisplayPoint::new(point.row(), map.line_len(point.row())),
@@ -966,18 +970,6 @@ fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) ->
     let mut new_point = Point::new((line - 1) as u32, 0).to_display_point(map);
     *new_point.column_mut() = point.column();
     map.clip_point(new_point, Bias::Left)
-}
-
-fn end_of_line_cmd(
-    map: &DisplaySnapshot,
-    display_lines: bool,
-    mut point: DisplayPoint,
-    times: usize,
-) -> DisplayPoint {
-    if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
-    }
-    end_of_line(map, display_lines, point)
 }
 
 fn end_of_document(
@@ -1132,7 +1124,7 @@ pub(crate) fn next_line_end(
     if times > 1 {
         point = start_of_relative_buffer_row(map, point, times as isize - 1);
     }
-    end_of_line(map, false, point)
+    end_of_line(map, false, point, 1)
 }
 
 fn window_top(

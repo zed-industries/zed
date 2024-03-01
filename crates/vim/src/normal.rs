@@ -301,7 +301,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
                         let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
-                        let insert_point = motion::end_of_line(map, false, previous_line);
+                        let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         (insert_point, SelectionGoal::None)
                     });
                 });
@@ -326,7 +326,8 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 let edits = selection_end_rows.into_iter().map(|row| {
                     let (indent, _) = map.line_indent(row);
                     let end_of_line =
-                        motion::end_of_line(&map, false, DisplayPoint::new(row, 0)).to_point(&map);
+                        motion::end_of_line(&map, false, DisplayPoint::new(row, 0), 1)
+                            .to_point(&map);
 
                     let mut new_text = "\n".to_string();
                     new_text.push_str(&" ".repeat(indent as usize));
