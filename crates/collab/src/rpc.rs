@@ -56,7 +56,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
+        Arc, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -793,16 +793,12 @@ fn broadcast<F>(
     }
 }
 
-lazy_static! {
-    static ref ZED_PROTOCOL_VERSION: HeaderName = HeaderName::from_static("x-zed-protocol-version");
-    static ref ZED_APP_VERSION: HeaderName = HeaderName::from_static("x-zed-app-version");
-}
-
 pub struct ProtocolVersion(u32);
 
 impl Header for ProtocolVersion {
     fn name() -> &'static HeaderName {
-        &ZED_PROTOCOL_VERSION
+        static ZED_PROTOCOL_VERSION: OnceLock<HeaderName> = OnceLock::new();
+        ZED_PROTOCOL_VERSION.get_or_init(|| HeaderName::from_static("x-zed-protocol-version"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
@@ -828,7 +824,8 @@ impl Header for ProtocolVersion {
 pub struct AppVersionHeader(SemanticVersion);
 impl Header for AppVersionHeader {
     fn name() -> &'static HeaderName {
-        &ZED_APP_VERSION
+        static ZED_APP_VERSION: OnceLock<HeaderName> = OnceLock::new();
+        ZED_APP_VERSION.get_or_init(|| HeaderName::from_static("x-zed-app-version"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
