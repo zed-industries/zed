@@ -55,6 +55,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_core::project_settings::{LspSettings, ProjectSettings};
 pub use project_core::{DiagnosticSummary, ProjectEntryId};
 use rand::prelude::*;
+use std::{ffi::OsStr, str::FromStr};
 
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
@@ -9363,6 +9364,20 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    let additional_command = match PathBuf::from_str(shell.as_str()) {
+        Ok(shell) if shell.file_name() == Some(OsStr::new("fish")) => Some("emit fish_prompt"),
+        _ => None,
+    };
+
+    let command = match additional_command {
+        Some(additional_command) => format!(
+            "cd {dir:?}; {}; echo {marker}; /usr/bin/env -0; exit 0;",
+            additional_command
+        ),
+        None => format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
+    };
+
     let output = smol::process::Command::new(&shell)
         .args([
             "-i",
@@ -9378,7 +9393,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
             // anymore.
             // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
             // do that, but it does, and `exit 0` helps.
-            &format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
+            &command,
         ])
         .output()
         .await
