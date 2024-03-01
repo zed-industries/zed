@@ -147,7 +147,7 @@ pub struct Server {
     app_state: Arc<AppState>,
     executor: Executor,
     handlers: HashMap<TypeId, MessageHandler>,
-    teardown: watch::Sender<()>,
+    teardown: watch::Sender<bool>,
 }
 
 pub(crate) struct ConnectionPoolGuard<'a> {
@@ -180,7 +180,7 @@ impl Server {
             executor,
             connection_pool: Default::default(),
             handlers: Default::default(),
-            teardown: watch::channel(()).0,
+            teardown: watch::channel(false).0,
         };
 
         server
@@ -436,7 +436,7 @@ impl Server {
     pub fn teardown(&self) {
         self.peer.teardown();
         self.connection_pool.lock().reset();
-        let _ = self.teardown.send(());
+        let _ = self.teardown.send(true);
     }
 
     #[cfg(test)]
@@ -444,6 +444,7 @@ impl Server {
         self.teardown();
         *self.id.lock() = id;
         self.peer.reset(id.0 as u32);
+        let _ = self.teardown.send(false);
     }
 
     #[cfg(test)]
@@ -561,6 +562,9 @@ impl Server {
         }
         let mut teardown = self.teardown.subscribe();
         async move {
+            if *teardown.borrow() {
+                return Err(anyhow!("server is tearing down"))?;
+            }
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
                 .add_connection(connection, {
@@ -943,7 +947,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
 #[instrument(err, skip(executor))]
 async fn connection_lost(
     session: Session,
-    mut teardown: watch::Receiver<()>,
+    mut teardown: watch::Receiver<bool>,
     executor: Executor,
 ) -> Result<()> {
     session.peer.disconnect(session.connection_id);
