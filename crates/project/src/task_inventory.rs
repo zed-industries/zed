@@ -221,10 +221,7 @@ impl Inventory {
 
 #[cfg(feature = "test-support")]
 pub mod test_inventory {
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::{path::Path, sync::Arc};
 
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
     use project_core::worktree::WorktreeId;
