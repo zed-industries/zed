@@ -752,7 +752,7 @@ unsafe fn generate_menu(
                     .bindings_for_action(action.as_ref())
                     .next()
                     .map(|binding| binding.keystrokes());
-                println!("Shortcut: {:#?}", keystrokes);
+                // println!("Shortcut: {:#?}", keystrokes);
 
                 let mut item_name = name.to_string();
                 let action_index = actions_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

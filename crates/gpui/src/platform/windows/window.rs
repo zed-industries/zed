@@ -122,6 +122,7 @@ impl WindowsWindow {
             display.display_id = display_id;
         }
         let scale_factor = monitor.scale_factor();
+        println!("Scale factor: {}", scale_factor);
 
         let mut lpwindowname = None;
         if let Some(ref titlebar_opt) = options.titlebar {
@@ -165,6 +166,7 @@ impl WindowsWindow {
             height: window_handle.size().height as _,
             depth: 1,
         };
+        println!("Window size: {:#?}", gpu_extent);
         let renderer = BladeRenderer::new(gpu, gpu_extent);
         let inner = WindowsWindowinner::new(
             dispatch_window_handle,
@@ -324,6 +326,7 @@ impl WindowsWindowinner {
                 height,
                 depth: 1,
             };
+            println!("Resize with: {:#?}", gpu_size);
             let mut render = self.renderer.borrow_mut();
             if render.viewport_size() != gpu_size {
                 render.update_drawable_size(crate::size(gpu_size.width as _, gpu_size.height as _));
@@ -816,9 +819,9 @@ impl RawWindow {
     pub fn show(&self) {
         unsafe {
             // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
-            // UpdateWindow(self.hwnd());
-            ShowWindow(self.hwnd(), SW_SHOW);
-            println!("Show window Error: {:?}", std::io::Error::last_os_error());
+            if !ShowWindow(self.hwnd(), SW_SHOW).as_bool() {
+                log_windows_error_with_message!("Unable to show window");
+            }
         }
     }
 
