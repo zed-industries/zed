@@ -15,6 +15,7 @@ gpui.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
+serde.workspace = true
 smol.workspace = true
 ui.workspace = true
 util.workspace = true

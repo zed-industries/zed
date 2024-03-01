@@ -7180,6 +7180,7 @@ dependencies = [
  "ordered-float 2.10.0",
  "picker",
  "project",
+ "serde",
  "serde_json",
  "smol",
  "ui",
