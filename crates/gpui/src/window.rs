@@ -853,9 +853,14 @@ impl<'a> WindowContext<'a> {
 
     /// Finds the topmost [Occlusion] containing the given position in the upcoming frame.
     pub fn topmost_occlusion(&self, position: Point<Pixels>) -> Option<Occlusion> {
+        let frame = if self.window.drawing {
+            &self.window.next_frame
+        } else {
+            &self.window.rendered_frame
+        };
+
         // TODO: consider reversing the occlusions array so that we can iterate it forwards.
-        self.window
-            .next_frame
+        frame
             .occlusions
             .iter()
             .rev()

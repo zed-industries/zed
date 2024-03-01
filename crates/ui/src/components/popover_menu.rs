@@ -241,7 +241,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         child_occlusion: &mut Option<OcclusionId>,
         cx: &mut ElementContext,
     ) {
-        self.with_element_state(cx, |_this, element_state, cx| {
+        self.with_element_state(cx, |_this, _element_state, cx| {
             if let Some(mut child) = before_layout.child_element.take() {
                 child.paint(cx);
             }

@@ -104,7 +104,7 @@ impl Styled for UniformList {
 
 impl Element for UniformList {
     type BeforeLayout = UniformListFrameState;
-    type AfterLayout = Occlusion;
+    type AfterLayout = Option<Occlusion>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
@@ -141,7 +141,7 @@ impl Element for UniformList {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Occlusion {
+    ) -> Option<Occlusion> {
         let style = self.interactivity.compute_style(None, cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
@@ -236,17 +236,15 @@ impl Element for UniformList {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        occlusion: &mut Occlusion,
+        occlusion: &mut Option<Occlusion>,
         cx: &mut ElementContext,
     ) {
-        self.interactivity.paint(occlusion, cx, |_, cx| {
-            let content_mask = ContentMask { bounds };
-            cx.with_content_mask(Some(content_mask), |cx| {
+        self.interactivity
+            .paint(bounds, occlusion.as_ref(), cx, |_, cx| {
                 for item in &mut before_layout.items {
                     item.paint(cx);
                 }
-            });
-        })
+            })
     }
 }
 

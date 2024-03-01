@@ -54,7 +54,7 @@ use crate::{
     KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::FxHashMap;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,

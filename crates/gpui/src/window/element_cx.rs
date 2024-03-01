@@ -53,12 +53,12 @@ pub(crate) struct CursorStyleRequest {
 }
 
 /// An identifier for an [Occlusion]
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct OcclusionId(usize);
 
 /// A rectangular region that potentially blocks occlusions inserted prior.
-/// See [ElementContext::insert_occlusion] for more details.
-#[derive(Clone, Eq, PartialEq)]
+/// See [ElementContext::occlude] for more details.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Occlusion {
     /// A unique identifier for the occlusion
     pub id: OcclusionId,
@@ -1066,10 +1066,14 @@ impl<'a> ElementContext<'a> {
     /// the returned [OcclusionId] during `paint` or in an event handler
     /// to determine whether the inserted occlusion was the topmost.
     pub fn occlude(&mut self, bounds: Bounds<Pixels>) -> Occlusion {
+        let content_mask = self.content_mask();
         let window = &mut self.window;
         let id = window.next_occlusion_id;
         window.next_occlusion_id.0 += 1;
-        let occlusion = Occlusion { id, bounds };
+        let occlusion = Occlusion {
+            id,
+            bounds: bounds.intersect(&content_mask.bounds),
+        };
         window.next_frame.occlusions.push(occlusion.clone());
         occlusion
     }

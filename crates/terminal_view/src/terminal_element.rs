@@ -3,9 +3,9 @@ use gpui::{
     div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementContext,
     FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Occlusion, Pixels, Point, ShapedLine,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
-    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    ModifiersChangedEvent, Occlusion, Pixels, Point, ShapedLine, StatefulInteractiveElement,
+    StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle, WeakView, WhiteSpace,
+    WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -1018,59 +1018,62 @@ impl Element for TerminalElement {
         self.register_mouse_listeners(origin, after_layout.mode, bounds, cx);
 
         let occlusion = after_layout.occlusion.clone();
-        self.interactivity.paint(&occlusion, cx, |_, cx| {
-            cx.handle_input(&self.focus, terminal_input_handler);
+        self.interactivity
+            .paint(bounds, Some(&occlusion), cx, |_, cx| {
+                cx.handle_input(&self.focus, terminal_input_handler);
 
-            cx.on_key_event({
-                let this = self.terminal.clone();
-                move |event: &ModifiersChangedEvent, phase, cx| {
-                    if phase != DispatchPhase::Bubble {
-                        return;
+                cx.on_key_event({
+                    let this = self.terminal.clone();
+                    move |event: &ModifiersChangedEvent, phase, cx| {
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
+
+                        let handled =
+                            this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+
+                        if handled {
+                            cx.refresh();
+                        }
                     }
+                });
 
-                    let handled =
-                        this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+                for rect in &after_layout.rects {
+                    rect.paint(origin, &after_layout, cx);
+                }
 
-                    if handled {
-                        cx.refresh();
+                for (relative_highlighted_range, color) in
+                    after_layout.relative_highlighted_ranges.iter()
+                {
+                    if let Some((start_y, highlighted_range_lines)) = to_highlighted_range_lines(
+                        relative_highlighted_range,
+                        &after_layout,
+                        origin,
+                    ) {
+                        let hr = HighlightedRange {
+                            start_y, //Need to change this
+                            line_height: after_layout.dimensions.line_height,
+                            lines: highlighted_range_lines,
+                            color: color.clone(),
+                            //Copied from editor. TODO: move to theme or something
+                            corner_radius: 0.15 * after_layout.dimensions.line_height,
+                        };
+                        hr.paint(bounds, cx);
                     }
+                }
+
+                for cell in &after_layout.cells {
+                    cell.paint(origin, &after_layout, bounds, cx);
+                }
+
+                if let Some(cursor) = &mut after_layout.cursor {
+                    cursor.paint(origin, cx);
+                }
+
+                if let Some(mut element) = after_layout.hyperlink_tooltip.take() {
+                    element.paint(cx);
                 }
             });
-
-            for rect in &after_layout.rects {
-                rect.paint(origin, &after_layout, cx);
-            }
-
-            for (relative_highlighted_range, color) in
-                after_layout.relative_highlighted_ranges.iter()
-            {
-                if let Some((start_y, highlighted_range_lines)) =
-                    to_highlighted_range_lines(relative_highlighted_range, &after_layout, origin)
-                {
-                    let hr = HighlightedRange {
-                        start_y, //Need to change this
-                        line_height: after_layout.dimensions.line_height,
-                        lines: highlighted_range_lines,
-                        color: color.clone(),
-                        //Copied from editor. TODO: move to theme or something
-                        corner_radius: 0.15 * after_layout.dimensions.line_height,
-                    };
-                    hr.paint(bounds, cx);
-                }
-            }
-
-            for cell in &after_layout.cells {
-                cell.paint(origin, &after_layout, bounds, cx);
-            }
-
-            if let Some(cursor) = &mut after_layout.cursor {
-                cursor.paint(origin, cx);
-            }
-
-            if let Some(mut element) = after_layout.hyperlink_tooltip.take() {
-                element.paint(cx);
-            }
-        });
     }
 }
 

@@ -20,8 +20,8 @@ use crate::{
     ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global,
     IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Occlusion, OcclusionId, ParentElement, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement,
-    Styled, Task, View, Visibility, WindowContext,
+    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1050,7 +1050,7 @@ impl ParentElement for Div {
 
 impl Element for Div {
     type BeforeLayout = DivFrameState;
-    type AfterLayout = Occlusion;
+    type AfterLayout = Option<Occlusion>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut child_layout_ids = SmallVec::new();
@@ -1072,7 +1072,7 @@ impl Element for Div {
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Occlusion {
+    ) -> Option<Occlusion> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         let content_size = if before_layout.child_layout_ids.is_empty() {
@@ -1125,14 +1125,15 @@ impl Element for Div {
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        occlusion: &mut Occlusion,
+        occlusion: &mut Option<Occlusion>,
         cx: &mut ElementContext,
     ) {
-        self.interactivity.paint(occlusion, cx, |_style, cx| {
-            for child in &mut self.children {
-                child.paint(cx);
-            }
-        });
+        self.interactivity
+            .paint(bounds, occlusion.as_ref(), cx, |_style, cx| {
+                for child in &mut self.children {
+                    child.paint(cx);
+                }
+            });
     }
 }
 
@@ -1263,7 +1264,7 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, Occlusion, &mut ElementContext) -> R,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Occlusion>, &mut ElementContext) -> R,
     ) -> R {
         self.content_size = content_size;
         cx.with_element_state::<InteractiveElementState, _>(
@@ -1275,7 +1276,20 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        let occlusion = cx.occlude(bounds);
+                        // TODO: this check should be slightly more advanced, e.g. we shouldn't check
+                        // the refinements by themselves but rather see how they would affect the overall
+                        // style.
+                        let should_occlude = self.occlude_mouse
+                            || style.should_occlude()
+                            || self
+                                .hover_style
+                                .as_ref()
+                                .map_or(false, |style| style.should_occlude())
+                            || self
+                                .group_hover_style
+                                .as_ref()
+                                .map_or(false, |group| group.style.should_occlude());
+                        let occlusion = should_occlude.then(|| cx.occlude(bounds));
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, occlusion, cx);
                         (result, element_state)
@@ -1337,7 +1351,8 @@ impl Interactivity {
     /// with the current scroll offset
     pub fn paint(
         &mut self,
-        occlusion: &Occlusion,
+        bounds: Bounds<Pixels>,
+        occlusion: Option<&Occlusion>,
         cx: &mut ElementContext,
         f: impl FnOnce(&Style, &mut ElementContext),
     ) {
@@ -1347,27 +1362,27 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                let style =
-                    self.compute_style_internal(Some(occlusion), element_state.as_mut(), cx);
+                let style = self.compute_style_internal(occlusion, element_state.as_mut(), cx);
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
                     cx.window
                         .next_frame
                         .debug_bounds
-                        .insert(debug_selector.clone(), occlusion.bounds);
+                        .insert(debug_selector.clone(), bounds);
                 }
 
                 if style.visibility == Visibility::Hidden {
-                    self.paint_hover_group_handler(occlusion, cx);
+                    self.paint_hover_group_handler(cx);
                     return ((), element_state);
                 }
 
-                style.paint(occlusion.bounds, cx, |cx: &mut ElementContext| {
+                style.paint(bounds, cx, |cx: &mut ElementContext| {
                     cx.with_text_style(style.text_style().cloned(), |cx| {
-                        cx.with_content_mask(
-                            style.overflow_mask(occlusion.bounds, cx.rem_size()),
-                            |cx| {
+                        cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
+                            self.paint_hover_group_handler(cx);
+
+                            if let Some(occlusion) = occlusion {
                                 self.paint_debug_info(occlusion, &style, cx);
 
                                 if !cx.has_active_drag() {
@@ -1380,16 +1395,18 @@ impl Interactivity {
                                     GroupOcclusions::push(group, occlusion.id, cx);
                                 }
 
-                                self.paint_hover_group_handler(occlusion, cx);
                                 self.paint_mouse_listeners(occlusion, element_state.as_mut(), cx);
                                 self.paint_scroll_listener(occlusion, &style, cx);
-                                self.paint_keyboard_listeners(&style, cx, f);
+                            }
 
+                            self.paint_keyboard_listeners(&style, cx, f);
+
+                            if occlusion.is_some() {
                                 if let Some(group) = self.group.as_ref() {
                                     GroupOcclusions::pop(group, cx);
                                 }
-                            },
-                        );
+                            }
+                        });
                     });
                 });
 
@@ -1399,12 +1416,13 @@ impl Interactivity {
     }
 
     fn paint_debug_info(&mut self, occlusion: &Occlusion, style: &Style, cx: &mut ElementContext) {
+        // TODO: Ensure that an occlusion is present when painting debug info.
         let occlusion_id = occlusion.id;
 
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
-            && occlusion.bounds.contains(&cx.mouse_position())
+            && Some(occlusion) == cx.moused_occlusion().as_ref()
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
             let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
@@ -1447,7 +1465,7 @@ impl Interactivity {
                         let was_hovered =
                             moused_occlusion.map_or(false, |moused| moused.id == occlusion_id);
                         cx.on_mouse_event(
-                            move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                            move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = moused_occlusion == Some(occlusion_id);
                                     if hovered != was_hovered {
@@ -1517,7 +1535,7 @@ impl Interactivity {
         // that will automatically transfer focus when hitting the element.
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
-            cx.on_mouse_event(move |event: &MouseDownEvent, moused_occlusion, phase, cx| {
+            cx.on_mouse_event(move |_: &MouseDownEvent, moused_occlusion, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && moused_occlusion == Some(occlusion_id)
                     && !cx.default_prevented()
@@ -1568,16 +1586,13 @@ impl Interactivity {
             || self.base_style.mouse_cursor.is_some()
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
-            let hovered = cx
+            let was_hovered = cx
                 .moused_occlusion()
                 .map_or(false, |occlusion| occlusion.id == occlusion_id);
-            cx.on_mouse_event(move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && (moused_occlusion == Some(occlusion_id)) != hovered
-                {
-                    if moused_occlusion == Some(occlusion_id) {
-                        cx.refresh();
-                    }
+            cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                let hovered = moused_occlusion == Some(occlusion_id);
+                if phase == DispatchPhase::Capture && hovered != was_hovered {
+                    cx.refresh();
                 }
             });
         }
@@ -1589,7 +1604,7 @@ impl Interactivity {
 
         if !drop_listeners.is_empty() {
             cx.on_mouse_event({
-                move |event: &MouseUpEvent, moused_occlusion, phase, cx| {
+                move |_: &MouseUpEvent, moused_occlusion, phase, cx| {
                     if let Some(drag) = &cx.active_drag {
                         if phase == DispatchPhase::Bubble && moused_occlusion == Some(occlusion_id)
                         {
@@ -1647,7 +1662,7 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let occlusion = occlusion.clone();
-                    move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                    move |event: &MouseMoveEvent, _moused_occlusion, phase, cx| {
                         if phase == DispatchPhase::Capture {
                             return;
                         }
@@ -1692,12 +1707,14 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                let mouse_click = ClickEvent {
-                                    down: mouse_down,
-                                    up: event.clone(),
-                                };
-                                for listener in &click_listeners {
-                                    listener(&mouse_click, cx);
+                                if moused_occlusion == Some(occlusion_id) {
+                                    let mouse_click = ClickEvent {
+                                        down: mouse_down,
+                                        up: event.clone(),
+                                    };
+                                    for listener in &click_listeners {
+                                        listener(&mouse_click, cx);
+                                    }
                                 }
                             }
                         }
@@ -1714,9 +1731,8 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
-                let occlusion = occlusion.clone();
 
-                cx.on_mouse_event(move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
@@ -1743,9 +1759,8 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
-                let bounds = occlusion.clone();
 
-                cx.on_mouse_event(move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
                     let is_hovered = pending_mouse_down.borrow().is_none()
                         && moused_occlusion == Some(occlusion_id);
                     if !is_hovered {
@@ -1872,20 +1887,19 @@ impl Interactivity {
         );
     }
 
-    fn paint_hover_group_handler(&self, occlusion: &Occlusion, cx: &mut ElementContext) {
+    fn paint_hover_group_handler(&self, cx: &mut ElementContext) {
         let group_occlusion = self
             .group_hover_style
             .as_ref()
             .and_then(|group_hover| GroupOcclusions::get(&group_hover.group, cx));
 
         if let Some(group_occlusion) = group_occlusion {
-            let hovered = cx
+            let was_hovered = cx
                 .moused_occlusion()
                 .map_or(false, |moused| moused.id == group_occlusion);
-            cx.on_mouse_event(move |event: &MouseMoveEvent, moused_occlusion, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && (moused_occlusion == Some(group_occlusion)) != hovered
-                {
+            cx.on_mouse_event(move |_: &MouseMoveEvent, moused_occlusion, phase, cx| {
+                let hovered = moused_occlusion == Some(group_occlusion);
+                if phase == DispatchPhase::Capture && hovered != was_hovered {
                     cx.refresh();
                 }
             });
@@ -2054,7 +2068,6 @@ pub struct InteractiveElementState {
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
-    pub(crate) occlusion: Option<Occlusion>,
 }
 
 /// The current active tooltip
