@@ -118,7 +118,7 @@
           "stop_at_soft_wraps": true
         }
       ],
-      "cmd-;": "editor::ToggleLineNumbers"
+      "ctrl-;": "editor::ToggleLineNumbers"
     }
   },
   {
