@@ -133,7 +133,7 @@ impl WasmHost {
             }
 
             let Some(zed_api_version) = zed_api_version else {
-                bail!("extension {} has no zed:api-version section", manifest.id,);
+                bail!("extension {} has no zed:api-version section", manifest.id);
             };
 
             let mut store = wasmtime::Store::new(

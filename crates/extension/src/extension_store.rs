@@ -50,6 +50,27 @@ pub struct ExtensionApiResponse {
     pub download_count: usize,
 }
 
+/// This is the old version of the extension manifest, from when it was `extension.json`.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct OldExtensionManifest {
+    pub name: String,
+    pub version: Arc<str>,
+
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub authors: Vec<String>,
+
+    #[serde(default)]
+    pub themes: BTreeMap<Arc<str>, PathBuf>,
+    #[serde(default)]
+    pub languages: BTreeMap<Arc<str>, PathBuf>,
+    #[serde(default)]
+    pub grammars: BTreeMap<Arc<str>, PathBuf>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ExtensionManifest {
     pub id: Arc<str>,
@@ -744,24 +765,45 @@ impl ExtensionStore {
             .ok_or_else(|| anyhow!("invalid extension name"))?;
 
         let mut extension_manifest_path = extension_dir.join("extension.json");
-        let mut extension_manifest: ExtensionManifest = if fs
-            .is_file(&extension_manifest_path)
-            .await
-        {
-            let extension_manifest = fs
+        let mut extension_manifest;
+        if fs.is_file(&extension_manifest_path).await {
+            let manifest_content = fs
                 .load(&extension_manifest_path)
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            serde_json::from_str(&extension_manifest)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))?
+            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+                .with_context(|| {
+                    format!("invalid extension.json for extension {extension_name}")
+                })?;
+
+            extension_manifest = ExtensionManifest {
+                id: extension_name.into(),
+                name: manifest_json.name,
+                version: manifest_json.version,
+                description: manifest_json.description,
+                repository: manifest_json.repository,
+                authors: manifest_json.authors,
+                lib: Default::default(),
+                themes: manifest_json.themes.into_values().collect(),
+                languages: manifest_json.languages.into_values().collect(),
+                grammars: manifest_json
+                    .grammars
+                    .into_iter()
+                    .map(|(grammar_name, _)| (grammar_name, Default::default()))
+                    .collect(),
+                language_servers: Default::default(),
+            };
+            extension_manifest.themes.sort();
+            extension_manifest.themes.dedup();
         } else {
             extension_manifest_path.set_extension("toml");
-            let extension_manifest = fs
+            let manifest_content = fs
                 .load(&extension_manifest_path)
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            ::toml::from_str(&extension_manifest)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))?
+            extension_manifest = ::toml::from_str(&manifest_content).with_context(|| {
+                format!("invalid extension.json for extension {extension_name}")
+            })?;
         };
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
@@ -780,7 +822,7 @@ impl ExtensionStore {
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
                 let relative_path = relative_path.to_path_buf();
-                if extension_manifest.languages.contains(&relative_path) {
+                if !extension_manifest.languages.contains(&relative_path) {
                     extension_manifest.languages.push(relative_path.clone());
                 }
 

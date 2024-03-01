@@ -125,9 +125,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     description: None,
                     authors: Vec::new(),
                     repository: None,
-                    themes: Vec::new(),
+                    themes: Default::default(),
                     lib: Default::default(),
-                    languages: vec!["languages/ruby".into(), "languages/erb".into()],
+                    languages: vec!["languages/ruby".into(), "languages/erb".into()].into(),
                     grammars: [
                         ("ruby".into(), GrammarManifestEntry::default()),
                         ("erb".into(), GrammarManifestEntry::default()),
@@ -150,9 +150,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     themes: vec![
                         "themes/monokai.json".into(),
                         "themes/monokai-pro.json".into(),
-                    ],
+                    ]
+                    .into(),
                     lib: Default::default(),
-                    languages: Vec::new(),
+                    languages: Default::default(),
                     grammars: BTreeMap::default(),
                     language_servers: BTreeMap::default(),
                 }
