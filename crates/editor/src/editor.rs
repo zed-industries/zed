@@ -923,58 +923,61 @@ impl CompletionsMenu {
 
                         let max_width = 510.;
 
-                        {
-                            let font_size = &style.text.font_size.to_pixels(cx.rem_size()).0;
+                        // {
+                        //     let font_size = &style.text.font_size.to_pixels(cx.rem_size()).0;
+                        //     let text_system = cx.text_system();
 
-                            // 60% (3:5) is a common aspect ratio for a wide-mono font. It would be better to use the exact aspect ratio or width however that functionality isn't in GPUI yet
-                            //Zed-Mono uses an
-                            let aspect_ratio = 0.6;
-                            let font_width = font_size * aspect_ratio;
+                        //     // 60% (3:5) is a common aspect ratio for a wide-mono font. It would be better to use the exact aspect ratio or width however that functionality isn't in GPUI yet
+                        //     //Zed-Mono uses an
+                        //     let aspect_ratio = 0.6;
+                        //     let font_width = font_size * aspect_ratio;
 
-                            let mut completion_label_text = completion.label.text.clone();
+                        //     let mut completion_label_text = completion.label.text.clone();
 
-                            let max_label_length = (max_width / font_width) as usize;
-                            println!("-----");
-                            println!("Max Width: {}", max_width);
+                        //     // let text_system.layout_line(text, font_size, runs);
 
-                            println!("Font Width: {}", font_width);
+                        //     let max_label_length = (max_width / font_width) as usize;
+                        //     println!("-----");
+                        //     println!("Max Width: {}", max_width);
 
-                            println!("Max Label Length: {}", max_label_length);
+                        //     println!("Font Width: {}", font_width);
 
-                            if completion.label.filter_range.end > max_label_length {
-                                let length_truncated = completion.label.filter_range.end as i32
-                                    - max_label_length as i32;
+                        //     println!("Max Label Length: {}", max_label_length);
 
-                                if max_label_length < completion_label_text.len()
-                                    && completion.label.filter_range.end
-                                        <= completion_label_text.len()
-                                    && max_label_length <= completion.label.filter_range.end
-                                {
-                                    // Remove characters from start_index to end_index
-                                    completion_label_text.replace_range(
-                                        max_label_length - 3..completion.label.filter_range.end,
-                                        "...",
-                                    );
-                                }
-                                for run in completion.label.runs.iter_mut() {
-                                    if run.0.start > max_label_length {
-                                        run.0.start =
-                                            (run.0.start as i32 - length_truncated) as usize;
-                                    }
-                                    if run.0.end > max_label_length {
-                                        run.0.end = (run.0.end as i32 - length_truncated) as usize;
-                                    }
-                                }
-                                if completion.label.filter_range.end > max_label_length {
-                                    completion.label.filter_range.end =
-                                        (completion.label.filter_range.end as i32
-                                            - length_truncated)
-                                            as usize;
-                                }
+                        //     if completion.label.filter_range.end > max_label_length {
+                        //         let length_truncated = completion.label.filter_range.end as i32
+                        //             - max_label_length as i32;
 
-                                completion.label.text = completion_label_text;
-                            }
-                        }
+                        //         if max_label_length < completion_label_text.len()
+                        //             && completion.label.filter_range.end
+                        //                 <= completion_label_text.len()
+                        //             && max_label_length <= completion.label.filter_range.end
+                        //         {
+                        //             // Remove characters from start_index to end_index
+                        //             completion_label_text.replace_range(
+                        //                 max_label_length - 3..completion.label.filter_range.end,
+                        //                 "...",
+                        //             );
+                        //         }
+                        //         for run in completion.label.runs.iter_mut() {
+                        //             if run.0.start > max_label_length {
+                        //                 run.0.start =
+                        //                     (run.0.start as i32 - length_truncated) as usize;
+                        //             }
+                        //             if run.0.end > max_label_length {
+                        //                 run.0.end = (run.0.end as i32 - length_truncated) as usize;
+                        //             }
+                        //         }
+                        //         if completion.label.filter_range.end > max_label_length {
+                        //             completion.label.filter_range.end =
+                        //                 (completion.label.filter_range.end as i32
+                        //                     - length_truncated)
+                        //                     as usize;
+                        //         }
+
+                        //         completion.label.text = completion_label_text;
+                        //     }
+                        // }
 
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
@@ -988,8 +991,39 @@ impl CompletionsMenu {
                             ),
                         );
 
-                        let completion_label = StyledText::new(completion.label.text.clone())
+                        let mut completion_label = StyledText::new(completion.label.text.clone())
                             .with_highlights(&style.text, highlights);
+
+                        // cx.text_system().layout_line(
+                        //     &completion_label.text,
+                        //     &style.text.font_size.to_pixels(cx.rem_size()).0,
+                        //     &style.syntax,
+                        // );
+                        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+
+                        if let Ok(layout_line) = completion_label.line_layout(font_size, cx) {
+                            if layout_line.width > px(510.) {
+                                if let Ok(ellipsis_width) = cx.text_system().layout_line(
+                                    "…",
+                                    font_size,
+                                    &[style.text.to_run("…".len())],
+                                ) {
+                                    if let Some(index) =
+                                        layout_line.index_for_x(px(510.) - ellipsis_width.width)
+                                    {
+                                        completion_label = completion_label.with_text(
+                                            completion
+                                                .label
+                                                .text
+                                                .chars()
+                                                .take(index)
+                                                .collect::<String>()
+                                                + "…",
+                                        );
+                                    }
+                                }
+                            }
+                        };
 
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
