@@ -23,7 +23,10 @@ fn main() {
     compile_metal_shaders(&header_path);
 
     // We are using Windows Visita+, right..?
-    if cfg!(target_os = "windows") {
+    // if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
+    #[cfg(target_os = "windows")]
+    {
+        println!("cargo:rustc-link-arg=/stack:{}", 4 * 1024 * 1024);
         println!("cargo:rerun-if-changed=assets/windows/manifest.xml");
         let mut res = winresource::WindowsResource::new();
         let manifest_path = std::env::current_dir()
