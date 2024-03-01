@@ -914,7 +914,6 @@ impl CompletionsMenu {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
                         let mut completion = completions_guard[candidate_id].clone();
-
                         let documentation = if show_completion_documentation {
                             &completion.documentation
                         } else {
@@ -994,32 +993,73 @@ impl CompletionsMenu {
                         let mut completion_label = StyledText::new(completion.label.text.clone())
                             .with_highlights(&style.text, highlights);
 
-                        // cx.text_system().layout_line(
-                        //     &completion_label.text,
-                        //     &style.text.font_size.to_pixels(cx.rem_size()).0,
-                        //     &style.syntax,
-                        // );
                         let font_size = style.text.font_size.to_pixels(cx.rem_size());
-
+                        let max_len = px(510.);
                         if let Ok(layout_line) = completion_label.line_layout(font_size, cx) {
-                            if layout_line.width > px(510.) {
+                            if layout_line.width > max_len {
                                 if let Ok(ellipsis_width) = cx.text_system().layout_line(
                                     "…",
                                     font_size,
                                     &[style.text.to_run("…".len())],
                                 ) {
-                                    if let Some(index) =
-                                        layout_line.index_for_x(px(510.) - ellipsis_width.width)
-                                    {
-                                        completion_label = completion_label.with_text(
-                                            completion
-                                                .label
-                                                .text
-                                                .chars()
-                                                .take(index)
-                                                .collect::<String>()
-                                                + "…",
-                                        );
+                                    let width_of_first_part =
+                                        layout_line.x_for_index(completion.label.filter_range.end);
+                                    let width_of_second_part =
+                                        layout_line.width - width_of_first_part;
+
+                                    let max_width_of_first_part =
+                                        if width_of_second_part < max_len * 0.2 {
+                                            max_len - width_of_second_part
+                                        } else {
+                                            max_len * 0.8
+                                        };
+
+                                    if width_of_first_part < max_width_of_first_part {
+                                        // truncate second part only
+                                        if let Some(index) =
+                                            layout_line.index_for_x(max_len - ellipsis_width.width)
+                                        {
+                                            completion_label = completion_label.with_text(
+                                                completion
+                                                    .label
+                                                    .text
+                                                    .chars()
+                                                    .take(index)
+                                                    .collect::<String>()
+                                                    + "…",
+                                            );
+                                        }
+                                    } else {
+                                        // truncate first part (and optionally second part too)
+                                        if let Some(index) = layout_line.index_for_x(
+                                            max_width_of_first_part - ellipsis_width.width,
+                                        ) {
+                                            completion_label = completion_label.with_text(
+                                                completion
+                                                    .label
+                                                    .text
+                                                    .chars()
+                                                    .take(index)
+                                                    .collect::<String>()
+                                                    + "…",
+                                            );
+                                        }
+
+                                        let highlights =
+                                            gpui::combine_highlights(
+                                                mat.ranges()
+                                                    .map(|range| (range, FontWeight::BOLD.into())),
+                                                styled_runs_for_code_label(
+                                                    &completion.label,
+                                                    &style.syntax,
+                                                )
+                                                .map(|(range, mut highlight)| {
+                                                    // Ignore font weight for syntax highlighting, as we'll use it
+                                                    // for fuzzy matches.
+                                                    highlight.font_weight = None;
+                                                    (range, highlight)
+                                                }),
+                                            );
                                     }
                                 }
                             }
@@ -1042,7 +1082,7 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        div().min_w(px(220.)).max_w(px(540.)).child(
+                        div().min_w(px(220.)).max_w(max_len + px(30.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .selected(item_ix == selected_item)
@@ -10482,7 +10522,6 @@ pub fn styled_runs_for_code_label<'a>(
                 }
                 runs.push((range.clone(), muted_style));
             } else if range.end <= label.filter_range.end {
-                println!("Start: {}, End: {}", range.start, range.end);
                 runs.push((range.clone(), style));
             } else {
                 runs.push((range.start..label.filter_range.end, style));
