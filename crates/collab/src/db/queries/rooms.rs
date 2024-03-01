@@ -468,15 +468,7 @@ impl Database {
                     Condition::all()
                         .add(room_participant::Column::RoomId.eq(room_id))
                         .add(room_participant::Column::UserId.eq(user_id))
-                        .add(room_participant::Column::AnsweringConnectionId.is_not_null())
-                        .add(
-                            Condition::any()
-                                .add(room_participant::Column::AnsweringConnectionLost.eq(true))
-                                .add(
-                                    room_participant::Column::AnsweringConnectionServerId
-                                        .ne(connection.owner_id as i32),
-                                ),
-                        ),
+                        .add(room_participant::Column::AnsweringConnectionId.is_not_null()),
                 )
                 .set(room_participant::ActiveModel {
                     answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
