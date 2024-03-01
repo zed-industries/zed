@@ -71,7 +71,10 @@ pub(crate) struct CursorStateInner {
 }
 
 #[derive(Clone)]
-pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>, Rc<RefCell<CursorStateInner>>);
+pub(crate) struct WaylandClientState {
+    client_state_inner: Rc<RefCell<WaylandClientStateInner>>,
+    cursor_state_inner: Rc<RefCell<CursorStateInner>>,
+}
 
 pub(crate) struct KeyRepeat {
     characters_per_second: u32,
@@ -146,7 +149,10 @@ impl WaylandClient {
 
         let source = WaylandSource::new(conn, event_queue);
 
-        let mut state = WaylandClientState(Rc::clone(&state_inner), Rc::clone(&cursor_state_inner));
+        let mut state = WaylandClientState{
+            client_state_inner: Rc::clone(&state_inner),
+            cursor_state_inner: Rc::clone(&cursor_state_inner)
+        };
         linux_platform_inner
             .loop_handle
             .insert_source(source, move |_, queue, _| {
@@ -156,7 +162,7 @@ impl WaylandClient {
 
         Self {
             platform_inner: linux_platform_inner,
-            state: WaylandClientState(state_inner, cursor_state_inner),
+            state: WaylandClientState{client_state_inner: state_inner, cursor_state_inner},
             qh: Arc::new(qh),
         }
     }
@@ -176,7 +182,7 @@ impl Client for WaylandClient {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let mut state = self.state.0.borrow_mut();
+        let mut state = self.state.client_state_inner.borrow_mut();
 
         let wl_surface = state.compositor.create_surface(&self.qh, ());
         let xdg_surface = state.wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
@@ -253,7 +259,7 @@ impl Client for WaylandClient {
             CursorStyle::ContextualMenu => "context-menu".to_string(),
         };
 
-        let mut cursor_state = self.state.1.borrow_mut();
+        let mut cursor_state = self.state.cursor_state_inner.borrow_mut();
         cursor_state.cursor_icon_name = cursor_icon_name;
     }
 }
@@ -302,7 +308,7 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let wl_callback::Event::Done { .. } = event {
             for window in &state.windows {
                 if window.1.surface.id() == surf.id() {
@@ -324,7 +330,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let xdg_surface::Event::Configure { serial, .. } = event {
             xdg_surface.ack_configure(serial);
             for window in &state.windows {
@@ -347,7 +353,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let xdg_toplevel::Event::Configure {
             width,
             height,
@@ -425,7 +431,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = this.0.borrow_mut();
+        let mut state = this.client_state_inner.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat.characters_per_second = rate as u32;
@@ -536,7 +542,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             let this = this.clone();
 
                             let timer = Timer::from_duration(delay);
-                            let state_ = Rc::clone(&this.0);
+                            let state_ = Rc::clone(&this.client_state_inner);
                             state
                                 .loop_handle
                                 .insert_source(timer, move |event, _metadata, shared_data| {
@@ -606,8 +612,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut cursor_state = state.1.borrow_mut();
-        let mut state = state.0.borrow_mut();
+        let mut cursor_state = state.cursor_state_inner.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
 
         if cursor_state.cursor.is_none() {
             cursor_state.cursor = Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
@@ -764,7 +770,7 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Wayland
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *id {
@@ -787,7 +793,7 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *surface_id {
