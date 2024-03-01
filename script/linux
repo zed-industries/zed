@@ -68,11 +68,11 @@ fi
 xbps=$(command -v xbps-install || true)
 if [[ -n $xbps ]]; then
   deps=(
-    alsa-lib
-    fontconfig
-    wayland
-    libxkbcommon-x11
-    openssl
+    alsa-lib-devel
+    fontconfig-devel
+    wayland-devel
+    libxkbcommon-devel
+    openssl-devel
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
