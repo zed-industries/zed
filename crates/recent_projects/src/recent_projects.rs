@@ -8,12 +8,19 @@ use gpui::{
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
+use serde::Deserialize;
 use std::sync::Arc;
 use ui::{prelude::*, tooltip_container, HighlightedLabel, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
 
-gpui::actions!(projects, [OpenRecent]);
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct OpenRecent {
+    #[serde(default)]
+    pub create_new_window: bool,
+}
+
+gpui::impl_actions!(projects, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
@@ -63,9 +70,9 @@ impl RecentProjects {
     }
 
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &OpenRecent, cx| {
+        workspace.register_action(|workspace, open_recent: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                if let Some(handler) = Self::open(workspace, cx) {
+                if let Some(handler) = Self::open(workspace, open_recent.create_new_window, cx) {
                     handler.detach_and_log_err(cx);
                 }
                 return;
@@ -79,12 +86,17 @@ impl RecentProjects {
         });
     }
 
-    fn open(_: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<Task<Result<()>>> {
+    fn open(
+        _: &mut Workspace,
+        create_new_window: bool,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
         Some(cx.spawn(|workspace, mut cx| async move {
             workspace.update(&mut cx, |workspace, cx| {
                 let weak_workspace = cx.view().downgrade();
                 workspace.toggle_modal(cx, |cx| {
-                    let delegate = RecentProjectsDelegate::new(weak_workspace, true);
+                    let delegate =
+                        RecentProjectsDelegate::new(weak_workspace, create_new_window, true);
 
                     let modal = Self::new(delegate, 34., cx);
                     modal
@@ -95,7 +107,13 @@ impl RecentProjects {
     }
 
     pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
-        cx.new_view(|cx| Self::new(RecentProjectsDelegate::new(workspace, false), 20., cx))
+        cx.new_view(|cx| {
+            Self::new(
+                RecentProjectsDelegate::new(workspace, false, false),
+                20.,
+                cx,
+            )
+        })
     }
 }
 
@@ -126,17 +144,19 @@ pub struct RecentProjectsDelegate {
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
+    create_new_window: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
 }
 
 impl RecentProjectsDelegate {
-    fn new(workspace: WeakView<Workspace>, render_paths: bool) -> Self {
+    fn new(workspace: WeakView<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
         Self {
             workspace,
             workspaces: vec![],
             selected_match_index: 0,
             matches: Default::default(),
+            create_new_window,
             render_paths,
             reset_selected_match_index: true,
         }
@@ -147,10 +167,19 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
+        let (create_window, reuse_window) = if self.create_new_window {
+            (
+                cx.keystroke_text_for(&menu::Confirm),
+                cx.keystroke_text_for(&menu::SecondaryConfirm),
+            )
+        } else {
+            (
+                cx.keystroke_text_for(&menu::SecondaryConfirm),
+                cx.keystroke_text_for(&menu::Confirm),
+            )
+        };
         Arc::from(format!(
-            "{} reuses the window, {} opens a new one",
-            cx.keystroke_text_for(&menu::Confirm),
-            cx.keystroke_text_for(&menu::SecondaryConfirm),
+            "{reuse_window} reuses the window, {create_window} opens a new one",
         ))
     }
 
@@ -219,7 +248,11 @@ impl PickerDelegate for RecentProjectsDelegate {
         {
             let (candidate_workspace_id, candidate_workspace_location) =
                 &self.workspaces[selected_match.candidate_id];
-            let replace_current_window = !secondary;
+            let replace_current_window = if self.create_new_window {
+                secondary
+            } else {
+                !secondary
+            };
             workspace
                 .update(cx, |workspace, cx| {
                     if workspace.database_id() != *candidate_workspace_id {
@@ -492,7 +525,12 @@ mod tests {
         workspace: &WindowHandle<Workspace>,
         cx: &mut TestAppContext,
     ) -> View<Picker<RecentProjectsDelegate>> {
-        cx.dispatch_action((*workspace).into(), OpenRecent);
+        cx.dispatch_action(
+            (*workspace).into(),
+            OpenRecent {
+                create_new_window: false,
+            },
+        );
         workspace
             .update(cx, |workspace, cx| {
                 workspace

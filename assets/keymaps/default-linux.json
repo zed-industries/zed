@@ -341,6 +341,13 @@
   {
     "context": "Workspace",
     "bindings": {
+      // Change the default action on `menu::Confirm` by setting the parameter
+      // "alt-cmd-o": [
+      //     "projects::OpenRecent",
+      //     {
+      //         "create_new_window": true
+      //     }
+      // ]
       "ctrl-alt-o": "projects::OpenRecent",
       "ctrl-alt-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
