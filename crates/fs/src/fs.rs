@@ -1011,16 +1011,12 @@ impl Fs for FakeFs {
         content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
     ) -> Result<()> {
         let mut entries = content.entries()?;
-        dbg!();
         while let Some(entry) = entries.next().await {
             let mut entry = entry?;
-            dbg!(&entry.header());
             if entry.header().entry_type().is_file() {
                 let path = path.join(entry.path()?.as_ref());
                 let mut bytes = Vec::new();
-                dbg!(&path);
                 entry.read_to_end(&mut bytes).await?;
-                dbg!(&bytes);
                 self.create_dir(path.parent().unwrap()).await?;
                 self.write_file_internal(&path, bytes)?;
             }
