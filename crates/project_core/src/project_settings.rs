@@ -41,6 +41,10 @@ pub struct ProjectSettings {
     pub private_files: Option<Vec<String>>,
 
     /// Maximum file size in kilobytes to open in the editor.
+    /// Files larger than this will not be opened and a warning will be shown.
+    /// Keep in mind that large files can slow down or even crash the editor.
+    ///
+    /// Default: 10240 (10MB)
     pub max_file_size: usize,
 }
 
