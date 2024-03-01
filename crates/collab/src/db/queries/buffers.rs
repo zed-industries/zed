@@ -161,11 +161,9 @@ impl Database {
 
                 // Find the collaborator record for this user's previous lost
                 // connection. Update it with the new connection id.
-                let server_id = ServerId(connection_id.owner_id as i32);
-                let Some(self_collaborator) = collaborators.iter_mut().find(|c| {
-                    c.user_id == user_id
-                        && (c.connection_lost || c.connection_server_id != server_id)
-                }) else {
+                let Some(self_collaborator) =
+                    collaborators.iter_mut().find(|c| c.user_id == user_id)
+                else {
                     log::info!("can't rejoin buffer, no previous collaborator found");
                     continue;
                 };
