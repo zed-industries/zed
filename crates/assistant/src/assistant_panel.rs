@@ -124,19 +124,18 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let (api_url, model_name) = cx.update(|cx| {
+            let (provider_kind, api_url, model_name) = cx.update(|cx| {
                 let settings = AssistantSettings::get_global(cx);
-                (settings.provider_api_url(), settings.provider_model_name())
-            })?;
-
-            dbg!(&api_url, &model_name);
-
-            let api_url = api_url?;
-            let model_name = model_name?;
+                anyhow::Ok((
+                    settings.provider_kind()?,
+                    settings.provider_api_url()?,
+                    settings.provider_model_name()?,
+                ))
+            })??;
 
             let completion_provider = OpenAiCompletionProvider::new(
                 api_url,
-                OpenAiCompletionProviderKind::OpenAi,
+                provider_kind,
                 model_name,
                 cx.background_executor().clone(),
             )
@@ -1464,12 +1463,12 @@ impl Conversation {
         let settings = AssistantSettings::get_global(cx);
         let model = settings
             .provider_model()
-            // TODO: Remove before merge.
-            .unwrap();
+            .log_err()
+            .unwrap_or(OpenAiModel::FourTurbo);
         let api_url = settings
             .provider_api_url()
-            // TODO: Remove before merge.
-            .unwrap();
+            .log_err()
+            .unwrap_or_else(|| OPEN_AI_API_URL.to_string());
 
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),

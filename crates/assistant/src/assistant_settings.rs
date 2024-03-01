@@ -1,4 +1,6 @@
-use ai::providers::open_ai::{AzureOpenAiApiVersion, OPEN_AI_API_URL};
+use ai::providers::open_ai::{
+    AzureOpenAiApiVersion, OpenAiCompletionProviderKind, OPEN_AI_API_URL,
+};
 use anyhow::anyhow;
 use gpui::Pixels;
 use schemars::JsonSchema;
@@ -14,8 +16,6 @@ pub enum OpenAiModel {
     Four,
     #[serde(rename = "gpt-4-1106-preview")]
     FourTurbo,
-    // TODO: Not happy with this; revisit.
-    Custom,
 }
 
 impl OpenAiModel {
@@ -24,7 +24,6 @@ impl OpenAiModel {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
             Self::Four => "gpt-4-0613",
             Self::FourTurbo => "gpt-4-1106-preview",
-            Self::Custom => "custom",
         }
     }
 
@@ -33,7 +32,6 @@ impl OpenAiModel {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
-            Self::Custom => "custom",
         }
     }
 
@@ -42,7 +40,6 @@ impl OpenAiModel {
             Self::ThreePointFiveTurbo => Self::Four,
             Self::Four => Self::FourTurbo,
             Self::FourTurbo => Self::ThreePointFiveTurbo,
-            Self::Custom => Self::Custom,
         }
     }
 }
@@ -76,6 +73,28 @@ pub struct AssistantSettings {
 }
 
 impl AssistantSettings {
+    pub fn provider_kind(&self) -> anyhow::Result<OpenAiCompletionProviderKind> {
+        match &self.provider {
+            crate::assistant_settings::AiProviderSettings::OpenAi(_) => {
+                Ok(OpenAiCompletionProviderKind::OpenAi)
+            }
+            crate::assistant_settings::AiProviderSettings::AzureOpenAi(settings) => {
+                let deployment_id = settings
+                    .deployment_id
+                    .clone()
+                    .ok_or_else(|| anyhow!("no Azure OpenAI deployment ID"))?;
+                let api_version = settings
+                    .api_version
+                    .ok_or_else(|| anyhow!("no Azure OpenAI API version"))?;
+
+                Ok(OpenAiCompletionProviderKind::AzureOpenAi {
+                    deployment_id,
+                    api_version,
+                })
+            }
+        }
+    }
+
     pub fn provider_api_url(&self) -> anyhow::Result<String> {
         match &self.provider {
             AiProviderSettings::OpenAi(settings) => Ok(settings
@@ -94,7 +113,10 @@ impl AssistantSettings {
             AiProviderSettings::OpenAi(settings) => {
                 Ok(settings.default_model.unwrap_or(OpenAiModel::FourTurbo))
             }
-            AiProviderSettings::AzureOpenAi(_settings) => Ok(OpenAiModel::Custom),
+            AiProviderSettings::AzureOpenAi(_settings) => {
+                // TODO: We need to use an Azure OpenAI model here.
+                Ok(OpenAiModel::FourTurbo)
+            }
         }
     }
 
