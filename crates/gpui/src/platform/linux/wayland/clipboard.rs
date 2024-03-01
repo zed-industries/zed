@@ -66,17 +66,23 @@ impl Clipboard {
 
     pub fn set_offer(&mut self, offer: Option<DataOffer>) {
         self.offer = offer;
-        self.offer_has_text = contains_mime_type(&self.offer, TEXT_MIME_TYPE);
-        self.offer_is_self = contains_mime_type(&self.offer, &self.self_mime);
+
+        // If the current offer is a self-offer, we want to keep its content around
+        // event if wayland asks us to destroy the object.
+        let keep_offer_content = self.offer.is_none() && self.offer_is_self;
+        if !keep_offer_content {
+            self.offer_has_text = contains_mime_type(&self.offer, TEXT_MIME_TYPE);
+            self.offer_is_self = contains_mime_type(&self.offer, &self.self_mime);
+        }
     }
 
     pub fn read(&self, client: &WaylandClient) -> Option<String> {
-        let Some(ref offer) = self.offer else {
-            return None;
-        };
         if self.offer_is_self {
             return self.source_content.clone();
         }
+        let Some(ref offer) = self.offer else {
+            return None;
+        };
 
         let read_pipe = match setup_offer_read(&offer.instance) {
             Ok(read_pipe) => read_pipe,
