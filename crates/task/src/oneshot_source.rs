@@ -38,7 +38,7 @@ impl Task for OneshotTask {
         if self.id().0.is_empty() {
             return None;
         }
-        let TaskContext {cwd, env} = cx;
+        let TaskContext { cwd, env } = cx;
         Some(SpawnInTerminal {
             id: self.id().clone(),
             label: self.name().to_owned(),
