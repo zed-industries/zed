@@ -444,8 +444,7 @@ impl ChatPanel {
 
         let reply_to_message = message
             .reply_to_message_id
-            .map(|id| active_chat.read(cx).find_loaded_message(id))
-            .flatten()
+            .and_then(|id| active_chat.read(cx).find_loaded_message(id))
             .cloned();
 
         let replied_to_you =
@@ -839,7 +838,7 @@ impl Render for ChatPanel {
             .when_some(reply_to_message_id, |el, reply_to_message_id| {
                 let reply_message = self
                     .active_chat()
-                    .map(|active_chat| {
+                    .and_then(|active_chat| {
                         active_chat.read(cx).messages().iter().find_map(|m| {
                             if m.id == ChannelMessageId::Saved(reply_to_message_id) {
                                 Some(m)
@@ -848,7 +847,6 @@ impl Render for ChatPanel {
                             }
                         })
                     })
-                    .flatten()
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {

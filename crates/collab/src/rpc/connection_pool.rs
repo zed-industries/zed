@@ -94,21 +94,19 @@ impl ConnectionPool {
         self.connected_users
             .get(&user_id)
             .into_iter()
-            .map(|state| {
+            .flat_map(|state| {
                 state
                     .connection_ids
                     .iter()
                     .flat_map(|cid| self.connections.get(cid))
             })
-            .flatten()
     }
 
     pub fn user_connection_ids(&self, user_id: UserId) -> impl Iterator<Item = ConnectionId> + '_ {
         self.connected_users
             .get(&user_id)
             .into_iter()
-            .map(|state| &state.connection_ids)
-            .flatten()
+            .flat_map(|state| &state.connection_ids)
             .copied()
     }
 

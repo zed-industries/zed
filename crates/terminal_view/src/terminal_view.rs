@@ -881,10 +881,9 @@ impl Item for TerminalView {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace
                             .upgrade()
-                            .map(|workspace| {
+                            .and_then(|workspace| {
                                 get_working_directory(workspace.read(cx), cx, strategy)
                             })
-                            .flatten()
                     })
                     .ok()
                     .flatten()

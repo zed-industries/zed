@@ -688,7 +688,7 @@ mod tests {
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
         let inlays = (0..buffer_snapshot.len())
-            .map(|offset| {
+            .flat_map(|offset| {
                 [
                     Inlay {
                         id: InlayId::Suggestion(post_inc(&mut id)),
@@ -712,7 +712,6 @@ mod tests {
                     },
                 ]
             })
-            .flatten()
             .collect();
         let snapshot = display_map.update(cx, |map, cx| {
             map.splice_inlays(Vec::new(), inlays, cx);

@@ -238,7 +238,7 @@ impl CopilotButton {
 
 impl StatusItemView for CopilotButton {
     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = item.map(|item| item.act_as::<Editor>(cx)).flatten() {
+        if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
                 cx.observe(&editor, Self::update_enabled),
                 editor.entity_id().as_u64() as usize,

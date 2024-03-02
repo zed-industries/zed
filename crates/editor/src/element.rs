@@ -4083,8 +4083,7 @@ mod tests {
             .position_map
             .line_layouts
             .iter()
-            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
-            .flatten()
+            .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
             .cloned()
             .collect()
     }
