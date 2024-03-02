@@ -172,7 +172,7 @@ impl ChannelView {
                 Some(ui::ContextMenu::build(cx, move |menu, _| {
                     menu.entry("Copy link to section", None, move |cx| {
                         this.update(cx, |this, cx| {
-                            this.copy_link_for_position(position.clone(), cx)
+                            this.copy_link_for_position(position, cx)
                         })
                         .ok();
                     })

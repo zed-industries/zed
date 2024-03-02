@@ -457,7 +457,7 @@ impl VectorDatabase {
                     let embeddings = std::mem::take(&mut batch_embeddings);
                     let ids = std::mem::take(&mut batch_ids);
                     let array =
-                        Array2::from_shape_vec((ids.len(), embedding_len.clone()), embeddings);
+                        Array2::from_shape_vec((ids.len(), embedding_len), embeddings);
                     match array {
                         Ok(array) => {
                             batches.push((ids, array));

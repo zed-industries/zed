@@ -561,7 +561,7 @@ pub fn handle_keymap_file_changes(
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
         if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
-            old_base_keymap = new_base_keymap.clone();
+            old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
             base_keymap_tx.unbounded_send(()).unwrap();
         }

@@ -229,7 +229,7 @@ impl LanguageServer {
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let mut server = Self::new_internal(
-            server_id.clone(),
+            server_id,
             stdin,
             stdout,
             Some(stderr),

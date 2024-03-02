@@ -403,7 +403,7 @@ impl CollabTitlebarItem {
                     )
                 })
                 .on_click({
-                    let host_peer_id = host.peer_id.clone();
+                    let host_peer_id = host.peer_id;
                     cx.listener(move |this, _, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {

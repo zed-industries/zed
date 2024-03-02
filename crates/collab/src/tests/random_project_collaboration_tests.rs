@@ -996,7 +996,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let statuses = statuses
                         .iter()
-                        .map(|(path, val)| (path.as_path(), val.clone()))
+                        .map(|(path, val)| (path.as_path(), *val))
                         .collect::<Vec<_>>();
 
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {

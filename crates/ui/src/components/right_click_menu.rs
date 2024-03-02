@@ -132,8 +132,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         };
         let menu = element_state.menu.clone();
         let position = element_state.position.clone();
-        let attach = self.attach.clone();
-        let child_layout_id = element_state.child_layout_id.clone();
+        let attach = self.attach;
+        let child_layout_id = element_state.child_layout_id;
         let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
         let interactive_bounds = InteractiveBounds {

@@ -715,7 +715,7 @@ impl Terminal {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
 
-                self.last_content.size = new_size.clone();
+                self.last_content.size = new_size;
 
                 self.pty_tx.0.send(Msg::Resize(new_size.into())).ok();
 

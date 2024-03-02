@@ -863,7 +863,7 @@ mod tests {
 
         let mut cx = EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
-        let window = cx.window.clone();
+        let window = cx.window;
         _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
                 editor.update(cx, |editor, cx| editor.text_layout_details(cx));

@@ -283,7 +283,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 self.output_offset.0 += prefix.len();
                 let mut prefix = Chunk {
                     text: prefix,
-                    ..chunk.clone()
+                    ..*chunk
                 };
                 if !self.active_highlights.is_empty() {
                     let mut highlight_style = HighlightStyle::default();
@@ -322,7 +322,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
                         highlight_style
                             .get_or_insert_with(|| Default::default())
-                            .highlight(style.clone());
+                            .highlight(*style);
                     }
                 } else {
                     next_inlay_highlight_endpoint = usize::MAX;

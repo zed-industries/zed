@@ -219,7 +219,7 @@ impl ProjectSearch {
             active_query: self.active_query.clone(),
             search_id: self.search_id,
             search_history: self.search_history.clone(),
-            no_results: self.no_results.clone(),
+            no_results: self.no_results,
         })
     }
 
@@ -1279,7 +1279,7 @@ impl ProjectSearchView {
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor.clone()..cursor]));
+            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
         });
         self.query_editor_was_focused = false;
         let results_handle = self.results_editor.focus_handle(cx);
@@ -1299,7 +1299,6 @@ impl ProjectSearchView {
                 if is_new_search {
                     let range_to_select = match_ranges
                         .first()
-                        .clone()
                         .map(|range| editor.range_for_match(range));
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(range_to_select)
@@ -2245,7 +2244,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.clone();
+        let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
@@ -2475,7 +2474,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.clone();
+        let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
@@ -3410,7 +3409,7 @@ pub mod tests {
         let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
 
         // First search
-        perform_search(search_view.clone(), "A", cx);
+        perform_search(search_view, "A", cx);
         search_view
             .update(cx, |search_view, cx| {
                 search_view.results_editor.update(cx, |results_editor, cx| {
@@ -3428,7 +3427,7 @@ pub mod tests {
             .expect("unable to update search view");
 
         // Second search
-        perform_search(search_view.clone(), "B", cx);
+        perform_search(search_view, "B", cx);
         search_view
             .update(cx, |search_view, cx| {
                 search_view.results_editor.update(cx, |results_editor, cx| {
