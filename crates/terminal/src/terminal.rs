@@ -1478,7 +1478,7 @@ fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
     clamped_row * size.columns() + clamped_col
 }
 
-/// Converts an 8 bit ANSI color to it's GPUI equivalent.
+/// Converts an 8 bit ANSI color to its GPUI equivalent.
 /// Accepts `usize` for compatibility with the `alacritty::Colors` interface,
 /// Other than that use case, should only be called with values in the [0,255] range
 pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
@@ -1504,7 +1504,7 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         15 => colors.terminal_ansi_bright_white,
         // 16-231 are mapped to their RGB colors on a 0-5 range per channel
         16..=231 => {
-            let (r, g, b) = rgb_for_index(&(index as u8)); // Split the index into it's ANSI-RGB components
+            let (r, g, b) = rgb_for_index(&(index as u8)); // Split the index into its ANSI-RGB components
             let step = (u8::MAX as f32 / 5.).floor() as u8; // Split the RGB range into 5 chunks, with floor so no overflow
             rgba_color(r * step, g * step, b * step) // Map the ANSI-RGB components to an RGB color
         }

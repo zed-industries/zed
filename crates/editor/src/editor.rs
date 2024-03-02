@@ -11,7 +11,7 @@
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
-//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides it's behaviour.
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
 pub mod actions;
 mod blink_manager;
 pub mod display_map;

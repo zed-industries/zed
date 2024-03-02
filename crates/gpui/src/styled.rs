@@ -515,13 +515,13 @@ pub trait Styled: Sized {
         &mut style.text
     }
 
-    /// Set the text color of this element, this value cascades to it's child elements.
+    /// Set the text color of this element, this value cascades to its child elements.
     fn text_color(mut self, color: impl Into<Hsla>) -> Self {
         self.text_style().get_or_insert_with(Default::default).color = Some(color.into());
         self
     }
 
-    /// Set the font weight of this element, this value cascades to it's child elements.
+    /// Set the font weight of this element, this value cascades to its child elements.
     fn font_weight(mut self, weight: FontWeight) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -529,7 +529,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the background color of this element, this value cascades to it's child elements.
+    /// Set the background color of this element, this value cascades to its child elements.
     fn text_bg(mut self, bg: impl Into<Hsla>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -537,7 +537,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the text size of this element, this value cascades to it's child elements.
+    /// Set the text size of this element, this value cascades to its child elements.
     fn text_size(mut self, size: impl Into<AbsoluteLength>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -563,7 +563,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Reset the text styling for this element and it's children.
+    /// Reset the text styling for this element and its children.
     fn text_base(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -607,7 +607,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Remove the text decoration on this element, this value cascades to it's child elements.
+    /// Remove the text decoration on this element, this value cascades to its child elements.
     fn text_decoration_none(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -679,7 +679,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Change the font on this element and it's children.
+    /// Change the font on this element and its children.
     fn font(mut self, family_name: impl Into<SharedString>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -687,7 +687,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Set the line height on this element and it's children.
+    /// Set the line height on this element and its children.
     fn line_height(mut self, line_height: impl Into<DefiniteLength>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
