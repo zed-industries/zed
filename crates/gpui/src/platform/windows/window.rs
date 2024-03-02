@@ -414,7 +414,6 @@ impl WindowsWindowBase for WindowsWindowinner {
             | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK | WM_XBUTTONDBLCLK => {
                 let modifiers = self.modifiers.borrow();
                 let key = parse_mouse_button(message, wparam, lparam, &modifiers);
-                println!("Mouse button down: {:#?}", key);
                 self.handle_input(key);
                 self.update_now();
                 LRESULT(0)
@@ -825,9 +824,7 @@ impl RawWindow {
     pub fn show(&self) {
         unsafe {
             // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
-            if !ShowWindow(self.hwnd(), SW_SHOW).as_bool() {
-                log_windows_error_with_message!("Unable to show window");
-            }
+            let _ = ShowWindow(self.hwnd(), SW_SHOW); // succes reports as error
         }
     }
 
@@ -926,9 +923,7 @@ fn parse_window_options(
         style |= WS_POPUP;
     }
     match options.bounds {
-        crate::WindowBounds::Fullscreen => style &= !WS_OVERLAPPEDWINDOW,
-        crate::WindowBounds::Maximized => style |= WS_MAXIMIZE,
-        crate::WindowBounds::Maximized => {}
+        crate::WindowBounds::Maximized | crate::WindowBounds::Fullscreen => style |= WS_MAXIMIZE,
         crate::WindowBounds::Fixed(bounds) => {
             width = Some(bounds.size.width.0 as _);
             height = Some(bounds.size.height.0 as _);

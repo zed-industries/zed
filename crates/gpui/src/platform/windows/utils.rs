@@ -79,11 +79,8 @@ macro_rules! hiword {
 #[inline]
 pub unsafe fn set_windowdata<T>(handle: HWND, data: T) {
     let raw = Box::into_raw(Box::new(data));
-    let ret = SetWindowLongPtrW(handle, GWL_USERDATA, raw as _);
-    if ret == 0 {
-        log_windows_error_with_message!(None);
-        let _ = SetWindowLongPtrW(handle, GWL_USERDATA, raw as _);
-    }
+    // this may generate false error
+    let _ = SetWindowLongPtrW(handle, GWL_USERDATA, raw as _);
 }
 
 #[inline]

@@ -199,7 +199,6 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
-        println!("{:?}", self.read_from_clipboard());
         unsafe {
             let mut msg = std::mem::zeroed();
             while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
@@ -403,7 +402,7 @@ impl Platform for WindowsPlatform {
     fn os_version(&self) -> Result<SemanticVersion> {
         let mut info = unsafe { std::mem::zeroed() };
         let status = unsafe { RtlGetVersion(&mut info) };
-        if status == STATUS_SUCCESS {
+        if status.is_ok() {
             Ok(SemanticVersion {
                 major: info.dwMajorVersion as _,
                 minor: info.dwMinorVersion as _,
@@ -467,6 +466,7 @@ impl Platform for WindowsPlatform {
         UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
     }
 
+    // todo("windows")
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unimplemented!()
     }
