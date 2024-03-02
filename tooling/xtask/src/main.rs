@@ -101,7 +101,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::iter_kv_map",
         "clippy::iter_overeager_cloned",
         "clippy::let_underscore_future",
-        "clippy::manual_find",
         "clippy::manual_flatten",
         "clippy::map_entry",
         "clippy::needless_arbitrary_self_type",
