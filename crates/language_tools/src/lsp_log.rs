@@ -756,8 +756,8 @@ impl Render for LspLogToolbarItemView {
             .trigger(Button::new(
                 "language_server_menu_header",
                 current_server
-                    .and_then(|row| {
-                        Some(Cow::Owned(format!(
+                    .map(|row| {
+                        Cow::Owned(format!(
                             "{} ({}) - {}",
                             row.server_name.0,
                             row.worktree_root_name,
@@ -766,7 +766,7 @@ impl Render for LspLogToolbarItemView {
                             } else {
                                 SERVER_LOGS
                             },
-                        )))
+                        ))
                     })
                     .unwrap_or_else(|| "No server selected".into()),
             ))
