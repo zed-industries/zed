@@ -3355,7 +3355,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3365,7 +3365,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3375,7 +3375,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
