@@ -54,3 +54,7 @@ pub const ACCEL_FVIRTKEY: u8 = 0x01;
 pub const ACCEL_FSHIFT: u8 = 0x04;
 pub const ACCEL_FCONTROL: u8 = 0x08;
 pub const ACCEL_FALT: u8 = 0x10;
+
+// clipboard
+pub const CLIPBOARD_TEXT_HASH: PCWSTR = windows::core::w!("ZedTextHash");
+pub const CLIPBOARD_METADATA: PCWSTR = windows::core::w!("ZedMetadata");

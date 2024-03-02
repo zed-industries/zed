@@ -5,6 +5,7 @@ use std::{
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
     process::Stdio,
+    ptr::copy_nonoverlapping,
     rc::Rc,
     str::FromStr,
     sync::{
@@ -28,15 +29,18 @@ use windows::{
         },
         System::{
             Com::{
-                CoCreateInstance, CoInitializeEx, CoUninitialize, CreateBindCtx, CLSCTX_ALL,
-                COINIT_DISABLE_OLE1DDE, COINIT_MULTITHREADED, DVASPECT_CONTENT, FORMATETC,
-                TYMED_HGLOBAL,
+                CoCreateInstance, CoInitializeEx, CoUninitialize, CreateBindCtx, IDataObject,
+                CLSCTX_ALL, COINIT_DISABLE_OLE1DDE, COINIT_MULTITHREADED, DVASPECT_CONTENT,
+                FORMATETC, TYMED_HGLOBAL,
             },
             DataExchange::{
-                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
+                RegisterClipboardFormatW, SetClipboardData,
             },
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
-            Ole::{OleGetClipboard, OleInitialize, OleUninitialize, ReleaseStgMedium},
+            Ole::{
+                OleGetClipboard, OleInitialize, OleSetClipboard, OleUninitialize, ReleaseStgMedium,
+            },
             Threading::CREATE_NO_WINDOW,
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
@@ -67,8 +71,8 @@ use crate::{
     encode_wide, log_windows_error, log_windows_error_with_message,
     platform::cross_platform::CosmicTextSystem, set_windowdata, Keystroke, WindowsWindow,
     WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
-    ACCEL_FVIRTKEY, CF_UNICODETEXT, DISPATCH_WINDOW_CLASS, DISPATCH_WINDOW_EXSTYLE,
-    DISPATCH_WINDOW_STYLE, MAIN_DISPATCH, MENU_ACTIONS, WINDOW_CLOSE,
+    ACCEL_FVIRTKEY, CF_UNICODETEXT, CLIPBOARD_METADATA, CLIPBOARD_TEXT_HASH, DISPATCH_WINDOW_CLASS,
+    DISPATCH_WINDOW_EXSTYLE, DISPATCH_WINDOW_STYLE, MAIN_DISPATCH, MENU_ACTIONS, WINDOW_CLOSE,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
@@ -97,6 +101,8 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<CosmicTextSystem>,
     inner: Rc<WindowsPlatformInner>,
     menu_handle: RefCell<Option<HMENU>>,
+    text_hash_clipboard_type: u32,
+    metadata_clipboard_type: u32,
 }
 
 impl WindowsPlatform {
@@ -122,6 +128,8 @@ impl WindowsPlatform {
             );
         }
         let dispatcher = Arc::new(WindowsDispatcher::new(sender, dispatch_window_handle));
+        let text_hash_clipboard_type = unsafe { RegisterClipboardFormatW(CLIPBOARD_TEXT_HASH) };
+        let metadata_clipboard_type = unsafe { RegisterClipboardFormatW(CLIPBOARD_METADATA) };
 
         WindowsPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -129,6 +137,8 @@ impl WindowsPlatform {
             text_system: Arc::new(CosmicTextSystem::new()),
             inner,
             menu_handle: RefCell::new(None),
+            text_hash_clipboard_type,
+            metadata_clipboard_type,
         }
     }
 }
@@ -533,7 +543,6 @@ impl Platform for WindowsPlatform {
         false
     }
 
-    //todo!(windows)
     fn write_to_clipboard(&self, item: ClipboardItem) {
         unsafe {
             if OpenClipboard(self.inner.dispatch_window_handle)
@@ -543,73 +552,73 @@ impl Platform for WindowsPlatform {
                 return;
             }
             if EmptyClipboard().inspect_err(log_windows_error).is_err() {
+                let _ = CloseClipboard().inspect_err(log_windows_error);
                 return;
             }
-            // MultiByteToWideChar(codepage, dwflags, lpmultibytestr, lpwidecharstr);
             let data_ptr = encode_wide(&item.text);
-            let count = data_ptr.len() + 1;
-            let global = GlobalAlloc(GMEM_MOVEABLE, count * 2).unwrap();
-            let handle = GlobalLock(global);
-            u_memcpy(handle as _, data_ptr.as_ptr() as _, count as _);
-            let _ = GlobalUnlock(global);
-            if SetClipboardData(CF_UNICODETEXT, HANDLE(global.0 as isize))
-                .inspect_err(log_windows_error)
-                .is_err()
-            {
+            let count = data_ptr.len();
+            if set_rawdata_to_clipboard(data_ptr.as_ptr(), count, CF_UNICODETEXT).is_err() {
+                let _ = CloseClipboard().inspect_err(log_windows_error);
                 return;
+            }
+            if let Some(metadata) = item.metadata.as_ref() {
+                let hash_result = ClipboardItem::text_hash(&item.text);
+                let mut hash_rawdata = hash_result.to_be_bytes();
+                let hash_wbytes =
+                    std::slice::from_raw_parts::<u16>(hash_rawdata.as_mut_ptr().cast::<u16>(), 4);
+                if set_rawdata_to_clipboard(hash_wbytes.as_ptr(), 4, self.text_hash_clipboard_type)
+                    .is_err()
+                {
+                    let _ = CloseClipboard().inspect_err(log_windows_error);
+                    return;
+                }
+                let metadata_ptr = encode_wide(metadata);
+                let count = metadata_ptr.len() + 1;
+                if set_rawdata_to_clipboard(
+                    metadata_ptr.as_ptr(),
+                    count,
+                    self.metadata_clipboard_type,
+                )
+                .is_err()
+                {
+                    let _ = CloseClipboard().inspect_err(log_windows_error);
+                    return;
+                }
             }
             let _ = CloseClipboard().inspect_err(log_windows_error);
         }
     }
 
-    //todo!(windows)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         unsafe {
             let Ok(clipboard) = OleGetClipboard().inspect_err(log_windows_error) else {
                 return None;
             };
-            let config = FORMATETC {
-                cfFormat: CF_UNICODETEXT as _,
-                ptd: std::ptr::null_mut() as _,
-                dwAspect: DVASPECT_CONTENT.0,
-                lindex: -1,
-                tymed: TYMED_HGLOBAL.0 as _,
-            };
-            let Ok(mut data) = clipboard
-                .GetData(&config as _)
-                .inspect_err(log_windows_error)
+            let Ok((text, _)) = read_rawdata_from_clipboard(&clipboard, CF_UNICODETEXT, false)
             else {
                 return None;
             };
-            let wstring = PCWSTR(GlobalLock(data.u.hGlobal) as *mut u16);
-            let string = String::from_utf16_lossy(wstring.as_wide());
-            let _ = GlobalUnlock(data.u.hGlobal);
-            ReleaseStgMedium(&mut data);
-
-            Some(ClipboardItem {
-                text: string,
+            let mut item = ClipboardItem {
+                text,
                 metadata: None,
-            })
-        }
-        // unsafe {
-        //     if OpenClipboard(self.inner.dispatch_window_handle)
-        //         .inspect_err(log_windows_error)
-        //         .is_err()
-        //     {
-        //         return None;
-        //     }
-        //     let Ok(handle) = GetClipboardData(CF_UNICODETEXT).inspect_err(log_windows_error) else {
-        //         return None;
-        //     };
-        //     let wstring = PCWSTR(handle.0 as _);
-        //     let string = String::from_utf16_lossy(wstring.as_wide());
-        //     let _ = CloseClipboard().inspect_err(log_windows_error);
+            };
+            // hash & metadata
+            let Ok((_, hash_data)) =
+                read_rawdata_from_clipboard(&clipboard, self.text_hash_clipboard_type, true)
+            else {
+                return Some(item);
+            };
+            let Ok((metadata, _)) =
+                read_rawdata_from_clipboard(&clipboard, self.metadata_clipboard_type, false)
+            else {
+                return Some(item);
+            };
+            if hash_data == ClipboardItem::text_hash(&item.text) {
+                item.metadata = Some(metadata);
+            }
 
-        //     Some(ClipboardItem {
-        //         text: string,
-        //         metadata: None,
-        //     })
-        // }
+            Some(item)
+        }
     }
 
     // todo!(windows)
@@ -802,7 +811,6 @@ unsafe fn generate_menu(
                     PCWSTR::from_raw(name_vec.as_ptr()),
                 )
                 .inspect_err(log_windows_error)?;
-                // println!("action [{}]: {:#?}", action_index, action);
                 actions_vec.push(action);
             }
         }
@@ -882,6 +890,59 @@ fn keycode_to_vkey(keycode: &str) -> Option<VIRTUAL_KEY> {
     key
 }
 
+fn set_rawdata_to_clipboard(src: *const u16, len_in_u16: usize, format: u32) -> anyhow::Result<()> {
+    unsafe {
+        let global = GlobalAlloc(GMEM_MOVEABLE, len_in_u16 * 2).unwrap();
+        let handle = GlobalLock(global);
+        u_memcpy(handle as _, src, len_in_u16 as _);
+        let _ = GlobalUnlock(global);
+        SetClipboardData(format, HANDLE(global.0 as isize)).inspect_err(log_windows_error)?;
+    }
+    Ok(())
+}
+
+fn read_rawdata_from_clipboard(
+    clipboard: &IDataObject,
+    format: u32,
+    getting_hash: bool,
+) -> anyhow::Result<(String, u64)> {
+    unsafe {
+        let config = FORMATETC {
+            cfFormat: format as _,
+            ptd: std::ptr::null_mut() as _,
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as _,
+        };
+        let mut data = clipboard
+            .GetData(&config as _)
+            .inspect_err(log_windows_error)?;
+        let mut hash_result = 0u64;
+        let mut string = String::new();
+        if getting_hash {
+            let raw_ptr = GlobalLock(data.u.hGlobal) as *mut u16;
+            let wbytes_ref = std::slice::from_raw_parts(raw_ptr, 4);
+            let mut wbytes = [0u16; 4];
+            for x in 0..4 {
+                wbytes[x] = wbytes_ref[x];
+            }
+            let hash_bytes_ref = std::slice::from_raw_parts(wbytes.as_mut_ptr().cast::<u8>(), 8);
+            let mut hash_bytes = [0u8; 8];
+            for x in 0..8 {
+                hash_bytes[x] = hash_bytes_ref[x];
+            }
+            hash_result = u64::from_be_bytes(hash_bytes);
+            let _ = GlobalUnlock(data.u.hGlobal);
+        } else {
+            let wstring = PCWSTR(GlobalLock(data.u.hGlobal) as *mut u16);
+            string = String::from_utf16_lossy(wstring.as_wide());
+            let _ = GlobalUnlock(data.u.hGlobal);
+        }
+        ReleaseStgMedium(&mut data);
+        Ok((string, hash_result))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ClipboardItem;
@@ -891,17 +952,16 @@ mod tests {
     #[test]
     fn test_clipboard() {
         let platform = WindowsPlatform::new();
-        println!("{:?}", platform.read_from_clipboard());
-        // assert_eq!(platform.read_from_clipboard(), None);
-
-        let item = ClipboardItem::new("123".to_string());
+        let item = ClipboardItem::new("你好".to_string());
         platform.write_to_clipboard(item.clone());
-        println!("{:?}", platform.read_from_clipboard());
-        // assert_eq!(platform.read_from_clipboard(), Some(item));
+        assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("456".to_string()).with_metadata(vec![3, 4]);
+        let item = ClipboardItem::new("1".to_string());
         platform.write_to_clipboard(item.clone());
-        println!("{:?}", platform.read_from_clipboard());
-        // assert_eq!(platform.read_from_clipboard(), Some(item));
+        assert_eq!(platform.read_from_clipboard(), Some(item));
+
+        let item = ClipboardItem::new("a".to_string()).with_metadata(vec![3, 4]);
+        platform.write_to_clipboard(item.clone());
+        assert_eq!(platform.read_from_clipboard(), Some(item));
     }
 }
