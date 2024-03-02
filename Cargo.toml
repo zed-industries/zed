@@ -93,6 +93,7 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "extensions/gleam",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -200,6 +201,7 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f394
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
+clap = "4.4"
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
