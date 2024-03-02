@@ -164,12 +164,15 @@ struct Error {
     message: String,
 }
 
+/// Experimental: Informs the end user about the state of the server
+///
+/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
 #[derive(Debug)]
 pub enum ServerStatus {}
 
+/// Other(String) variant to handle unknown values due to this still being experimental
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-/// Other(String) variant to handle unknown values due to this still being experimental
 pub enum ServerHealthStatus {
     Ok,
     Warning,
