@@ -46,7 +46,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf,
+    MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -3140,6 +3140,50 @@ impl Project {
 
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
+
+        language_server
+            .on_notification::<ServerStatus, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let name = name.to_string();
+                    if let Some(ref message) = params.message {
+                        let message = message.trim();
+                        if !message.is_empty() {
+                            let formatted_message = format!(
+                                "Language server {name} (id {server_id}) status update: {message}"
+                            );
+                            match params.health {
+                                ServerHealthStatus::Ok => log::info!("{}", formatted_message),
+                                ServerHealthStatus::Warning => log::warn!("{}", formatted_message),
+                                ServerHealthStatus::Error => {
+                                    log::error!("{}", formatted_message);
+                                    let (tx, _rx) = smol::channel::bounded(1);
+                                    let request = LanguageServerPromptRequest {
+                                        level: PromptLevel::Critical,
+                                        message: params.message.unwrap_or_default(),
+                                        actions: Vec::new(),
+                                        response_channel: tx,
+                                        lsp_name: name.clone(),
+                                    };
+                                    let _ = this
+                                        .update(&mut cx, |_, cx| {
+                                            cx.emit(Event::LanguageServerPrompt(request));
+                                        })
+                                        .ok();
+                                }
+                                ServerHealthStatus::Other(status) => {
+                                    log::info!(
+                                        "Unknown server health: {status}\n{formatted_message}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
 
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
