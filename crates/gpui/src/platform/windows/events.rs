@@ -1,20 +1,16 @@
-use std::{
-    rc::Rc,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-};
+use std::rc::Rc;
 
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::HBRUSH,
         UI::{
             Input::KeyboardAndMouse::{
-                GetAsyncKeyState, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VIRTUAL_KEY,
-                VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11,
-                VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_HOME,
-                VK_LBUTTON, VK_LEFT, VK_LWIN, VK_MBUTTON, VK_MENU, VK_NEXT, VK_PRIOR, VK_RBUTTON,
-                VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_UP,
+                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
+                VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9,
+                VK_HOME, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
+                VK_RWIN, VK_SHIFT, VK_UP,
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, RegisterClassExW, CS_DBLCLKS, CS_HREDRAW,
@@ -28,11 +24,10 @@ use windows::{
 };
 
 use crate::{
-    get_module_handle, get_windowdata, hiword, log_windows_error, loword, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
-    MOUSE_MOVE_BUTTONS, MOUSE_MOVE_LBUTTON, MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON,
-    MOUSE_MOVE_XBUTTON1, MOUSE_MOVE_XBUTTON2,
+    get_module_handle, get_windowdata, hiword, loword, KeyDownEvent, KeyUpEvent, Keystroke,
+    Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, PlatformInput, Point,
+    ScrollDelta, ScrollWheelEvent, TouchPhase, MOUSE_MOVE_BUTTONS, MOUSE_MOVE_LBUTTON,
+    MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON, MOUSE_MOVE_XBUTTON1, MOUSE_MOVE_XBUTTON2,
 };
 
 pub struct WindowsWinodwDataWrapper<T: WindowsWindowBase + Sized>(pub Rc<T>);

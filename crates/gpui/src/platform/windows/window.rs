@@ -7,7 +7,7 @@ use util::ResultExt;
 use windows::{
     core::{implement, PCWSTR},
     Win32::{
-        Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM},
         Graphics::Gdi::{
             MonitorFromWindow, RedrawWindow, ValidateRect, HRGN, MONITOR_DEFAULTTONEAREST,
             RDW_ERASENOW, RDW_INVALIDATE, RDW_UPDATENOW,
@@ -23,7 +23,7 @@ use windows::{
         UI::{
             Controls::{
                 TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
-                TD_INFORMATION_ICON, TD_WARNING_ICON, WM_MOUSELEAVE,
+                TD_INFORMATION_ICON, TD_WARNING_ICON,
             },
             HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
             Input::{
@@ -31,7 +31,7 @@ use windows::{
                     ImmGetContext, ImmReleaseContext, ImmSetCompositionWindow, CFS_POINT,
                     COMPOSITIONFORM,
                 },
-                KeyboardAndMouse::{SetActiveWindow, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
+                KeyboardAndMouse::SetActiveWindow,
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
