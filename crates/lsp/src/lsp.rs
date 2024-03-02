@@ -340,7 +340,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            server: Arc::new(Mutex::new(server.map(|server| server))),
+            server: Arc::new(Mutex::new(server)),
         }
     }
 
