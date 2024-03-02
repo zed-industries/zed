@@ -638,7 +638,7 @@ fn paragraph(
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
     let paragraph_end_row = paragraph_end.row();
-    let paragraph_ends_with_eof = paragraph_end_row == map.max_buffer_row();
+    let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
     let point = relative_to.to_point(map);
     let current_line_is_empty = map.buffer_snapshot.is_line_blank(point.row);
 
