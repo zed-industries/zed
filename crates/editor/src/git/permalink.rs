@@ -105,7 +105,7 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .trim_start_matches("https://github.com/")
             .trim_end_matches(".git");
 
-        let (owner, repo) = repo_with_owner.split_once("/")?;
+        let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Github,
@@ -120,7 +120,7 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .trim_start_matches("https://gitlab.com/")
             .trim_end_matches(".git");
 
-        let (owner, repo) = repo_with_owner.split_once("/")?;
+        let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Gitlab,
@@ -135,7 +135,7 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .trim_start_matches("https://gitee.com/")
             .trim_end_matches(".git");
 
-        let (owner, repo) = repo_with_owner.split_once("/")?;
+        let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Gitee,
@@ -147,9 +147,9 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
     if url.contains("bitbucket.org") {
         let (_, repo_with_owner) = url.trim_end_matches(".git").split_once("bitbucket.org")?;
         let (owner, repo) = repo_with_owner
-            .trim_start_matches("/")
-            .trim_start_matches(":")
-            .split_once("/")?;
+            .trim_start_matches('/')
+            .trim_start_matches(':')
+            .split_once('/')?;
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Bitbucket,
@@ -166,7 +166,7 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .trim_start_matches("git@git.sr.ht:~")
             .trim_start_matches("https://git.sr.ht/~");
 
-        let (owner, repo) = repo_with_owner.split_once("/")?;
+        let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Sourcehut,
@@ -181,7 +181,7 @@ fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .trim_start_matches("https://codeberg.org/")
             .trim_end_matches(".git");
 
-        let (owner, repo) = repo_with_owner.split_once("/")?;
+        let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
             provider: GitHostingProvider::Codeberg,

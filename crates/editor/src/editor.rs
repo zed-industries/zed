@@ -4845,7 +4845,7 @@ impl Editor {
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
 
-            let mut lines = text.split("\n").collect_vec();
+            let mut lines = text.split('\n').collect_vec();
 
             let lines_before = lines.len();
             callback(&mut lines);
@@ -4913,7 +4913,7 @@ impl Editor {
         self.manipulate_text(cx, |text| {
             // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
             // https://github.com/rutrum/convert-case/issues/16
-            text.split("\n")
+            text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
         })
@@ -4935,7 +4935,7 @@ impl Editor {
         self.manipulate_text(cx, |text| {
             // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
             // https://github.com/rutrum/convert-case/issues/16
-            text.split("\n")
+            text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
         })
@@ -9387,7 +9387,7 @@ impl Editor {
             let highlight = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.name(&style.syntax));
-            let mut chunk_lines = chunk.text.split("\n").peekable();
+            let mut chunk_lines = chunk.text.split('\n').peekable();
             while let Some(text) = chunk_lines.next() {
                 let mut merged_with_last_token = false;
                 if let Some(last_token) = line.back_mut() {

@@ -124,7 +124,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::redundant_locals",
         "clippy::reversed_empty_ranges",
         "clippy::search_is_some",
-        "clippy::single_char_pattern",
         "clippy::single_range_in_vec_init",
         "clippy::suspicious_to_owned",
         "clippy::to_string_in_format_args",

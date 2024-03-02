@@ -331,7 +331,7 @@ impl TestAppContext {
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
-            .split(" ")
+            .split(' ')
             .map(Keystroke::parse)
             .map(Result::unwrap)
         {

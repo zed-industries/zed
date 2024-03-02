@@ -41,7 +41,7 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
     //
     // For now, you can only do a replace on the % range, and you can
     // only use a specific line number range to "go to line"
-    while query.starts_with(":") {
+    while query.starts_with(':') {
         query = &query[1..];
     }
 
@@ -321,16 +321,16 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
         "0" => ("0", StartOfDocument.boxed_clone()),
 
         _ => {
-            if query.starts_with("/") || query.starts_with("?") {
+            if query.starts_with('/') || query.starts_with('?') {
                 (
                     query,
                     FindCommand {
                         query: query[1..].to_string(),
-                        backwards: query.starts_with("?"),
+                        backwards: query.starts_with('?'),
                     }
                     .boxed_clone(),
                 )
-            } else if query.starts_with("%") {
+            } else if query.starts_with('%') {
                 (
                     query,
                     ReplaceCommand {

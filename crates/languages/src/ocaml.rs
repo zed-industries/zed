@@ -62,7 +62,7 @@ impl LspAdapter for OCamlLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<CodeLabel> {
         let name = &completion.label;
-        let detail = completion.detail.as_ref().map(|s| s.replace("\n", " "));
+        let detail = completion.detail.as_ref().map(|s| s.replace('\n', " "));
 
         match completion.kind.zip(detail) {
             // Error of 'b : ('a, 'b) result
@@ -124,7 +124,7 @@ impl LspAdapter for OCamlLspAdapter {
             // version : string
             // NOTE: (~|?) are omitted as we don't use them in the fuzzy filtering
             Some((CompletionItemKind::FIELD, detail))
-                if name.starts_with("~") || name.starts_with("?") =>
+                if name.starts_with('~') || name.starts_with('?') =>
             {
                 let label = name.trim_start_matches(&['~', '?']);
                 let text = format!("{} : {}", label, detail);
