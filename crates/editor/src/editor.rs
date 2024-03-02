@@ -914,11 +914,6 @@ impl CompletionsMenu {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
                         let mut completion = completions_guard[candidate_id].clone();
-                        let documentation = if show_completion_documentation {
-                            &completion.documentation
-                        } else {
-                            &None
-                        };
 
                         let max_width = 510.;
 
@@ -1055,22 +1050,25 @@ impl CompletionsMenu {
                             StyledText::new(label_text).with_highlights(&style.text, highlights);
 
                         //documentation
-                        let documentation_label =
-                            if let Some(Documentation::SingleLine(text)) = documentation {
-                                if text.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(
-                                        h_flex().ml_4().child(
-                                            Label::new(text.clone())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                }
-                            } else {
-                                None
-                            };
+                        let documentation_text = "Hello There".to_string();
+
+                        let mut new_style = style.clone().text;
+                        new_style.color = Color::Muted.color(cx);
+
+                        let highlight_style = HighlightStyle {
+                            color: Some(Color::Muted.color(cx)),
+                            ..Default::default()
+                        };
+
+                        let doc_highlights = vec![(
+                            Range {
+                                start: 0,
+                                end: documentation_text.len(),
+                            },
+                            highlight_style,
+                        )];
+                        let doc_styled_text = StyledText::new(documentation_text)
+                            .with_highlights(&new_style, doc_highlights);
 
                         div().min_w(px(220.)).max_w(max_len + px(30.)).child(
                             ListItem::new(mat.candidate_id)
@@ -1088,7 +1086,8 @@ impl CompletionsMenu {
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
                                 .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Div>(documentation_label),
+                                // .end_slot::<Div>(documentation_label),
+                                .end_slot(doc_styled_text),
                         )
                     })
                     .collect()
