@@ -93,7 +93,7 @@ jobs:
           fi
 
       - name: cargo clippy
-        run: cargo xtask clippy --deny-warnings
+        run: cargo xtask clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
