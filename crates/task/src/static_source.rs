@@ -97,7 +97,7 @@ impl DefinitionProvider {
         serde_json_lenient::to_value(schema).unwrap()
     }
 }
-/// A Wrapper around deserializable T that keeps track of it's contents
+/// A Wrapper around deserializable T that keeps track of its contents
 /// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
 /// notified.
 struct TrackedFile<T> {

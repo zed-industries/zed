@@ -122,7 +122,7 @@ pub struct Style {
     #[cfg(debug_assertions)]
     pub debug: bool,
 
-    /// Whether to draw a red debugging outline around this element and all of it's conforming children
+    /// Whether to draw a red debugging outline around this element and all of its conforming children
     #[cfg(debug_assertions)]
     pub debug_below: bool,
 }
@@ -148,7 +148,7 @@ pub enum Visibility {
 pub struct BoxShadow {
     /// What color should the shadow have?
     pub color: Hsla,
-    /// How should it be offset from it's element?
+    /// How should it be offset from its element?
     pub offset: Point<Pixels>,
     /// How much should the shadow be blurred?
     pub blur_radius: Pixels,
@@ -333,7 +333,7 @@ impl Style {
     }
 
     /// Get the content mask for this element style, based on the given bounds.
-    /// If the element does not hide it's overflow, this will return `None`.
+    /// If the element does not hide its overflow, this will return `None`.
     pub fn overflow_mask(
         &self,
         bounds: Bounds<Pixels>,
