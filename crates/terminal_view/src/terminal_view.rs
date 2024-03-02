@@ -879,11 +879,9 @@ impl Item for TerminalView {
                 .or_else(|| {
                     cx.update(|cx| {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
-                        workspace
-                            .upgrade()
-                            .and_then(|workspace| {
-                                get_working_directory(workspace.read(cx), cx, strategy)
-                            })
+                        workspace.upgrade().and_then(|workspace| {
+                            get_working_directory(workspace.read(cx), cx, strategy)
+                        })
                     })
                     .ok()
                     .flatten()
