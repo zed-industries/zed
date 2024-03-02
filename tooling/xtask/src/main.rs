@@ -132,7 +132,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::too_many_arguments",
         "clippy::type_complexity",
         "clippy::unit_arg",
-        "clippy::unnecessary_cast",
         "clippy::unnecessary_filter_map",
         "clippy::unnecessary_find_map",
         "clippy::unnecessary_operation",
