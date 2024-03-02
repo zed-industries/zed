@@ -96,7 +96,6 @@ impl IntoElement for SharedString {
 /// and just pass text directly.
 pub struct StyledText {
     text: SharedString,
-
     runs: Option<Vec<TextRun>>,
 }
 

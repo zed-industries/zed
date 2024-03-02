@@ -941,14 +941,7 @@ impl CompletionsMenu {
 
                         let max_len = px(510.);
                         let mut first_part_end = completion.label.filter_range.end;
-                        let mut second_part_end =
-                            if let Some(last_run) = completion.label.runs.last() {
-                                last_run.0.end
-                            } else {
-                                completion.label.filter_range.end
-                            };
                         let mut label_text = completion.label.text.clone();
-                        let origional_text = completion.label.text.clone();
                         let mut first_length_truncated: i32 = 0;
                         if let Ok(layout_line) = completion_label.line_layout(font_size, cx) {
                             if layout_line.width > max_len {
@@ -982,8 +975,6 @@ impl CompletionsMenu {
                                                 .take(index)
                                                 .collect::<String>()
                                                 + "...";
-                                            completion_label =
-                                                completion_label.with_text(label_text.clone());
                                         }
                                     } else {
                                         // truncate first part (and optionally second part too)
@@ -1018,14 +1009,11 @@ impl CompletionsMenu {
                                                     if let Some(index) = layout_line.index_for_x(
                                                         px(max_width) - ellipsis_width.width,
                                                     ) {
-                                                        second_part_end = index;
                                                         label_text = label_text
                                                             .chars()
                                                             .take(index)
                                                             .collect::<String>()
                                                             + "...";
-                                                        completion_label = completion_label
-                                                            .with_text(label_text.clone());
                                                     }
                                                 }
                                             }
@@ -1040,21 +1028,15 @@ impl CompletionsMenu {
                         completion.label.text = label_text.clone();
                         completion.label.filter_range.end = first_part_end;
 
-                        println!("------");
                         for run in completion.label.runs.iter_mut() {
                             if run.0.start == 0 {
                                 run.0.start = 0;
                                 run.0.end = first_part_end;
                             } else {
-                                print!("{}, {}", run.0.start, run.0.end);
-
-                                run.0.start = (run.0.start as i32 - first_length_truncated as i32)
-                                    // .max(first_part_end as i32)
-                                    as usize;
-                                run.0.end = (run.0.end as i32 - first_length_truncated as i32)
-                                    // .max(first_part_end as i32 + 2)
-                                    as usize;
-                                println!("-> {}, {}", run.0.start, run.0.end);
+                                run.0.start =
+                                    (run.0.start as i32 - first_length_truncated as i32) as usize;
+                                run.0.end =
+                                    (run.0.end as i32 - first_length_truncated as i32) as usize;
                             }
                         }
                         let highlights = gpui::combine_highlights(
@@ -1069,7 +1051,7 @@ impl CompletionsMenu {
                             ),
                         );
 
-                        let mut completion_label =
+                        let completion_label =
                             StyledText::new(label_text).with_highlights(&style.text, highlights);
 
                         //documentation
