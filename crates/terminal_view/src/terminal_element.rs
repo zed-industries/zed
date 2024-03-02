@@ -406,11 +406,10 @@ impl TerminalElement {
 
         let font_features = terminal_settings
             .font_features
-            .clone()
-            .unwrap_or(settings.buffer_font.features.clone());
+            .unwrap_or(settings.buffer_font.features);
 
         let line_height = terminal_settings.line_height.value();
-        let font_size = terminal_settings.font_size.clone();
+        let font_size = terminal_settings.font_size;
 
         let font_size =
             font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
@@ -462,7 +461,7 @@ impl TerminalElement {
                 .width;
             gutter = cell_width;
 
-            let mut size = bounds.size.clone();
+            let mut size = bounds.size;
             size.width -= gutter;
 
             // https://github.com/zed-industries/zed/issues/2750
@@ -646,7 +645,7 @@ impl TerminalElement {
         });
 
         cx.on_mouse_event({
-            let bounds = bounds.clone();
+            let bounds = bounds;
             let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             move |e: &MouseMoveEvent, phase, cx| {
@@ -828,7 +827,7 @@ impl Element for TerminalElement {
                                 start_y, //Need to change this
                                 line_height: layout.dimensions.line_height,
                                 lines: highlighted_range_lines,
-                                color: color.clone(),
+                                color: *color,
                                 //Copied from editor. TODO: move to theme or something
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };

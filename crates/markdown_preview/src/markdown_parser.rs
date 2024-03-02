@@ -105,7 +105,7 @@ impl<'a> MarkdownParser<'a> {
                     classes: _,
                     attrs: _,
                 } => {
-                    let level = level.clone();
+                    let level = *level;
                     self.cursor += 1;
                     let heading = self.parse_heading(level);
                     Some(ParsedMarkdownElement::Heading(heading))
@@ -117,7 +117,7 @@ impl<'a> MarkdownParser<'a> {
                     Some(ParsedMarkdownElement::Table(table))
                 }
                 Tag::List(order) => {
-                    let order = order.clone();
+                    let order = *order;
                     self.cursor += 1;
                     let list = self.parse_list(1, order);
                     Some(ParsedMarkdownElement::List(list))
@@ -421,7 +421,7 @@ impl<'a> MarkdownParser<'a> {
             let (current, _source_range) = self.current().unwrap();
             match current {
                 Event::Start(Tag::List(order)) => {
-                    let order = order.clone();
+                    let order = *order;
                     self.cursor += 1;
 
                     let inner_list = self.parse_list(depth + 1, order);
@@ -467,7 +467,7 @@ impl<'a> MarkdownParser<'a> {
 
                     let item_type = if let Some(checked) = task_item {
                         ParsedMarkdownListItemType::Task(checked)
-                    } else if let Some(order) = order.clone() {
+                    } else if let Some(order) = order {
                         ParsedMarkdownListItemType::Ordered(order)
                     } else {
                         ParsedMarkdownListItemType::Unordered

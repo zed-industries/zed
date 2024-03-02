@@ -1873,7 +1873,7 @@ impl Editor {
         let new_cursor_position = self.selections.newest_anchor().head();
 
         self.push_to_nav_history(
-            old_cursor_position.clone(),
+            *old_cursor_position,
             Some(new_cursor_position.to_point(buffer)),
             cx,
         );
@@ -1892,8 +1892,7 @@ impl Editor {
 
             if let Some(completion_menu) = completion_menu {
                 let cursor_position = new_cursor_position.to_offset(buffer);
-                let (word_range, kind) =
-                    buffer.surrounding_word(completion_menu.initial_position.clone());
+                let (word_range, kind) = buffer.surrounding_word(completion_menu.initial_position);
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
@@ -2114,7 +2113,7 @@ impl Editor {
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
-                end = start.clone();
+                end = start;
                 mode = SelectMode::Character;
                 auto_scroll = true;
             }
@@ -2122,7 +2121,7 @@ impl Editor {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
-                mode = SelectMode::Word(start.clone()..end.clone());
+                mode = SelectMode::Word(start..end);
                 auto_scroll = true;
             }
             3 => {
@@ -2136,7 +2135,7 @@ impl Editor {
                 );
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
-                mode = SelectMode::Line(start.clone()..end.clone());
+                mode = SelectMode::Line(start..end);
                 auto_scroll = true;
             }
             _ => {
@@ -3208,7 +3207,7 @@ impl Editor {
         let (buffer, buffer_position) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(position.clone(), cx)?;
+            .text_anchor_for_position(position, cx)?;
 
         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
         // hence we do LSP request & edit on host side only — add formats to host's history.
@@ -3252,17 +3251,14 @@ impl Editor {
         };
 
         let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)
-        {
-            output
-        } else {
-            return;
-        };
+        let (buffer, buffer_position) =
+            if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
+                output
+            } else {
+                return;
+            };
 
-        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
+        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
         let completions = provider.completions(&buffer, buffer_position, cx);
 
         let id = post_inc(&mut self.next_completion_id);
@@ -3700,7 +3696,7 @@ impl Editor {
         let newest_selection = self.selections.newest_anchor().clone();
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
-            buffer.text_anchor_for_position(cursor_position.clone(), cx)?;
+            buffer.text_anchor_for_position(cursor_position, cx)?;
         let (tail_buffer, _) = buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
         if cursor_buffer != tail_buffer {
             return None;
@@ -3758,7 +3754,7 @@ impl Editor {
 
                             let range = Anchor {
                                 buffer_id,
-                                excerpt_id: excerpt_id.clone(),
+                                excerpt_id: excerpt_id,
                                 text_anchor: start,
                             }..Anchor {
                                 buffer_id,
@@ -4741,7 +4737,7 @@ impl Editor {
                 row_range.end - 1,
                 snapshot.line_len(row_range.end - 1),
             ));
-            cursor_positions.push(anchor.clone()..anchor);
+            cursor_positions.push(anchor..anchor);
         }
 
         self.transact(cx, |this, cx| {
@@ -7447,10 +7443,8 @@ impl Editor {
 
     pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
         let position = self.selections.newest_anchor().head();
-        let Some((buffer, buffer_position)) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
         else {
             return;
         };
@@ -7912,7 +7906,7 @@ impl Editor {
                     let block_id = this.insert_blocks(
                         [BlockProperties {
                             style: BlockStyle::Flex,
-                            position: range.start.clone(),
+                            position: range.start,
                             height: 1,
                             render: Arc::new({
                                 let rename_editor = rename_editor.clone();
@@ -7976,11 +7970,11 @@ impl Editor {
         let (start_buffer, start) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(rename.range.start.clone(), cx)?;
+            .text_anchor_for_position(rename.range.start, cx)?;
         let (end_buffer, end) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(rename.range.end.clone(), cx)?;
+            .text_anchor_for_position(rename.range.end, cx)?;
         if start_buffer != end_buffer {
             return None;
         }
@@ -8817,7 +8811,7 @@ impl Editor {
                     Ok(i) | Err(i) => i,
                 };
 
-                let right_position = right_position.clone();
+                let right_position = right_position;
                 ranges[start_ix..]
                     .iter()
                     .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())

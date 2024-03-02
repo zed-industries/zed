@@ -367,7 +367,7 @@ impl WorkspaceDb {
 
                 conn.exec_bound(sql!(
                     DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
-                ))?((&workspace.location, workspace.id.clone()))
+                ))?((&workspace.location, workspace.id))
                 .context("clearing out old locations")?;
 
                 // Upsert

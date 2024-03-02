@@ -1147,8 +1147,8 @@ impl SearchableItem for Editor {
                                 let end = excerpt
                                     .buffer
                                     .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id.clone(), start)
-                                    ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
+                                buffer.anchor_in_excerpt(excerpt.id, start)
+                                    ..buffer.anchor_in_excerpt(excerpt.id, end)
                             }),
                     );
                 }

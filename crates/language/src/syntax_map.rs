@@ -1412,7 +1412,7 @@ fn insert_newlines_between_ranges(
             continue;
         }
 
-        let range_b = ranges[ix].clone();
+        let range_b = ranges[ix];
         let range_a = &mut ranges[ix - 1];
         if range_a.end_point.column == 0 {
             continue;

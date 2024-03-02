@@ -222,7 +222,7 @@ pub fn visual_block_motion(
                     start: start.to_point(map),
                     end: end.to_point(map),
                     reversed: is_reversed,
-                    goal: goal.clone(),
+                    goal,
                 };
 
                 selections.push(selection);

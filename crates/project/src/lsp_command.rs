@@ -1408,7 +1408,7 @@ impl LspCommand for GetHover {
         if let Some(range) = range.as_ref() {
             buffer
                 .update(&mut cx, |buffer, _| {
-                    buffer.wait_for_anchors([range.start.clone(), range.end.clone()])
+                    buffer.wait_for_anchors([range.start, range.end])
                 })?
                 .await?;
         }
@@ -1523,7 +1523,7 @@ impl LspCommand for GetCompletions {
                                 });
 
                             let range = if let Some(range) = default_edit_range {
-                                let range = range_from_lsp(range.clone());
+                                let range = range_from_lsp(*range);
                                 let start = snapshot.clip_point_utf16(range.start, Bias::Left);
                                 let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                 if start != range.start.0 || end != range.end.0 {

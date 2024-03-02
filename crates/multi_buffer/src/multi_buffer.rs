@@ -950,12 +950,12 @@ impl MultiBuffer {
                     for range in ranges.by_ref().take(range_count) {
                         let start = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id.clone(),
+                            excerpt_id: excerpt_id,
                             text_anchor: range.start,
                         };
                         let end = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id.clone(),
+                            excerpt_id: excerpt_id,
                             text_anchor: range.end,
                         };
                         if tx.send(start..end).await.is_err() {
@@ -1005,12 +1005,12 @@ impl MultiBuffer {
             anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
                 let start = Anchor {
                     buffer_id: Some(buffer_id),
-                    excerpt_id: excerpt_id.clone(),
+                    excerpt_id: excerpt_id,
                     text_anchor: buffer_snapshot.anchor_after(range.start),
                 };
                 let end = Anchor {
                     buffer_id: Some(buffer_id),
-                    excerpt_id: excerpt_id.clone(),
+                    excerpt_id: excerpt_id,
                     text_anchor: buffer_snapshot.anchor_after(range.end),
                 };
                 start..end
@@ -1206,7 +1206,7 @@ impl MultiBuffer {
             cursor.seek_forward(&Some(locator), Bias::Left, &());
             if let Some(excerpt) = cursor.item() {
                 if excerpt.locator == *locator {
-                    excerpts.push((excerpt.id.clone(), excerpt.range.clone()));
+                    excerpts.push((excerpt.id, excerpt.range.clone()));
                 }
             }
         }
@@ -1238,7 +1238,7 @@ impl MultiBuffer {
             .or_else(|| snapshot.excerpts.last())
             .map(|excerpt| {
                 (
-                    excerpt.id.clone(),
+                    excerpt.id,
                     self.buffers
                         .borrow()
                         .get(&excerpt.buffer_id)
@@ -2689,7 +2689,7 @@ impl MultiBufferSnapshot {
                 if !kept_position {
                     for excerpt in [next_excerpt, prev_excerpt].iter().filter_map(|e| *e) {
                         if excerpt.contains(&anchor) {
-                            anchor.excerpt_id = excerpt.id.clone();
+                            anchor.excerpt_id = excerpt.id;
                             kept_position = true;
                             break;
                         }
@@ -2713,7 +2713,7 @@ impl MultiBufferSnapshot {
                         }
                         Anchor {
                             buffer_id: Some(excerpt.buffer_id),
-                            excerpt_id: excerpt.id.clone(),
+                            excerpt_id: excerpt.id,
                             text_anchor,
                         }
                     } else if let Some(excerpt) = prev_excerpt {
@@ -2730,7 +2730,7 @@ impl MultiBufferSnapshot {
                         }
                         Anchor {
                             buffer_id: Some(excerpt.buffer_id),
-                            excerpt_id: excerpt.id.clone(),
+                            excerpt_id: excerpt.id,
                             text_anchor,
                         }
                     } else if anchor.text_anchor.bias == Bias::Left {
@@ -2760,7 +2760,7 @@ impl MultiBufferSnapshot {
         if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
             return Anchor {
                 buffer_id: Some(buffer_id),
-                excerpt_id: excerpt_id.clone(),
+                excerpt_id: *excerpt_id,
                 text_anchor: buffer.anchor_at(offset, bias),
             };
         }
@@ -2782,7 +2782,7 @@ impl MultiBufferSnapshot {
                 excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
             Anchor {
                 buffer_id: Some(excerpt.buffer_id),
-                excerpt_id: excerpt.id.clone(),
+                excerpt_id: excerpt.id,
                 text_anchor,
             }
         } else if offset == 0 && bias == Bias::Left {
@@ -2895,7 +2895,7 @@ impl MultiBufferSnapshot {
                 let excerpt = cursor.item()?;
                 let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
                 let boundary = ExcerptBoundary {
-                    id: excerpt.id.clone(),
+                    id: excerpt.id,
                     row: cursor.start().1.row,
                     buffer: excerpt.buffer.clone(),
                     range: excerpt.range.clone(),
@@ -3280,8 +3280,8 @@ impl MultiBufferSnapshot {
                 .into_iter()
                 .map(|item| OutlineItem {
                     depth: item.depth,
-                    range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
-                        ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
+                    range: self.anchor_in_excerpt(*excerpt_id, item.range.start)
+                        ..self.anchor_in_excerpt(*excerpt_id, item.range.end),
                     text: item.text,
                     highlight_ranges: item.highlight_ranges,
                     name_ranges: item.name_ranges,
@@ -3402,19 +3402,19 @@ impl MultiBufferSnapshot {
                         selections.map(move |selection| {
                             let mut start = Anchor {
                                 buffer_id: Some(excerpt.buffer_id),
-                                excerpt_id: excerpt.id.clone(),
+                                excerpt_id: excerpt.id,
                                 text_anchor: selection.start,
                             };
                             let mut end = Anchor {
                                 buffer_id: Some(excerpt.buffer_id),
-                                excerpt_id: excerpt.id.clone(),
+                                excerpt_id: excerpt.id,
                                 text_anchor: selection.end,
                             };
                             if range.start.cmp(&start, self).is_gt() {
-                                start = range.start.clone();
+                                start = range.start;
                             }
                             if range.end.cmp(&end, self).is_lt() {
-                                end = range.end.clone();
+                                end = range.end;
                             }
 
                             (

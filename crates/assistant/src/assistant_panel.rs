@@ -1483,7 +1483,7 @@ impl Conversation {
             max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
             api_url: Some(api_url),
-            model: model.clone(),
+            model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -1527,7 +1527,7 @@ impl Conversation {
                 .as_ref()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
-            model: self.model.clone(),
+            model: self.model,
             api_url: self.api_url.clone(),
         }
     }
@@ -1652,7 +1652,7 @@ impl Conversation {
                 })
             })
             .collect::<Vec<_>>();
-        let model = self.model.clone();
+        let model = self.model;
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()

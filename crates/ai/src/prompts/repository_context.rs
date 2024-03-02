@@ -65,7 +65,7 @@ impl PromptTemplate for RepositoryContext {
         let template = "You are working inside a large repository, here are a few code snippets that may be useful.";
         let mut prompt = String::new();
 
-        let mut remaining_tokens = max_token_length.clone();
+        let mut remaining_tokens = max_token_length;
         let separator_token_length = args.model.count_tokens("\n")?;
         for snippet in &args.snippets {
             let mut snippet_prompt = template.to_string();

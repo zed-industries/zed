@@ -871,7 +871,7 @@ impl Workspace {
 
                 cx.open_window(options, {
                     let app_state = app_state.clone();
-                    let workspace_id = workspace_id.clone();
+                    let workspace_id = workspace_id;
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {
@@ -3790,7 +3790,7 @@ impl Render for Workspace {
             let theme_settings = ThemeSettings::get_global(cx);
             (
                 theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size.clone(),
+                theme_settings.ui_font_size,
             )
         };
 
@@ -4393,7 +4393,7 @@ pub fn open_paths(
     cx.spawn(move |mut cx| async move {
         if let Some(existing) = existing {
             Ok((
-                existing.clone(),
+                existing,
                 existing
                     .update(&mut cx, |workspace, cx| {
                         workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
