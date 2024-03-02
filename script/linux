@@ -63,4 +63,19 @@ if [[ -n $pacman ]]; then
   exit 0
 fi
 
+# Void
+# https://voidlinux.org/packages/
+xbps=$(command -v xbps-install || true)
+if [[ -n $xbps ]]; then
+  deps=(
+    alsa-lib-devel
+    fontconfig-devel
+    wayland-devel
+    libxkbcommon-devel
+    openssl-devel
+  )
+  $maysudo "$xbps" -Syu "${deps[@]}"
+  exit 0
+fi
+
 echo "Unsupported Linux distribution in script/linux"
