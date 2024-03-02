@@ -823,7 +823,7 @@ impl Render for LspLogToolbarItemView {
                                                             selection,
                                                             Selection::Selected
                                                         );
-                                                        view.toggle_logging_for_server(
+                                                        view.toggle_rpc_logging_for_server(
                                                             row.server_id,
                                                             enabled,
                                                             cx,
@@ -887,7 +887,7 @@ impl LspLogToolbarItemView {
         }
     }
 
-    fn toggle_logging_for_server(
+    fn toggle_rpc_logging_for_server(
         &mut self,
         id: LanguageServerId,
         enabled: bool,
@@ -898,6 +898,9 @@ impl LspLogToolbarItemView {
                 log_view.toggle_rpc_trace_for_server(id, enabled, cx);
                 if !enabled && Some(id) == log_view.current_server_id {
                     log_view.show_logs_for_server(id, cx);
+                    cx.notify();
+                } else if enabled {
+                    log_view.show_rpc_trace_for_server(id, cx);
                     cx.notify();
                 }
                 cx.focus(&log_view.focus_handle);
