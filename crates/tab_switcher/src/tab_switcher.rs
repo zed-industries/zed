@@ -8,7 +8,7 @@ use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
-    pane::{render_item_indicator, tab_details},
+    pane::{render_item_indicator, tab_details, Event as PaneEvent},
     ModalView, Pane, Workspace,
 };
 
@@ -93,13 +93,7 @@ impl TabSwitcherDelegate {
         pane: WeakView<Pane>,
         cx: &mut ViewContext<TabSwitcher>,
     ) -> Self {
-        // cx.observe(&project, |tab_switcher, _, cx| {
-        //     tab_switcher
-        //         .picker
-        //         .update(cx, |picker, cx| picker.refresh(cx))
-        // })
-        // .detach();
-
+        Self::subscribe_to_updates(&pane, cx);
         let mut this = Self {
             tab_switcher,
             selected_index: 0,
@@ -109,6 +103,23 @@ impl TabSwitcherDelegate {
         };
         this.update_matches(cx);
         this
+    }
+
+    fn subscribe_to_updates(pane: &WeakView<Pane>, cx: &mut ViewContext<TabSwitcher>) {
+        let Some(pane) = pane.upgrade() else {
+            return;
+        };
+        cx.subscribe(&pane, |tab_switcher, _, event, cx| {
+            match event {
+                PaneEvent::AddItem { .. } | PaneEvent::RemoveItem { .. } | PaneEvent::Remove => {
+                    tab_switcher
+                        .picker
+                        .update(cx, |picker, cx| picker.refresh(cx))
+                }
+                _ => {}
+            };
+        })
+        .detach();
     }
 
     fn update_matches(&mut self, cx: &mut WindowContext) {
@@ -162,8 +173,9 @@ impl PickerDelegate for TabSwitcherDelegate {
     fn update_matches(
         &mut self,
         _raw_query: String,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
+        self.update_matches(cx);
         Task::ready(())
     }
 
