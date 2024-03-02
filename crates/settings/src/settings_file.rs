@@ -52,7 +52,7 @@ pub fn watch_config_file(
                 }
 
                 if let Ok(contents) = fs.load(&path).await {
-                    if !tx.unbounded_send(contents).is_ok() {
+                    if tx.unbounded_send(contents).is_err() {
                         break;
                     }
                 }
@@ -100,7 +100,7 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
                     return Ok(crate::initial_user_settings_content().to_string());
                 }
             }
-            return Err(err);
+            Err(err)
         }
     }
 }
