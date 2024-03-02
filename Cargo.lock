@@ -9462,6 +9462,7 @@ dependencies = [
  "theme",
  "thiserror",
  "util",
+ "windows 0.53.0",
 ]
 
 [[package]]

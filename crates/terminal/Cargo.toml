@@ -30,5 +30,11 @@ theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
 
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.53.0"
+features = [
+    "Win32_System_Threading",
+]
+
 [dev-dependencies]
 rand.workspace = true
