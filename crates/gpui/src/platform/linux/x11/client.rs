@@ -1,11 +1,11 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
 use xcb::{x, Xid as _};
 use xkbcommon::xkb;
 
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 
 use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
@@ -15,11 +15,18 @@ use crate::{
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
-use calloop::generic::{FdWrapper, Generic};
+use calloop::{
+    generic::{FdWrapper, Generic},
+    RegistrationToken,
+};
 
-pub(crate) struct X11ClientState {
-    pub(crate) windows: HashMap<x::Window, Rc<X11WindowState>>,
-    pub(crate) windows_to_refresh: HashSet<x::Window>,
+struct WindowRef {
+    state: Rc<X11WindowState>,
+    refresh_event_token: RegistrationToken,
+}
+
+struct X11ClientState {
+    windows: HashMap<x::Window, WindowRef>,
     xkb: xkbcommon::xkb::State,
 }
 
@@ -28,7 +35,6 @@ pub(crate) struct X11Client {
     xcb_connection: Rc<xcb::Connection>,
     x_root_index: i32,
     atoms: XcbAtoms,
-    refresh_millis: Cell<u64>,
     state: RefCell<X11ClientState>,
 }
 
@@ -36,11 +42,7 @@ impl X11Client {
     pub(crate) fn new(inner: Rc<LinuxPlatformInner>) -> Rc<Self> {
         let (xcb_connection, x_root_index) = xcb::Connection::connect_with_extensions(
             None,
-            &[
-                xcb::Extension::Present,
-                xcb::Extension::Xkb,
-                xcb::Extension::RandR,
-            ],
+            &[xcb::Extension::RandR, xcb::Extension::Xkb],
             &[],
         )
         .unwrap();
@@ -55,33 +57,32 @@ impl X11Client {
 
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
         let xcb_connection = Rc::new(xcb_connection);
-        let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let xkb_device_id = xkb::x11::get_core_keyboard_device_id(&xcb_connection);
-        let xkb_keymap = xkb::x11::keymap_new_from_device(
-            &xkb_context,
-            &xcb_connection,
-            xkb_device_id,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        );
 
-        let xkb_state =
-            xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id);
+        let xkb_state = {
+            let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let xkb_device_id = xkb::x11::get_core_keyboard_device_id(&xcb_connection);
+            let xkb_keymap = xkb::x11::keymap_new_from_device(
+                &xkb_context,
+                &xcb_connection,
+                xkb_device_id,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            );
+            xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
+        };
 
         let client: Rc<X11Client> = Rc::new(Self {
             platform_inner: inner.clone(),
-            xcb_connection: xcb_connection.clone(),
+            xcb_connection: Rc::clone(&xcb_connection),
             x_root_index,
             atoms,
-            refresh_millis: Cell::new(16),
             state: RefCell::new(X11ClientState {
                 windows: HashMap::default(),
-                windows_to_refresh: HashSet::default(),
                 xkb: xkb_state,
             }),
         });
 
         // Safety: Safe if xcb::Connection always returns a valid fd
-        let fd = unsafe { FdWrapper::new(xcb_connection.clone()) };
+        let fd = unsafe { FdWrapper::new(Rc::clone(&xcb_connection)) };
 
         inner
             .loop_handle
@@ -92,12 +93,10 @@ impl X11Client {
                     calloop::Mode::Level,
                 ),
                 {
-                    let client = client.clone();
-                    move |readiness, _, _| {
-                        if readiness.readable || readiness.error {
-                            while let Some(event) = xcb_connection.poll_for_event()? {
-                                client.handle_event(event);
-                            }
+                    let client = Rc::clone(&client);
+                    move |_readiness, _, _| {
+                        while let Some(event) = xcb_connection.poll_for_event()? {
+                            client.handle_event(event);
                         }
                         Ok(calloop::PostAction::Continue)
                     }
@@ -105,37 +104,12 @@ impl X11Client {
             )
             .expect("Failed to initialize x11 event source");
 
-        inner
-            .loop_handle
-            .insert_source(
-                calloop::timer::Timer::from_duration(Duration::from_millis(
-                    client.refresh_millis.get(),
-                )),
-                {
-                    let client = client.clone();
-                    move |_, _, _| {
-                        client.present();
-                        calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(
-                            client.refresh_millis.get(),
-                        ))
-                    }
-                },
-            )
-            .expect("Failed to initialize refresh timer");
-
         client
     }
 
     fn get_window(&self, win: x::Window) -> Option<Rc<X11WindowState>> {
         let state = self.state.borrow();
-        state.windows.get(&win).cloned()
-    }
-
-    fn present(&self) {
-        let state = self.state.borrow_mut();
-        for window_state in state.windows.values() {
-            window_state.refresh();
-        }
+        state.windows.get(&win).map(|wr| Rc::clone(&wr.state))
     }
 
     fn handle_event(&self, event: xcb::Event) -> Option<()> {
@@ -143,20 +117,20 @@ impl X11Client {
             xcb::Event::X(x::Event::ClientMessage(event)) => {
                 if let x::ClientMessageData::Data32([atom, ..]) = event.data() {
                     if atom == self.atoms.wm_del_window.resource_id() {
-                        self.state
-                            .borrow_mut()
-                            .windows_to_refresh
-                            .remove(&event.window());
                         // window "x" button clicked by user, we gracefully exit
-                        let window = self
+                        let window_ref = self
                             .state
                             .borrow_mut()
                             .windows
                             .remove(&event.window())
                             .unwrap();
-                        window.destroy();
-                        let state = self.state.borrow();
-                        if state.windows.is_empty() {
+
+                        self.platform_inner
+                            .loop_handle
+                            .remove(window_ref.refresh_event_token);
+                        window_ref.state.destroy();
+
+                        if self.state.borrow().windows.is_empty() {
                             self.platform_inner.loop_signal.stop();
                         }
                     }
@@ -175,6 +149,10 @@ impl X11Client {
                 };
                 let window = self.get_window(event.window())?;
                 window.configure(bounds);
+            }
+            xcb::Event::X(x::Event::Expose(event)) => {
+                let window = self.get_window(event.window())?;
+                window.refresh();
             }
             xcb::Event::X(x::Event::FocusIn(event)) => {
                 let window = self.get_window(event.event())?;
@@ -322,7 +300,6 @@ impl Client for X11Client {
             x_window,
             &self.atoms,
         ));
-        window_ptr.request_refresh();
 
         let cookie = self
             .xcb_connection
@@ -343,21 +320,44 @@ impl Client for X11Client {
             .find(|m| m.id == mode_id)
             .expect("Missing screen mode for crtc specified mode id");
 
-        let refresh_millies = mode_refresh_rate_millis(mode);
+        let refresh_event_token = self
+            .platform_inner
+            .loop_handle
+            .insert_source(calloop::timer::Timer::immediate(), {
+                let refresh_duration = mode_refresh_rate(mode);
+                let xcb_connection = Rc::clone(&self.xcb_connection);
+                move |mut instant, (), _| {
+                    xcb_connection.send_request(&x::SendEvent {
+                        propagate: false,
+                        destination: x::SendEventDest::Window(x_window),
+                        event_mask: x::EventMask::EXPOSURE,
+                        event: &x::ExposeEvent::new(x_window, 0, 0, 0, 0, 1),
+                    });
+                    let _ = xcb_connection.flush();
+                    // Take into account that some frames have been skipped
+                    let now = time::Instant::now();
+                    while instant < now {
+                        instant += refresh_duration;
+                    }
+                    calloop::timer::TimeoutAction::ToInstant(instant)
+                }
+            })
+            .expect("Failed to initialize refresh timer");
 
-        self.refresh_millis.set(refresh_millies);
-
-        self.state
-            .borrow_mut()
-            .windows
-            .insert(x_window, Rc::clone(&window_ptr));
+        let window_ref = WindowRef {
+            state: Rc::clone(&window_ptr),
+            refresh_event_token,
+        };
+        self.state.borrow_mut().windows.insert(x_window, window_ref);
         Box::new(X11Window(window_ptr))
     }
 }
 
 // Adatpted from:
 // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
-pub fn mode_refresh_rate_millis(mode: &xcb::randr::ModeInfo) -> u64 {
+pub fn mode_refresh_rate(mode: &xcb::randr::ModeInfo) -> Duration {
     let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
-    (millihertz as f64 / 1_000_000.) as u64
+    let micros = 1_000_000_000 / millihertz;
+    log::info!("Refreshing at {} micros", micros);
+    Duration::from_micros(micros)
 }
