@@ -429,8 +429,6 @@ impl Element for InteractiveText {
         cx.with_element_state::<InteractiveTextState, _>(
             Some(self.element_id.clone()),
             |interactive_state, cx| {
-                todo!("use hit test");
-
                 let mut interactive_state = interactive_state.unwrap().unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = cx.mouse_position();
@@ -447,9 +445,10 @@ impl Element for InteractiveText {
                     let text_state = text_state.clone();
                     let mouse_down = interactive_state.mouse_down_index.clone();
                     if let Some(mouse_down_index) = mouse_down.get() {
+                        let hitbox = hitbox.clone();
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
                         cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                            if phase == DispatchPhase::Bubble {
+                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                                 if let Some(mouse_up_index) =
                                     text_state.index_for_position(bounds, event.position)
                                 {
@@ -468,8 +467,9 @@ impl Element for InteractiveText {
                             }
                         });
                     } else {
+                        let hitbox = hitbox.clone();
                         cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                            if phase == DispatchPhase::Bubble {
+                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                                 if let Some(mouse_down_index) =
                                     text_state.index_for_position(bounds, event.position)
                                 {
@@ -482,10 +482,11 @@ impl Element for InteractiveText {
                 }
 
                 if let Some(hover_listener) = self.hover_listener.take() {
+                    let hitbox = hitbox.clone();
                     let text_state = text_state.clone();
                     let hovered_index = interactive_state.hovered_index.clone();
                     cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                        if phase == DispatchPhase::Bubble {
+                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                             let current = hovered_index.get();
                             let updated = text_state.index_for_position(bounds, event.position);
                             if current != updated {
@@ -498,13 +499,16 @@ impl Element for InteractiveText {
                 }
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
+                    let hitbox = hitbox.clone();
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
                     let text_state = text_state.clone();
 
                     cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                         let position = text_state.index_for_position(bounds, event.position);
-                        let is_hovered = position.is_some() && pending_mouse_down.get().is_none();
+                        let is_hovered = position.is_some()
+                            && hitbox.is_hovered(cx)
+                            && pending_mouse_down.get().is_none();
                         if !is_hovered {
                             active_tooltip.take();
                             return;

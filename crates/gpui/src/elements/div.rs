@@ -84,8 +84,9 @@ impl Interactivity {
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_down_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble && event.button == button {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Bubble && event.button == button && hitbox.is_hovered(cx)
+                {
                     (listener)(event, cx)
                 }
             }));
@@ -100,8 +101,8 @@ impl Interactivity {
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_down_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Capture {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -116,8 +117,8 @@ impl Interactivity {
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_down_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -133,8 +134,9 @@ impl Interactivity {
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_up_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble && event.button == button {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Bubble && event.button == button && hitbox.is_hovered(cx)
+                {
                     (listener)(event, cx)
                 }
             }));
@@ -149,8 +151,8 @@ impl Interactivity {
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_up_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Capture {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -165,8 +167,8 @@ impl Interactivity {
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_up_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -182,8 +184,8 @@ impl Interactivity {
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_down_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Capture {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Capture && !hitbox.is_hovered(cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -200,8 +202,11 @@ impl Interactivity {
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_up_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Capture && event.button == button {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Capture
+                    && event.button == button
+                    && !hitbox.is_hovered(cx)
+                {
                     (listener)(event, cx);
                 }
             }));
@@ -216,8 +221,8 @@ impl Interactivity {
         listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
     ) {
         self.mouse_move_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                     (listener)(event, cx);
                 }
             }));
@@ -237,7 +242,7 @@ impl Interactivity {
         T: 'static,
     {
         self.mouse_move_listeners
-            .push(Box::new(move |event, phase, cx| {
+            .push(Box::new(move |event, phase, hitbox, cx| {
                 if phase == DispatchPhase::Capture
                     && cx
                         .active_drag
@@ -247,7 +252,7 @@ impl Interactivity {
                     (listener)(
                         &DragMoveEvent {
                             event: event.clone(),
-                            bounds: todo!(),
+                            bounds: hitbox.bounds.clone(),
                             drag: PhantomData,
                         },
                         cx,
@@ -265,8 +270,8 @@ impl Interactivity {
         listener: impl Fn(&ScrollWheelEvent, &mut WindowContext) + 'static,
     ) {
         self.scroll_wheel_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+            .push(Box::new(move |event, phase, hitbox, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                     (listener)(event, cx);
                 }
             }));
@@ -968,15 +973,15 @@ pub trait FocusableElement: InteractiveElement {
 }
 
 pub(crate) type MouseDownListener =
-    Box<dyn Fn(&MouseDownEvent, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&MouseDownEvent, DispatchPhase, &Hitbox, &mut WindowContext) + 'static>;
 pub(crate) type MouseUpListener =
-    Box<dyn Fn(&MouseUpEvent, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&MouseUpEvent, DispatchPhase, &Hitbox, &mut WindowContext) + 'static>;
 
 pub(crate) type MouseMoveListener =
-    Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut WindowContext) + 'static>;
 
 pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut WindowContext) + 'static>;
 
 pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
@@ -1412,12 +1417,11 @@ impl Interactivity {
 
     fn paint_debug_info(&mut self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
         // todo!("ensure that an hitbox is present when painting debug info").
-        let hitbox_id = hitbox.id;
 
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
-            && hitbox_id.is_hovered(cx)
+            && hitbox.is_hovered(cx)
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
             let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
@@ -1456,22 +1460,26 @@ impl Interactivity {
                             }
                         });
 
-                        let was_hovered = hitbox_id.is_hovered(cx);
-                        cx.on_mouse_event(move |_: &MouseMoveEvent, phase, cx| {
-                            if phase == DispatchPhase::Capture {
-                                let hovered = hitbox_id.is_hovered(cx);
-                                if hovered != was_hovered {
-                                    cx.refresh();
+                        let was_hovered = hitbox.is_hovered(cx);
+                        cx.on_mouse_event({
+                            let hitbox = hitbox.clone();
+                            move |_: &MouseMoveEvent, phase, cx| {
+                                if phase == DispatchPhase::Capture {
+                                    let hovered = hitbox.is_hovered(cx);
+                                    if hovered != was_hovered {
+                                        cx.refresh();
+                                    }
                                 }
                             }
                         });
 
                         cx.on_mouse_event({
+                            let hitbox = hitbox.clone();
                             let location = self.location.unwrap();
                             move |e: &crate::MouseDownEvent, phase, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
-                                    && hitbox_id.is_hovered(cx)
+                                    && hitbox.is_hovered(cx)
                                 {
                                     cx.stop_propagation();
                                     let Ok(dir) = std::env::current_dir() else {
@@ -1520,15 +1528,14 @@ impl Interactivity {
         element_state: Option<&mut InteractiveElementState>,
         cx: &mut ElementContext,
     ) {
-        let hitbox_id = hitbox.id;
-
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
+            let hitbox = hitbox.clone();
             cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble
-                    && hitbox_id.is_hovered(cx)
+                    && hitbox.is_hovered(cx)
                     && !cx.default_prevented()
                 {
                     cx.focus(&focus_handle);
@@ -1540,34 +1547,30 @@ impl Interactivity {
         }
 
         for listener in self.mouse_down_listeners.drain(..) {
+            let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                if hitbox_id.is_hovered(cx) {
-                    listener(event, phase, cx);
-                }
+                listener(event, phase, &hitbox, cx);
             })
         }
 
         for listener in self.mouse_up_listeners.drain(..) {
+            let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                if hitbox_id.is_hovered(cx) {
-                    listener(event, phase, cx);
-                }
+                listener(event, phase, &hitbox, cx);
             })
         }
 
         for listener in self.mouse_move_listeners.drain(..) {
+            let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                if hitbox_id.is_hovered(cx) {
-                    listener(event, phase, cx);
-                }
+                listener(event, phase, &hitbox, cx);
             })
         }
 
         for listener in self.scroll_wheel_listeners.drain(..) {
+            let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                if hitbox_id.is_hovered(cx) {
-                    listener(event, phase, cx);
-                }
+                listener(event, phase, &hitbox, cx);
             })
         }
 
@@ -1575,9 +1578,10 @@ impl Interactivity {
             || self.base_style.mouse_cursor.is_some()
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
-            let was_hovered = hitbox_id.is_hovered(cx);
+            let hitbox = hitbox.clone();
+            let was_hovered = hitbox.is_hovered(cx);
             cx.on_mouse_event(move |_: &MouseMoveEvent, phase, cx| {
-                let hovered = hitbox_id.is_hovered(cx);
+                let hovered = hitbox.is_hovered(cx);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     cx.refresh();
                 }
@@ -1590,10 +1594,11 @@ impl Interactivity {
         let can_drop_predicate = mem::take(&mut self.can_drop_predicate);
 
         if !drop_listeners.is_empty() {
+            let hitbox = hitbox.clone();
             cx.on_mouse_event({
                 move |_: &MouseUpEvent, phase, cx| {
                     if let Some(drag) = &cx.active_drag {
-                        if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
+                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                             let drag_state_type = drag.value.as_ref().type_id();
                             for (drop_state_type, listener) in &drop_listeners {
                                 if *drop_state_type == drag_state_type {
@@ -1634,10 +1639,11 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
+                    let hitbox = hitbox.clone();
                     move |event: &MouseDownEvent, phase, cx| {
                         if phase == DispatchPhase::Bubble
                             && event.button == MouseButton::Left
-                            && hitbox_id.is_hovered(cx)
+                            && hitbox.is_hovered(cx)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             cx.refresh();
@@ -1679,13 +1685,14 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let mut captured_mouse_down = None;
+                    let hitbox = hitbox.clone();
                     move |event: &MouseUpEvent, phase, cx| match phase {
                         // Clear the pending mouse down during the capture phase,
                         // so that it happens even if another event handler stops
                         // propagation.
                         DispatchPhase::Capture => {
                             let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                            if pending_mouse_down.is_some() && hitbox_id.is_hovered(cx) {
+                            if pending_mouse_down.is_some() && hitbox.is_hovered(cx) {
                                 captured_mouse_down = pending_mouse_down.take();
                                 cx.refresh();
                             }
@@ -1707,6 +1714,7 @@ impl Interactivity {
             }
 
             if let Some(hover_listener) = self.hover_listener.take() {
+                let hitbox = hitbox.clone();
                 let was_hovered = element_state
                     .hover_state
                     .get_or_insert_with(Default::default)
@@ -1722,7 +1730,7 @@ impl Interactivity {
                     }
                     let is_hovered = has_mouse_down.borrow().is_none()
                         && !cx.has_active_drag()
-                        && hitbox_id.is_hovered(cx);
+                        && hitbox.is_hovered(cx);
                     let mut was_hovered = was_hovered.borrow_mut();
 
                     if is_hovered != *was_hovered {
@@ -1743,10 +1751,10 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
+                let hitbox = hitbox.clone();
 
                 cx.on_mouse_event(move |_: &MouseMoveEvent, phase, cx| {
-                    let is_hovered =
-                        pending_mouse_down.borrow().is_none() && hitbox_id.is_hovered(cx);
+                    let is_hovered = pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
                     if !is_hovered {
                         active_tooltip.borrow_mut().take();
                         return;
@@ -1893,9 +1901,9 @@ impl Interactivity {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
             let line_height = cx.line_height();
-            let hitbox_id = hitbox.id;
+            let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
