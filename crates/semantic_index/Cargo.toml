@@ -12,10 +12,8 @@ doctest = false
 [dependencies]
 ai.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
 collections.workspace = true
 futures.workspace = true
-globset.workspace = true
 gpui.workspace = true
 language.workspace = true
 lazy_static.workspace = true
@@ -35,25 +33,21 @@ serde_json.workspace = true
 settings.workspace = true
 sha1 = "0.10.5"
 smol.workspace = true
-tiktoken-rs.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
 ai = { workspace = true, features = ["test-support"] }
-client.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-node_runtime.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
-rust-embed.workspace = true
 settings = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
 tree-sitter-cpp.workspace = true

@@ -56,7 +56,7 @@ async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
-    let extensions = app.db.get_extensions(params.filter.as_deref(), 30).await?;
+    let extensions = app.db.get_extensions(params.filter.as_deref(), 500).await?;
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
 
@@ -147,9 +147,7 @@ async fn fetch_extensions_from_blob_store(
         .send()
         .await?;
 
-    let objects = list
-        .contents
-        .ok_or_else(|| anyhow!("missing bucket contents"))?;
+    let objects = list.contents.unwrap_or_default();
 
     let mut published_versions = HashMap::<&str, Vec<&str>>::default();
     for object in &objects {

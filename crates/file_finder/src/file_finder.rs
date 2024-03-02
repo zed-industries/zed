@@ -93,7 +93,7 @@ impl FileFinder {
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            picker: cx.new_view(|cx| Picker::new(delegate, cx)),
+            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
         }
     }
 }
@@ -365,14 +365,7 @@ impl FileFinderDelegate {
         history_items: Vec<FoundPath>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
-        cx.observe(&project, |file_finder, _, cx| {
-            //todo We should probably not re-render on every project anything
-            file_finder
-                .picker
-                .update(cx, |picker, cx| picker.refresh(cx))
-        })
-        .detach();
-
+        Self::subscribe_to_updates(&project, cx);
         Self {
             file_finder,
             workspace,
@@ -387,6 +380,20 @@ impl FileFinderDelegate {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
         }
+    }
+
+    fn subscribe_to_updates(project: &Model<Project>, cx: &mut ViewContext<FileFinder>) {
+        cx.subscribe(project, |file_finder, _, event, cx| {
+            match event {
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded
+                | project::Event::WorktreeRemoved(_) => file_finder
+                    .picker
+                    .update(cx, |picker, cx| picker.refresh(cx)),
+                _ => {}
+            };
+        })
+        .detach();
     }
 
     fn spawn_search(
@@ -663,7 +670,7 @@ impl FileFinderDelegate {
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search project files...".into()
     }
 

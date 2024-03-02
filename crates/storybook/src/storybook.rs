@@ -1,3 +1,5 @@
+mod actions;
+mod app_menus;
 mod assets;
 mod stories;
 mod story_selector;
@@ -9,14 +11,16 @@ use gpui::{
     WindowOptions,
 };
 use log::LevelFilter;
-use settings::{default_settings, Settings, SettingsStore};
+use settings::{default_settings, KeymapFile, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
+use crate::app_menus::app_menus;
 use crate::assets::Assets;
 use crate::story_selector::{ComponentStory, StorySelector};
+use actions::Quit;
 pub use indoc::indoc;
 
 #[derive(Parser)]
@@ -33,10 +37,9 @@ struct Args {
 }
 
 fn main() {
-    // unsafe { backtrace_on_stack_overflow::enable() };
-
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
+    menu::init();
     let args = Args::parse();
 
     let story_selector = args.story.clone().unwrap_or_else(|| {
@@ -78,6 +81,9 @@ fn main() {
 
         language::init(cx);
         editor::init(cx);
+        init(cx);
+        load_storybook_keymap(cx);
+        cx.set_menus(app_menus());
 
         let _window = cx.open_window(
             WindowOptions {
@@ -132,4 +138,20 @@ fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
     }
 
     cx.text_system().add_fonts(embedded_fonts)
+}
+
+fn load_storybook_keymap(cx: &mut AppContext) {
+    KeymapFile::load_asset("keymaps/storybook.json", cx).unwrap();
+}
+
+pub fn init(cx: &mut AppContext) {
+    cx.on_action(quit);
+}
+
+fn quit(_: &Quit, cx: &mut AppContext) {
+    cx.spawn(|cx| async move {
+        cx.update(|cx| cx.quit())?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }

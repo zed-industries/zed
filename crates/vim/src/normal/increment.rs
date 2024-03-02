@@ -44,7 +44,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 }
 
 fn increment(vim: &mut Vim, mut delta: i32, step: i32, cx: &mut WindowContext) {
-    vim.update_active_editor(cx, |editor, cx| {
+    vim.update_active_editor(cx, |vim, editor, cx| {
         let mut edits = Vec::new();
         let mut new_anchors = Vec::new();
 

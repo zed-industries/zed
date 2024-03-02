@@ -105,6 +105,10 @@ pub(crate) struct GetTypeDefinition {
     pub position: PointUtf16,
 }
 
+pub(crate) struct GetImplementation {
+    pub position: PointUtf16,
+}
+
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
@@ -488,6 +492,99 @@ impl LspCommand for GetDefinition {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDefinition) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetImplementation {
+    type Response = Vec<LocationLink>;
+    type LspRequest = lsp::request::GotoImplementation;
+    type ProtoRequest = proto::GetImplementation;
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::GotoImplementationParams {
+        lsp::GotoImplementationParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: point_to_lsp(self.position),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::GotoImplementationResponse>,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
+        server_id: LanguageServerId,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<LocationLink>> {
+        location_links_from_lsp(message, project, buffer, server_id, cx).await
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetImplementation {
+        proto::GetImplementation {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetImplementation,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self {
+            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+        })
+    }
+
+    fn response_to_proto(
+        response: Vec<LocationLink>,
+        project: &mut Project,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut AppContext,
+    ) -> proto::GetImplementationResponse {
+        let links = location_links_to_proto(response, project, peer_id, cx);
+        proto::GetImplementationResponse { links }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetImplementationResponse,
+        project: Model<Project>,
+        _: Model<Buffer>,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<LocationLink>> {
+        location_links_from_proto(message.links, project, cx).await
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetImplementation) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
@@ -1308,6 +1405,13 @@ impl LspCommand for GetHover {
         } else {
             None
         };
+        if let Some(range) = range.as_ref() {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_anchors([range.start.clone(), range.end.clone()])
+                })?
+                .await?;
+        }
 
         Ok(Some(Hover {
             contents,
@@ -1367,6 +1471,12 @@ impl LspCommand for GetCompletions {
         } else {
             Default::default()
         };
+
+        let language_server_adapter = project
+            .update(&mut cx, |project, _cx| {
+                project.language_server_adapter_for_id(server_id)
+            })?
+            .ok_or_else(|| anyhow!("no such language server"))?;
 
         let completions = buffer.update(&mut cx, |buffer, cx| {
             let language_registry = project.read(cx).languages().clone();
@@ -1455,12 +1565,17 @@ impl LspCommand for GetCompletions {
 
                     let language_registry = language_registry.clone();
                     let language = language.clone();
+                    let language_server_adapter = language_server_adapter.clone();
                     LineEnding::normalize(&mut new_text);
                     Some(async move {
                         let mut label = None;
-                        if let Some(language) = language.as_ref() {
-                            language.process_completion(&mut lsp_completion).await;
-                            label = language.label_for_completion(&lsp_completion).await;
+                        if let Some(language) = &language {
+                            language_server_adapter
+                                .process_completion(&mut lsp_completion)
+                                .await;
+                            label = language_server_adapter
+                                .label_for_completion(&lsp_completion, language)
+                                .await;
                         }
 
                         let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
@@ -1547,7 +1662,7 @@ impl LspCommand for GetCompletions {
     async fn response_from_proto(
         self,
         message: proto::GetCompletionsResponse,
-        _: Model<Project>,
+        project: Model<Project>,
         buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
@@ -1558,8 +1673,13 @@ impl LspCommand for GetCompletions {
             .await?;
 
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
         let completions = message.completions.into_iter().map(|completion| {
-            language::proto::deserialize_completion(completion, language.clone())
+            language::proto::deserialize_completion(
+                completion,
+                language.clone(),
+                &language_registry,
+            )
         });
         future::try_join_all(completions).await
     }

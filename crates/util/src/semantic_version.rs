@@ -14,9 +14,18 @@ pub struct SemanticVersion {
     pub patch: usize,
 }
 
+impl SemanticVersion {
+    pub fn new(major: usize, minor: usize, patch: usize) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
+}
+
 impl FromStr for SemanticVersion {
     type Err = anyhow::Error;
-
     fn from_str(s: &str) -> Result<Self> {
         let mut components = s.trim().split('.');
         let major = components

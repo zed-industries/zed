@@ -1,7 +1,7 @@
-use channel::{ChannelId, ChannelMembership, ChannelStore};
+use channel::{ChannelMembership, ChannelStore};
 use client::{
     proto::{self, ChannelRole, ChannelVisibility},
-    User, UserId, UserStore,
+    ChannelId, User, UserId, UserStore,
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -43,7 +43,7 @@ impl ChannelModal {
         cx.observe(&channel_store, |_, _, cx| cx.notify()).detach();
         let channel_modal = cx.view().downgrade();
         let picker = cx.new_view(|cx| {
-            Picker::new(
+            Picker::uniform_list(
                 ChannelModalDelegate {
                     channel_modal,
                     matching_users: Vec::new(),
@@ -266,7 +266,7 @@ pub struct ChannelModalDelegate {
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search collaborator by username...".into()
     }
 

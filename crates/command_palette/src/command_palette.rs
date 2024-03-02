@@ -1,19 +1,23 @@
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
+    time::Duration,
 };
 
 use client::telemetry::Telemetry;
 use collections::HashMap;
-use copilot::CommandPaletteFilter;
+use command_palette_hooks::{
+    CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
-    ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 
-use release_channel::{parse_zed_link, ReleaseChannel};
+use postage::{sink::Sink, stream::Stream};
+use release_channel::parse_zed_link;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -31,6 +35,24 @@ impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
+}
+
+fn trim_consecutive_whitespaces(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut last_char_was_whitespace = false;
+
+    for char in input.trim().chars() {
+        if char.is_whitespace() {
+            if !last_char_was_whitespace {
+                result.push(char);
+            }
+            last_char_was_whitespace = true;
+        } else {
+            result.push(char);
+            last_char_was_whitespace = false;
+        }
+    }
+    result
 }
 
 impl CommandPalette {
@@ -80,7 +102,7 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
-        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         Self { picker }
     }
 }
@@ -99,18 +121,6 @@ impl Render for CommandPalette {
     }
 }
 
-pub struct CommandPaletteInterceptor(
-    pub Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>,
-);
-
-impl Global for CommandPaletteInterceptor {}
-
-pub struct CommandInterceptResult {
-    pub action: Box<dyn Action>,
-    pub string: String,
-    pub positions: Vec<usize>,
-}
-
 pub struct CommandPaletteDelegate {
     command_palette: WeakView<CommandPalette>,
     all_commands: Vec<Command>,
@@ -119,6 +129,10 @@ pub struct CommandPaletteDelegate {
     selected_ix: usize,
     telemetry: Arc<Telemetry>,
     previous_focus_handle: FocusHandle,
+    updating_matches: Option<(
+        Task<()>,
+        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>)>,
+    )>,
 }
 
 struct Command {
@@ -138,7 +152,7 @@ impl Clone for Command {
 /// Hit count for each command in the palette.
 /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
 /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct HitCounts(HashMap<String, usize>);
 
 impl Global for HitCounts {}
@@ -158,6 +172,66 @@ impl CommandPaletteDelegate {
             selected_ix: 0,
             telemetry,
             previous_focus_handle,
+            updating_matches: None,
+        }
+    }
+
+    fn matches_updated(
+        &mut self,
+        query: String,
+        mut commands: Vec<Command>,
+        mut matches: Vec<StringMatch>,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) {
+        self.updating_matches.take();
+
+        let mut intercept_result =
+            if let Some(interceptor) = cx.try_global::<CommandPaletteInterceptor>() {
+                (interceptor.0)(&query, cx)
+            } else {
+                None
+            };
+
+        if parse_zed_link(&query).is_some() {
+            intercept_result = Some(CommandInterceptResult {
+                action: OpenZedUrl { url: query.clone() }.boxed_clone(),
+                string: query.clone(),
+                positions: vec![],
+            })
+        }
+
+        if let Some(CommandInterceptResult {
+            action,
+            string,
+            positions,
+        }) = intercept_result
+        {
+            if let Some(idx) = matches
+                .iter()
+                .position(|m| commands[m.candidate_id].action.type_id() == action.type_id())
+            {
+                matches.remove(idx);
+            }
+            commands.push(Command {
+                name: string.clone(),
+                action,
+            });
+            matches.insert(
+                0,
+                StringMatch {
+                    candidate_id: commands.len() - 1,
+                    string,
+                    positions,
+                    score: 0.0,
+                },
+            )
+        }
+        self.commands = commands;
+        self.matches = matches;
+        if self.matches.is_empty() {
+            self.selected_ix = 0;
+        } else {
+            self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
     }
 }
@@ -165,7 +239,7 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Execute a command...".into()
     }
 
@@ -186,111 +260,96 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let mut commands = self.all_commands.clone();
-
-        cx.spawn(move |picker, mut cx| async move {
-            cx.read_global::<HitCounts, _>(|hit_counts, _| {
+        let (mut tx, mut rx) = postage::dispatch::channel(1);
+        let task = cx.background_executor().spawn({
+            let mut commands = self.all_commands.clone();
+            let hit_counts = cx.global::<HitCounts>().clone();
+            let executor = cx.background_executor().clone();
+            let query = trim_consecutive_whitespaces(&query.as_str());
+            async move {
                 commands.sort_by_key(|action| {
                     (
                         Reverse(hit_counts.0.get(&action.name).cloned()),
                         action.name.clone(),
                     )
                 });
-            })
-            .ok();
 
-            let candidates = commands
-                .iter()
-                .enumerate()
-                .map(|(ix, command)| StringMatchCandidate {
-                    id: ix,
-                    string: command.name.to_string(),
-                    char_bag: command.name.chars().collect(),
-                })
-                .collect::<Vec<_>>();
-            let mut matches = if query.is_empty() {
-                candidates
-                    .into_iter()
+                let candidates = commands
+                    .iter()
                     .enumerate()
-                    .map(|(index, candidate)| StringMatch {
-                        candidate_id: index,
-                        string: candidate.string,
-                        positions: Vec::new(),
-                        score: 0.0,
+                    .map(|(ix, command)| StringMatchCandidate {
+                        id: ix,
+                        string: command.name.to_string(),
+                        char_bag: command.name.chars().collect(),
                     })
-                    .collect()
-            } else {
-                fuzzy::match_strings(
-                    &candidates,
-                    &query,
-                    true,
-                    10000,
-                    &Default::default(),
-                    cx.background_executor().clone(),
-                )
-                .await
+                    .collect::<Vec<_>>();
+                let matches = if query.is_empty() {
+                    candidates
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, candidate)| StringMatch {
+                            candidate_id: index,
+                            string: candidate.string,
+                            positions: Vec::new(),
+                            score: 0.0,
+                        })
+                        .collect()
+                } else {
+                    let ret = fuzzy::match_strings(
+                        &candidates,
+                        &query,
+                        true,
+                        10000,
+                        &Default::default(),
+                        executor,
+                    )
+                    .await;
+                    ret
+                };
+
+                tx.send((commands, matches)).await.log_err();
+            }
+        });
+        self.updating_matches = Some((task, rx.clone()));
+
+        cx.spawn(move |picker, mut cx| async move {
+            let Some((commands, matches)) = rx.recv().await else {
+                return;
             };
 
-            let mut intercept_result = cx
-                .try_read_global(|interceptor: &CommandPaletteInterceptor, cx| {
-                    (interceptor.0)(&query, cx)
-                })
-                .flatten();
-            let release_channel = cx
-                .update(|cx| ReleaseChannel::try_global(cx))
-                .ok()
-                .flatten();
-            if release_channel == Some(ReleaseChannel::Dev) {
-                if parse_zed_link(&query).is_some() {
-                    intercept_result = Some(CommandInterceptResult {
-                        action: OpenZedUrl { url: query.clone() }.boxed_clone(),
-                        string: query.clone(),
-                        positions: vec![],
-                    })
-                }
-            }
-
-            if let Some(CommandInterceptResult {
-                action,
-                string,
-                positions,
-            }) = intercept_result
-            {
-                if let Some(idx) = matches
-                    .iter()
-                    .position(|m| commands[m.candidate_id].action.type_id() == action.type_id())
-                {
-                    matches.remove(idx);
-                }
-                commands.push(Command {
-                    name: string.clone(),
-                    action,
-                });
-                matches.insert(
-                    0,
-                    StringMatch {
-                        candidate_id: commands.len() - 1,
-                        string,
-                        positions,
-                        score: 0.0,
-                    },
-                )
-            }
-
             picker
-                .update(&mut cx, |picker, _| {
-                    let delegate = &mut picker.delegate;
-                    delegate.commands = commands;
-                    delegate.matches = matches;
-                    if delegate.matches.is_empty() {
-                        delegate.selected_ix = 0;
-                    } else {
-                        delegate.selected_ix =
-                            cmp::min(delegate.selected_ix, delegate.matches.len() - 1);
-                    }
+                .update(&mut cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .matches_updated(query, commands, matches, cx)
                 })
                 .log_err();
         })
+    }
+
+    fn finalize_update_matches(
+        &mut self,
+        query: String,
+        duration: Duration,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> bool {
+        let Some((task, rx)) = self.updating_matches.take() else {
+            return true;
+        };
+
+        match cx
+            .background_executor()
+            .block_with_timeout(duration, rx.clone().recv())
+        {
+            Ok(Some((commands, matches))) => {
+                self.matches_updated(query, commands, matches, cx);
+                true
+            }
+            _ => {
+                self.updating_matches = Some((task, rx));
+                false
+            }
+        }
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
@@ -426,7 +485,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| editor.focus(cx))
         });
 

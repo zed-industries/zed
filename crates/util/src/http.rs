@@ -14,41 +14,60 @@ use std::fmt;
 use std::{sync::Arc, time::Duration};
 pub use url::Url;
 
-pub struct ZedHttpClient {
-    pub zed_host: Mutex<String>,
-    client: Box<dyn HttpClient>,
+/// An [`HttpClient`] that has a base URL.
+pub struct HttpClientWithUrl {
+    base_url: Mutex<String>,
+    client: Arc<dyn HttpClient>,
 }
 
-impl ZedHttpClient {
-    pub fn zed_url(&self, path: &str) -> String {
-        format!("{}{}", self.zed_host.lock(), path)
+impl HttpClientWithUrl {
+    /// Returns a new [`HttpClientWithUrl`] with the given base URL.
+    pub fn new(base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: Mutex::new(base_url.into()),
+            client: client(),
+        }
+    }
+
+    /// Returns the base URL.
+    pub fn base_url(&self) -> String {
+        self.base_url.lock().clone()
+    }
+
+    /// Sets the base URL.
+    pub fn set_base_url(&self, base_url: impl Into<String>) {
+        *self.base_url.lock() = base_url.into();
+    }
+
+    /// Builds a URL using the given path.
+    pub fn build_url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url.lock(), path)
+    }
+
+    /// Builds a Zed API URL using the given path.
+    pub fn build_zed_api_url(&self, path: &str) -> String {
+        let base_url = self.base_url.lock().clone();
+        let base_api_url = match base_url.as_ref() {
+            "https://zed.dev" => "https://api.zed.dev",
+            "https://staging.zed.dev" => "https://api-staging.zed.dev",
+            "http://localhost:3000" => "http://localhost:8080",
+            other => other,
+        };
+
+        format!("{}{}", base_api_url, path)
     }
 }
 
-impl HttpClient for Arc<ZedHttpClient> {
+impl HttpClient for Arc<HttpClientWithUrl> {
     fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
         self.client.send(req)
     }
 }
 
-impl HttpClient for ZedHttpClient {
+impl HttpClient for HttpClientWithUrl {
     fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
         self.client.send(req)
     }
-}
-
-pub fn zed_client(zed_host: &str) -> Arc<ZedHttpClient> {
-    Arc::new(ZedHttpClient {
-        zed_host: Mutex::new(zed_host.to_string()),
-        client: Box::new(
-            isahc::HttpClient::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .low_speed_timeout(100, Duration::from_secs(5))
-                .proxy(http_proxy_from_env())
-                .build()
-                .unwrap(),
-        ),
-    })
 }
 
 pub trait HttpClient: Send + Sync {
@@ -121,20 +140,20 @@ pub struct FakeHttpClient {
 
 #[cfg(feature = "test-support")]
 impl FakeHttpClient {
-    pub fn create<Fut, F>(handler: F) -> Arc<ZedHttpClient>
+    pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
         Fut: 'static + Send + futures::Future<Output = Result<Response<AsyncBody>, Error>>,
         F: 'static + Send + Sync + Fn(Request<AsyncBody>) -> Fut,
     {
-        Arc::new(ZedHttpClient {
-            zed_host: Mutex::new("http://test.example".into()),
-            client: Box::new(Self {
+        Arc::new(HttpClientWithUrl {
+            base_url: Mutex::new("http://test.example".into()),
+            client: Arc::new(Self {
                 handler: Box::new(move |req| Box::pin(handler(req))),
             }),
         })
     }
 
-    pub fn with_404_response() -> Arc<ZedHttpClient> {
+    pub fn with_404_response() -> Arc<HttpClientWithUrl> {
         Self::create(|_| async move {
             Ok(Response::builder()
                 .status(404)
@@ -143,7 +162,7 @@ impl FakeHttpClient {
         })
     }
 
-    pub fn with_200_response() -> Arc<ZedHttpClient> {
+    pub fn with_200_response() -> Arc<HttpClientWithUrl> {
         Self::create(|_| async move {
             Ok(Response::builder()
                 .status(200)

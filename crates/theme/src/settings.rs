@@ -243,6 +243,7 @@ impl ThemeSettings {
                 .styles
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
+            base_theme.styles.player.merge(&theme_overrides.players);
             base_theme.styles.syntax = Arc::new(SyntaxTheme {
                 highlights: {
                     let mut highlights = base_theme.styles.syntax.highlights.clone();

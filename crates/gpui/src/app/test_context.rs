@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
-    ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Empty, Entity,
+    EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
     TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
@@ -177,7 +177,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| ()));
+        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| Empty));
         drop(cx);
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
@@ -335,7 +335,7 @@ impl TestAppContext {
             .map(Keystroke::parse)
             .map(Result::unwrap)
         {
-            self.dispatch_keystroke(window, keystroke.into(), false);
+            self.dispatch_keystroke(window, keystroke.into());
         }
 
         self.background_executor.run_until_parked()
@@ -347,21 +347,16 @@ impl TestAppContext {
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
-            self.dispatch_keystroke(window, keystroke.into(), false);
+            self.dispatch_keystroke(window, keystroke.into());
         }
 
         self.background_executor.run_until_parked()
     }
 
     /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
-    pub fn dispatch_keystroke(
-        &mut self,
-        window: AnyWindowHandle,
-        keystroke: Keystroke,
-        is_held: bool,
-    ) {
-        self.test_window(window)
-            .simulate_keystroke(keystroke, is_held)
+    pub fn dispatch_keystroke(&mut self, window: AnyWindowHandle, keystroke: Keystroke) {
+        self.update_window(window, |_, cx| cx.dispatch_keystroke(keystroke))
+            .unwrap();
     }
 
     /// Returns the `TestWindow` backing the given handle.

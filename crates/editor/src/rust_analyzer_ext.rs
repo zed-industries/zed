@@ -105,7 +105,7 @@ pub fn expand_macro_recursively(
             let buffer = cx.new_model(|cx| {
                 MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
             });
-            workspace.add_item(
+            workspace.add_item_to_active_pane(
                 Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                 cx,
             );

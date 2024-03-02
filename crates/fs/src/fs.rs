@@ -11,7 +11,11 @@ use fsevent::StreamFlags;
 #[cfg(not(target_os = "macos"))]
 use notify::{Config, EventKind, Watcher};
 
-use futures::{future::BoxFuture, Stream, StreamExt};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+use async_tar::Archive;
+use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
 use repository::GitRepository;
@@ -21,14 +25,13 @@ use std::io::Write;
 use std::sync::Arc;
 use std::{
     io,
-    os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     pin::Pin,
     time::{Duration, SystemTime},
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
-use util::ResultExt;
+use util::{paths, ResultExt};
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
@@ -41,6 +44,16 @@ use std::ffi::OsStr;
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
+    async fn create_file_with(
+        &self,
+        path: &Path,
+        content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()>;
+    async fn extract_tar_file(
+        &self,
+        path: &Path,
+        content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
+    ) -> Result<()>;
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
@@ -123,6 +136,25 @@ impl Fs for RealFs {
         Ok(())
     }
 
+    async fn create_file_with(
+        &self,
+        path: &Path,
+        content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()> {
+        let mut file = smol::fs::File::create(&path).await?;
+        futures::io::copy(content, &mut file).await?;
+        Ok(())
+    }
+
+    async fn extract_tar_file(
+        &self,
+        path: &Path,
+        content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
+    ) -> Result<()> {
+        content.unpack(path).await?;
+        Ok(())
+    }
+
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
         if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
             if options.ignore_if_exists {
@@ -187,7 +219,14 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = NamedTempFile::new()?;
+            let mut tmp_file = if cfg!(target_os = "linux") {
+                // Use the directory of the destination as temp dir to avoid
+                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+                // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::TEMP_DIR))
+            } else {
+                NamedTempFile::new()
+            }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             Ok::<(), anyhow::Error>(())
@@ -239,8 +278,15 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
+
+        #[cfg(unix)]
+        let inode = metadata.ino();
+
+        #[cfg(windows)]
+        let inode = file_id(path).await?;
+
         Ok(Some(Metadata {
-            inode: metadata.ino(),
+            inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
@@ -330,10 +376,10 @@ impl Fs for RealFs {
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
-        LibGitRepository::open(&dotgit_path)
+        LibGitRepository::open(dotgit_path)
             .log_err()
-            .and_then::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
-                Some(Arc::new(Mutex::new(libgit_repository)))
+            .map::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
+                Arc::new(Mutex::new(libgit_repository))
             })
     }
 
@@ -413,7 +459,7 @@ enum FakeFsEntry {
     File {
         inode: u64,
         mtime: SystemTime,
-        content: String,
+        content: Vec<u8>,
     },
     Dir {
         inode: u64,
@@ -428,15 +474,15 @@ enum FakeFsEntry {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFsState {
-    fn read_path<'a>(&'a self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
+    fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
             .try_read_path(target, true)
             .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
             .0)
     }
 
-    fn try_read_path<'a>(
-        &'a self,
+    fn try_read_path(
+        &self,
         target: &Path,
         follow_symlink: bool,
     ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
@@ -559,7 +605,7 @@ impl FakeFs {
         })
     }
 
-    pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) {
+    pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
         self.write_file_internal(path, content).unwrap()
     }
 
@@ -579,10 +625,10 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event(&[path]);
+        state.emit_event([path]);
     }
 
-    pub fn write_file_internal(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
+    fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
         let mut state = self.state.lock();
         let path = path.as_ref();
         let inode = state.next_inode;
@@ -605,8 +651,18 @@ impl FakeFs {
             }
             Ok(())
         })?;
-        state.emit_event(&[path]);
+        state.emit_event([path]);
         Ok(())
+    }
+
+    async fn load_internal(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
+        let path = path.as_ref();
+        let path = normalize_path(path);
+        self.simulate_random_delay().await;
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        entry.file_content(&path).cloned()
     }
 
     pub fn pause_events(&self) {
@@ -646,10 +702,34 @@ impl FakeFs {
                     self.create_dir(path).await.unwrap();
                 }
                 String(contents) => {
-                    self.insert_file(&path, contents).await;
+                    self.insert_file(&path, contents.into_bytes()).await;
                 }
                 _ => {
                     panic!("JSON object must contain only objects, strings, or null");
+                }
+            }
+        }
+        .boxed()
+    }
+
+    pub fn insert_tree_from_real_fs<'a>(
+        &'a self,
+        path: impl 'a + AsRef<Path> + Send,
+        src_path: impl 'a + AsRef<Path> + Send,
+    ) -> futures::future::BoxFuture<'a, ()> {
+        use futures::FutureExt as _;
+
+        async move {
+            let path = path.as_ref();
+            if std::fs::metadata(&src_path).unwrap().is_file() {
+                let contents = std::fs::read(src_path).unwrap();
+                self.insert_file(path, contents).await;
+            } else {
+                self.create_dir(path).await.unwrap();
+                for entry in std::fs::read_dir(&src_path).unwrap() {
+                    let entry = entry.unwrap();
+                    self.insert_tree_from_real_fs(&path.join(entry.file_name()), &entry.path())
+                        .await;
                 }
             }
         }
@@ -705,7 +785,7 @@ impl FakeFs {
             state.worktree_statuses.extend(
                 statuses
                     .iter()
-                    .map(|(path, content)| ((**path).into(), content.clone())),
+                    .map(|(path, content)| ((**path).into(), *content)),
             );
         });
         self.state.lock().emit_event(
@@ -725,7 +805,7 @@ impl FakeFs {
             state.worktree_statuses.extend(
                 statuses
                     .iter()
-                    .map(|(path, content)| ((**path).into(), content.clone())),
+                    .map(|(path, content)| ((**path).into(), *content)),
             );
         });
     }
@@ -816,7 +896,7 @@ impl FakeFsEntry {
         matches!(self, Self::Symlink { .. })
     }
 
-    fn file_content(&self, path: &Path) -> Result<&String> {
+    fn file_content(&self, path: &Path) -> Result<&Vec<u8>> {
         if let Self::File { content, .. } = self {
             Ok(content)
         } else {
@@ -824,7 +904,7 @@ impl FakeFsEntry {
         }
     }
 
-    fn set_file_content(&mut self, path: &Path, new_content: String) -> Result<()> {
+    fn set_file_content(&mut self, path: &Path, new_content: Vec<u8>) -> Result<()> {
         if let Self::File { content, mtime, .. } = self {
             *mtime = SystemTime::now();
             *content = new_content;
@@ -893,7 +973,7 @@ impl Fs for FakeFs {
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
-            content: String::new(),
+            content: Vec::new(),
         }));
         state.write_path(path, |entry| {
             match entry {
@@ -910,7 +990,37 @@ impl Fs for FakeFs {
             }
             Ok(())
         })?;
-        state.emit_event(&[path]);
+        state.emit_event([path]);
+        Ok(())
+    }
+
+    async fn create_file_with(
+        &self,
+        path: &Path,
+        mut content: Pin<&mut (dyn AsyncRead + Send)>,
+    ) -> Result<()> {
+        let mut bytes = Vec::new();
+        content.read_to_end(&mut bytes).await?;
+        self.write_file_internal(path, bytes)?;
+        Ok(())
+    }
+
+    async fn extract_tar_file(
+        &self,
+        path: &Path,
+        content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
+    ) -> Result<()> {
+        let mut entries = content.entries()?;
+        while let Some(entry) = entries.next().await {
+            let mut entry = entry?;
+            if entry.header().entry_type().is_file() {
+                let path = path.join(entry.path()?.as_ref());
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).await?;
+                self.create_dir(path.parent().unwrap()).await?;
+                self.write_file_internal(&path, bytes)?;
+            }
+        }
         Ok(())
     }
 
@@ -984,7 +1094,7 @@ impl Fs for FakeFs {
                 e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
                     inode,
                     mtime,
-                    content: String::new(),
+                    content: Vec::new(),
                 })))
                 .clone(),
             )),
@@ -1063,35 +1173,30 @@ impl Fs for FakeFs {
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
-        let text = self.load(path).await?;
-        Ok(Box::new(io::Cursor::new(text)))
+        let bytes = self.load_internal(path).await?;
+        Ok(Box::new(io::Cursor::new(bytes)))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
-        let path = normalize_path(path);
-        self.simulate_random_delay().await;
-        let state = self.state.lock();
-        let entry = state.read_path(&path)?;
-        let entry = entry.lock();
-        entry.file_content(&path).cloned()
+        let content = self.load_internal(path).await?;
+        Ok(String::from_utf8(content.clone())?)
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
-        self.write_file_internal(path, data.to_string())?;
-
+        self.write_file_internal(path, data.into_bytes())?;
         Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let content = chunks(text, line_ending).collect();
+        let content = chunks(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, content)?;
+        self.write_file_internal(path, content.into_bytes())?;
         Ok(())
     }
 
@@ -1325,6 +1430,41 @@ pub fn copy_recursive<'a>(
         }
     }
     .boxed()
+}
+
+// todo(windows)
+// can we get file id not open the file twice?
+// https://github.com/rust-lang/rust/issues/63010
+#[cfg(target_os = "windows")]
+async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
+    use std::os::windows::io::AsRawHandle;
+
+    use smol::fs::windows::OpenOptionsExt;
+    use windows_sys::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+        },
+    };
+
+    let file = smol::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .await?;
+
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+    // This function supports Windows XP+
+    smol::unblock(move || {
+        let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        if ret == 0 {
+            return Err(anyhow!(format!("{}", std::io::Error::last_os_error())));
+        };
+
+        Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
+    })
+    .await
 }
 
 #[cfg(test)]

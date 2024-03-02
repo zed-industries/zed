@@ -120,6 +120,12 @@ jobs:
           export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
           export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
 
+          export ZED_SERVICE_NAME=collab
           envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-          kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/collab --watch
-          echo "deployed collab.template.yml to ${ZED_KUBE_NAMESPACE}"
+          kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+          echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
+
+          export ZED_SERVICE_NAME=api
+          envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
+          kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+          echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"

@@ -1,6 +1,6 @@
-use crate::{Channel, ChannelId, ChannelStore};
+use crate::{Channel, ChannelStore};
 use anyhow::Result;
-use client::{Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
+use client::{ChannelId, Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use language::proto::serialize_version;
@@ -51,7 +51,7 @@ impl ChannelBuffer {
     ) -> Result<Model<Self>> {
         let response = client
             .request(proto::JoinChannelBuffer {
-                channel_id: channel.id,
+                channel_id: channel.id.0,
             })
             .await?;
         let buffer_id = BufferId::new(response.buffer_id)?;
@@ -68,7 +68,7 @@ impl ChannelBuffer {
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
 
-        let subscription = client.subscribe_to_entity(channel.id)?;
+        let subscription = client.subscribe_to_entity(channel.id.0)?;
 
         anyhow::Ok(cx.new_model(|cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
@@ -97,7 +97,7 @@ impl ChannelBuffer {
             }
             self.client
                 .send(proto::LeaveChannelBuffer {
-                    channel_id: self.channel_id,
+                    channel_id: self.channel_id.0,
                 })
                 .log_err();
         }
@@ -191,7 +191,7 @@ impl ChannelBuffer {
                 let operation = language::proto::serialize_operation(operation);
                 self.client
                     .send(proto::UpdateChannelBuffer {
-                        channel_id: self.channel_id,
+                        channel_id: self.channel_id.0,
                         operations: vec![operation],
                     })
                     .log_err();

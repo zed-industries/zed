@@ -153,6 +153,24 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // goes to current line end
+    cx.set_state(indoc! {"ˇaa\nbb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes(["$"]);
+    cx.assert_editor_state("aˇa\nbb\ncc");
+
+    // goes to next line end
+    cx.simulate_keystrokes(["2", "$"]);
+    cx.assert_editor_state("aa\nbˇb\ncc");
+
+    // try to exceed the final line.
+    cx.simulate_keystrokes(["4", "$"]);
+    cx.assert_editor_state("aa\nbb\ncˇc");
+}
+
+#[gpui::test]
 async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
@@ -163,9 +181,9 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes(["<", "<"]);
     cx.assert_editor_state("aa\nbˇb\ncc");
 
-    // works in visuial mode
+    // works in visual mode
     cx.simulate_keystrokes(["shift-v", "down", ">"]);
-    cx.assert_editor_state("aa\n    b«b\n    ccˇ»");
+    cx.assert_editor_state("aa\n    bb\n    cˇc");
 }
 
 #[gpui::test]
@@ -883,4 +901,83 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes(["enter"]);
     rename_request.next().await.unwrap();
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
+}
+
+#[gpui::test]
+async fn test_remap(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // test moving the cursor
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g z",
+            workspace::SendKeystrokes("l l l l".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ123456789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "z"]);
+    cx.assert_state("1234ˇ56789", Mode::Normal);
+
+    // test switching modes
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g y",
+            workspace::SendKeystrokes("i f o o escape l".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ123456789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "y"]);
+    cx.assert_state("fooˇ123456789", Mode::Normal);
+
+    // test recursion
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g x",
+            workspace::SendKeystrokes("g z g y".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ123456789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "x"]);
+    cx.assert_state("1234fooˇ56789", Mode::Normal);
+
+    cx.executor().allow_parking();
+
+    // test command
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g w",
+            workspace::SendKeystrokes(": j enter".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ1234\n56789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "w"]);
+    cx.assert_state("1234ˇ 56789", Mode::Normal);
+
+    // test leaving command
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g u",
+            workspace::SendKeystrokes("g w g z".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("ˇ1234\n56789", Mode::Normal);
+    cx.simulate_keystrokes(["g", "u"]);
+    cx.assert_state("1234 567ˇ89", Mode::Normal);
+
+    // test leaving command
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g t",
+            workspace::SendKeystrokes("i space escape".to_string()),
+            None,
+        )])
+    });
+    cx.set_state("12ˇ34", Mode::Normal);
+    cx.simulate_keystrokes(["g", "t"]);
+    cx.assert_state("12ˇ 34", Mode::Normal);
 }

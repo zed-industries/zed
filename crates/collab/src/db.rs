@@ -375,7 +375,7 @@ impl Database {
 }
 
 fn is_serialization_error(error: &Error) -> bool {
-    const SERIALIZATION_FAILURE_CODE: &'static str = "40001";
+    const SERIALIZATION_FAILURE_CODE: &str = "40001";
     match error {
         Error::Database(
             DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error))
@@ -587,6 +587,7 @@ pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
+    pub hosted_projects: Vec<proto::HostedProject>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
     pub observed_channel_messages: Vec<proto::ChannelMessageId>,

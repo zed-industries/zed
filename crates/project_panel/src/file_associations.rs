@@ -13,17 +13,18 @@ struct TypeConfig {
 
 #[derive(Deserialize, Debug)]
 pub struct FileAssociations {
+    stems: HashMap<String, String>,
     suffixes: HashMap<String, String>,
     types: HashMap<String, TypeConfig>,
 }
 
 impl Global for FileAssociations {}
 
-const COLLAPSED_DIRECTORY_TYPE: &'static str = "collapsed_folder";
-const EXPANDED_DIRECTORY_TYPE: &'static str = "expanded_folder";
-const COLLAPSED_CHEVRON_TYPE: &'static str = "collapsed_chevron";
-const EXPANDED_CHEVRON_TYPE: &'static str = "expanded_chevron";
-pub const FILE_TYPES_ASSET: &'static str = "icons/file_icons/file_types.json";
+const COLLAPSED_DIRECTORY_TYPE: &str = "collapsed_folder";
+const EXPANDED_DIRECTORY_TYPE: &str = "expanded_folder";
+const COLLAPSED_CHEVRON_TYPE: &str = "collapsed_chevron";
+const EXPANDED_CHEVRON_TYPE: &str = "expanded_chevron";
+pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.set_global(FileAssociations::new(assets))
@@ -38,6 +39,7 @@ impl FileAssociations {
                     .map_err(Into::into)
             })
             .unwrap_or_else(|_| FileAssociations {
+                stems: HashMap::default(),
                 suffixes: HashMap::default(),
                 types: HashMap::default(),
             })
@@ -49,7 +51,14 @@ impl FileAssociations {
         // FIXME: Associate a type with the languages and have the file's language
         //        override these associations
         maybe!({
-            let suffix = path.icon_suffix()?;
+            let suffix = path.icon_stem_or_suffix()?;
+
+            if let Some(type_str) = this.stems.get(suffix) {
+                return this
+                    .types
+                    .get(type_str)
+                    .map(|type_config| type_config.icon.clone());
+            }
 
             this.suffixes
                 .get(suffix)

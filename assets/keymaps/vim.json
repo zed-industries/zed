@@ -125,6 +125,7 @@
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g x": "editor::OpenUrl",
       "g n": "vim::SelectNext",
       "g shift-n": "vim::SelectPrevious",
       "g >": [
@@ -287,6 +288,13 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
       "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+
+      "ctrl-w d": "editor::GoToDefinitionSplit",
+      "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
+      "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
+      "ctrl-w space": "editor::OpenExcerptsSplit",
+      "ctrl-w g space": "editor::OpenExcerptsSplit",
       "-": "pane::RevealInProjectPanel"
     }
   },
@@ -341,8 +349,8 @@
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      "> >": "editor::Indent",
-      "< <": "editor::Outdent",
+      "> >": "vim::Indent",
+      "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }
@@ -382,6 +390,7 @@
           "ignorePunctuation": true
         }
       ],
+      "t": "vim::Tag",
       "s": "vim::Sentence",
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
@@ -396,7 +405,8 @@
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
-      ">": "vim::AngleBrackets"
+      ">": "vim::AngleBrackets",
+      "a": "vim::Argument"
     }
   },
   {
@@ -457,8 +467,8 @@
       "ctrl-c": ["vim::SwitchMode", "Normal"],
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"],
-      ">": "editor::Indent",
-      "<": "editor::Outdent",
+      ">": "vim::Indent",
+      "<": "vim::Outdent",
       "i": [
         "vim::PushOperator",
         {
@@ -489,7 +499,9 @@
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-w": "editor::DeleteToPreviousWordStart",
-      "ctrl-u": "editor::DeleteToBeginningOfLine"
+      "ctrl-u": "editor::DeleteToBeginningOfLine",
+      "ctrl-t": "vim::Indent",
+      "ctrl-d": "vim::Outdent"
     }
   },
   {
@@ -509,31 +521,25 @@
     }
   },
   {
-    // Directory expansion
+    // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
-      "escape": "project_panel::ToggleFocus",
-      "enter": "project_panel::Open",
-      "o": "project_panel::Open",
-      "t": "project_panel::Open",
-      "v": "project_panel::Open",
-      "d": "project_panel::NewDirectory",
+      ":": "command_palette::Toggle",
       "%": "project_panel::NewFile",
-      "shift-r": "project_panel::Rename",
-      "m m": "project_panel::Cut",
-      "m c": "project_panel::Copy",
-      "m t": "project_panel::Paste",
-      "x": "project_panel::RevealInFinder",
-      "l": "project_panel::ExpandSelectedEntry",
+      "/": "project_panel::NewSearchInDirectory",
+      "d": "project_panel::NewDirectory",
+      "enter": "project_panel::Open",
+      "escape": "project_panel::ToggleFocus",
       "h": "project_panel::CollapseSelectedEntry",
-      // Move up and down
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",
+      "l": "project_panel::ExpandSelectedEntry",
+      "o": "project_panel::Open",
       "shift-d": "project_panel::Delete",
-      "/": "project_panel::NewSearchInDirectory",
-      // zed specific
-      "q p": "project_panel::CopyPath",
-      "q r": "project_panel::CopyRelativePath"
+      "shift-r": "project_panel::Rename",
+      "t": "project_panel::Open",
+      "v": "project_panel::Open",
+      "x": "project_panel::RevealInFinder"
     }
   }
 ]

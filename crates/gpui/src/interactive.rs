@@ -1,5 +1,6 @@
 use crate::{
-    point, seal::Sealed, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
+    point, seal::Sealed, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
+    ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -343,7 +344,8 @@ impl ExternalPaths {
 
 impl Render for ExternalPaths {
     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        // Intentionally left empty because the platform will render icons for the dragged files
+        // the platform will render icons for the dragged files
+        Empty
     }
 }
 
@@ -491,8 +493,8 @@ mod test {
             .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap(), false);
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap(), false);
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
 
         window
             .update(cx, |test_view, _| {

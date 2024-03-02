@@ -652,9 +652,14 @@ impl Database {
             .observed_channel_messages(&channel_ids, user_id, &*tx)
             .await?;
 
+        let hosted_projects = self
+            .get_hosted_projects(&channel_ids, &roles_by_channel_id, &*tx)
+            .await?;
+
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
+            hosted_projects,
             channel_participants,
             latest_buffer_versions,
             latest_channel_messages,
@@ -795,6 +800,7 @@ impl Database {
         match role {
             Some(ChannelRole::Admin) => Ok(role.unwrap()),
             Some(ChannelRole::Member)
+            | Some(ChannelRole::Talker)
             | Some(ChannelRole::Banned)
             | Some(ChannelRole::Guest)
             | None => Err(anyhow!(
@@ -813,7 +819,10 @@ impl Database {
         let channel_role = self.channel_role_for_user(channel, user_id, tx).await?;
         match channel_role {
             Some(ChannelRole::Admin) | Some(ChannelRole::Member) => Ok(channel_role.unwrap()),
-            Some(ChannelRole::Banned) | Some(ChannelRole::Guest) | None => Err(anyhow!(
+            Some(ChannelRole::Banned)
+            | Some(ChannelRole::Guest)
+            | Some(ChannelRole::Talker)
+            | None => Err(anyhow!(
                 "user is not a channel member or channel does not exist"
             ))?,
         }
@@ -828,9 +837,10 @@ impl Database {
     ) -> Result<ChannelRole> {
         let role = self.channel_role_for_user(channel, user_id, tx).await?;
         match role {
-            Some(ChannelRole::Admin) | Some(ChannelRole::Member) | Some(ChannelRole::Guest) => {
-                Ok(role.unwrap())
-            }
+            Some(ChannelRole::Admin)
+            | Some(ChannelRole::Member)
+            | Some(ChannelRole::Guest)
+            | Some(ChannelRole::Talker) => Ok(role.unwrap()),
             Some(ChannelRole::Banned) | None => Err(anyhow!(
                 "user is not a channel participant or channel does not exist"
             ))?,

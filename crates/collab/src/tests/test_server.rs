@@ -1,15 +1,17 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState, Config,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
 use channel::{ChannelBuffer, ChannelStore};
 use client::{
-    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
+    self, proto::PeerId, ChannelId, Client, Connection, Credentials, EstablishConnectionError,
+    UserStore,
 };
+use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -37,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
+use util::{http::FakeHttpClient, SemanticVersion};
 use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
@@ -119,7 +121,7 @@ impl TestServer {
     pub async fn start2(
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
-    ) -> (TestServer, TestClient, TestClient, u64) {
+    ) -> (TestServer, TestClient, TestClient, ChannelId) {
         let mut server = Self::start(cx_a.executor()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
@@ -163,6 +165,7 @@ impl TestServer {
             client::init_settings(cx);
         });
 
+        let clock = Arc::new(FakeSystemClock::default());
         let http = FakeHttpClient::with_404_response();
         let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
         {
@@ -185,7 +188,7 @@ impl TestServer {
                 .user_id
         };
         let client_name = name.to_string();
-        let mut client = cx.update(|cx| Client::new(http.clone(), cx));
+        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
@@ -231,12 +234,18 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
+                                ZedVersion(SemanticVersion::new(1, 0, 0)),
                                 None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
                             .detach();
-                        let connection_id = connection_id_rx.await.unwrap();
+                        let connection_id = connection_id_rx.await.map_err(|e| {
+                            EstablishConnectionError::Other(anyhow!(
+                                "{} (is server shutting down?)",
+                                e
+                            ))
+                        })?;
                         connection_killers
                             .lock()
                             .insert(connection_id.into(), killed);
@@ -273,7 +282,7 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
         });
 
         client
@@ -350,10 +359,10 @@ impl TestServer {
     pub async fn make_channel(
         &self,
         channel: &str,
-        parent: Option<u64>,
+        parent: Option<ChannelId>,
         admin: (&TestClient, &mut TestAppContext),
         members: &mut [(&TestClient, &mut TestAppContext)],
-    ) -> u64 {
+    ) -> ChannelId {
         let (_, admin_cx) = admin;
         let channel_id = admin_cx
             .read(ChannelStore::global)
@@ -396,7 +405,7 @@ impl TestServer {
         channel: &str,
         client: &TestClient,
         cx: &mut TestAppContext,
-    ) -> u64 {
+    ) -> ChannelId {
         let channel_id = self
             .make_channel(channel, None, (client, cx), &mut [])
             .await;
@@ -420,7 +429,7 @@ impl TestServer {
         &self,
         channels: &[(&str, Option<&str>)],
         creator: (&TestClient, &mut TestAppContext),
-    ) -> Vec<u64> {
+    ) -> Vec<ChannelId> {
         let mut observed_channels = HashMap::default();
         let mut result = Vec::new();
         for (channel, parent) in channels {
@@ -480,6 +489,7 @@ impl TestServer {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
             blob_store_client: None,
+            clickhouse_client: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -497,6 +507,12 @@ impl TestServer {
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
+                clickhouse_url: None,
+                clickhouse_user: None,
+                clickhouse_password: None,
+                clickhouse_database: None,
+                zed_client_checksum_seed: None,
+                slack_panics_webhook: None,
             },
         })
     }
@@ -668,7 +684,7 @@ impl TestClient {
     pub async fn host_workspace(
         &self,
         workspace: &View<Workspace>,
-        channel_id: u64,
+        channel_id: ChannelId,
         cx: &mut VisualTestContext,
     ) {
         cx.update(|cx| {
@@ -689,7 +705,7 @@ impl TestClient {
 
     pub async fn join_workspace<'a>(
         &'a self,
-        channel_id: u64,
+        channel_id: ChannelId,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
@@ -768,7 +784,7 @@ impl TestClient {
 }
 
 pub fn open_channel_notes(
-    channel_id: u64,
+    channel_id: ChannelId,
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<View<ChannelView>>> {
     let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
