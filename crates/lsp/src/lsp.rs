@@ -169,20 +169,18 @@ pub enum ServerStatus {}
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+/// Other(String) variant to handle unknown values due to this still being experimental
 pub enum ServerHealthStatus {
     Ok,
     Warning,
     Error,
-    Other(String), // Variant to handle unknown values due to this still being experimental
+    Other(String),
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatusParams {
-    pub health: ServerHealthStatus, // "ok" | "warning" | "error"
-    /// Is there any pending background work which might change the status?
-    /// For example, are dependencies being downloaded?
-    pub quiescent: bool,
+    pub health: ServerHealthStatus,
     pub message: Option<String>,
 }
 
