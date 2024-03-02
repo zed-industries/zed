@@ -1633,8 +1633,7 @@ impl EditorElement {
 
                             let y = event.position.y;
                             if y < thumb_top || thumb_bottom < y {
-                                let center_row =
-                                    ((y - top) * max_row / height).round() as u32;
+                                let center_row = ((y - top) * max_row / height).round() as u32;
                                 let top_row = center_row
                                     .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                                 let mut position = editor.scroll_position(cx);
