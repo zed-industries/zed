@@ -241,7 +241,7 @@ pub struct LanguageSettingsContent {
     // Controls how the editor handles the autoclosed characters.
     // When set to `false`(default), skipping over and auto-removing of the closing characters
     // happen only for auto-inserted characters.
-    // Otherwise(when `true`), the closing charcaters are always skipped over and auto-removed
+    // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
     // no matter how they were inserted.
     ///
     /// Default: false
