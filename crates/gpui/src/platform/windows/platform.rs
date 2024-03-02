@@ -18,7 +18,7 @@ use time::UtcOffset;
 use util::SemanticVersion;
 use windows::Win32::{
     Foundation::{CloseHandle, HANDLE, HWND},
-    System::Threading::{CreateEventW, ResetEvent, INFINITE},
+    System::Threading::{CreateEventW, INFINITE},
     UI::WindowsAndMessaging::{
         DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage,
         TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT,
@@ -68,7 +68,7 @@ struct Callbacks {
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let event = unsafe { CreateEventW(None, true, false, None) }.unwrap();
+        let event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, event));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
@@ -118,7 +118,6 @@ impl Platform for WindowsPlatform {
             while let Ok(runnable) = self.inner.main_receiver.try_recv() {
                 runnable.run();
             }
-            unsafe { ResetEvent(self.inner.event) }.unwrap();
         }
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {
