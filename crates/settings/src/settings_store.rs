@@ -755,8 +755,8 @@ fn replace_value_in_json_text(
     tab_size: usize,
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
-    const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
-    const LANGUAGES: &'static str = "languages";
+    const LANGUAGE_OVERRIDES: &str = "language_overrides";
+    const LANGUAGES: &str = "languages";
 
     lazy_static! {
         static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(

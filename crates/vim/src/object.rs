@@ -835,7 +835,7 @@ mod test {
         test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
     };
 
-    const WORD_LOCATIONS: &'static str = indoc! {"
+    const WORD_LOCATIONS: &str = indoc! {"
         The quick ˇbrowˇnˇ•••
         fox ˇjuˇmpsˇ over
         the lazy dogˇ••

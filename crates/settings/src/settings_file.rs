@@ -6,7 +6,7 @@ use gpui::{AppContext, BackgroundExecutor};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
-pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
+pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {

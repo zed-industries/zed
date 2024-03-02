@@ -14,7 +14,7 @@ use std::{
 };
 use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str = "node_modules/svelte-language-server/bin/server.js";
+const SERVER_PATH: &str = "node_modules/svelte-language-server/bin/server.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]

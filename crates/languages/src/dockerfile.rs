@@ -13,8 +13,7 @@ use std::{
 };
 use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str =
-    "node_modules/dockerfile-language-server-nodejs/bin/docker-langserver";
+const SERVER_PATH: &str = "node_modules/dockerfile-language-server-nodejs/bin/docker-langserver";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]

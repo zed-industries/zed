@@ -8644,7 +8644,7 @@ impl Editor {
         let mut cwd = worktree.read(cx).abs_path().to_path_buf();
         cwd.push(".git");
 
-        const REMOTE_NAME: &'static str = "origin";
+        const REMOTE_NAME: &str = "origin";
         let repo = project
             .fs()
             .open_repo(&cwd)
