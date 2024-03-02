@@ -921,8 +921,6 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let max_width = 510.;
-
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
                             styled_runs_for_code_label(&completion.label, &style.syntax).map(
@@ -1047,13 +1045,12 @@ impl CompletionsMenu {
                                                             new_completion_layout_line
                                                                 .x_for_index(label_text.len())
                                                                 + width_of_second_part;
-                                                        if combined_width > px(max_width) {
-                                                            println!("Both");
+                                                        if combined_width > max_len {
                                                             if let Some(index) =
                                                                 documentation_layout_line
                                                                     .index_for_x(
                                                                         (max_len * 0.65).min(
-                                                                            px(max_width)
+                                                                            max_len
                                                                                 - ellipsis_width
                                                                                     .width
                                                                                 -max_width_of_first_part
@@ -1141,10 +1138,10 @@ impl CompletionsMenu {
                                                     {
                                                         let combined_width = layout_line
                                                             .x_for_index(label_text.len());
-                                                        if combined_width > px(max_width) {
+                                                        if combined_width > max_len {
                                                             if let Some(index) = layout_line
                                                                 .index_for_x(
-                                                                    px(max_width)
+                                                                    max_len
                                                                         - ellipsis_width.width,
                                                                 )
                                                             {
@@ -1166,21 +1163,32 @@ impl CompletionsMenu {
 
                         //recompute syntax highlighting
                         completion.label.text = label_text.clone();
-                        completion.label.filter_range.end = first_part_end;
 
-                        for run in completion.label.runs.iter_mut() {
-                            if run.0.start == 0 {
-                                run.0.start = 0;
-                                run.0.end = first_part_end;
-                            } else {
-                                run.0.start =
-                                    (run.0.start as i32 - first_length_truncated as i32) as usize;
-                                run.0.end =
-                                    (run.0.end as i32 - first_length_truncated as i32) as usize;
+
+                        if inline_documentation_exists{
+                            completion.label.filter_range.end = label_text.len();
+                            for run in completion.label.runs.iter_mut() {
+                                if run.0.start == 0 {
+                                    run.0.start = 0;
+                                    run.0.end = label_text.len();
+                                }
+                            }
+                        }else{
+                            completion.label.filter_range.end = first_part_end;
+                            for run in completion.label.runs.iter_mut() {
+                                if run.0.start == 0 {
+                                    run.0.start = 0;
+                                    run.0.end = first_part_end;
+                                } else{
+                                    run.0.start =
+                                        (run.0.start as i32 - first_length_truncated as i32) as usize;
+                                    run.0.end =
+                                        (run.0.end as i32 - first_length_truncated as i32) as usize;
+                                }
                             }
                         }
                         let highlights = gpui::combine_highlights(
-                            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+                            mat.ranges().map(|range| (range, FontWeight::NORMAL.into())),
                             styled_runs_for_code_label(&completion.label, &style.syntax).map(
                                 |(range, mut highlight)| {
                                     // Ignore font weight for syntax highlighting, as we'll use it
@@ -1230,7 +1238,7 @@ impl CompletionsMenu {
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
                                 .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot(documentation_label), // .end_slot(div().child(documentation_label)),
+                                .end_slot(documentation_label),
                         )
                     })
                     .collect()
