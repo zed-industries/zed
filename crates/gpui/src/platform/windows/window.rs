@@ -455,7 +455,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 LRESULT(0)
             }
             WM_IME_STARTCOMPOSITION => {
-                let ctx = ImmGetContext(None);
+                let ctx = ImmGetContext(handle);
                 let mut config = COMPOSITIONFORM::default();
                 config.dwStyle = CFS_POINT;
                 let mut cursor = std::mem::zeroed();
@@ -470,7 +470,6 @@ impl WindowsWindowBase for WindowsWindowinner {
                 config.ptCurrentPos.y = cursor.y;
                 ImmSetCompositionWindow(ctx, &config as _);
                 ImmReleaseContext(handle, ctx);
-                self.update();
                 println!(
                     "Set composition pos: ({}, {})",
                     config.ptCurrentPos.x, config.ptCurrentPos.y
