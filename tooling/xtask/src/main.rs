@@ -84,7 +84,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::borrow_deref_ref",
         "clippy::borrowed_box",
         "clippy::cast_abs_to_unsigned",
-        "clippy::clone_on_copy",
         "clippy::cmp_owned",
         "clippy::crate_in_macro_def",
         "clippy::default_constructed_unit_structs",
