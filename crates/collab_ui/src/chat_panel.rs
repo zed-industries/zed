@@ -572,7 +572,6 @@ impl ChatPanel {
                                                         Some(Self::render_message_menu(
                                                             &this,
                                                             message_id,
-                                                            &message,
                                                             can_modify_message,
                                                             cx,
                                                         ))
@@ -617,12 +616,9 @@ impl ChatPanel {
     fn render_message_menu(
         this: &View<Self>,
         message_id: u64,
-        message: &ChannelMessage,
         can_modify_message: bool,
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
-        let reply_to_message_id = message.reply_to_message_id;
-
         let menu = {
             ContextMenu::build(cx, move |menu, cx| {
                 menu.entry(
@@ -650,34 +646,42 @@ impl ChatPanel {
                     }),
                 )
                 .when(can_modify_message, |menu| {
-                    let message_body = message.body.clone();
-
                     menu.entry(
                         "Edit message",
                         None,
                         cx.handler_for(&this, move |this, cx| {
-                            this.message_editor.update(cx, |editor, cx| {
-                                let buffer = editor
-                                    .editor
-                                    .read(cx)
-                                    .buffer()
-                                    .read(cx)
-                                    .as_singleton()
-                                    .expect("message editor must be singleton");
+                            let message = this
+                                .active_chat()
+                                .map(|active_chat| {
+                                    active_chat.read(cx).find_loaded_message(message_id)
+                                })
+                                .flatten()
+                                .cloned();
 
-                                buffer.update(cx, |buffer, cx| {
-                                    buffer.set_text(message_body.clone(), cx)
-                                });
+                            if let Some(message) = message {
+                                this.message_editor.update(cx, |editor, cx| {
+                                    let buffer = editor
+                                        .editor
+                                        .read(cx)
+                                        .buffer()
+                                        .read(cx)
+                                        .as_singleton()
+                                        .expect("message editor must be singleton");
 
-                                if let Some(reply_to_message_id) = reply_to_message_id {
-                                    editor.set_reply_to_message_id(reply_to_message_id);
-                                } else {
-                                    editor.clear_reply_to_message_id();
-                                }
+                                    buffer.update(cx, |buffer, cx| {
+                                        buffer.set_text(message.body.clone(), cx)
+                                    });
 
-                                editor.set_edit_message_id(message_id);
-                                editor.focus_handle(cx).focus(cx);
-                            })
+                                    if let Some(reply_to_message_id) = message.reply_to_message_id {
+                                        editor.set_reply_to_message_id(reply_to_message_id);
+                                    } else {
+                                        editor.clear_reply_to_message_id();
+                                    }
+
+                                    editor.set_edit_message_id(message_id);
+                                    editor.focus_handle(cx).focus(cx);
+                                })
+                            }
                         }),
                     )
                 })
