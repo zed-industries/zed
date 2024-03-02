@@ -3775,7 +3775,7 @@ dependencies = [
 name = "fsevent"
 version = "2.0.2"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.4.1",
  "fsevent-sys 3.1.0",
  "parking_lot 0.11.2",
  "tempfile",
@@ -8233,7 +8233,7 @@ name = "search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags 1.3.2",
+ "bitflags 2.4.1",
  "client",
  "collections",
  "editor",
