@@ -96,7 +96,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn get_global<'a>(cx: &'a AppContext) -> &'a Self
+    fn get_global(cx: &AppContext) -> &Self
     where
         Self: Sized,
     {
@@ -104,7 +104,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn try_read_global<'a, R>(cx: &'a AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
+    fn try_read_global<R>(cx: &AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
     where
         Self: Sized,
     {
@@ -112,7 +112,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn override_global<'a>(settings: Self, cx: &'a mut AppContext)
+    fn override_global(settings: Self, cx: &mut AppContext)
     where
         Self: Sized,
     {
@@ -210,10 +210,10 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
+                .get(release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
-                    .deserialize_setting(&release_settings)
+                    .deserialize_setting(release_settings)
                     .log_err()
                 {
                     user_values_stack.push(release_settings);
@@ -316,7 +316,7 @@ impl SettingsStore {
         let raw_settings = parse_json_with_comments::<serde_json::Value>(text).unwrap_or_default();
         let old_content = match setting.deserialize_setting(&raw_settings) {
             Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
-            Err(_) => Box::new(T::FileContent::default()),
+            Err(_) => Box::<<T as Settings>::FileContent>::default(),
         };
         let mut new_content = old_content.clone();
         update(&mut new_content);
@@ -543,10 +543,10 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
+                .get(release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
-                    .deserialize_setting(&release_settings)
+                    .deserialize_setting(release_settings)
                     .log_err()
                 {
                     user_settings_stack.push(release_settings);
@@ -662,7 +662,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any {
         if let Some((root_id, path)) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
-                if root_id == *settings_root_id && path.starts_with(&settings_path) {
+                if root_id == *settings_root_id && path.starts_with(settings_path) {
                     return value;
                 }
             }
@@ -755,8 +755,8 @@ fn replace_value_in_json_text(
     tab_size: usize,
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
-    const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
-    const LANGUAGES: &'static str = "languages";
+    const LANGUAGE_OVERRIDES: &str = "language_overrides";
+    const LANGUAGES: &str = "languages";
 
     lazy_static! {
         static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
