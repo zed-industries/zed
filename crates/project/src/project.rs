@@ -2909,6 +2909,7 @@ impl Project {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
         worktree_path: &Path,
@@ -6182,6 +6183,7 @@ impl Project {
     }
 
     /// Pick paths that might potentially contain a match of a given search query.
+    #[allow(clippy::too_many_arguments)]
     async fn background_search(
         unnamed_buffers: Vec<Model<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,

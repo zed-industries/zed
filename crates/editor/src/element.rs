@@ -2992,6 +2992,7 @@ impl LineWithInvisibles {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_invisibles(
         &self,
         selection_ranges: &[Range<DisplayPoint>],

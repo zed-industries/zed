@@ -303,6 +303,7 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
