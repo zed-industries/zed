@@ -108,9 +108,7 @@ fn main() {
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |cx| {
-        if let Some(app_state) = AppState::try_global(cx)
-            .map(|app_state| app_state.upgrade())
-            .flatten()
+        if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
