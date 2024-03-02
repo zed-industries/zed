@@ -340,7 +340,7 @@ impl SettingsStore {
             &new_value,
             &mut edits,
         );
-        return edits;
+        edits
     }
 
     /// Configure the tab sized when updating JSON files.
@@ -799,15 +799,15 @@ fn replace_value_in_json_text(
             break;
         }
 
-        first_key_start.get_or_insert_with(|| key_range.start);
+        first_key_start.get_or_insert(key_range.start);
 
         let found_key = text
             .get(key_range.clone())
             .map(|key_text| {
                 if key_path[depth] == LANGUAGES && has_language_overrides {
-                    return key_text == format!("\"{}\"", LANGUAGE_OVERRIDES);
+                    key_text == format!("\"{}\"", LANGUAGE_OVERRIDES)
                 } else {
-                    return key_text == format!("\"{}\"", key_path[depth]);
+                    key_text == format!("\"{}\"", key_path[depth])
                 }
             })
             .unwrap_or(false);
@@ -820,9 +820,9 @@ fn replace_value_in_json_text(
 
             if depth == key_path.len() {
                 break;
-            } else {
-                first_key_start = None;
             }
+
+            first_key_start = None;
         }
     }
 
