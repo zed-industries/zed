@@ -5189,6 +5189,7 @@ dependencies = [
  "tree-sitter-zig",
  "unindent",
  "util",
+ "workspace",
 ]
 
 [[package]]
