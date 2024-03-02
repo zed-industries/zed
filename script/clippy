@@ -12,10 +12,8 @@ cargo clippy --release --workspace --all-features --all-targets -- --allow clipp
 #
 # Once all packages have no more Clippy warnings we can promote `--deny warnings` to
 # the entire workspace.
-
-# TODO: `fs` doesn't build on Windows.
-# cargo clippy --package fs --no-deps -- --deny warnings
-cargo clippy --package fuzzy --no-deps -- --deny warnings
-cargo clippy --package gpui --no-deps -- --deny warnings
-cargo clippy --package settings --no-deps -- --deny warnings
-cargo clippy --package theme --no-deps -- --deny warnings
+cargo clippy --release --package fs --no-deps -- --deny warnings
+cargo clippy --release --package fuzzy --no-deps -- --deny warnings
+cargo clippy --release --package gpui --no-deps -- --deny warnings
+cargo clippy --release --package settings --no-deps -- --deny warnings
+cargo clippy --release --package theme --no-deps -- --deny warnings
