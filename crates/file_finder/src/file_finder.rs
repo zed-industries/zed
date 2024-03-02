@@ -5,14 +5,15 @@ use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Model, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
     cmp,
+    fmt::Debug,
     path::{Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool},
@@ -725,6 +726,11 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
+            if raw_query == ">" {
+                self.dismissed(cx);
+                cx.dispatch_action(command_palette::Toggle.boxed_clone());
+                return Task::ready(());
+            }
             let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
                 Ok::<_, std::convert::Infallible>(FileSearchQuery {
                     raw_query: raw_query.to_owned(),
