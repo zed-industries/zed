@@ -135,12 +135,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "css",
-            tree_sitter_css::language(),
-            None,
-        )
-        .await;
+        let language = crate::language("css", tree_sitter_css::language(), None).await;
 
         let text = r#"
             /* Import statement */
