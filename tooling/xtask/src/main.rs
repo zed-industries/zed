@@ -41,8 +41,8 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
     let mut clippy_command = Command::new(&cargo);
     clippy_command.arg("clippy");
 
-    if let Some(package) = args.package {
-        clippy_command.args(["--package", &package]);
+    if let Some(package) = args.package.as_ref() {
+        clippy_command.args(["--package", package]);
     } else {
         clippy_command.arg("--workspace");
     }
@@ -69,9 +69,11 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
     /// We'll want to drive this list down by either:
     /// 1. fixing violations of the rule and begin enforcing it
     /// 2. deciding we want to allow the rule permanently, at which point
-    ///    we should codify that separately in this script.
+    ///    we should codify that separately in this task.
+    ///
+    /// This list shouldn't be added to; it should only get shorter.
     const MIGRATORY_RULES_TO_ALLOW: &[&str] = &[
-        // There's a bunch of rules currently failing in the `style` group, so
+        // There are a bunch of rules currently failing in the `style` group, so
         // allow all of those, for now.
         "clippy::style",
         // Individual rules that have violations in the codebase:
@@ -129,7 +131,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::too_many_arguments",
         "clippy::type_complexity",
         "clippy::unit_arg",
-        "clippy::unnecessary_cast",
         "clippy::unnecessary_filter_map",
         "clippy::unnecessary_find_map",
         "clippy::unnecessary_operation",
@@ -140,10 +141,11 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::vec_init_then_push",
     ];
 
-    // When fixing violations automatically we don't care about the
-    // rules we're already violating, since it may be possible to
+    // When fixing violations automatically for a single package we don't care
+    // about the rules we're already violating, since it may be possible to
     // have them fixed automatically.
-    if !args.fix {
+    let ignore_suppressed_rules = args.fix && args.package.is_some();
+    if !ignore_suppressed_rules {
         for rule in MIGRATORY_RULES_TO_ALLOW {
             clippy_command.args(["--allow", rule]);
         }

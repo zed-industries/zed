@@ -359,7 +359,7 @@ impl Database {
         const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
         if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
             let base_delay = SLEEPS[prev_attempt_count];
-            let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
+            let randomized_delay = base_delay * self.rng.lock().await.gen_range(0.5..=2.0);
             log::info!(
                 "retrying transaction after serialization error. delay: {} ms.",
                 randomized_delay

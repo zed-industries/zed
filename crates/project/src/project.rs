@@ -3665,7 +3665,7 @@ impl Project {
                                 proto::LspWorkStart {
                                     token,
                                     message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
+                                    percentage: report.percentage.map(|p| p),
                                 },
                             ),
                         })
@@ -3691,7 +3691,7 @@ impl Project {
                                 proto::LspWorkProgress {
                                     token,
                                     message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
+                                    percentage: report.percentage.map(|p| p),
                                 },
                             ),
                         })

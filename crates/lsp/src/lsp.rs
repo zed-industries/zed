@@ -977,7 +977,7 @@ impl LanguageServer {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
                         CancelParams {
-                            id: NumberOrString::Number(id as i32),
+                            id: NumberOrString::Number(id),
                         },
                     )
                     .log_err();

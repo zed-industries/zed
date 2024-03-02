@@ -1294,8 +1294,7 @@ impl Terminal {
                     self.last_content.display_offset,
                 );
 
-                if let Some(scrolls) =
-                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+                if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
                         self.pty_tx.notify(scroll);
@@ -1554,9 +1553,9 @@ fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
 
 pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
     Rgba {
-        r: (r as f32 / 255.) as f32,
-        g: (g as f32 / 255.) as f32,
-        b: (b as f32 / 255.) as f32,
+        r: (r as f32 / 255.),
+        g: (g as f32 / 255.),
+        b: (b as f32 / 255.),
         a: 1.,
     }
     .into()
@@ -1577,9 +1576,9 @@ mod tests {
 
     #[test]
     fn test_rgb_for_index() {
-        //Test every possible value in the color cube
+        // Test every possible value in the color cube.
         for i in 16..=231 {
-            let (r, g, b) = rgb_for_index(&(i as u8));
+            let (r, g, b) = rgb_for_index(&i);
             assert_eq!(i, 16 + 36 * r + 6 * g + b);
         }
     }

@@ -365,7 +365,7 @@ impl TerminalElement {
         };
 
         let mut result = TextRun {
-            len: indexed.c.len_utf8() as usize,
+            len: indexed.c.len_utf8(),
             color: fg,
             background_color: None,
             font: Font {
@@ -1015,10 +1015,10 @@ fn to_highlighted_range_lines(
         let mut line_end = layout.dimensions.columns();
 
         if line == clamped_start_line {
-            line_start = unclamped_start.column.0 as usize;
+            line_start = unclamped_start.column.0;
         }
         if line == clamped_end_line {
-            line_end = unclamped_end.column.0 as usize + 1; //+1 for inclusive
+            line_end = unclamped_end.column.0 + 1; // +1 for inclusive
         }
 
         highlighted_range_lines.push(HighlightedRangeLine {

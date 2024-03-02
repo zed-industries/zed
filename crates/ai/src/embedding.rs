@@ -112,7 +112,7 @@ mod tests {
         }
 
         fn round_to_decimals(n: OrderedFloat<f32>, decimal_places: i32) -> f32 {
-            let factor = (10.0 as f32).powi(decimal_places);
+            let factor = 10.0_f32.powi(decimal_places);
             (n * factor).round() / factor
         }
 

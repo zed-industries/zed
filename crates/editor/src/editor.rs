@@ -4107,7 +4107,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            IconButton::new(ix as usize, ui::IconName::ChevronDown)
+                            IconButton::new(ix, ui::IconName::ChevronDown)
                                 .on_click({
                                     let view = editor_view.clone();
                                     move |_e, cx| {

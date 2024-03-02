@@ -1586,7 +1586,7 @@ impl EditorElement {
                         let new_y = event.position.y;
                         if (track_bounds.top()..track_bounds.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
-                            position.y += (new_y - y) * (max_row as f32) / height;
+                            position.y += (new_y - y) * max_row / height;
                             if position.y < 0.0 {
                                 position.y = 0.0;
                             }
@@ -1633,8 +1633,7 @@ impl EditorElement {
 
                             let y = event.position.y;
                             if y < thumb_top || thumb_bottom < y {
-                                let center_row =
-                                    ((y - top) * max_row as f32 / height).round() as u32;
+                                let center_row = ((y - top) * max_row / height).round() as u32;
                                 let top_row = center_row
                                     .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                                 let mut position = editor.scroll_position(cx);
@@ -1964,7 +1963,7 @@ impl EditorElement {
                 chunks,
                 &self.style.text,
                 MAX_LINE_LEN,
-                rows.len() as usize,
+                rows.len(),
                 line_number_layouts,
                 snapshot.mode,
                 cx,
