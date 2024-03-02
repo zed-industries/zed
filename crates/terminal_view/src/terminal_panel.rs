@@ -31,7 +31,7 @@ use workspace::{
 
 use anyhow::Result;
 
-const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
+const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
 actions!(terminal_panel, [ToggleFocus]);
 

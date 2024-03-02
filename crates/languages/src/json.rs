@@ -18,8 +18,7 @@ use std::{
 };
 use util::{async_maybe, paths, ResultExt};
 
-const SERVER_PATH: &'static str =
-    "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]

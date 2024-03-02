@@ -12,7 +12,7 @@ use std::{
 };
 use util::ResultExt;
 
-const SERVER_PATH: &'static str = "node_modules/pyright/langserver.index.js";
+const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]

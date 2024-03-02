@@ -2821,8 +2821,8 @@ async fn test_git_status_sync(
         )
         .await;
 
-    const A_TXT: &'static str = "a.txt";
-    const B_TXT: &'static str = "b.txt";
+    const A_TXT: &str = "a.txt";
+    const B_TXT: &str = "b.txt";
 
     client_a.fs().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),

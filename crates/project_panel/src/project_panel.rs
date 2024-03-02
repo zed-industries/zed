@@ -34,7 +34,7 @@ use workspace::{
     Workspace,
 };
 
-const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
+const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {

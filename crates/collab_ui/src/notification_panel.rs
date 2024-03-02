@@ -29,7 +29,7 @@ use workspace::{
 const LOADING_THRESHOLD: usize = 30;
 const MARK_AS_READ_DELAY: Duration = Duration::from_secs(1);
 const TOAST_DURATION: Duration = Duration::from_secs(5);
-const NOTIFICATION_PANEL_KEY: &'static str = "NotificationPanel";
+const NOTIFICATION_PANEL_KEY: &str = "NotificationPanel";
 
 pub struct NotificationPanel {
     client: Arc<Client>,

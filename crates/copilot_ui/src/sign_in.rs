@@ -7,7 +7,7 @@ use gpui::{
 use ui::{prelude::*, Button, IconName, Label};
 use workspace::ModalView;
 
-const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
+const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 
 pub struct CopilotCodeVerification {
     status: Status,
