@@ -1,11 +1,7 @@
 use std::{
-    alloc::GlobalAlloc,
     cell::RefCell,
     fmt::Write,
-    os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::Stdio,
-    ptr::copy_nonoverlapping,
     rc::Rc,
     str::FromStr,
     sync::{
@@ -19,37 +15,30 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use time::UtcOffset;
 use windows::{
-    core::{HSTRING, PCWSTR},
+    core::PCWSTR,
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
-        Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, STATUS_SUCCESS, WPARAM},
-        Globalization::{u_memcpy, MultiByteToWideChar},
-        Security::Credentials::{
-            CredEnumerateW, CredWriteDomainCredentialsW, CREDENTIAL_TARGET_INFORMATIONW,
-        },
+        Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
+        Globalization::u_memcpy,
         System::{
             Com::{
-                CoCreateInstance, CoInitializeEx, CoUninitialize, CreateBindCtx, IDataObject,
-                CLSCTX_ALL, COINIT_DISABLE_OLE1DDE, COINIT_MULTITHREADED, DVASPECT_CONTENT,
+                CoCreateInstance, CreateBindCtx, IDataObject, CLSCTX_ALL, DVASPECT_CONTENT,
                 FORMATETC, TYMED_HGLOBAL,
             },
             DataExchange::{
-                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
-                RegisterClipboardFormatW, SetClipboardData,
+                CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW,
+                SetClipboardData,
             },
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
-            Ole::{
-                OleGetClipboard, OleInitialize, OleSetClipboard, OleUninitialize, ReleaseStgMedium,
-            },
-            Threading::CREATE_NO_WINDOW,
+            Ole::{OleGetClipboard, OleInitialize, OleUninitialize, ReleaseStgMedium},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
         UI::{
             HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE},
             Input::KeyboardAndMouse::{
-                GetDoubleClickTime, ToUnicode, VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_END,
-                VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7,
-                VK_F8, VK_F9, VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_UP,
+                GetDoubleClickTime, VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE,
+                VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8,
+                VK_F9, VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_UP,
             },
             Shell::{
                 FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
@@ -57,11 +46,11 @@ use windows::{
                 FOS_ALLOWMULTISELECT, FOS_PICKFOLDERS, SIGDN_PARENTRELATIVEPARSING,
             },
             WindowsAndMessaging::{
-                AppendMenuW, CreateAcceleratorTableW, CreateMenu, DefWindowProcW, DestroyWindow,
-                DispatchMessageW, GetMessageW, LoadCursorW, LoadImageW, PostQuitMessage, SetCursor,
-                TranslateMessage, ACCEL, ACCEL_VIRT_FLAGS, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS,
-                IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE,
-                LR_SHARED, MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_DESTROY,
+                AppendMenuW, CreateAcceleratorTableW, CreateMenu, DefWindowProcW, DispatchMessageW,
+                GetMessageW, LoadImageW, PostQuitMessage, SetCursor, TranslateMessage, ACCEL,
+                ACCEL_VIRT_FLAGS, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM,
+                IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MF_POPUP,
+                MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_DESTROY,
             },
         },
     },
@@ -221,7 +210,7 @@ impl Platform for WindowsPlatform {
     fn restart(&self) {}
 
     //todo!(windows)
-    fn activate(&self, ignoring_other_apps: bool) {}
+    fn activate(&self, _ignoring_other_apps: bool) {}
 
     //todo!(windows)
     fn hide(&self) {}
@@ -467,7 +456,7 @@ impl Platform for WindowsPlatform {
     }
 
     // todo("windows")
-    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         unimplemented!()
     }
 
@@ -622,17 +611,22 @@ impl Platform for WindowsPlatform {
     }
 
     // todo!(windows)
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+    fn write_credentials(
+        &self,
+        _url: &str,
+        _usernamee: &str,
+        _passwordrd: &[u8],
+    ) -> Task<Result<()>> {
         unimplemented!()
     }
 
     // todo!(windows)
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         unimplemented!()
     }
 
     // todo!(windows)
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
         unimplemented!()
     }
 
@@ -777,7 +771,7 @@ unsafe fn generate_menu(
             crate::MenuItem::Action {
                 name,
                 action,
-                os_action,
+                os_action: _,
             } => {
                 let keystrokes = keymap
                     .bindings_for_action(action.as_ref())

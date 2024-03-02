@@ -4,9 +4,7 @@ use windows::{
     core::PCWSTR,
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-        Globalization::{WideCharToMultiByte, CP_UTF8},
         Graphics::Gdi::HBRUSH,
-        System::SystemServices::{MK_CONTROL, MK_SHIFT},
         UI::{
             Input::KeyboardAndMouse::{
                 VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
@@ -28,12 +26,9 @@ use windows::{
 use crate::{
     get_module_handle, get_windowdata, hiword, loword, KeyDownEvent, KeyUpEvent, Keystroke,
     Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput,
-    Point, ScrollDelta, ScrollWheelEvent, TouchPhase, WindowsPlatformInner, MOUSE_MOVE_BUTTONS,
-    MOUSE_MOVE_LBUTTON, MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON, MOUSE_MOVE_XBUTTON1,
-    MOUSE_MOVE_XBUTTON2,
+    Point, ScrollDelta, ScrollWheelEvent, TouchPhase, MOUSE_MOVE_BUTTONS, MOUSE_MOVE_LBUTTON,
+    MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON, MOUSE_MOVE_XBUTTON1, MOUSE_MOVE_XBUTTON2,
 };
-
-struct DispatchWindowData(Rc<WindowsPlatformInner>);
 
 pub struct WindowsWinodwDataWrapper<T: WindowsWindowBase + Sized>(pub Rc<T>);
 
@@ -426,13 +421,6 @@ pub fn parse_mouse_hwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) 
         modifiers,
         touch_phase: TouchPhase::default(),
     })
-}
-
-pub unsafe fn parse_dropfiles(wparam: WPARAM, lparam: LPARAM) -> PlatformInput {
-    let hdrop = windows::Win32::UI::Shell::HDROP(wparam.0 as isize);
-    // DragQueryFileW(hdrop, ifile, lpszfile);
-
-    PlatformInput::FileDrop(crate::FileDropEvent::Exited)
 }
 
 fn buttonmask_to_button(mask: usize) -> Option<MouseButton> {

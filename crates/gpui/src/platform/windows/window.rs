@@ -1,35 +1,19 @@
-use std::{
-    cell::{Cell, RefCell},
-    ffi::c_void,
-    mem,
-    num::NonZeroIsize,
-    path::PathBuf,
-    rc::{Rc, Weak},
-    str::FromStr,
-    sync::{
-        atomic::{AtomicIsize, Ordering},
-        Arc,
-    },
-};
+use std::{cell::RefCell, mem, path::PathBuf, rc::Rc, str::FromStr, sync::Arc};
 
 use futures::channel::oneshot;
-use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use util::ResultExt;
 use windows::{
-    core::{implement, IUnknown, Interface, IntoParam, Param, ReferenceType, PCWSTR},
+    core::{implement, PCWSTR},
     Win32::{
-        Foundation::{
-            ERROR_UNRECOVERABLE_STACK_OVERFLOW, HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM,
-        },
+        Foundation::{HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM},
         Graphics::Gdi::{
-            GetMonitorInfoW, MonitorFromWindow, RedrawWindow, UpdateWindow, ValidateRect, HRGN,
-            MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_ERASENOW, RDW_INVALIDATE, RDW_UPDATENOW,
+            MonitorFromWindow, RedrawWindow, ValidateRect, HRGN, MONITOR_DEFAULTTONEAREST,
+            RDW_ERASENOW, RDW_INVALIDATE, RDW_UPDATENOW,
         },
         System::{
             Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
-            Memory::{GlobalLock, GlobalUnlock},
             Ole::{
                 IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
                 CF_HDROP, DROPEFFECT, DROPEFFECT_LINK, DROPEFFECT_NONE,
@@ -38,8 +22,8 @@ use windows::{
         },
         UI::{
             Controls::{
-                TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TASKDIALOG_FLAGS,
-                TDF_USE_HICON_MAIN, TD_ERROR_ICON, TD_INFORMATION_ICON, TD_WARNING_ICON,
+                TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
+                TD_INFORMATION_ICON, TD_WARNING_ICON,
             },
             HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
             Input::{
@@ -47,32 +31,29 @@ use windows::{
                     ImmGetContext, ImmReleaseContext, ImmSetCompositionWindow, CFS_POINT,
                     COMPOSITIONFORM,
                 },
-                KeyboardAndMouse::GetMouseMovePointsEx,
+                KeyboardAndMouse::SetActiveWindow,
             },
-            Shell::{DragQueryFileA, DragQueryFileW, HDROP},
+            Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, KillTimer,
-                MessageBoxExW, PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer,
-                SetWindowTextW, ShowWindow, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_HINSTANCE,
-                HMENU, SIZE_MINIMIZED, SW_SHOW, TIMERPROC, WA_ACTIVE, WA_CLICKACTIVE, WA_INACTIVE,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR, WM_CLOSE, WM_COMMAND,
-                WM_DESTROY, WM_DROPFILES, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP,
+                DefWindowProcW, GetClientRect, GetCursorPos, KillTimer, PostMessageW,
+                PostQuitMessage, SetTimer, SetWindowTextW, ShowWindow, CW_USEDEFAULT,
+                GWLP_HINSTANCE, HMENU, SIZE_MINIMIZED, SW_MINIMIZE, SW_SHOW, TIMERPROC, WA_ACTIVE,
+                WA_CLICKACTIVE, WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR,
+                WM_COMMAND, WM_DESTROY, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP,
                 WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
                 WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
                 WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
-                WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSEXW, WS_EX_ACCEPTFILES,
-                WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+                WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WS_MAXIMIZE, WS_POPUP, WS_VISIBLE,
             },
         },
     },
 };
 
 use crate::{
-    available_monitors, encode_wide, get_module_handle, hiword, log_windows_error,
-    log_windows_error_with_message, loword, parse_dropfiles, parse_keyboard_input,
-    parse_mouse_button, parse_mouse_hwheel, parse_mouse_movement, parse_mouse_vwheel,
-    parse_system_key, platform::cross_platform::BladeRenderer, set_windowdata, Action, Bounds,
-    DisplayId, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput,
+    available_monitors, encode_wide, hiword, log_windows_error, log_windows_error_with_message,
+    loword, parse_keyboard_input, parse_mouse_button, parse_mouse_hwheel, parse_mouse_movement,
+    parse_mouse_vwheel, parse_system_key, platform::cross_platform::BladeRenderer, set_windowdata,
+    Bounds, DisplayId, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, Size, WindowKind, WindowOptions,
     WindowsWindowBase, WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH,
     MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE,
@@ -108,13 +89,13 @@ impl WindowsWindow {
         options: &WindowOptions,
         menu_handle: Option<HMENU>,
     ) -> Self {
-        let mut monitor = available_monitors()
+        let mut _monitor = available_monitors()
             .into_iter()
             .nth(0)
             .expect("no monitor detected!");
         let mut display = WindowsDisplay::new(DisplayId(0));
         if let Some(display_id) = options.display_id {
-            monitor = available_monitors()
+            _monitor = available_monitors()
                 .into_iter()
                 .nth(display_id.0 as usize)
                 .unwrap();
@@ -122,6 +103,7 @@ impl WindowsWindow {
             display.display_id = display_id;
         }
         // let scale_factor = monitor.scale_factor();
+        // TODO: actually use scale factor
         let scale_factor = 1.0;
 
         let mut lpwindowname = None;
@@ -170,7 +152,6 @@ impl WindowsWindow {
         let renderer = BladeRenderer::new(gpu, gpu_extent);
         let inner = WindowsWindowinner::new(
             dispatch_window_handle,
-            options,
             scale_factor,
             window_handle,
             bounds,
@@ -205,7 +186,7 @@ impl WindowsWindow {
 
 pub struct WindowsWindowinner {
     pub dispatch_window_handle: HWND,
-    pub window_handle: RawWindow,
+    window_handle: RawWindow,
     bounds: RefCell<Bounds<i32>>,
     scale_factor: f32,
     pub callbacks: RefCell<Callbacks>,
@@ -223,9 +204,8 @@ struct RawWindow {
 }
 
 impl WindowsWindowinner {
-    pub fn new(
+    fn new(
         dispatch_window_handle: HWND,
-        options: &WindowOptions,
         scale_factor: f32,
         window_handle: RawWindow,
         bounds: Bounds<i32>,
@@ -320,7 +300,7 @@ impl WindowsWindowinner {
                 },
             };
             *bounds_lock = bounds;
-            let window_size = self.window_handle.size();
+            let _window_size = self.window_handle.size();
             let gpu_size = blade_graphics::Extent {
                 width,
                 height,
@@ -488,7 +468,7 @@ impl IDropTarget_Impl for WindowsDragDropTarget {
     fn DragEnter(
         &self,
         pdataobj: Option<&IDataObject>,
-        grfkeystate: MODIFIERKEYS_FLAGS,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
@@ -550,9 +530,9 @@ impl IDropTarget_Impl for WindowsDragDropTarget {
 
     fn DragOver(
         &self,
-        grfkeystate: MODIFIERKEYS_FLAGS,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        pdweffect: *mut DROPEFFECT,
+        _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         let input = PlatformInput::FileDrop(crate::FileDropEvent::Pending {
             position: Point {
@@ -574,10 +554,10 @@ impl IDropTarget_Impl for WindowsDragDropTarget {
 
     fn Drop(
         &self,
-        pdataobj: ::core::option::Option<&IDataObject>,
-        grfkeystate: MODIFIERKEYS_FLAGS,
+        _pdataobj: ::core::option::Option<&IDataObject>,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        pdweffect: *mut DROPEFFECT,
+        _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         let input = PlatformInput::FileDrop(crate::FileDropEvent::Submit {
             position: Point {
@@ -621,10 +601,12 @@ impl PlatformWindow for WindowsWindow {
         self.inner.scale_factor
     }
 
+    // todo("windows")
     fn titlebar_height(&self) -> Pixels {
         todo!()
     }
 
+    // todo("windows")
     fn appearance(&self) -> crate::WindowAppearance {
         crate::WindowAppearance::Light
     }
@@ -726,26 +708,36 @@ impl PlatformWindow for WindowsWindow {
         done_rx
     }
 
-    fn activate(&self) {}
+    fn activate(&self) {
+        unsafe {
+            let _ = SetActiveWindow(self.inner.window_handle.hwnd());
+        }
+    }
 
     fn set_title(&mut self, title: &str) {
         self.inner.window_handle.set_title(title);
     }
 
-    fn set_edited(&mut self, edited: bool) {}
+    // todo("windows")
+    fn set_edited(&mut self, _edited: bool) {}
 
+    // todo("windows")
     fn show_character_palette(&self) {
         todo!()
     }
 
     fn minimize(&self) {
-        // TODO:
+        unsafe {
+            ShowWindow(self.inner.window_handle.hwnd(), SW_MINIMIZE);
+        }
     }
 
+    // todo("windows")
     fn zoom(&self) {
         todo!()
     }
 
+    // todo("windows")
     fn toggle_full_screen(&self) {
         todo!()
     }
@@ -786,7 +778,8 @@ impl PlatformWindow for WindowsWindow {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn is_topmost_for_position(&self, position: crate::Point<Pixels>) -> bool {
+    // todo("windows")
+    fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
         todo!()
     }
 
