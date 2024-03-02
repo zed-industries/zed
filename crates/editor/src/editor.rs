@@ -3057,10 +3057,13 @@ impl Editor {
     fn select_autoclose_pair(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx).read(cx);
-        let mut new_selections = Vec::new();
-        for (mut selection, region) in self.selections_with_autoclose_regions(selections, &buffer) {
-            if selection.is_empty() {
-                let mut try_handle_autclosed_character = true;
+        let new_selections = self
+            .selections_with_autoclose_regions(selections, &buffer)
+            .map(|(mut selection, region)| {
+                if !selection.is_empty() {
+                    return selection;
+                }
+
                 if let Some(region) = region {
                     let mut range = region.range.to_offset(&buffer);
                     if selection.start == range.start {
@@ -3071,45 +3074,45 @@ impl Editor {
                                     range.end += region.pair.end.len();
                                     selection.start = range.start;
                                     selection.end = range.end;
-                                    try_handle_autclosed_character = false;
+
+                                    return selection;
                                 }
                             }
                         }
                     }
                 }
 
-                if try_handle_autclosed_character {
-                    let always_handle_autoclosed_character = self
-                        .always_handle_autoclosed_character
-                        && buffer
-                            .settings_at(selection.start, cx)
-                            .always_handle_autoclosed_character;
+                let always_handle_autoclosed_character = self.always_handle_autoclosed_character
+                    && buffer
+                        .settings_at(selection.start, cx)
+                        .always_handle_autoclosed_character;
 
-                    if always_handle_autoclosed_character {
-                        if let Some(scope) = buffer.language_scope_at(selection.start) {
-                            for (pair, enabled) in scope.brackets() {
-                                if !enabled || !pair.close {
-                                    continue;
-                                }
+                if !always_handle_autoclosed_character {
+                    return selection;
+                }
 
-                                if buffer.contains_str_at(selection.start, &pair.end) {
-                                    let pair_start_len = pair.start.len();
-                                    if buffer.contains_str_at(
-                                        selection.start - pair_start_len,
-                                        &pair.start,
-                                    ) {
-                                        selection.start -= pair_start_len;
-                                        selection.end += pair.end.len();
-                                    }
-                                }
+                if let Some(scope) = buffer.language_scope_at(selection.start) {
+                    for (pair, enabled) in scope.brackets() {
+                        if !enabled || !pair.close {
+                            continue;
+                        }
+
+                        if buffer.contains_str_at(selection.start, &pair.end) {
+                            let pair_start_len = pair.start.len();
+                            if buffer.contains_str_at(selection.start - pair_start_len, &pair.start)
+                            {
+                                selection.start -= pair_start_len;
+                                selection.end += pair.end.len();
+
+                                return selection;
                             }
                         }
                     }
                 }
-            }
 
-            new_selections.push(selection);
-        }
+                selection
+            })
+            .collect();
 
         drop(buffer);
         self.change_selections(None, cx, |selections| selections.select(new_selections));
