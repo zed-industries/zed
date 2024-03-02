@@ -637,7 +637,13 @@ impl Platform for WindowsPlatform {
 }
 
 impl WindowsWindowBase for WindowsPlatformInner {
-    unsafe fn handle_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe fn handle_message(
+        &self,
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         match message {
             MAIN_DISPATCH => {
                 if let Ok(runnable) = self.main_receiver.try_recv() {
@@ -663,7 +669,7 @@ impl WindowsWindowBase for WindowsPlatformInner {
                 }
                 LRESULT(0)
             }
-            _ => DefWindowProcW(self.dispatch_window_handle, message, wparam, lparam),
+            _ => DefWindowProcW(handle, message, wparam, lparam),
         }
     }
 }

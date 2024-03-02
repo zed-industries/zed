@@ -7,7 +7,7 @@ use util::ResultExt;
 use windows::{
     core::{implement, PCWSTR},
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM},
+        Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM},
         Graphics::Gdi::{
             MonitorFromWindow, RedrawWindow, ValidateRect, HRGN, MONITOR_DEFAULTTONEAREST,
             RDW_ERASENOW, RDW_INVALIDATE, RDW_UPDATENOW,
@@ -23,7 +23,7 @@ use windows::{
         UI::{
             Controls::{
                 TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
-                TD_INFORMATION_ICON, TD_WARNING_ICON,
+                TD_INFORMATION_ICON, TD_WARNING_ICON, WM_MOUSELEAVE,
             },
             HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
             Input::{
@@ -31,7 +31,7 @@ use windows::{
                     ImmGetContext, ImmReleaseContext, ImmSetCompositionWindow, CFS_POINT,
                     COMPOSITIONFORM,
                 },
-                KeyboardAndMouse::SetActiveWindow,
+                KeyboardAndMouse::{SetActiveWindow, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
@@ -51,13 +51,13 @@ use windows::{
 
 use crate::{
     available_monitors, encode_wide, hiword, log_windows_error, log_windows_error_with_message,
-    loword, parse_keyboard_input, parse_mouse_button, parse_mouse_hwheel, parse_mouse_movement,
-    parse_mouse_vwheel, parse_system_key, platform::cross_platform::BladeRenderer, set_windowdata,
-    Bounds, DisplayId, ForegroundExecutor, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, Size, WindowKind, WindowOptions,
-    WindowsWindowBase, WindowsWinodwDataWrapper, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH,
-    MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER, WINODW_EXTRA_EXSTYLE,
-    WINODW_REFRESH_INTERVAL, WINODW_STYLE,
+    loword, parse_keyboard_input, parse_mouse_button, parse_mouse_events_lparam,
+    parse_mouse_hwheel, parse_mouse_movement_wparam, parse_mouse_vwheel, parse_system_key,
+    platform::cross_platform::BladeRenderer, set_windowdata, Bounds, DisplayId, ForegroundExecutor,
+    Modifiers, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    Size, WindowKind, WindowOptions, WindowsWindowBase, WindowsWinodwDataWrapper,
+    DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH, MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER,
+    WINODW_EXTRA_EXSTYLE, WINODW_REFRESH_INTERVAL, WINODW_STYLE,
 };
 
 use super::{display::WindowsDisplay, WINDOW_CLASS};
@@ -163,15 +163,15 @@ impl WindowsWindow {
                 WINDOW_REFRESH_TIMER,
                 WINODW_REFRESH_INTERVAL,
                 TIMERPROC::None,
-            )
-        };
+            );
+        }
         let windows_dragdrop = unsafe {
             set_windowdata(raw_window_handle, WindowsWinodwDataWrapper(inner.clone()));
             let drop_target = WindowsDragDropTarget(inner.clone());
             let windows_dragdrop: IDropTarget = drop_target.into();
             RegisterDragDrop(raw_window_handle, &windows_dragdrop)
                 .inspect_err(log_windows_error)
-                .expect("Unable to register drawgrop op");
+                .expect("Unable to register drag-drop op");
             windows_dragdrop
         };
 
@@ -193,7 +193,6 @@ pub struct WindowsWindowinner {
     input_handler: RefCell<Option<PlatformInputHandler>>,
     pub renderer: RefCell<BladeRenderer>,
     pub modifiers: RefCell<Modifiers>,
-    mouse_position: RefCell<Point<Pixels>>,
 }
 
 #[implement(IDropTarget)]
@@ -222,7 +221,6 @@ impl WindowsWindowinner {
             scale_factor,
             renderer: RefCell::new(renderer),
             modifiers: RefCell::new(Modifiers::default()),
-            mouse_position: RefCell::new(Point::default()),
         })
     }
 
@@ -333,7 +331,13 @@ impl WindowsWindowinner {
 }
 
 impl WindowsWindowBase for WindowsWindowinner {
-    unsafe fn handle_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe fn handle_message(
+        &self,
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         match message {
             WM_TIMER => {
                 self.update();
@@ -341,8 +345,8 @@ impl WindowsWindowBase for WindowsWindowinner {
             }
             WM_PAINT => {
                 self.request_redraw();
-                ValidateRect(self.window_handle.hwnd(), None);
-                DefWindowProcW(self.window_handle.hwnd(), message, wparam, lparam)
+                ValidateRect(handle, None);
+                DefWindowProcW(handle, message, wparam, lparam)
             }
             WM_DESTROY => {
                 self.destroy();
@@ -355,7 +359,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 if let Some(func) = self.callbacks.borrow_mut().close.take() {
                     func();
                 }
-                let _ = KillTimer(self.window_handle.hwnd(), WINDOW_REFRESH_TIMER);
+                let _ = KillTimer(handle, WINDOW_REFRESH_TIMER);
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -384,30 +388,42 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let mut modifiers = self.modifiers.borrow().clone();
                 if let Some(key) = parse_system_key(message, wparam, lparam, &mut modifiers) {
                     self.handle_input(key);
+                    let mut old_state = self.modifiers.borrow_mut();
+                    if modifiers != *old_state {
+                        let input = PlatformInput::ModifiersChanged(crate::ModifiersChangedEvent {
+                            modifiers: modifiers.clone(),
+                        });
+                        self.handle_input(input);
+                        (*old_state) = modifiers;
+                    }
                     self.update_now();
                 }
-                (*self.modifiers.borrow_mut()) = modifiers;
                 LRESULT(0)
             }
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONUP
             | WM_MBUTTONUP | WM_XBUTTONDOWN | WM_XBUTTONUP | WM_LBUTTONDBLCLK
             | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK | WM_XBUTTONDBLCLK => {
-                let modifiers = self.modifiers.borrow();
-                let key = parse_mouse_button(message, wparam, lparam, &modifiers);
+                let modifiers = self.modifiers.borrow().clone();
+                let key = parse_mouse_button(message, wparam, lparam, modifiers);
                 self.handle_input(key);
                 self.update_now();
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
                 let modifiers = self.modifiers.borrow().clone();
-                let (new_pos, input) = parse_mouse_movement(wparam, lparam, modifiers);
-                *self.mouse_position.borrow_mut() = new_pos;
-                self.handle_input(input);
+                let pressed_button = parse_mouse_movement_wparam(wparam);
+                let new_position = parse_mouse_events_lparam(lparam);
+                let move_event = PlatformInput::MouseMove(crate::MouseMoveEvent {
+                    position: new_position.clone(),
+                    pressed_button,
+                    modifiers,
+                });
+                self.handle_input(move_event);
                 LRESULT(0)
             }
             WM_CHAR => {
-                let modifiers = self.modifiers.borrow();
-                let keycode = parse_keyboard_input(wparam, lparam, &*modifiers);
+                let modifiers = self.modifiers.borrow().clone();
+                let keycode = parse_keyboard_input(wparam, lparam, modifiers);
                 if let Some(key) = keycode {
                     self.handle_input(key);
                     self.update_now();
@@ -430,7 +446,7 @@ impl WindowsWindowBase for WindowsWindowinner {
             }
             WM_SIZE => {
                 if wparam.0 as u32 == SIZE_MINIMIZED {
-                    return DefWindowProcW(self.window_handle.hwnd(), message, wparam, lparam);
+                    return DefWindowProcW(handle, message, wparam, lparam);
                 }
                 let width = loword!(lparam.0, u16) as u32;
                 let height = hiword!(lparam.0, u16) as u32;
@@ -443,15 +459,17 @@ impl WindowsWindowBase for WindowsWindowinner {
                 let mut config = COMPOSITIONFORM::default();
                 config.dwStyle = CFS_POINT;
                 let mut cursor = std::mem::zeroed();
-                if let Err(ref e) = GetCursorPos(&mut cursor) {
-                    log_windows_error(e);
-                    cursor.x = self.mouse_position.borrow().x.0 as _;
-                    cursor.y = self.mouse_position.borrow().y.0 as _;
+                if GetCursorPos(&mut cursor)
+                    .inspect_err(log_windows_error)
+                    .is_err()
+                {
+                    cursor.x = 0;
+                    cursor.y = 0;
                 }
                 config.ptCurrentPos.x = cursor.x;
                 config.ptCurrentPos.y = cursor.y;
                 ImmSetCompositionWindow(ctx, &config as _);
-                ImmReleaseContext(self.window_handle.hwnd(), ctx);
+                ImmReleaseContext(handle, ctx);
                 self.update();
                 println!(
                     "Set composition pos: ({}, {})",
@@ -459,7 +477,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                 );
                 LRESULT(0)
             }
-            _ => DefWindowProcW(self.window_handle.hwnd(), message, wparam, lparam),
+            _ => DefWindowProcW(handle, message, wparam, lparam),
         }
     }
 }
@@ -615,8 +633,20 @@ impl PlatformWindow for WindowsWindow {
         Rc::clone(&self.display)
     }
 
-    fn mouse_position(&self) -> crate::Point<Pixels> {
-        self.inner.mouse_position.borrow().clone()
+    fn mouse_position(&self) -> Point<Pixels> {
+        unsafe {
+            let mut position = std::mem::zeroed();
+            if GetCursorPos(&mut position)
+                .inspect_err(log_windows_error)
+                .is_err()
+            {
+                return Point::default();
+            }
+            Point {
+                x: Pixels(position.x as _),
+                y: Pixels(position.y as _),
+            }
+        }
     }
 
     fn modifiers(&self) -> crate::Modifiers {

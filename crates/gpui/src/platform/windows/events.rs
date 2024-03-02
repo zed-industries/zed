@@ -1,16 +1,20 @@
-use std::rc::Rc;
+use std::{
+    rc::Rc,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::HBRUSH,
         UI::{
             Input::KeyboardAndMouse::{
-                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
-                VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9,
-                VK_HOME, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
-                VK_RWIN, VK_SHIFT, VK_UP,
+                GetAsyncKeyState, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VIRTUAL_KEY,
+                VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11,
+                VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_HOME,
+                VK_LBUTTON, VK_LEFT, VK_LWIN, VK_MBUTTON, VK_MENU, VK_NEXT, VK_PRIOR, VK_RBUTTON,
+                VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_UP,
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, RegisterClassExW, CS_DBLCLKS, CS_HREDRAW,
@@ -24,10 +28,11 @@ use windows::{
 };
 
 use crate::{
-    get_module_handle, get_windowdata, hiword, loword, KeyDownEvent, KeyUpEvent, Keystroke,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput,
-    Point, ScrollDelta, ScrollWheelEvent, TouchPhase, MOUSE_MOVE_BUTTONS, MOUSE_MOVE_LBUTTON,
-    MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON, MOUSE_MOVE_XBUTTON1, MOUSE_MOVE_XBUTTON2,
+    get_module_handle, get_windowdata, hiword, log_windows_error, loword, KeyDownEvent, KeyUpEvent,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    MOUSE_MOVE_BUTTONS, MOUSE_MOVE_LBUTTON, MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON,
+    MOUSE_MOVE_XBUTTON1, MOUSE_MOVE_XBUTTON2,
 };
 
 pub struct WindowsWinodwDataWrapper<T: WindowsWindowBase + Sized>(pub Rc<T>);
@@ -36,7 +41,13 @@ pub trait WindowsWindowBase
 where
     Self: Sized,
 {
-    unsafe fn handle_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT;
+    unsafe fn handle_message(
+        &self,
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT;
 
     extern "system" fn event_runner(
         handle: HWND,
@@ -50,7 +61,7 @@ where
                 return DefWindowProcW(handle, message, wparam, lparam);
             }
             let this = &*ptr;
-            this.0.handle_message(message, wparam, lparam)
+            this.0.handle_message(handle, message, wparam, lparam)
         }
     }
 
@@ -175,10 +186,10 @@ pub fn parse_system_key(
 pub fn parse_keyboard_input(
     wparam: WPARAM,
     lparam: LPARAM,
-    modifiers: &Modifiers,
+    modifiers: Modifiers,
 ) -> Option<PlatformInput> {
-    if wparam.0 == 8 || wparam.0 == 27 || wparam.0 == 13 || (lparam.0 >> 24) & 1 == 1 {
-        // backspace escape enter ctrl
+    if wparam.0 == 8 || wparam.0 == 27 || wparam.0 == 13 {
+        // backspace escape enter
         // these keys are handled by Zed
         return None;
     }
@@ -191,13 +202,14 @@ pub fn parse_keyboard_input(
     };
     println!("{} => {:?}", wparam.0, first_char);
     if first_char.is_control() {
+        // ctrl is handled by zed
         return None;
     }
     Some(PlatformInput::KeyDown(KeyDownEvent {
         keystroke: Keystroke {
             key: first_char.to_string(),
             ime_key: None,
-            modifiers: modifiers.clone(),
+            modifiers,
         },
         is_held: lparam.0 & (0x1 << 30) > 0,
     }))
@@ -207,109 +219,79 @@ pub fn parse_mouse_button(
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
-    modifiers: &Modifiers,
+    modifiers: Modifiers,
 ) -> PlatformInput {
+    let position = parse_mouse_events_lparam(lparam);
     match msg {
         WM_LBUTTONDOWN => PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Left,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 1,
         }),
+
         WM_LBUTTONDBLCLK => PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Left,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 2,
         }),
         WM_LBUTTONUP => PlatformInput::MouseUp(MouseUpEvent {
             button: MouseButton::Left,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 1,
         }),
         WM_RBUTTONDOWN => PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Right,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 1,
         }),
         WM_RBUTTONDBLCLK => PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Right,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 2,
         }),
         WM_RBUTTONUP => PlatformInput::MouseUp(MouseUpEvent {
             button: MouseButton::Right,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 1,
         }),
         WM_MBUTTONDOWN => PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Middle,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 1,
         }),
         WM_MBUTTONDBLCLK => PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Middle,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 2,
         }),
         WM_MBUTTONUP => PlatformInput::MouseUp(MouseUpEvent {
             button: MouseButton::Middle,
-            position: crate::Point {
-                x: crate::Pixels(loword!(lparam.0, i16) as _),
-                y: crate::Pixels(hiword!(lparam.0, i16) as _),
-            },
-            modifiers: modifiers.clone(),
+            position,
+            modifiers,
             click_count: 1,
         }),
+
         WM_XBUTTONDOWN => {
             if hiword!(wparam.0, u16) == XBUTTON1 {
                 PlatformInput::MouseDown(MouseDownEvent {
                     button: MouseButton::Navigate(crate::NavigationDirection::Forward),
-                    position: crate::Point {
-                        x: crate::Pixels(loword!(lparam.0, i16) as _),
-                        y: crate::Pixels(hiword!(lparam.0, i16) as _),
-                    },
-                    modifiers: modifiers.clone(),
+                    position,
+                    modifiers,
                     click_count: 1,
                 })
             } else {
                 PlatformInput::MouseDown(MouseDownEvent {
                     button: MouseButton::Navigate(crate::NavigationDirection::Back),
-                    position: crate::Point {
-                        x: crate::Pixels(loword!(lparam.0, i16) as _),
-                        y: crate::Pixels(hiword!(lparam.0, i16) as _),
-                    },
-                    modifiers: modifiers.clone(),
+                    position,
+                    modifiers,
                     click_count: 1,
                 })
             }
@@ -318,21 +300,15 @@ pub fn parse_mouse_button(
             if hiword!(wparam.0, u16) == XBUTTON1 {
                 PlatformInput::MouseDown(MouseDownEvent {
                     button: MouseButton::Navigate(crate::NavigationDirection::Forward),
-                    position: crate::Point {
-                        x: crate::Pixels(loword!(lparam.0, i16) as _),
-                        y: crate::Pixels(hiword!(lparam.0, i16) as _),
-                    },
-                    modifiers: modifiers.clone(),
+                    position,
+                    modifiers,
                     click_count: 2,
                 })
             } else {
                 PlatformInput::MouseDown(MouseDownEvent {
                     button: MouseButton::Navigate(crate::NavigationDirection::Back),
-                    position: crate::Point {
-                        x: crate::Pixels(loword!(lparam.0, i16) as _),
-                        y: crate::Pixels(hiword!(lparam.0, i16) as _),
-                    },
-                    modifiers: modifiers.clone(),
+                    position,
+                    modifiers,
                     click_count: 2,
                 })
             }
@@ -341,21 +317,15 @@ pub fn parse_mouse_button(
             if hiword!(wparam.0, u16) == XBUTTON1 {
                 PlatformInput::MouseUp(MouseUpEvent {
                     button: MouseButton::Navigate(crate::NavigationDirection::Forward),
-                    position: crate::Point {
-                        x: crate::Pixels(loword!(lparam.0, i16) as _),
-                        y: crate::Pixels(hiword!(lparam.0, i16) as _),
-                    },
-                    modifiers: modifiers.clone(),
+                    position,
+                    modifiers,
                     click_count: 1,
                 })
             } else {
                 PlatformInput::MouseUp(MouseUpEvent {
                     button: MouseButton::Navigate(crate::NavigationDirection::Back),
-                    position: crate::Point {
-                        x: crate::Pixels(loword!(lparam.0, i16) as _),
-                        y: crate::Pixels(hiword!(lparam.0, i16) as _),
-                    },
-                    modifiers: modifiers.clone(),
+                    position,
+                    modifiers,
                     click_count: 1,
                 })
             }
@@ -364,15 +334,30 @@ pub fn parse_mouse_button(
     }
 }
 
-pub fn parse_mouse_movement(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    modifiers: Modifiers,
-) -> (Point<Pixels>, PlatformInput) {
-    let new_pos = Point {
+// #[inline]
+// pub unsafe fn query_mouse_button_state() -> Option<MouseButton> {
+//     if GetAsyncKeyState(VK_LBUTTON.0 as _) & 1 > 0 {
+//         return Some(MouseButton::Left);
+//     }
+//     if GetAsyncKeyState(VK_RBUTTON.0 as _) & 1 > 0 {
+//         return Some(MouseButton::Right);
+//     }
+//     if GetAsyncKeyState(VK_MBUTTON.0 as _) & 1 > 0 {
+//         return Some(MouseButton::Middle);
+//     }
+//     None
+// }
+
+#[inline]
+pub fn parse_mouse_events_lparam(lparam: LPARAM) -> Point<Pixels> {
+    Point {
         x: Pixels(loword!(lparam.0, i16) as _),
         y: Pixels(hiword!(lparam.0, i16) as _),
-    };
+    }
+}
+
+#[inline]
+pub fn parse_mouse_movement_wparam(wparam: WPARAM) -> Option<MouseButton> {
     let mut pressed_button = None;
     for button_mask in MOUSE_MOVE_BUTTONS {
         if wparam.0 & button_mask > 0 {
@@ -380,23 +365,14 @@ pub fn parse_mouse_movement(
             break;
         }
     }
-    let input = PlatformInput::MouseMove(MouseMoveEvent {
-        position: new_pos.clone(),
-        pressed_button,
-        modifiers,
-    });
-
-    (new_pos, input)
+    pressed_button
 }
 
 pub fn parse_mouse_vwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) -> PlatformInput {
-    let position = Point {
-        x: Pixels(loword!(lparam.0, i16) as _),
-        y: Pixels(hiword!(lparam.0, i16) as _),
-    };
     let lines = hiword!(wparam.0, i16);
+
     PlatformInput::ScrollWheel(ScrollWheelEvent {
-        position,
+        position: parse_mouse_events_lparam(lparam),
         delta: ScrollDelta::Lines(Point {
             x: 0.0,
             y: lines as f32 / 120.0,
@@ -407,13 +383,10 @@ pub fn parse_mouse_vwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) 
 }
 
 pub fn parse_mouse_hwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) -> PlatformInput {
-    let position = Point {
-        x: Pixels(loword!(lparam.0, i16) as _),
-        y: Pixels(hiword!(lparam.0, i16) as _),
-    };
     let lines = hiword!(wparam.0, i16);
+
     PlatformInput::ScrollWheel(ScrollWheelEvent {
-        position,
+        position: parse_mouse_events_lparam(lparam),
         delta: ScrollDelta::Lines(Point {
             x: lines as f32 / 120.0,
             y: 0.0,
@@ -422,6 +395,17 @@ pub fn parse_mouse_hwheel(wparam: WPARAM, lparam: LPARAM, modifiers: Modifiers) 
         touch_phase: TouchPhase::default(),
     })
 }
+
+// pub unsafe fn enable_tracking_mouse_leave_event(handle: HWND) {
+//     let mut config = TRACKMOUSEEVENT {
+//         cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as _,
+//         dwFlags: TME_LEAVE,
+//         hwndTrack: handle,
+//         dwHoverTime: 0,
+//     };
+//     // Zed should run without mouse-leave event emitting
+//     let _ = TrackMouseEvent(&mut config as _).inspect_err(log_windows_error);
+// }
 
 fn buttonmask_to_button(mask: usize) -> Option<MouseButton> {
     match mask {
