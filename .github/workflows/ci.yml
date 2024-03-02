@@ -93,8 +93,7 @@ jobs:
           fi
 
       - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -126,8 +125,7 @@ jobs:
         run: script/linux
 
       - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
       - name: Build Zed
         run: cargo build -p zed
@@ -149,8 +147,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
       - name: Build Zed
         run: cargo build -p zed
