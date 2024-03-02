@@ -1685,7 +1685,7 @@ impl Interactivity {
                         // propagation.
                         DispatchPhase::Capture => {
                             let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                            if pending_mouse_down.is_some() {
+                            if pending_mouse_down.is_some() && hitbox_id.is_hovered(cx) {
                                 captured_mouse_down = pending_mouse_down.take();
                                 cx.refresh();
                             }
@@ -1693,14 +1693,12 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                if hitbox_id.is_hovered(cx) {
-                                    let mouse_click = ClickEvent {
-                                        down: mouse_down,
-                                        up: event.clone(),
-                                    };
-                                    for listener in &click_listeners {
-                                        listener(&mouse_click, cx);
-                                    }
+                                let mouse_click = ClickEvent {
+                                    down: mouse_down,
+                                    up: event.clone(),
+                                };
+                                for listener in &click_listeners {
+                                    listener(&mouse_click, cx);
                                 }
                             }
                         }

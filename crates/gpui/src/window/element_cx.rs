@@ -110,7 +110,7 @@ pub(crate) struct AfterLayoutIndex {
     tooltips_index: usize,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
@@ -376,49 +376,6 @@ impl<'a> ElementContext<'a> {
 
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
 
-        // let moused_hitbox = self.moused_hitbox();
-        // let hitbox_count = self.window.next_frame.hitboxes.len();
-        // for (hitbox_ix, hitbox) in self
-        //     .window
-        //     .next_frame
-        //     .hitboxes
-        //     .iter()
-        //     .cloned()
-        //     .enumerate()
-        //     .collect::<Vec<_>>()
-        // {
-        //     // let synthwave_colors = [
-        //     //     crate::hsla(327.0, 100.0, 50.0, 1.0), // Hot pink
-        //     //     crate::hsla(213.0, 100.0, 50.0, 1.0), // Neon blue
-        //     //     crate::hsla(261.0, 51.0, 49.0, 1.0),  // Purple
-        //     //     crate::hsla(291.0, 63.0, 68.0, 1.0),  // Magenta
-        //     //     crate::hsla(192.0, 100.0, 50.0, 1.0), // Cyan
-        //     //     crate::hsla(348.0, 95.0, 68.0, 1.0),  // Red
-        //     //     crate::hsla(141.0, 75.0, 60.0, 1.0),  // Bright green
-        //     // ];
-
-        //     // for (i, &color) in synthwave_colors.iter().enumerate() {
-        //     //     let hitbox_color = if Some(hitbox.id) == moused_hitbox {
-        //     //         color.with_alpha(0.5) // If moused over, make the color more transparent
-        //     //     } else {
-        //     //         color
-        //     //     };
-        //     //     self.paint_quad(crate::fill(hitbox.bounds.clone(), hitbox_color));
-        //     // }
-
-        //     let color = if Some(&hitbox) == moused_hitbox.as_ref() {
-        //         crate::hsla(141.0, 75.0, 60.0, 1.0)
-        //     } else {
-        //         crate::hsla(
-        //             0.7 + hitbox_ix as f32 / hitbox_count as f32 * 0.3,
-        //             0.5, // Saturation at 50%
-        //             0.5 + hitbox_ix as f32 / hitbox_count as f32 * 0.1,
-        //             0.2, // Alpha at 50% for transparency
-        //         )
-        //     };
-        //     self.paint_quad(crate::fill(hitbox.bounds.clone(), color));
-        // }
-
         // Now actually paint the elements.
         self.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
             // We need to use cx.cx here so we can utilize borrow splitting
@@ -459,6 +416,7 @@ impl<'a> ElementContext<'a> {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        let parent_view_id = self.parent_view_id();
         let window = &mut self.cx.window;
 
         window.next_frame.cursor_styles.extend(
@@ -483,7 +441,7 @@ impl<'a> ElementContext<'a> {
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut window.rendered_frame.dispatch_tree,
         );
-        for view_id in grafted_view_ids {
+        for view_id in [parent_view_id].into_iter().chain(grafted_view_ids) {
             assert!(self.window.next_frame.reused_views.insert(view_id));
 
             // Reuse the previous input handler requested during painting of the reused view.
