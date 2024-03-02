@@ -833,7 +833,8 @@ impl RawWindow {
     pub fn set_title(&self, title: &str) {
         let title_vec = encode_wide(title);
         unsafe {
-            SetWindowTextW(self.hwnd(), PCWSTR::from_raw(title_vec.as_ptr())).log_err();
+            let _ = SetWindowTextW(self.hwnd(), PCWSTR::from_raw(title_vec.as_ptr()))
+                .inspect_err(log_windows_error);
         }
     }
 
