@@ -1892,8 +1892,7 @@ impl Editor {
 
             if let Some(completion_menu) = completion_menu {
                 let cursor_position = new_cursor_position.to_offset(buffer);
-                let (word_range, kind) =
-                    buffer.surrounding_word(completion_menu.initial_position);
+                let (word_range, kind) = buffer.surrounding_word(completion_menu.initial_position);
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
@@ -3252,15 +3251,12 @@ impl Editor {
         };
 
         let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position, cx)
-        {
-            output
-        } else {
-            return;
-        };
+        let (buffer, buffer_position) =
+            if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
+                output
+            } else {
+                return;
+            };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
         let completions = provider.completions(&buffer, buffer_position, cx);
@@ -7447,10 +7443,8 @@ impl Editor {
 
     pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
         let position = self.selections.newest_anchor().head();
-        let Some((buffer, buffer_position)) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position, cx)
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
         else {
             return;
         };
