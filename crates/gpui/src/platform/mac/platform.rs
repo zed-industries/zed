@@ -500,7 +500,7 @@ impl Platform for MacPlatform {
             handle,
             options,
             self.foreground_executor(),
-            self.0.lock().renderer_context,
+            self.0.lock().renderer_context.clone(),
         ))
     }
 
