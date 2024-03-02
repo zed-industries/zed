@@ -26,6 +26,14 @@ fn main() -> Result<()> {
 
 #[derive(Parser)]
 struct ClippyArgs {
+    /// Automatically apply lint suggestions (`clippy --fix`).
+    #[arg(long)]
+    fix: bool,
+
+    /// The package to run Clippy against (`cargo -p <PACKAGE> clippy`).
+    #[arg(long, short)]
+    package: Option<String>,
+
     /// Whether to deny warnings (`clippy --deny warnings`).
     #[arg(long)]
     deny_warnings: bool,
@@ -35,12 +43,22 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
     let mut clippy_command = Command::new(&cargo);
+    clippy_command.arg("clippy");
+
+    if let Some(package) = args.package {
+        clippy_command.args(["--package", &package]);
+    } else {
+        clippy_command.arg("--workspace");
+    }
+
     clippy_command
-        .arg("clippy")
-        .arg("--workspace")
         .arg("--release")
         .arg("--all-targets")
         .arg("--all-features");
+
+    if args.fix {
+        clippy_command.arg("--fix");
+    }
 
     clippy_command.arg("--");
 
@@ -48,9 +66,46 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         clippy_command.args(["--deny", "warnings"]);
     }
 
+    const MIGRATORY_LINTS_TO_ALLOW: &[&str] = &[
+        // There's a bunch of rules currently failing in the `style` group, so
+        // allow all of those, for now.
+        "clippy::style",
+        // Individual rules that have violations in the codebase:
+        "clippy::almost_complete_range",
+        "clippy::arc_with_non_send_sync",
+        "clippy::bool_comparison",
+        "clippy::borrowed_box",
+        "clippy::cast_abs_to_unsigned",
+        "clippy::clone_on_copy",
+        "clippy::eq_op",
+        "clippy::explicit_auto_deref",
+        "clippy::extra_unused_lifetimes",
+        "clippy::iter_overeager_cloned",
+        "clippy::map_entry",
+        "clippy::map_identity",
+        "clippy::needless_lifetimes",
+        "clippy::non_canonical_clone_impl",
+        "clippy::option_map_unit_fn",
+        "clippy::redundant_locals",
+        "clippy::reversed_empty_ranges",
+        "clippy::search_is_some",
+        "clippy::single_char_pattern",
+        "clippy::single_range_in_vec_init",
+        "clippy::too_many_arguments",
+        "clippy::type_complexity",
+        "clippy::unit_arg",
+        "clippy::unnecessary_cast",
+        "clippy::unnecessary_unwrap",
+        "clippy::useless_conversion",
+    ];
+
+    for rule in MIGRATORY_LINTS_TO_ALLOW {
+        clippy_command.args(["--allow", rule]);
+    }
+
     // Allow all Clippy lints by default, as we have a lot of violations at the moment.
     // We can tighten things up once we have a better handle on them.
-    clippy_command.args(["--allow", "clippy::all"]);
+    // clippy_command.args(["--allow", "clippy::all"]);
 
     // Deny `dbg!` and `todo!`s.
     clippy_command
@@ -61,7 +116,7 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "running: {cargo} {}",
         clippy_command
             .get_args()
-            .map(|arg| format!("{}", arg.to_str().unwrap()))
+            .map(|arg| arg.to_str().unwrap())
             .collect::<Vec<_>>()
             .join(" ")
     );
