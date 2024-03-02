@@ -1018,7 +1018,7 @@ fn to_highlighted_range_lines(
             line_start = unclamped_start.column.0;
         }
         if line == clamped_end_line {
-            line_end = unclamped_end.column.0 + 1; //+1 for inclusive
+            line_end = unclamped_end.column.0 + 1; // +1 for inclusive
         }
 
         highlighted_range_lines.push(HighlightedRangeLine {

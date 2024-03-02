@@ -1576,9 +1576,9 @@ mod tests {
 
     #[test]
     fn test_rgb_for_index() {
-        //Test every possible value in the color cube
+        // Test every possible value in the color cube.
         for i in 16..=231 {
-            let (r, g, b) = rgb_for_index(&{ i });
+            let (r, g, b) = rgb_for_index(&i);
             assert_eq!(i, 16 + 36 * r + 6 * g + b);
         }
     }
