@@ -431,7 +431,7 @@ impl Telemetry {
                             json_bytes.clear();
                             serde_json::to_writer(&mut json_bytes, event)?;
                             file.write_all(&json_bytes)?;
-                            file.write(b"\n")?;
+                            file.write_all(b"\n")?;
                         }
                     }
 

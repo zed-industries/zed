@@ -427,8 +427,6 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut AppContext,
     ) -> Arc<Self> {
-        
-
         Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
@@ -573,17 +571,18 @@ impl Client {
         let mut state = self.state.write();
         if state.entities_by_type_and_remote_id.contains_key(&id) {
             return Err(anyhow!("already subscribed to entity"));
-        } else {
-            state
-                .entities_by_type_and_remote_id
-                .insert(id, WeakSubscriber::Pending(Default::default()));
-            Ok(PendingEntitySubscription {
-                client: self.clone(),
-                remote_id,
-                consumed: false,
-                _entity_type: PhantomData,
-            })
         }
+
+        state
+            .entities_by_type_and_remote_id
+            .insert(id, WeakSubscriber::Pending(Default::default()));
+
+        Ok(PendingEntitySubscription {
+            client: self.clone(),
+            remote_id,
+            consumed: false,
+            _entity_type: PhantomData,
+        })
     }
 
     #[track_caller]
