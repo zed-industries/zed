@@ -105,7 +105,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::manual_flatten",
         "clippy::map_entry",
         "clippy::map_flatten",
-        "clippy::map_identity",
         "clippy::needless_arbitrary_self_type",
         "clippy::needless_borrowed_reference",
         "clippy::needless_lifetimes",
