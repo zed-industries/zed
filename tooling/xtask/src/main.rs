@@ -99,8 +99,10 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::useless_conversion",
     ];
 
-    for rule in MIGRATORY_LINTS_TO_ALLOW {
-        clippy_command.args(["--allow", rule]);
+    if !args.fix {
+        for rule in MIGRATORY_LINTS_TO_ALLOW {
+            clippy_command.args(["--allow", rule]);
+        }
     }
 
     // Allow all Clippy lints by default, as we have a lot of violations at the moment.
