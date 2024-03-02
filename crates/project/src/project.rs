@@ -3201,7 +3201,6 @@ impl Project {
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
 
-        // Log LSP messages under experimental/serverStatus and display pop-up for errors
         language_server
             .on_notification::<ServerStatus, _>({
                 let this = this.clone();
@@ -3209,38 +3208,38 @@ impl Project {
                 move |params, mut cx| {
                     let this = this.clone();
                     let name = name.to_string();
-                    match params.health {
-                        ServerHealthStatus::Ok => log::info!("Health: Ok"),
-                        ServerHealthStatus::Warning => log::warn!(
-                            "Health: Warning.\nMessage: {}",
-                            params.message.unwrap_or_default()
-                        ),
-                        ServerHealthStatus::Error => {
-                            log::error!(
-                                "Health: Error.\nMessage: {}",
-                                params.message.clone().unwrap_or_default()
+                    if let Some(message) = params.message {
+                        message = message.trim().to_string();
+                        if !message.is_empty() {
+                            let formatted_message = format!(
+                                "Language server {name} (id {server_id}) status update: {message}"
                             );
-                            let (tx, _rx) = smol::channel::bounded(1);
-                            let request = LanguageServerPromptRequest {
-                                level: match params.health {
-                                    ServerHealthStatus::Error => PromptLevel::Critical,
-                                    ServerHealthStatus::Warning => PromptLevel::Warning,
-                                    ServerHealthStatus::Ok => PromptLevel::Info,
-                                    ServerHealthStatus::Other(_) => PromptLevel::Info,
-                                },
-                                message: params.message.unwrap_or_default(),
-                                actions: Vec::new(),
-                                response_channel: tx,
-                                lsp_name: name.clone(),
-                            };
-
-                            let _ = this
-                                .update(&mut cx, |_, cx| {
-                                    cx.emit(Event::LanguageServerPrompt(request));
-                                })
-                                .ok();
+                            match params.health {
+                                ServerHealthStatus::Ok => log::info!("{}", formatted_message),
+                                ServerHealthStatus::Warning => log::warn!("{}", formatted_message),
+                                ServerHealthStatus::Error => {
+                                    log::error!("{}", formatted_message);
+                                    let (tx, _rx) = smol::channel::bounded(1);
+                                    let request = LanguageServerPromptRequest {
+                                        level: PromptLevel::Critical,
+                                        message: params.message.unwrap_or_default(),
+                                        actions: Vec::new(),
+                                        response_channel: tx,
+                                        lsp_name: name.clone(),
+                                    };
+                                    let _ = this
+                                        .update(&mut cx, |_, cx| {
+                                            cx.emit(Event::LanguageServerPrompt(request));
+                                        })
+                                        .ok();
+                                }
+                                ServerHealthStatus::Other(status) => {
+                                    log::info!(
+                                        "Unknown server health: {status}\n{formatted_message}"
+                                    )
+                                }
+                            }
                         }
-                        ServerHealthStatus::Other(status) => log::info!("Health: {}", status),
                     }
                 }
             })
