@@ -376,10 +376,10 @@ impl Fs for RealFs {
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
-        LibGitRepository::open(&dotgit_path)
+        LibGitRepository::open(dotgit_path)
             .log_err()
-            .and_then::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
-                Some(Arc::new(Mutex::new(libgit_repository)))
+            .map::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
+                Arc::new(Mutex::new(libgit_repository))
             })
     }
 
@@ -474,15 +474,15 @@ enum FakeFsEntry {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFsState {
-    fn read_path<'a>(&'a self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
+    fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
             .try_read_path(target, true)
             .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
             .0)
     }
 
-    fn try_read_path<'a>(
-        &'a self,
+    fn try_read_path(
+        &self,
         target: &Path,
         follow_symlink: bool,
     ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
@@ -625,7 +625,7 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event(&[path]);
+        state.emit_event([path]);
     }
 
     fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
@@ -651,7 +651,7 @@ impl FakeFs {
             }
             Ok(())
         })?;
-        state.emit_event(&[path]);
+        state.emit_event([path]);
         Ok(())
     }
 
@@ -785,7 +785,7 @@ impl FakeFs {
             state.worktree_statuses.extend(
                 statuses
                     .iter()
-                    .map(|(path, content)| ((**path).into(), content.clone())),
+                    .map(|(path, content)| ((**path).into(), *content)),
             );
         });
         self.state.lock().emit_event(
@@ -805,7 +805,7 @@ impl FakeFs {
             state.worktree_statuses.extend(
                 statuses
                     .iter()
-                    .map(|(path, content)| ((**path).into(), content.clone())),
+                    .map(|(path, content)| ((**path).into(), *content)),
             );
         });
     }
@@ -990,7 +990,7 @@ impl Fs for FakeFs {
             }
             Ok(())
         })?;
-        state.emit_event(&[path]);
+        state.emit_event([path]);
         Ok(())
     }
 
