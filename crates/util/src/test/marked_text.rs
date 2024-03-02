@@ -131,9 +131,9 @@ pub fn marked_text_ranges(
                 if current_range_start.is_some() {
                     if current_range_cursor.is_some() {
                         panic!("duplicate point marker 'ˇ' at index {marked_ix}");
-                    } else {
-                        current_range_cursor = Some(unmarked_len);
                     }
+
+                    current_range_cursor = Some(unmarked_len);
                 } else {
                     ranges.push(unmarked_len..unmarked_len);
                 }
@@ -252,6 +252,7 @@ impl From<(char, char)> for TextRangeMarker {
 mod tests {
     use super::{generate_marked_text, marked_text_ranges};
 
+    #[allow(clippy::reversed_empty_ranges)]
     #[test]
     fn test_marked_text() {
         let (text, ranges) = marked_text_ranges("one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six", true);
