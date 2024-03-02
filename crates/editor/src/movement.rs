@@ -841,7 +841,7 @@ mod tests {
                 surrounding_word(&snapshot, display_points[1]),
                 display_points[0]..display_points[2],
                 "{}",
-                marked_text.to_string()
+                marked_text
             );
         }
 

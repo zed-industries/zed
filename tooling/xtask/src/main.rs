@@ -124,7 +124,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::search_is_some",
         "clippy::single_range_in_vec_init",
         "clippy::suspicious_to_owned",
-        "clippy::to_string_in_format_args",
         "clippy::too_many_arguments",
         "clippy::type_complexity",
         "clippy::unit_arg",
