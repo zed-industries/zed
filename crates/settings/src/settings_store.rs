@@ -126,16 +126,15 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
 }
 
+type TabSizeCallback = Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>;
+
 /// A set of strongly-typed setting values defined via multiple JSON files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
-    tab_size_callback: Option<(
-        TypeId,
-        Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
-    )>,
+    tab_size_callback: Option<(TypeId, TabSizeCallback)>,
 }
 
 impl Global for SettingsStore {}

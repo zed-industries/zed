@@ -6,4 +6,14 @@ set -euxo pipefail
 # so specify those here, and disable the rest until Zed's workspace
 # will have more fixes & suppression for the standard lint set
 cargo clippy --release --workspace --all-features --all-targets -- --allow clippy::all --deny clippy::dbg_macro --deny clippy::todo
-cargo clippy --package gpui -- --deny warnings
+
+# Deny warnings in individual packages that we've passed over, to prevent warnings
+# from slipping back in.
+#
+# Once all packages have no more Clippy warnings we can promote `--deny warnings` to
+# the entire workspace.
+cargo clippy --package fs -- --deny warnings --no-deps
+cargo clippy --package fuzzy -- --deny warnings --no-deps
+cargo clippy --package gpui -- --deny warnings --no-deps
+cargo clippy --package settings -- --deny warnings --no-deps
+cargo clippy --package theme -- --deny warnings --no-deps
