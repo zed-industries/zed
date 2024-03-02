@@ -994,13 +994,14 @@ impl CompletionsMenu {
                             .with_highlights(&style.text, highlights);
 
                         let font_size = style.text.font_size.to_pixels(cx.rem_size());
+
                         let max_len = px(510.);
                         if let Ok(layout_line) = completion_label.line_layout(font_size, cx) {
                             if layout_line.width > max_len {
                                 if let Ok(ellipsis_width) = cx.text_system().layout_line(
-                                    "…",
+                                    "...",
                                     font_size,
-                                    &[style.text.to_run("…".len())],
+                                    &[style.text.to_run("...".len())],
                                 ) {
                                     let width_of_first_part =
                                         layout_line.x_for_index(completion.label.filter_range.end);
@@ -1026,7 +1027,7 @@ impl CompletionsMenu {
                                                     .chars()
                                                     .take(index)
                                                     .collect::<String>()
-                                                    + "…",
+                                                    + "...",
                                             );
                                         }
                                     } else {
@@ -1034,15 +1035,42 @@ impl CompletionsMenu {
                                         if let Some(index) = layout_line.index_for_x(
                                             max_width_of_first_part - ellipsis_width.width,
                                         ) {
-                                            completion_label = completion_label.with_text(
-                                                completion
-                                                    .label
-                                                    .text
-                                                    .chars()
-                                                    .take(index)
-                                                    .collect::<String>()
-                                                    + "…",
-                                            );
+                                            let entire_raw_label = completion.label.text.clone();
+
+                                            let second_part_text = &completion.label.text.as_str()
+                                                [completion.label.filter_range.end..];
+
+                                            let combined_text = completion
+                                                .label
+                                                .text
+                                                .chars()
+                                                .take(index)
+                                                .collect::<String>()
+                                                + "..."
+                                                + second_part_text;
+                                            completion_label =
+                                                completion_label.with_text(combined_text.clone());
+                                            if let Ok(layout_line) =
+                                                completion_label.line_layout(font_size, cx)
+                                            {
+                                                println!("Combined Len: {}", combined_text.len());
+                                                let combined_width =
+                                                    layout_line.x_for_index(combined_text.len());
+                                                if combined_width > px(max_width) {
+                                                    if let Some(index) = layout_line.index_for_x(
+                                                        px(max_width) - ellipsis_width.width,
+                                                    ) {
+                                                        completion_label = completion_label
+                                                            .with_text(
+                                                                combined_text
+                                                                    .chars()
+                                                                    .take(index)
+                                                                    .collect::<String>()
+                                                                    + "...",
+                                                            );
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         let highlights =
