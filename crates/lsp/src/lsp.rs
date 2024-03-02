@@ -616,11 +616,11 @@ impl LanguageServer {
                 uri: root_uri,
                 name: Default::default(),
             }]),
-            client_info: Some(ClientInfo {
-                name: release_channel::ReleaseChannel::global(cx)
-                    .display_name()
-                    .to_string(),
-                version: Some(release_channel::AppVersion::global(cx).to_string()),
+            client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
+                ClientInfo {
+                    name: release_channel.display_name().to_string(),
+                    version: Some(release_channel::AppVersion::global(cx).to_string()),
+                }
             }),
             locale: None,
         };
@@ -1055,6 +1055,7 @@ impl Drop for Subscription {
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub struct FakeLanguageServer {
+    pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
     notifications_rx: channel::Receiver<(String, String)>,
 }
@@ -1063,6 +1064,7 @@ pub struct FakeLanguageServer {
 impl FakeLanguageServer {
     /// Construct a fake language server.
     pub fn new(
+        binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
         cx: AsyncAppContext,
@@ -1084,6 +1086,7 @@ impl FakeLanguageServer {
             |_| {},
         );
         let fake = FakeLanguageServer {
+            binary,
             server: Arc::new(LanguageServer::new_internal(
                 LanguageServerId(0),
                 stdout_writer,
@@ -1302,8 +1305,16 @@ mod tests {
         cx.update(|cx| {
             release_channel::init("0.0.0", cx);
         });
-        let (server, mut fake) =
-            FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
+        let (server, mut fake) = FakeLanguageServer::new(
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            cx.to_async(),
+        );
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();

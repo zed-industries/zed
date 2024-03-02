@@ -18,10 +18,6 @@ impl LspAdapter for OCamlLspAdapter {
         LanguageServerName("ocamllsp".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "ocaml"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

@@ -11,7 +11,7 @@
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
-//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides it's behaviour.
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
 pub mod actions;
 mod blink_manager;
 pub mod display_map;
@@ -8707,6 +8707,12 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
+        EditorSettings::override_global(editor_settings, cx);
+    }
+
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
         cx.notify();
@@ -8759,7 +8765,7 @@ impl Editor {
         let mut cwd = worktree.read(cx).abs_path().to_path_buf();
         cwd.push(".git");
 
-        const REMOTE_NAME: &'static str = "origin";
+        const REMOTE_NAME: &str = "origin";
         let repo = project
             .fs()
             .open_repo(&cwd)

@@ -490,9 +490,7 @@ mod test {
 
         assert_eq!(fs.load(&path).await.unwrap(), "@\n");
 
-        fs.as_fake()
-            .write_file_internal(path, "oops\n".to_string())
-            .unwrap();
+        fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
 
         // conflict!
         cx.simulate_keystrokes(["i", "@", "escape"]);

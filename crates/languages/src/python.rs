@@ -12,7 +12,7 @@ use std::{
 };
 use util::ResultExt;
 
-const SERVER_PATH: &'static str = "node_modules/pyright/langserver.index.js";
+const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -32,10 +32,6 @@ impl PythonLspAdapter {
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "pyright"
     }
 
     async fn fetch_latest_server_version(
@@ -188,7 +184,7 @@ mod tests {
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::language("python", tree_sitter_python::language(), None).await;
+        let language = crate::language("python", tree_sitter_python::language());
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);

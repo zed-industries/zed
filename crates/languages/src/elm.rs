@@ -17,8 +17,8 @@ use std::{
 };
 use util::ResultExt;
 
-const SERVER_NAME: &'static str = "elm-language-server";
-const SERVER_PATH: &'static str = "node_modules/@elm-tooling/elm-language-server/out/node/index.js";
+const SERVER_NAME: &str = "elm-language-server";
+const SERVER_PATH: &str = "node_modules/@elm-tooling/elm-language-server/out/node/index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -38,10 +38,6 @@ impl ElmLspAdapter {
 impl LspAdapter for ElmLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(SERVER_NAME.into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "elmLS"
     }
 
     async fn fetch_latest_server_version(

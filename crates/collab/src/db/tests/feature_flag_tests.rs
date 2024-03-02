@@ -37,8 +37,8 @@ async fn test_get_user_flags(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    const CHANNELS_ALPHA: &'static str = "channels-alpha";
-    const NEW_SEARCH: &'static str = "new-search";
+    const CHANNELS_ALPHA: &str = "channels-alpha";
+    const NEW_SEARCH: &str = "new-search";
 
     let channels_flag = db.create_user_flag(CHANNELS_ALPHA).await.unwrap();
     let search_flag = db.create_user_flag(NEW_SEARCH).await.unwrap();

@@ -14,7 +14,7 @@ use std::{
 };
 use util::ResultExt;
 
-const SERVER_PATH: &'static str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
+const SERVER_PATH: &str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -34,10 +34,6 @@ impl AstroLspAdapter {
 impl LspAdapter for AstroLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("astro-language-server".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "astro"
     }
 
     async fn fetch_latest_server_version(

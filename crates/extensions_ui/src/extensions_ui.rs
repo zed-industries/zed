@@ -1,6 +1,6 @@
 use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::{Extension, ExtensionStatus, ExtensionStore};
+use extension::{ExtensionApiResponse, ExtensionStatus, ExtensionStore};
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
     FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
@@ -42,7 +42,7 @@ pub struct ExtensionsPage {
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
     filter: ExtensionFilter,
-    extension_entries: Vec<Extension>,
+    extension_entries: Vec<ExtensionApiResponse>,
     query_editor: View<Editor>,
     query_contains_error: bool,
     _subscription: gpui::Subscription,
@@ -78,7 +78,7 @@ impl ExtensionsPage {
         })
     }
 
-    fn filtered_extension_entries(&self, cx: &mut ViewContext<Self>) -> Vec<Extension> {
+    fn filtered_extension_entries(&self, cx: &mut ViewContext<Self>) -> Vec<ExtensionApiResponse> {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         self.extension_entries
@@ -154,7 +154,7 @@ impl ExtensionsPage {
             .collect()
     }
 
-    fn render_entry(&self, extension: &Extension, cx: &mut ViewContext<Self>) -> Div {
+    fn render_entry(&self, extension: &ExtensionApiResponse, cx: &mut ViewContext<Self>) -> Div {
         let status = ExtensionStore::global(cx)
             .read(cx)
             .extension_status(&extension.id);

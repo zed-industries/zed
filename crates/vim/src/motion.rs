@@ -492,9 +492,10 @@ impl Motion {
                 start_of_line(map, *display_lines, point),
                 SelectionGoal::None,
             ),
-            EndOfLine { display_lines } => {
-                (end_of_line(map, *display_lines, point), SelectionGoal::None)
-            }
+            EndOfLine { display_lines } => (
+                end_of_line(map, *display_lines, point, times),
+                SelectionGoal::None,
+            ),
             StartOfParagraph => (
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
@@ -949,8 +950,12 @@ pub(crate) fn start_of_line(
 pub(crate) fn end_of_line(
     map: &DisplaySnapshot,
     display_lines: bool,
-    point: DisplayPoint,
+    mut point: DisplayPoint,
+    times: usize,
 ) -> DisplayPoint {
+    if times > 1 {
+        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+    }
     if display_lines {
         map.clip_point(
             DisplayPoint::new(point.row(), map.line_len(point.row())),
@@ -1119,7 +1124,7 @@ pub(crate) fn next_line_end(
     if times > 1 {
         point = start_of_relative_buffer_row(map, point, times as isize - 1);
     }
-    end_of_line(map, false, point)
+    end_of_line(map, false, point, 1)
 }
 
 fn window_top(

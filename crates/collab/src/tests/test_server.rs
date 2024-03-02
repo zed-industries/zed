@@ -240,7 +240,12 @@ impl TestServer {
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
                             .detach();
-                        let connection_id = connection_id_rx.await.unwrap();
+                        let connection_id = connection_id_rx.await.map_err(|e| {
+                            EstablishConnectionError::Other(anyhow!(
+                                "{} (is server shutting down?)",
+                                e
+                            ))
+                        })?;
                         connection_killers
                             .lock()
                             .insert(connection_id.into(), killed);
@@ -507,6 +512,7 @@ impl TestServer {
                 clickhouse_password: None,
                 clickhouse_database: None,
                 zed_client_checksum_seed: None,
+                slack_panics_webhook: None,
             },
         })
     }
