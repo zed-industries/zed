@@ -418,6 +418,10 @@ impl Pane {
         self.active_item_index
     }
 
+    pub fn activation_history(&self) -> &Vec<EntityId> {
+        &self.activation_history
+    }
+
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
         cx.notify();

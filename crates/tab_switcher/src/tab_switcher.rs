@@ -1,3 +1,4 @@
+use collections::HashMap;
 use gpui::{
     actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
@@ -94,15 +95,13 @@ impl TabSwitcherDelegate {
         cx: &mut ViewContext<TabSwitcher>,
     ) -> Self {
         Self::subscribe_to_updates(&pane, cx);
-        let mut this = Self {
+        Self {
             tab_switcher,
             selected_index: 0,
             _cancel_flag: Arc::new(AtomicBool::new(false)),
             pane,
             matches: Vec::new(),
-        };
-        this.update_matches(cx);
-        this
+        }
     }
 
     fn subscribe_to_updates(pane: &WeakView<Pane>, cx: &mut ViewContext<TabSwitcher>) {
@@ -127,12 +126,16 @@ impl TabSwitcherDelegate {
         let Some(pane) = self.pane.upgrade() else {
             return;
         };
-        let mut items = Vec::new();
-        pane.update(cx, |pane, _| {
-            pane.items()
-                .map(|i| i.boxed_clone())
-                .for_each(|i| items.push(i));
-        });
+
+        let pane = pane.read(cx);
+        let mut history_indices = HashMap::new();
+        pane.activation_history().iter().rev().enumerate().for_each(
+            |(history_index, entity_id)| {
+                history_indices.insert(entity_id, history_index);
+            },
+        );
+
+        let items: Vec<Box<dyn ItemHandle>> = pane.items().map(|item| item.boxed_clone()).collect();
         items
             .iter()
             .enumerate()
@@ -143,6 +146,17 @@ impl TabSwitcherDelegate {
                 detail,
             })
             .for_each(|tab_match| self.matches.push(tab_match));
+
+        let non_history_base = history_indices.len();
+        self.matches.sort_by(move |a, b| {
+            let a_score = *history_indices
+                .get(&a.item.item_id())
+                .unwrap_or(&(a.item_index + non_history_base));
+            let b_score = *history_indices
+                .get(&b.item.item_id())
+                .unwrap_or(&(b.item_index + non_history_base));
+            a_score.cmp(&b_score)
+        });
     }
 }
 

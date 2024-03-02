@@ -10,6 +10,7 @@ path = "src/tab_switcher.rs"
 doctest = false
 
 [dependencies]
+collections.workspace = true
 gpui.workspace = true
 picker.workspace = true
 ui.workspace = true

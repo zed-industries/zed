@@ -9357,6 +9357,7 @@ dependencies = [
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "gpui",
  "picker",
  "ui",
