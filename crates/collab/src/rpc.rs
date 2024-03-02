@@ -543,6 +543,7 @@ impl Server {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,

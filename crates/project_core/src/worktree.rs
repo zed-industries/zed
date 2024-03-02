@@ -3299,6 +3299,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,

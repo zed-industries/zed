@@ -124,6 +124,7 @@ impl RichText {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_markdown_mut(
     block: &str,
     mut mentions: &[Mention],
