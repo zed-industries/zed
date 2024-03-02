@@ -23,6 +23,7 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extension_api",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -91,6 +92,7 @@ members = [
     "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
+    "extensions/gleam",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -298,7 +300,9 @@ unindent = "0.1.7"
 unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
+wasmparser = "0.121"
 wasmtime = "18.0"
+wasmtime-wasi = "18.0"
 which = "6.0.0"
 sys-locale = "0.3.1"
 

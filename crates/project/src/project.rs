@@ -10,6 +10,7 @@ pub mod terminals;
 mod project_tests;
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use async_trait::async_trait;
 use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
@@ -847,10 +848,12 @@ impl Project {
         let current_lsp_settings = &self.current_lsp_settings;
         for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
             let language = languages.iter().find_map(|l| {
-                let adapter = l
-                    .lsp_adapters()
+                let adapter = self
+                    .languages
+                    .lsp_adapters(l)
                     .iter()
-                    .find(|adapter| &adapter.name == started_lsp_name)?;
+                    .find(|adapter| &adapter.name == started_lsp_name)?
+                    .clone();
                 Some((l, adapter))
             });
             if let Some((language, adapter)) = language {
@@ -889,9 +892,11 @@ impl Project {
 
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language, settings) in language_formatters_to_check {
-            if let Some(plugins) =
-                prettier_support::prettier_plugins_for_language(&language, &settings)
-            {
+            if let Some(plugins) = prettier_support::prettier_plugins_for_language(
+                &self.languages,
+                &language,
+                &settings,
+            ) {
                 prettier_plugins_by_worktree
                     .entry(worktree)
                     .or_insert_with(|| HashSet::default())
@@ -2047,7 +2052,7 @@ impl Project {
             }
 
             if let Some(language) = language {
-                for adapter in language.lsp_adapters() {
+                for adapter in self.languages.lsp_adapters(&language) {
                     let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
                         .language_server_ids
@@ -2118,10 +2123,12 @@ impl Project {
             let worktree_id = old_file.worktree_id(cx);
             let ids = &self.language_server_ids;
 
-            let language = buffer.language().cloned();
-            let adapters = language.iter().flat_map(|language| language.lsp_adapters());
-            for &server_id in adapters.flat_map(|a| ids.get(&(worktree_id, a.name.clone()))) {
-                buffer.update_diagnostics(server_id, Default::default(), cx);
+            if let Some(language) = buffer.language().cloned() {
+                for adapter in self.languages.lsp_adapters(&language) {
+                    if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
+                        buffer.update_diagnostics(*server_id, Default::default(), cx);
+                    }
+                }
             }
 
             self.buffer_snapshots.remove(&buffer.remote_id());
@@ -2701,9 +2708,11 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) =
-            prettier_support::prettier_plugins_for_language(&new_language, &settings)
-        {
+        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(
+            &self.languages,
+            &new_language,
+            &settings,
+        ) {
             self.install_default_prettier(worktree, prettier_plugins, cx);
         };
         if let Some(file) = buffer_file {
@@ -2726,7 +2735,7 @@ impl Project {
             return;
         }
 
-        for adapter in language.lsp_adapters() {
+        for adapter in self.languages.clone().lsp_adapters(&language) {
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
@@ -3240,7 +3249,11 @@ impl Project {
                 };
 
                 if file.worktree.read(cx).id() != key.0
-                    || !language.lsp_adapters().iter().any(|a| a.name == key.1)
+                    || !self
+                        .languages
+                        .lsp_adapters(&language)
+                        .iter()
+                        .any(|a| a.name == key.1)
                 {
                     continue;
                 }
@@ -3433,8 +3446,10 @@ impl Project {
     ) {
         let worktree_id = worktree.read(cx).id();
 
-        let stop_tasks = language
-            .lsp_adapters()
+        let stop_tasks = self
+            .languages
+            .clone()
+            .lsp_adapters(&language)
             .iter()
             .map(|adapter| {
                 let stop_task = self.stop_language_server(worktree_id, adapter.name.clone(), cx);
@@ -4785,14 +4800,15 @@ impl Project {
                                     .languages
                                     .language_for_file(&project_path.path, None)
                                     .unwrap_or_else(move |_| adapter_language);
-                                let language_server_name = adapter.name.clone();
+                                let adapter = adapter.clone();
                                 Some(async move {
                                     let language = language.await;
-                                    let label =
-                                        language.label_for_symbol(&symbol_name, symbol_kind).await;
+                                    let label = adapter
+                                        .label_for_symbol(&symbol_name, symbol_kind, &language)
+                                        .await;
 
                                     Symbol {
-                                        language_server_name,
+                                        language_server_name: adapter.name.clone(),
                                         source_worktree_id,
                                         path: project_path,
                                         label: label.unwrap_or_else(|| {
@@ -7972,6 +7988,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
+        let languages = this.update(&mut cx, |this, _| this.languages.clone())?;
         let (buffer, completion) = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this
@@ -7986,6 +8003,7 @@ impl Project {
                     .completion
                     .ok_or_else(|| anyhow!("invalid completion"))?,
                 language.cloned(),
+                &languages,
             );
             Ok::<_, anyhow::Error>((buffer, completion))
         })??;
@@ -8713,6 +8731,9 @@ impl Project {
                 .language_for_file(&path.path, None)
                 .await
                 .log_err();
+            let adapter = language
+                .as_ref()
+                .and_then(|language| languages.lsp_adapters(language).first().cloned());
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),
@@ -8720,10 +8741,10 @@ impl Project {
                 source_worktree_id,
                 path,
                 label: {
-                    match language {
-                        Some(language) => {
-                            language
-                                .label_for_symbol(&serialized_symbol.name, kind)
+                    match language.as_ref().zip(adapter.as_ref()) {
+                        Some((language, adapter)) => {
+                            adapter
+                                .label_for_symbol(&serialized_symbol.name, kind, language)
                                 .await
                         }
                         None => None,
@@ -8975,6 +8996,17 @@ impl Project {
         self.supplementary_language_servers.iter()
     }
 
+    pub fn language_server_adapter_for_id(
+        &self,
+        id: LanguageServerId,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        if let Some(LanguageServerState::Running { adapter, .. }) = self.language_servers.get(&id) {
+            Some(adapter.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
         if let Some(LanguageServerState::Running { server, .. }) = self.language_servers.get(&id) {
             Some(server.clone())
@@ -9025,8 +9057,8 @@ impl Project {
     ) -> Vec<LanguageServerId> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
-            language
-                .lsp_adapters()
+            self.languages
+                .lsp_adapters(&language)
                 .iter()
                 .flat_map(|adapter| {
                     let key = (worktree_id, adapter.name.clone());
@@ -9190,20 +9222,25 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
 
 struct ProjectLspAdapterDelegate {
     project: Model<Project>,
-    worktree: Model<Worktree>,
+    worktree: worktree::Snapshot,
+    fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl ProjectLspAdapterDelegate {
     fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
         Arc::new(Self {
             project: cx.handle(),
-            worktree: worktree.clone(),
+            worktree: worktree.read(cx).snapshot(),
+            fs: project.fs.clone(),
             http_client: project.client.http_client(),
+            language_registry: project.languages.clone(),
         })
     }
 }
 
+#[async_trait]
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {
         self.project
@@ -9214,41 +9251,50 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
-    fn which_command(
-        &self,
-        command: OsString,
-        cx: &AppContext,
-    ) -> Task<Option<(PathBuf, HashMap<String, String>)>> {
-        let worktree_abs_path = self.worktree.read(cx).abs_path();
-        let command = command.to_owned();
+    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)> {
+        let worktree_abs_path = self.worktree.abs_path();
 
-        cx.background_executor().spawn(async move {
-            let shell_env = load_shell_environment(&worktree_abs_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to determine load login shell environment in {worktree_abs_path:?}"
-                    )
-                })
-                .log_err();
+        let shell_env = load_shell_environment(&worktree_abs_path)
+            .await
+            .with_context(|| {
+                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
+            })
+            .log_err();
 
-            if let Some(shell_env) = shell_env {
-                let shell_path = shell_env.get("PATH");
-                match which::which_in(&command, shell_path, &worktree_abs_path) {
-                    Ok(command_path) => Some((command_path, shell_env)),
-                    Err(error) => {
-                        log::warn!(
-                            "failed to determine path for command {:?} in shell PATH {:?}: {error}",
-                            command.to_string_lossy(),
-                            shell_path.map(String::as_str).unwrap_or("")
-                        );
-                        None
-                    }
+        if let Some(shell_env) = shell_env {
+            let shell_path = shell_env.get("PATH");
+            match which::which_in(&command, shell_path, &worktree_abs_path) {
+                Ok(command_path) => Some((command_path, shell_env)),
+                Err(error) => {
+                    log::warn!(
+                        "failed to determine path for command {:?} in shell PATH {:?}: {error}",
+                        command.to_string_lossy(),
+                        shell_path.map(String::as_str).unwrap_or("")
+                    );
+                    None
                 }
-            } else {
-                None
             }
-        })
+        } else {
+            None
+        }
+    }
+
+    fn update_status(
+        &self,
+        server_name: LanguageServerName,
+        status: language::LanguageServerBinaryStatus,
+    ) {
+        self.language_registry
+            .update_lsp_status(server_name, status);
+    }
+
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        if self.worktree.entry_for_path(&path).is_none() {
+            return Err(anyhow!("no such path {path:?}"));
+        }
+        let path = self.worktree.absolutize(path.as_ref())?;
+        let content = self.fs.load(&path).await?;
+        Ok(content)
     }
 }
 

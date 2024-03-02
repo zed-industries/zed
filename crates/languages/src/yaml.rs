@@ -39,10 +39,6 @@ impl LspAdapter for YamlLspAdapter {
         LanguageServerName("yaml-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "yaml"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

@@ -34,10 +34,6 @@ impl LspAdapter for PythonLspAdapter {
         LanguageServerName("pyright".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "pyright"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -188,7 +184,7 @@ mod tests {
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::language("python", tree_sitter_python::language(), None).await;
+        let language = crate::language("python", tree_sitter_python::language());
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);

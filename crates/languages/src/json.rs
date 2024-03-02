@@ -90,10 +90,6 @@ impl LspAdapter for JsonLspAdapter {
         LanguageServerName("json-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "json"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

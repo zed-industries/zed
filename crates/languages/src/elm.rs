@@ -40,10 +40,6 @@ impl LspAdapter for ElmLspAdapter {
         LanguageServerName(SERVER_NAME.into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "elmLS"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
