@@ -33,10 +33,6 @@ struct ClippyArgs {
     /// The package to run Clippy against (`cargo -p <PACKAGE> clippy`).
     #[arg(long, short)]
     package: Option<String>,
-
-    /// Whether to deny warnings (`clippy --deny warnings`).
-    #[arg(long)]
-    deny_warnings: bool,
 }
 
 fn run_clippy(args: ClippyArgs) -> Result<()> {
@@ -62,11 +58,19 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
 
     clippy_command.arg("--");
 
-    if args.deny_warnings {
-        clippy_command.args(["--deny", "warnings"]);
-    }
+    // Deny all warnings.
+    // We don't do this yet on Windows, as it still has some warnings present.
+    #[cfg(not(target_os = "windows"))]
+    clippy_command.args(["--deny", "warnings"]);
 
-    const MIGRATORY_LINTS_TO_ALLOW: &[&str] = &[
+    /// These are all of the rules that currently have violations in the Zed
+    /// codebase.
+    ///
+    /// We'll want to drive this list down by either:
+    /// 1. fixing violations of the rule and begin enforcing it
+    /// 2. deciding we want to allow the rule permanently, at which point
+    ///    we should codify that separately in this script.
+    const MIGRATORY_RULES_TO_ALLOW: &[&str] = &[
         // There's a bunch of rules currently failing in the `style` group, so
         // allow all of those, for now.
         "clippy::style",
@@ -141,14 +145,10 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
     // rules we're already violating, since it may be possible to
     // have them fixed automatically.
     if !args.fix {
-        for rule in MIGRATORY_LINTS_TO_ALLOW {
+        for rule in MIGRATORY_RULES_TO_ALLOW {
             clippy_command.args(["--allow", rule]);
         }
     }
-
-    // Allow all Clippy lints by default, as we have a lot of violations at the moment.
-    // We can tighten things up once we have a better handle on them.
-    // clippy_command.args(["--allow", "clippy::all"]);
 
     // Deny `dbg!` and `todo!`s.
     clippy_command
