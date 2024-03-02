@@ -3208,8 +3208,8 @@ impl Project {
                 move |params, mut cx| {
                     let this = this.clone();
                     let name = name.to_string();
-                    if let Some(message) = params.message {
-                        message = message.trim().to_string();
+                    if let Some(ref message) = params.message {
+                        let message = message.trim();
                         if !message.is_empty() {
                             let formatted_message = format!(
                                 "Language server {name} (id {server_id}) status update: {message}"
