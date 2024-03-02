@@ -392,7 +392,7 @@ impl NeovimConnection {
                 // the content of the selection via the "a register to get the shape correctly.
                 self.nvim.input("\"aygv").await.unwrap();
                 let content = self.nvim.command_output("echo getreg('a')").await.unwrap();
-                let lines = content.split("\n").collect::<Vec<_>>();
+                let lines = content.split('\n').collect::<Vec<_>>();
                 let top = cmp::min(selection_row, cursor_row);
                 let left = cmp::min(selection_col, cursor_col);
                 for row in top..=cmp::max(selection_row, cursor_row) {

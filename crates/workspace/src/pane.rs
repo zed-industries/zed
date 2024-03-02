@@ -2586,8 +2586,8 @@ mod tests {
 
             let mut index = 0;
             let items = labels.map(|mut label| {
-                if label.ends_with("*") {
-                    label = label.trim_end_matches("*");
+                if label.ends_with('*') {
+                    label = label.trim_end_matches('*');
                     active_item_index = index;
                 }
 

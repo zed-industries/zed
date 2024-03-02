@@ -592,7 +592,7 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ChannelId>> {
         let client = self.client.clone();
-        let name = name.trim_start_matches("#").to_owned();
+        let name = name.trim_start_matches('#').to_owned();
         cx.spawn(move |this, mut cx| async move {
             let response = client
                 .request(proto::CreateChannel {

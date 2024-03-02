@@ -310,7 +310,7 @@ impl MessageEditor {
                 for range in ranges {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
-                    if let Some(username) = text.strip_prefix("@") {
+                    if let Some(username) = text.strip_prefix('@') {
                         if let Some(user_id) = this.channel_members.get(username) {
                             let start = multi_buffer.anchor_after(range.start);
                             let end = multi_buffer.anchor_after(range.end);

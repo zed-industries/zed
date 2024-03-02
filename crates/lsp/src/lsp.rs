@@ -377,7 +377,7 @@ impl LanguageServer {
             let headers = std::str::from_utf8(&buffer)?;
 
             let message_len = headers
-                .split("\n")
+                .split('\n')
                 .find(|line| line.starts_with(CONTENT_LEN_HEADER))
                 .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
                 .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
