@@ -738,6 +738,8 @@ fn show_savefile_dialog(directory: PathBuf) -> anyhow::Result<IFileSaveDialog> {
     }
 }
 
+// todo("windows")
+// what is the os action stuff??
 unsafe fn generate_menu(
     parent_handle: HMENU,
     menu: Menu,
@@ -786,7 +788,7 @@ unsafe fn generate_menu(
                 let mut item_name = name.to_string();
                 let action_index = actions_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if let Some(keystrokes) = keystrokes {
-                    // TODO: deal with 2 keystrokes
+                    // TODO: deal with os action
                     if keystrokes.len() == 1 {
                         let keystroke = &keystrokes[0];
                         item_name.push('\t');
@@ -921,16 +923,10 @@ fn read_rawdata_from_clipboard(
         let mut string = String::new();
         if getting_hash {
             let raw_ptr = GlobalLock(data.u.hGlobal) as *mut u16;
-            let wbytes_ref = std::slice::from_raw_parts(raw_ptr, 4);
-            let mut wbytes = [0u16; 4];
-            for x in 0..4 {
-                wbytes[x] = wbytes_ref[x];
-            }
-            let hash_bytes_ref = std::slice::from_raw_parts(wbytes.as_mut_ptr().cast::<u8>(), 8);
-            let mut hash_bytes = [0u8; 8];
-            for x in 0..8 {
-                hash_bytes[x] = hash_bytes_ref[x];
-            }
+            let hash_bytes: [u8; 8] = std::slice::from_raw_parts(raw_ptr.cast::<u8>(), 8)
+                .to_vec()
+                .try_into()
+                .unwrap();
             hash_result = u64::from_be_bytes(hash_bytes);
             let _ = GlobalUnlock(data.u.hGlobal);
         } else {
