@@ -4908,6 +4908,41 @@ impl Editor {
         })
     }
 
+    pub fn revert_selected_chunks(&mut self, _: &RevertSelectedChunks, cx: &mut ViewContext<Self>) {
+        let mut revert_changes = Vec::new();
+
+        self.buffer.update(cx, |multi_buffer, cx| {
+            let snapshot = multi_buffer.snapshot(cx);
+            let selections = self.selections.disjoint_anchors();
+            let hunks = selections.into_iter().filter_map(|selection| {
+                let tail = selection.tail();
+                let buffer = multi_buffer.buffer(tail.buffer_id?)?;
+                let start = tail.to_point(&snapshot).row;
+                let end = selection.head().to_point(&snapshot).row;
+                let buffer_range = if start > end { end..start } else { start..end };
+                Some((buffer, buffer_range))
+            });
+            for (buffer, selected_rows) in hunks {
+                buffer.update(cx, |buffer, _| {
+                    if let Some(diff_base) = buffer.diff_base() {
+                        for hunk in snapshot.git_diff_hunks_in_range(selected_rows) {
+                            let original_text = &diff_base[hunk.diff_base_byte_range.clone()];
+                            let buffer_range = Point::new(hunk.buffer_range.start, 0)
+                                ..Point::new(hunk.buffer_range.end, 0);
+                            revert_changes.push((buffer_range, Arc::from(original_text)));
+                        }
+                    }
+                })
+            }
+        });
+
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.edit(revert_changes, cx);
+            });
+        }
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
         self.manipulate_lines(cx, |lines| lines.reverse())
     }

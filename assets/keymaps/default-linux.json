@@ -118,7 +118,8 @@
           "stop_at_soft_wraps": true
         }
       ],
-      "ctrl-;": "editor::ToggleLineNumbers"
+      "ctrl-;": "editor::ToggleLineNumbers",
+      "cmd-alt-z": "editor::RevertSelectedChunks"
     }
   },
   {
