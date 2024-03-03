@@ -847,7 +847,7 @@ impl DisplaySnapshot {
         self.block_snapshot.longest_row()
     }
 
-    pub fn fold_for_line(self: &Self, buffer_row: u32) -> Option<FoldStatus> {
+    pub fn fold_for_line(&self, buffer_row: u32) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
             Some(FoldStatus::Folded)
         } else if self.is_foldable(buffer_row) {
@@ -857,7 +857,7 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn is_foldable(self: &Self, buffer_row: u32) -> bool {
+    pub fn is_foldable(&self, buffer_row: u32) -> bool {
         let max_row = self.buffer_snapshot.max_buffer_row();
         if buffer_row >= max_row {
             return false;
@@ -880,7 +880,7 @@ impl DisplaySnapshot {
         false
     }
 
-    pub fn foldable_range(self: &Self, buffer_row: u32) -> Option<Range<Point>> {
+    pub fn foldable_range(&self, buffer_row: u32) -> Option<Range<Point>> {
         let start = Point::new(buffer_row, self.buffer_snapshot.line_len(buffer_row));
         if self.is_foldable(start.row) && !self.is_line_folded(start.row) {
             let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
