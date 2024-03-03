@@ -1243,11 +1243,11 @@ impl Workspace {
                 }
             }
 
-            Ok(this
+            this
                 .update(&mut cx, |this, cx| {
                     this.save_all_internal(SaveIntent::Close, cx)
                 })?
-                .await?)
+                .await
         })
     }
 

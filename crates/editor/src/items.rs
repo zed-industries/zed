@@ -952,14 +952,14 @@ impl Item for Editor {
                     let buffer = project_item
                         .downcast::<Buffer>()
                         .map_err(|_| anyhow!("Project item at stored path was not a buffer"))?;
-                    Ok(pane.update(&mut cx, |_, cx| {
+                    pane.update(&mut cx, |_, cx| {
                         cx.new_view(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
 
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor
                         })
-                    })?)
+                    })
                 })
             })
             .unwrap_or_else(|error| Task::ready(Err(error)))

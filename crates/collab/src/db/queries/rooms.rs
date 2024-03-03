@@ -1030,7 +1030,7 @@ impl Database {
             if result.rows_affected != 1 {
                 Err(anyhow!("could not update room participant role"))?;
             }
-            Ok(self.get_room(room_id, &tx).await?)
+            self.get_room(room_id, &tx).await
         })
         .await
     }
