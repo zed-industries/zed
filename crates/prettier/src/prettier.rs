@@ -245,7 +245,7 @@ impl Prettier {
                         );
                         let plugin_name_into_path = |plugin_name: &str| {
                             let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
-                            for possible_plugin_path in [
+                            [
                                 prettier_plugin_dir.join("dist").join("index.mjs"),
                                 prettier_plugin_dir.join("dist").join("index.js"),
                                 prettier_plugin_dir.join("dist").join("plugin.js"),
@@ -255,12 +255,9 @@ impl Prettier {
                                 // this one is for @prettier/plugin-php
                                 prettier_plugin_dir.join("standalone.js"),
                                 prettier_plugin_dir,
-                            ] {
-                                if possible_plugin_path.is_file() {
-                                    return Some(possible_plugin_path);
-                                }
-                            }
-                            None
+                            ]
+                            .into_iter()
+                            .find(|possible_plugin_path| possible_plugin_path.is_file())
                         };
                         let (parser, located_plugins) = match parser_with_plugins {
                             Some((parser, plugins)) => {
