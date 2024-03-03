@@ -123,7 +123,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::suspicious_to_owned",
         "clippy::type_complexity",
         "clippy::unit_arg",
-        "clippy::unnecessary_find_map",
         "clippy::unnecessary_operation",
         "clippy::unnecessary_to_owned",
         "clippy::unnecessary_unwrap",
