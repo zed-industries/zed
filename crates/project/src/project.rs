@@ -7002,7 +7002,7 @@ impl Project {
                 .spawn(async move {
                     future_buffers
                         .into_iter()
-                        .filter_map(|e| e)
+                        .flatten()
                         .chain(current_buffers)
                         .filter_map(|(buffer, path)| {
                             let (work_directory, repo) =
