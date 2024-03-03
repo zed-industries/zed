@@ -1328,7 +1328,7 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    /// Create a minimal edit that will cause the the given row to be indented
+    /// Create a minimal edit that will cause the given row to be indented
     /// with the given size. After applying this edit, the length of the line
     /// will always be at least `new_size.len`.
     pub fn edit_for_indent_size_adjustment(
