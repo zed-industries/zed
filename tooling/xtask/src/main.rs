@@ -91,7 +91,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::derive_ord_xor_partial_ord",
         "clippy::eq_op",
         "clippy::expect_fun_call",
-        "clippy::explicit_auto_deref",
         "clippy::explicit_counter_loop",
         "clippy::extra_unused_lifetimes",
         "clippy::identity_op",
