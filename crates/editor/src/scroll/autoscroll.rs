@@ -244,8 +244,7 @@ impl Editor {
             self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x =
-                (target_right - viewport_width) / max_glyph_width;
+            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
             true
         } else {
             false

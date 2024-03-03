@@ -1455,10 +1455,8 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("mod.body", Hsla::red()),
-            ("fn.name", Hsla::blue()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("mod.body", Hsla::red()), ("fn.name", Hsla::blue())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1545,10 +1543,8 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("mod.body", Hsla::red()),
-            ("fn.name", Hsla::blue()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("mod.body", Hsla::red()), ("fn.name", Hsla::blue())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1616,10 +1612,8 @@ pub mod tests {
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("operator", Hsla::red()),
-            ("string", Hsla::green()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("operator", Hsla::red()), ("string", Hsla::green())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {

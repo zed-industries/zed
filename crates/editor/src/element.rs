@@ -2723,8 +2723,7 @@ impl EditorElement {
 
                         let scroll_position = position_map.snapshot.scroll_position();
                         let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
-                        let y =
-                            (scroll_position.y * line_height - delta.y) / line_height;
+                        let y = (scroll_position.y * line_height - delta.y) / line_height;
                         let scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         editor.scroll(scroll_position, axis, cx);
