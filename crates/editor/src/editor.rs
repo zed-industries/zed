@@ -6445,7 +6445,8 @@ impl Editor {
                     {
                         // TODO: This is n^2, because we might check all the selections
                         if !selections
-                            .iter().any(|selection| selection.range().overlaps(&offset_range))
+                            .iter()
+                            .any(|selection| selection.range().overlaps(&offset_range))
                         {
                             next_selected_range = Some(offset_range);
                             break;
