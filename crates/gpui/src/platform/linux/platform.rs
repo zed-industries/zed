@@ -342,8 +342,9 @@ impl Platform for LinuxPlatform {
         ))
     }
 
-    // todo(linux)
-    fn set_cursor_style(&self, style: CursorStyle) {}
+    fn set_cursor_style(&self, style: CursorStyle) {
+        self.client.set_cursor_style(style)
+    }
 
     // todo(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
