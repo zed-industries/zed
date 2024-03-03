@@ -1021,7 +1021,7 @@ impl Database {
                         .add(room_participant::Column::UserId.eq(user_id)),
                 )
                 .set(room_participant::ActiveModel {
-                    role: ActiveValue::set(Some(ChannelRole::from(role))),
+                    role: ActiveValue::set(Some(role)),
                     ..Default::default()
                 })
                 .exec(&*tx)

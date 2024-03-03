@@ -2883,7 +2883,7 @@ async fn update_channel_buffer(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             session.peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     latest_channel_buffer_versions: vec![proto::ChannelBufferVersion {
                         channel_id: channel_id.to_proto(),
@@ -2968,8 +2968,8 @@ fn channel_buffer_updated<T: EnvelopedMessage>(
     message: &T,
     peer: &Peer,
 ) {
-    broadcast(Some(sender_id), collaborators.into_iter(), |peer_id| {
-        peer.send(peer_id.into(), message.clone())
+    broadcast(Some(sender_id), collaborators, |peer_id| {
+        peer.send(peer_id, message.clone())
     });
 }
 
@@ -3074,7 +3074,7 @@ async fn send_channel_message(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             session.peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     latest_channel_message_ids: vec![proto::ChannelMessageId {
                         channel_id: channel_id.to_proto(),
@@ -3447,7 +3447,7 @@ fn room_updated(room: &proto::Room, peer: &Peer) {
             .filter_map(|participant| Some(participant.peer_id?.into())),
         |peer_id| {
             peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::RoomUpdated {
                     room: Some(room.clone()),
                 },
@@ -3476,7 +3476,7 @@ fn channel_updated(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     channel_participants: vec![proto::ChannelParticipants {
                         channel_id: channel_id.to_proto(),

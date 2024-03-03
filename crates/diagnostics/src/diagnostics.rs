@@ -797,7 +797,7 @@ impl Item for ProjectDiagnosticsEditor {
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
-    let message: SharedString = message.into();
+    let message: SharedString = message;
     Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()

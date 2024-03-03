@@ -358,7 +358,7 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     let mut positions = Vec::new();
-    let mut chars = query.chars().into_iter();
+    let mut chars = query.chars();
 
     let Some(mut current) = chars.next() else {
         return positions;

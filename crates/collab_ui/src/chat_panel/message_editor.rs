@@ -357,7 +357,7 @@ impl Render for MessageEditor {
             font_size: UiTextSize::Small.rems().into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,

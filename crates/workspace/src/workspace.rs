@@ -2961,7 +2961,7 @@ impl Workspace {
         })?;
 
         let Some(id) = view.id.clone() else {
-            return Err(anyhow!("no id for view")).into();
+            return Err(anyhow!("no id for view"));
         };
         let id = ViewId::from_proto(id)?;
 
@@ -3744,7 +3744,7 @@ fn open_items(
 
         let tasks = tasks.collect::<Vec<_>>();
 
-        let tasks = futures::future::join_all(tasks.into_iter());
+        let tasks = futures::future::join_all(tasks);
         for (ix, path_open_result) in tasks.await.into_iter().flatten() {
             opened_items[ix] = Some(path_open_result);
         }

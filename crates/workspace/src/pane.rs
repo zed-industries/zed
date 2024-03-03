@@ -899,7 +899,7 @@ impl Pane {
             if not_shown_files == 1 {
                 file_names.push(".. 1 file not shown".into());
             } else {
-                file_names.push(format!(".. {} files not shown", not_shown_files).into());
+                file_names.push(format!(".. {} files not shown", not_shown_files));
             }
         }
         (
