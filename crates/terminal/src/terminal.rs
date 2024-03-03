@@ -487,21 +487,21 @@ impl TerminalBuilder {
                         }
                     }
 
-                    if events.is_empty() && wakeup == false {
+                    if events.is_empty() && !wakeup {
                         smol::future::yield_now().await;
                         break 'outer;
-                    } else {
-                        terminal.update(&mut cx, |this, cx| {
-                            if wakeup {
-                                this.process_event(&AlacTermEvent::Wakeup, cx);
-                            }
-
-                            for event in events {
-                                this.process_event(&event, cx);
-                            }
-                        })?;
-                        smol::future::yield_now().await;
                     }
+
+                    terminal.update(&mut cx, |this, cx| {
+                        if wakeup {
+                            this.process_event(&AlacTermEvent::Wakeup, cx);
+                        }
+
+                        for event in events {
+                            this.process_event(&event, cx);
+                        }
+                    })?;
+                    smol::future::yield_now().await;
                 }
             }
 
