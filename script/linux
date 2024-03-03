@@ -61,7 +61,7 @@ if [[ -n $pacman ]]; then
     wayland
     libxkbcommon-x11
     openssl
-    libzstd
+    zstd
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
