@@ -79,9 +79,7 @@ impl PlatformTextSystem for LinuxTextSystem {
             .font_system
             .db()
             .faces()
-            .filter_map(|face| {
-                Some(face.families.get(0)?.0.clone())
-            })
+            .filter_map(|face| Some(face.families.get(0)?.0.clone()))
             .collect_vec()
     }
 
