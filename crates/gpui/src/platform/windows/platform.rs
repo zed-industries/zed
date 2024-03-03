@@ -155,7 +155,7 @@ impl WindowsPlatform {
         Self { inner }
     }
 
-    /// runs message handlers that should be processed before dispatching to prevent transalting unncessary messages
+    /// runs message handlers that should be processed before dispatching to prevent translating unnecessary messages
     /// returns true if message is handled and should not dispatch
     fn run_immediate_msg_handlers(&self, msg: &MSG) -> bool {
         if msg.message == WM_SETTINGCHANGE {
