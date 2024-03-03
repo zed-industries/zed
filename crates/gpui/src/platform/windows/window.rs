@@ -274,7 +274,6 @@ impl WindowsWindow {
     }
 
     fn maximize(&self) {
-        log::debug!("{:?}", self.inner.hwnd);
         unsafe { ShowWindow(self.inner.hwnd, SW_MAXIMIZE) };
     }
 }
