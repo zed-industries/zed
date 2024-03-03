@@ -3273,7 +3273,7 @@ impl PositionMap {
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y as usize)
-            .map(|&LineWithInvisibles { ref line, .. }| line)
+            .map(|LineWithInvisibles { line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, px(0.))
