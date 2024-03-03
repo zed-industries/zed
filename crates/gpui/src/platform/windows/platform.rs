@@ -36,9 +36,9 @@ use windows::{
         UI::{
             HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE},
             Input::KeyboardAndMouse::{
-                GetDoubleClickTime, VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE,
-                VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8,
-                VK_F9, VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_UP,
+                GetDoubleClickTime, VkKeyScanW, VIRTUAL_KEY, VK_BACK, VK_DELETE, VK_DOWN, VK_END,
+                VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7,
+                VK_F8, VK_F9, VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_UP,
             },
             Shell::{
                 FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
@@ -47,17 +47,18 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreateAcceleratorTableW, CreateMenu, DefWindowProcW, DispatchMessageW,
-                GetMessageW, LoadImageW, PostQuitMessage, SetCursor, TranslateMessage, ACCEL,
-                ACCEL_VIRT_FLAGS, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM,
-                IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MF_POPUP,
-                MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_DESTROY,
+                GetMessageW, LoadAcceleratorsW, LoadImageW, PostQuitMessage, SetCursor,
+                TranslateAcceleratorW, TranslateMessage, ACCEL, ACCEL_VIRT_FLAGS, HACCEL, HCURSOR,
+                HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
+                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MF_POPUP, MF_SEPARATOR, MF_STRING,
+                SW_SHOWDEFAULT, WM_COMMAND, WM_DESTROY,
             },
         },
     },
 };
 
 use crate::{
-    encode_wide, log_windows_error, log_windows_error_with_message,
+    encode_wide, get_module_handle, log_windows_error, log_windows_error_with_message, loword,
     platform::cross_platform::CosmicTextSystem, set_windowdata, Keystroke, WindowsWindow,
     WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
     ACCEL_FVIRTKEY, CF_UNICODETEXT, CLIPBOARD_METADATA, CLIPBOARD_TEXT_HASH, DISPATCH_WINDOW_CLASS,
@@ -92,6 +93,7 @@ pub(crate) struct WindowsPlatform {
     menu_handle: RefCell<Option<HMENU>>,
     text_hash_clipboard_type: u32,
     metadata_clipboard_type: u32,
+    shortcuts_table: RefCell<Option<HACCEL>>,
 }
 
 impl WindowsPlatform {
@@ -128,6 +130,7 @@ impl WindowsPlatform {
             menu_handle: RefCell::new(None),
             text_hash_clipboard_type,
             metadata_clipboard_type,
+            shortcuts_table: RefCell::new(None),
         }
     }
 }
@@ -171,6 +174,16 @@ impl WindowsPlatformInner {
         }
         self.windows_count.fetch_sub(1, Ordering::SeqCst);
     }
+
+    fn do_action(&self, action_index: usize) {
+        if let Some(ref mut callback) = self.callbacks.borrow_mut().app_menu_action {
+            if let Some(action) = self.menu_actions.borrow().get(action_index - 1) {
+                println!("Action index: {}", action_index);
+                let action = action.boxed_clone();
+                callback(&*action);
+            }
+        }
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -190,9 +203,13 @@ impl Platform for WindowsPlatform {
         on_finish_launching();
         unsafe {
             let mut msg = std::mem::zeroed();
+            let dispatch_window_handle = self.inner.dispatch_window_handle;
+            let table = self.shortcuts_table.borrow_mut().take().unwrap();
             while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
+                if TranslateAcceleratorW(dispatch_window_handle, table, &mut msg) == 0 {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
             }
         }
         if let Some(ref mut func) = self.inner.callbacks.borrow_mut().quit {
@@ -434,7 +451,11 @@ impl Platform for WindowsPlatform {
                 );
             }
             let _ = self.menu_handle.borrow_mut().insert(menu_bar_handle);
-            let _ = CreateAcceleratorTableW(&accelerator_vec).inspect_err(log_windows_error);
+            if let Ok(table) =
+                CreateAcceleratorTableW(&accelerator_vec).inspect_err(log_windows_error)
+            {
+                (*self.shortcuts_table.borrow_mut()) = Some(table);
+            }
         }
         (*self.inner.menu_actions.borrow_mut()) = actions_vec;
     }
@@ -659,14 +680,16 @@ impl WindowsWindowBase for WindowsPlatformInner {
                 self.close_one_window();
                 LRESULT(0)
             }
-            MENU_ACTIONS => {
-                if let Some(ref mut callback) = self.callbacks.borrow_mut().app_menu_action {
-                    if let Some(action) = self.menu_actions.borrow().get(wparam.0) {
-                        println!("Action index: {}", wparam.0);
-                        let action = action.boxed_clone();
-                        callback(&*action);
-                    }
+            WM_COMMAND => {
+                let action_index = loword!(wparam.0, u16) as usize;
+                if action_index != 0 {
+                    println!("Get shorcut index: {}", action_index);
+                    self.do_action(action_index);
                 }
+                LRESULT(0)
+            }
+            MENU_ACTIONS => {
+                self.do_action(wparam.0);
                 LRESULT(0)
             }
             _ => DefWindowProcW(handle, message, wparam, lparam),
@@ -793,15 +816,14 @@ unsafe fn generate_menu(
                         let keystroke = &keystrokes[0];
                         item_name.push('\t');
                         keystroke_to_menu_string(keystroke, &mut item_name);
-                        let accel_table = keystroke_to_accel_table(keystroke, action_index as _);
-                        accelerator_vec.push(accel_table);
+                        let accel = keystroke_to_accel(keystroke, action_index as _);
+                        accelerator_vec.push(accel);
                     } else {
                         // windows cant show multiple chortcuts on menu item
                         for keystroke in keystrokes.iter() {
                             keystroke_to_menu_string(keystroke, &mut item_name);
-                            let accel_table =
-                                keystroke_to_accel_table(keystroke, action_index as _);
-                            accelerator_vec.push(accel_table);
+                            let accel = keystroke_to_accel(keystroke, action_index as _);
+                            accelerator_vec.push(accel);
                         }
                     }
                 }
@@ -834,7 +856,7 @@ fn keystroke_to_menu_string(keystroke: &Keystroke, menu_string: &mut String) {
     let _ = write!(menu_string, "{}", keystroke.key.to_uppercase());
 }
 
-fn keystroke_to_accel_table(keystroke: &Keystroke, action_index: u16) -> ACCEL {
+fn keystroke_to_accel(keystroke: &Keystroke, action_index: u16) -> ACCEL {
     let mut table = ACCEL::default();
     if keystroke.modifiers.control {
         table.fVirt |= ACCEL_VIRT_FLAGS(ACCEL_FCONTROL);
@@ -847,7 +869,7 @@ fn keystroke_to_accel_table(keystroke: &Keystroke, action_index: u16) -> ACCEL {
     }
     table.fVirt |= ACCEL_VIRT_FLAGS(ACCEL_FVIRTKEY);
     table.key = keycode_to_vkey(&keystroke.key).unwrap_or(VK_DELETE).0;
-    table.cmd = action_index + 1;
+    table.cmd = action_index;
 
     table
 }
@@ -885,8 +907,8 @@ fn keycode_to_vkey(keycode: &str) -> Option<VIRTUAL_KEY> {
             return None;
         };
         // TODO: is this correct?
-        key = Some(VIRTUAL_KEY(this_char as u16));
-        // println!("Char {} to vk {:?}", this_char, key);
+        key = unsafe { Some(VIRTUAL_KEY(VkKeyScanW(this_char as _) as _)) };
+        println!("Char {} to vk {:?}", this_char, key);
     }
 
     key

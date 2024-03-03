@@ -366,10 +366,11 @@ impl WindowsWindowBase for WindowsWindowinner {
             WM_COMMAND => {
                 let action_index = loword!(wparam.0, u16) as usize;
                 if action_index != 0 {
+                    println!("Get action: {}", action_index);
                     let _ = PostMessageW(
                         self.dispatch_window_handle,
                         MENU_ACTIONS,
-                        WPARAM(action_index - 1),
+                        WPARAM(action_index),
                         LPARAM::default(),
                     )
                     .inspect_err(log_windows_error);
