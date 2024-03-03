@@ -2883,7 +2883,7 @@ impl LineWithInvisibles {
                         .unwrap();
                     layouts.push(Self {
                         line: shaped_line,
-                        invisibles: invisibles.drain(..).collect(),
+                        invisibles: std::mem::take(&mut invisibles),
                     });
 
                     line.clear();
