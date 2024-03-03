@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use flume::{Receiver, Sender};
@@ -156,6 +157,8 @@ impl LinuxPlatform {
         }
     }
 }
+
+const KEYRING_LABEL: &str = "zed-github-account";
 
 impl Platform for LinuxPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
@@ -397,7 +400,14 @@ impl Platform for LinuxPlatform {
         self.background_executor().spawn(async move {
             let keyring = oo7::Keyring::new().await?;
             keyring.unlock().await?;
-            keyring.create_item(&url, &vec![("url", &url), ("username", &username)], password, true).await?;
+            keyring
+                .create_item(
+                    KEYRING_LABEL,
+                    &vec![("url", &url), ("username", &username)],
+                    password,
+                    true,
+                )
+                .await?;
             Ok(())
         })
     }
@@ -410,16 +420,23 @@ impl Platform for LinuxPlatform {
 
             let items = keyring.search_items(&vec![("url", &url)]).await?;
 
-            if let Some(item) = items.first() {
-                let attributes = item.attributes().await?;
-                let username = attributes.get("username").ok_or(anyhow::Error::msg("can not find username in stored credential"))?;
-                let secret = item.secret().await?;
+            for item in items.into_iter() {
+                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    let attributes = item.attributes().await?;
+                    let username = attributes
+                        .get("username")
+                        .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
+                    let secret = item.secret().await?;
 
-                // we loose the zeroizing capabilities at this boundary, which is a current limitation of the creds api
-                return Ok(Some((username.to_string(), secret.to_vec())))
+                    // we lose the zeroizing capabilities at this boundary,
+                    // a current limitation GPUI's credentials api
+                    return Ok(Some((username.to_string(), secret.to_vec())));
+                } else {
+                    continue;
+                }
             }
             Ok(None)
-       })
+        })
     }
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
@@ -430,8 +447,11 @@ impl Platform for LinuxPlatform {
 
             let items = keyring.search_items(&vec![("url", &url)]).await?;
 
-            if let Some(item) = items.first() {
-                item.delete().await?;
+            for item in items.into_iter() {
+                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    item.delete().await?;
+                    return Ok(());
+                }
             }
 
             Ok(())
