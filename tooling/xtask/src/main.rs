@@ -103,7 +103,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::non_canonical_clone_impl",
         "clippy::non_canonical_partial_ord_impl",
         "clippy::redundant_closure_call",
-        "clippy::redundant_guards",
         "clippy::reversed_empty_ranges",
         "clippy::single_range_in_vec_init",
         "clippy::suspicious_to_owned",

@@ -9379,7 +9379,7 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
             }
             (None, _) => components.push(Component::ParentDir),
             (Some(a), Some(b)) if components.is_empty() && a == b => (),
-            (Some(a), Some(b)) if b == Component::CurDir => components.push(a),
+            (Some(a), Some(Component::CurDir)) => components.push(a),
             (Some(a), Some(_)) => {
                 components.push(Component::ParentDir);
                 for _ in base_components {
