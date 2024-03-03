@@ -19,11 +19,9 @@ pub struct Embedding(pub Vec<f32>);
 impl FromSql for Embedding {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
         let bytes = value.as_blob()?;
-        let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
-        if embedding.is_err() {
-            return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
-        }
-        Ok(Embedding(embedding.unwrap()))
+        let embedding =
+            bincode::deserialize(bytes).map_err(|err| rusqlite::types::FromSqlError::Other(err))?;
+        Ok(Embedding(embedding))
     }
 }
 
