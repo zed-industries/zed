@@ -278,20 +278,25 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                                     selection.end = range.end;
                                 }
                             }
-                        }
 
-                        // In the visual selection result of a paragraph object, the cursor is
-                        // placed at the start of the last line. And in the visual mode, the
-                        // selection end is located after the end character.
-                        if object == Object::Paragraph {
-                            let row_of_selection_end_line = selection.end.to_point(map).row;
-                            let new_selection_end =
-                                if map.buffer_snapshot.line_len(row_of_selection_end_line) == 0 {
-                                    Point::new(row_of_selection_end_line + 1, 0)
-                                } else {
-                                    Point::new(row_of_selection_end_line, 1)
-                                };
-                            selection.end = new_selection_end.to_display_point(map);
+                            // In the visual selection result of a paragraph object, the cursor is
+                            // placed at the start of the last line. And in the visual mode, the
+                            // selection end is located after the end character. So, adjustment of
+                            // selection end is needed.
+                            //
+                            // We don't do this adjustment for a one-line blank paragraph since the
+                            // trailing newline is included in its selection from the beginning.
+                            if object == Object::Paragraph && range.start != range.end {
+                                let row_of_selection_end_line = selection.end.to_point(map).row;
+                                let new_selection_end =
+                                    if map.buffer_snapshot.line_len(row_of_selection_end_line) == 0
+                                    {
+                                        Point::new(row_of_selection_end_line + 1, 0)
+                                    } else {
+                                        Point::new(row_of_selection_end_line, 1)
+                                    };
+                                selection.end = new_selection_end.to_display_point(map);
+                            }
                         }
                     });
                 });

@@ -1216,6 +1216,12 @@ mod test {
                 ˇThe quick brown fox jumps
                 over the lazy dog.
             "},
+            indoc! {"
+                ˇThe quick brown fox jumps over the lazy dog.
+                ˇ
+                ˇThe quick brown fox jumps over the lazy dog.
+
+            "},
         ];
 
         for paragraph_example in EXAMPLES {
