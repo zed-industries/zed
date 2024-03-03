@@ -89,7 +89,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::default_constructed_unit_structs",
         "clippy::derivable_impls",
         "clippy::derive_ord_xor_partial_ord",
-        "clippy::drain_collect",
         "clippy::eq_op",
         "clippy::expect_fun_call",
         "clippy::explicit_auto_deref",
