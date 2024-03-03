@@ -105,7 +105,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::never_loop",
         "clippy::non_canonical_clone_impl",
         "clippy::non_canonical_partial_ord_impl",
-        "clippy::nonminimal_bool",
         "clippy::redundant_closure_call",
         "clippy::redundant_guards",
         "clippy::reversed_empty_ranges",

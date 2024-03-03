@@ -4283,6 +4283,7 @@ impl Project {
                             })
                             .collect();
 
+                        #[allow(clippy::nonminimal_bool)]
                         if !code_actions.is_empty()
                             && !(trigger == FormatTrigger::Save
                                 && settings.format_on_save == FormatOnSave::Off)

@@ -458,7 +458,7 @@ fn argument(
             parent_covers_bracket_range = covers_bracket_range;
 
             // Unable to find a child node with a parent that covers the bracket range, so no argument to select
-            if !cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.goto_first_child_for_byte(offset).is_none() {
                 return None;
             }
         }
