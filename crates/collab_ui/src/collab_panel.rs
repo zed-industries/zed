@@ -1629,7 +1629,7 @@ impl CollabPanel {
         self.toggle_channel_collapsed(id, cx)
     }
 
-    fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+    fn toggle_channel_collapsed(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         match self.collapsed_channels.binary_search(&channel_id) {
             Ok(ix) => {
                 self.collapsed_channels.remove(ix);

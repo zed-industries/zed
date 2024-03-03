@@ -220,7 +220,7 @@ impl Deref for WorkDirectoryEntry {
     }
 }
 
-impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
+impl From<ProjectEntryId> for WorkDirectoryEntry {
     fn from(value: ProjectEntryId) -> Self {
         WorkDirectoryEntry(value)
     }
