@@ -2735,9 +2735,8 @@ impl Editor {
 
         let mut edits = Vec::new();
         let mut rows = Vec::new();
-        let mut rows_inserted = 0;
 
-        for selection in self.selections.all_adjusted(cx) {
+        for (rows_inserted, selection) in self.selections.all_adjusted(cx).into_iter().enumerate() {
             let cursor = selection.head();
             let row = cursor.row;
 
@@ -2746,8 +2745,7 @@ impl Editor {
             let newline = "\n".to_string();
             edits.push((start_of_line..start_of_line, newline));
 
-            rows.push(row + rows_inserted);
-            rows_inserted += 1;
+            rows.push(row + rows_inserted as u32);
         }
 
         self.transact(cx, |editor, cx| {
