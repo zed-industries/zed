@@ -631,14 +631,12 @@ impl ChatPanel {
                     "Copy message text",
                     None,
                     cx.handler_for(&this, move |this, cx| {
-                        this.active_chat().map(|active_chat| {
-                            if let Some(message) =
-                                active_chat.read(cx).find_loaded_message(message_id)
-                            {
-                                let text = message.body.clone();
-                                cx.write_to_clipboard(ClipboardItem::new(text))
-                            }
-                        });
+                        if let Some(message) = this.active_chat().and_then(|active_chat| {
+                            active_chat.read(cx).find_loaded_message(message_id)
+                        }) {
+                            let text = message.body.clone();
+                            cx.write_to_clipboard(ClipboardItem::new(text))
+                        }
                     }),
                 )
                 .when(can_delete_message, move |menu| {
