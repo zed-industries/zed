@@ -1028,7 +1028,7 @@ impl ProjectPanel {
                 cx.foreground_executor().spawn(task).detach_and_log_err(cx);
             }
 
-            Some(project.worktree_id_for_entry(destination, cx)?)
+            project.worktree_id_for_entry(destination, cx)
         });
 
         if let Some(destination_worktree) = destination_worktree {

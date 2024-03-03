@@ -43,7 +43,7 @@ async fn test_channels(db: &Arc<Database>) {
     let mut members = db
         .transaction(|tx| async move {
             let channel = db.get_channel_internal(replace_id, &tx).await?;
-            Ok(db.get_channel_participants(&channel, &tx).await?)
+            db.get_channel_participants(&channel, &tx).await
         })
         .await
         .unwrap();

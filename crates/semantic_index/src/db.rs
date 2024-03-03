@@ -125,7 +125,7 @@ impl VectorDatabase {
             // Delete existing tables, if SEMANTIC_INDEX_VERSION is bumped
             let version_query = db.prepare("SELECT version from semantic_index_config");
             let version = version_query
-                .and_then(|mut query| query.query_row([], |row| Ok(row.get::<_, i64>(0)?)));
+                .and_then(|mut query| query.query_row([], |row| row.get::<_, i64>(0)));
             if version.map_or(false, |version| version == SEMANTIC_INDEX_VERSION as i64) {
                 log::trace!("vector database schema up to date");
                 return Ok(());
@@ -275,8 +275,8 @@ impl VectorDatabase {
         self.transact(move |db| {
             let mut worktree_query =
                 db.prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
-            let worktree_id = worktree_query
-                .query_row(params![worktree_root_path], |row| Ok(row.get::<_, i64>(0)?));
+            let worktree_id =
+                worktree_query.query_row(params![worktree_root_path], |row| row.get::<_, i64>(0));
 
             Ok(worktree_id.is_ok())
         })
@@ -356,7 +356,7 @@ impl VectorDatabase {
                 db.prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
             let worktree_id = worktree_query
                 .query_row(params![worktree_root_path.to_string_lossy()], |row| {
-                    Ok(row.get::<_, i64>(0)?)
+                    row.get::<_, i64>(0)
                 });
 
             if worktree_id.is_ok() {

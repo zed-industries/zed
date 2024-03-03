@@ -5424,11 +5424,11 @@ impl Project {
                         return Err(err);
                     }
 
-                    return Ok(this.update(&mut cx, |this, _| {
+                    return this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id())
                             .unwrap_or_default()
-                    })?);
+                    });
                 }
 
                 Ok(ProjectTransaction::default())
@@ -7865,13 +7865,13 @@ impl Project {
 
         this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
-        Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: Some(buffer.saved_mtime().into()),
             fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
-        })?)
+        })
     }
 
     async fn handle_reload_buffers(
@@ -8206,7 +8206,7 @@ impl Project {
             .await
             .context("inlay hints fetch")?;
 
-        Ok(this.update(&mut cx, |project, cx| {
+        this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(
                 buffer_hints,
                 project,
@@ -8214,7 +8214,7 @@ impl Project {
                 &buffer.read(cx).version(),
                 cx,
             )
-        })?)
+        })
     }
 
     async fn handle_resolve_inlay_hint(
