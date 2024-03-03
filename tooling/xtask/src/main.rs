@@ -113,7 +113,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::redundant_guards",
         "clippy::redundant_locals",
         "clippy::reversed_empty_ranges",
-        "clippy::search_is_some",
         "clippy::single_range_in_vec_init",
         "clippy::suspicious_to_owned",
         "clippy::type_complexity",

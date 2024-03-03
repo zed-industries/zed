@@ -6444,10 +6444,9 @@ impl Editor {
                             && !movement::is_inside_word(&display_map, display_range.end))
                     {
                         // TODO: This is n^2, because we might check all the selections
-                        if selections
+                        if !selections
                             .iter()
-                            .find(|selection| selection.range().overlaps(&offset_range))
-                            .is_none()
+                            .any(|selection| selection.range().overlaps(&offset_range))
                         {
                             next_selected_range = Some(offset_range);
                             break;
