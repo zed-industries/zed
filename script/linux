@@ -1,7 +1,7 @@
 #!/usr/bin/bash -e
 
 # if sudo is not installed, define an empty alias
-maysudo=$(command -v sudo || true)
+maysudo=$(command -v sudo || command -v doas || true)
 
 # Ubuntu, Debian, etc.
 # https://packages.ubuntu.com/
