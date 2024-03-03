@@ -336,8 +336,10 @@
           "advance_downwards": false
         }
       ],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
+      "alt-up": "editor::MoveLineUp",
+      "alt-down": "editor::MoveLineDown",
+      "alt-shift-down": "editor::DuplicateLine",
+      "alt-shift-up": ["workspace::SendKeystrokes", "alt-shift-down up"],
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
