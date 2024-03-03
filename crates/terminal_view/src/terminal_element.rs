@@ -645,7 +645,6 @@ impl TerminalElement {
         });
 
         cx.on_mouse_event({
-            let bounds = bounds;
             let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             move |e: &MouseMoveEvent, phase, cx| {

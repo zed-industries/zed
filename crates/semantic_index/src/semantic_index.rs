@@ -840,7 +840,6 @@ impl SemanticIndex {
             let mut batch_results = Vec::new();
             for batch in file_ids.chunks(batch_size) {
                 let batch = batch.into_iter().map(|v| *v).collect::<Vec<i64>>();
-                let limit = limit;
                 let fs = fs.clone();
                 let db_path = db_path.clone();
                 let query = query.clone();
