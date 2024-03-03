@@ -96,7 +96,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::let_underscore_future",
         "clippy::map_entry",
         "clippy::needless_lifetimes",
-        "clippy::needless_option_as_deref",
         "clippy::needless_update",
         "clippy::never_loop",
         "clippy::non_canonical_clone_impl",
