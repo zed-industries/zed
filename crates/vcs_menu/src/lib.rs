@@ -131,6 +131,43 @@ impl BranchListDelegate {
             model.show_toast(Toast::new(GIT_CHECKOUT_FAILURE_ID, message), ctx)
         });
     }
+
+    fn create_branch(cx: &mut ViewContext<Picker<Self>>) {
+        cx.spawn(|picker, mut cx| async move {
+                                picker.update(&mut cx, |this, cx| {
+                                    let project = this.delegate.workspace.read(cx).project().read(cx);
+                                    let current_pick = &this.delegate.last_query;
+                                    let mut cwd = project
+                                    .visible_worktrees(cx)
+                                    .next()
+                                    .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
+                                    .read(cx)
+                                    .abs_path()
+                                    .to_path_buf();
+                                    cwd.push(".git");
+                                    let repo = project
+                                        .fs()
+                                        .open_repo(&cwd)
+                                        .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
+                                    let repo = repo
+                                        .lock();
+                                    let status = repo
+                                        .create_branch(&current_pick);
+                                    if status.is_err() {
+                                        this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                        status?;
+                                    }
+                                    let status = repo.change_branch(&current_pick);
+                                    if status.is_err() {
+                                        this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                        status?;
+                                    }
+                                    this.cancel(&Default::default(), cx);
+                                    Ok::<(), anyhow::Error>(())
+                        })
+
+            }).detach_and_log_err(cx);
+    }
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -224,6 +261,7 @@ impl PickerDelegate for BranchListDelegate {
             .get(current_pick)
             .map(|pick| pick.string.clone())
         else {
+            BranchListDelegate::create_branch(cx);
             return;
         };
         cx.spawn(|picker, mut cx| async move {
@@ -314,45 +352,18 @@ impl PickerDelegate for BranchListDelegate {
         }
 
         Some(
-            h_flex().mr_3().pb_2().child(h_flex().w_full()).child(
-            Button::new("branch-picker-create-branch-button", "Create branch").on_click(
-                cx.listener(|_, _, cx| {
-                    cx.spawn(|picker, mut cx| async move {
-                                        picker.update(&mut cx, |this, cx| {
-                                            let project = this.delegate.workspace.read(cx).project().read(cx);
-                                            let current_pick = &this.delegate.last_query;
-                                            let mut cwd = project
-                                            .visible_worktrees(cx)
-                                            .next()
-                                            .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-                                            .read(cx)
-                                            .abs_path()
-                                            .to_path_buf();
-                                            cwd.push(".git");
-                                            let repo = project
-                                                .fs()
-                                                .open_repo(&cwd)
-                                                .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
-                                            let repo = repo
-                                                .lock();
-                                            let status = repo
-                                                .create_branch(&current_pick);
-                                            if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                                status?;
-                                            }
-                                            let status = repo.change_branch(&current_pick);
-                                            if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                                status?;
-                                            }
-                                            this.cancel(&Default::default(), cx);
-                                            Ok::<(), anyhow::Error>(())
-                                })
-
-                    }).detach_and_log_err(cx);
-                }),
-            ).style(ui::ButtonStyle::Filled)).into_any_element(),
+            h_flex()
+                .mr_3()
+                .pb_2()
+                .child(h_flex().w_full())
+                .child(
+                    Button::new("branch-picker-create-branch-button", "Create branch")
+                        .on_click(cx.listener(|_, _, cx| {
+                            BranchListDelegate::create_branch(cx);
+                        }))
+                        .style(ui::ButtonStyle::Filled),
+                )
+                .into_any_element(),
         )
     }
 }
