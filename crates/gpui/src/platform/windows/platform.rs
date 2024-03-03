@@ -15,11 +15,15 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use time::UtcOffset;
 use windows::{
-    core::PCWSTR,
+    core::{PCWSTR, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
         Globalization::u_memcpy,
+        Security::Credentials::{
+            CredDeleteW, CredReadDomainCredentialsW, CredWriteDomainCredentialsW, CREDENTIALW,
+            CREDENTIAL_TARGET_INFORMATIONW, CRED_PERSIST_SESSION, CRED_TYPE_DOMAIN_PASSWORD,
+        },
         System::{
             Com::{
                 CoCreateInstance, CreateBindCtx, IDataObject, CLSCTX_ALL, DVASPECT_CONTENT,
@@ -632,27 +636,86 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo!(windows)
-    fn write_credentials(
-        &self,
-        _url: &str,
-        _usernamee: &str,
-        _passwordrd: &[u8],
-    ) -> Task<Result<()>> {
-        unimplemented!()
+    // todo("windows")
+    // not tested yet
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            let mut url_wide = encode_wide(&url);
+            let mut usrname_wide = encode_wide(&username);
+            let target_info = CREDENTIAL_TARGET_INFORMATIONW {
+                TargetName: PWSTR::from_raw(url_wide.as_mut_ptr()),
+                DnsDomainName: PWSTR::from_raw(url_wide.as_mut_ptr()),
+                ..Default::default()
+            };
+            let mut blob = password.to_vec();
+            let cred = CREDENTIALW {
+                Type: CRED_TYPE_DOMAIN_PASSWORD,
+                TargetName: PWSTR::from_raw(url_wide.as_mut_ptr()),
+                CredentialBlobSize: blob.len() as _,
+                CredentialBlob: blob.as_mut_ptr(),
+                Persist: CRED_PERSIST_SESSION,
+                UserName: PWSTR::from_raw(usrname_wide.as_mut_ptr()),
+                ..Default::default()
+            };
+            unsafe {
+                CredWriteDomainCredentialsW(&target_info as _, &cred as _, 0)
+                    .inspect_err(log_windows_error)?;
+            }
+            Ok(())
+        })
     }
 
-    // todo!(windows)
-    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        unimplemented!()
+    // todo("windows")
+    // not tested yet
+    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        let url = url.to_string();
+        self.background_executor().spawn(async move {
+            let mut url_wide = encode_wide(&url);
+            let target_info = CREDENTIAL_TARGET_INFORMATIONW {
+                TargetName: PWSTR::from_raw(url_wide.as_mut_ptr()),
+                DnsDomainName: PWSTR::from_raw(url_wide.as_mut_ptr()),
+                ..Default::default()
+            };
+            unsafe {
+                let mut count = std::mem::zeroed();
+                let mut creds_ptr = std::mem::zeroed();
+                CredReadDomainCredentialsW(&target_info as _, 0, &mut count, &mut creds_ptr)
+                    .inspect_err(log_windows_error)?;
+                let creds: Vec<*mut CREDENTIALW> =
+                    Vec::from_raw_parts(creds_ptr as _, count as _, count as _);
+                // get the first one for now
+                let cred = &*(creds[0]);
+                let username = String::from_utf16_lossy(cred.UserName.as_wide());
+                let size = cred.CredentialBlobSize as usize;
+                let password = Vec::from_raw_parts(cred.CredentialBlob, size, size);
+                Ok(Some((username, password)))
+            }
+        })
     }
 
-    // todo!(windows)
-    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
-        unimplemented!()
+    // todo("windows")
+    // not tested yet
+    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+        let url = url.to_string();
+
+        self.background_executor().spawn(async move {
+            let url_wide = encode_wide(&url);
+            unsafe {
+                CredDeleteW(
+                    PCWSTR::from_raw(url_wide.as_ptr()),
+                    CRED_TYPE_DOMAIN_PASSWORD,
+                    0,
+                )
+                .inspect_err(log_windows_error)?;
+            }
+            Ok(())
+        })
     }
 
-    // todo!(windows)
+    // todo("windows")
     fn window_appearance(&self) -> crate::WindowAppearance {
         crate::WindowAppearance::Light
     }
