@@ -1525,11 +1525,7 @@ impl MultiBuffer {
             .unwrap_or(false)
     }
 
-    pub fn language_at<'a, T: ToOffset>(
-        &self,
-        point: T,
-        cx: &'a AppContext,
-    ) -> Option<Arc<Language>> {
+    pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
             .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
     }
@@ -2828,10 +2824,10 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    fn excerpts_for_range<'a, T: ToOffset>(
-        &'a self,
+    fn excerpts_for_range<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (&'a Excerpt, usize)> + 'a {
+    ) -> impl Iterator<Item = (&Excerpt, usize)> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut cursor = self.excerpts.cursor::<usize>();
@@ -2956,10 +2952,10 @@ impl MultiBufferSnapshot {
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
     /// not contained in a single excerpt
-    pub fn enclosing_bracket_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn enclosing_bracket_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a> {
+    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
@@ -2973,10 +2969,10 @@ impl MultiBufferSnapshot {
 
     /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
     /// not contained in a single excerpt
-    pub fn bracket_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a> {
+    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
@@ -3041,12 +3037,12 @@ impl MultiBufferSnapshot {
         self.trailing_excerpt_update_count
     }
 
-    pub fn file_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<dyn File>> {
+    pub fn file_at<T: ToOffset>(&self, point: T) -> Option<&Arc<dyn File>> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, _)| buffer.file())
     }
 
-    pub fn language_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<Language>> {
+    pub fn language_at<T: ToOffset>(&self, point: T) -> Option<&Arc<Language>> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
@@ -3065,7 +3061,7 @@ impl MultiBufferSnapshot {
         language_settings(language, file, cx)
     }
 
-    pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {
+    pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
@@ -3133,10 +3129,10 @@ impl MultiBufferSnapshot {
         false
     }
 
-    pub fn git_diff_hunks_in_range_rev<'a>(
-        &'a self,
+    pub fn git_diff_hunks_in_range_rev(
+        &self,
         row_range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+    ) -> impl Iterator<Item = DiffHunk<u32>> + '_ {
         let mut cursor = self.excerpts.cursor::<Point>();
 
         cursor.seek(&Point::new(row_range.end, 0), Bias::Left, &());
@@ -3198,10 +3194,10 @@ impl MultiBufferSnapshot {
         .flatten()
     }
 
-    pub fn git_diff_hunks_in_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_in_range(
+        &self,
         row_range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+    ) -> impl Iterator<Item = DiffHunk<u32>> + '_ {
         let mut cursor = self.excerpts.cursor::<Point>();
 
         cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
@@ -3317,7 +3313,7 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    fn excerpt_locator_for_id<'a>(&'a self, id: ExcerptId) -> &'a Locator {
+    fn excerpt_locator_for_id(&self, id: ExcerptId) -> &Locator {
         if id == ExcerptId::min() {
             Locator::min_ref()
         } else if id == ExcerptId::max() {
@@ -3342,7 +3338,7 @@ impl MultiBufferSnapshot {
         Some(&self.excerpt(excerpt_id)?.buffer)
     }
 
-    fn excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<&'a Excerpt> {
+    fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
         let locator = self.excerpt_locator_for_id(excerpt_id);
         cursor.seek(&Some(locator), Bias::Left, &());
