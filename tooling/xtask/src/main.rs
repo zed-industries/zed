@@ -94,7 +94,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::iter_overeager_cloned",
         "clippy::let_underscore_future",
         "clippy::map_entry",
-        "clippy::needless_lifetimes",
         "clippy::needless_update",
         "clippy::never_loop",
         "clippy::non_canonical_clone_impl",

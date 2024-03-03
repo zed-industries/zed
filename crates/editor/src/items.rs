@@ -593,7 +593,7 @@ impl Item for Editor {
         None
     }
 
-    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
+    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
         let path = path_for_buffer(&self.buffer, detail, true, cx)?;
         Some(path.to_string_lossy().to_string().into())
     }

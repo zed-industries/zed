@@ -1705,18 +1705,14 @@ impl Editor {
         }
     }
 
-    pub fn language_at<'a, T: ToOffset>(
-        &self,
-        point: T,
-        cx: &'a AppContext,
-    ) -> Option<Arc<Language>> {
+    pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
     }
 
-    pub fn file_at<'a, T: ToOffset>(
+    pub fn file_at<T: ToOffset>(
         &self,
         point: T,
-        cx: &'a AppContext,
+        cx: &AppContext,
     ) -> Option<Arc<dyn language::File>> {
         self.buffer.read(cx).read(cx).file_at(point).cloned()
     }
@@ -10439,7 +10435,7 @@ pub fn styled_runs_for_code_label<'a>(
         })
 }
 
-pub(crate) fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
+pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {
     let mut index = 0;
     let mut codepoints = text.char_indices().peekable();
 
