@@ -18,8 +18,7 @@ async fn test_contributors(db: &Arc<Database>) {
         },
     )
     .await
-    .unwrap()
-    .user_id;
+    .unwrap();
 
     assert_eq!(db.get_contributors().await.unwrap(), Vec::<String>::new());
 
