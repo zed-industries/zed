@@ -143,6 +143,7 @@ impl X11WindowState {
         x_main_screen_index: i32,
         x_window: x::Window,
         atoms: &XcbAtoms,
+        scroll_devices: &Vec<xcb::xinput::Device>,
     ) -> Self {
         let x_screen_index = options
             .display_id
@@ -169,8 +170,6 @@ impl X11WindowState {
                     | x::EventMask::BUTTON1_MOTION
                     | x::EventMask::BUTTON2_MOTION
                     | x::EventMask::BUTTON3_MOTION
-                    | x::EventMask::BUTTON4_MOTION
-                    | x::EventMask::BUTTON5_MOTION
                     | x::EventMask::BUTTON_MOTION,
             ),
         ];
@@ -199,6 +198,16 @@ impl X11WindowState {
             visual: screen.root_visual(),
             value_list: &xcb_values,
         });
+
+        for device in scroll_devices {
+            xcb_connection.send_request(&xcb::xinput::XiSelectEvents {
+                window: x_window,
+                masks: &[xcb::xinput::EventMaskBuf::new(
+                    *device,
+                    &[xcb::xinput::XiEventMask::MOTION],
+                )],
+            });
+        }
 
         if let Some(titlebar) = options.titlebar {
             if let Some(title) = titlebar.title {

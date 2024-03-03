@@ -28,6 +28,8 @@ struct WindowRef {
 struct X11ClientState {
     windows: HashMap<x::Window, WindowRef>,
     xkb: xkbcommon::xkb::State,
+    scroll_x: Option<i32>,
+    scroll_y: Option<i32>,
 }
 
 pub(crate) struct X11Client {
@@ -36,13 +38,18 @@ pub(crate) struct X11Client {
     x_root_index: i32,
     atoms: XcbAtoms,
     state: RefCell<X11ClientState>,
+    scroll_devices: Vec<xcb::xinput::Device>,
 }
 
 impl X11Client {
     pub(crate) fn new(inner: Rc<LinuxPlatformInner>) -> Rc<Self> {
         let (xcb_connection, x_root_index) = xcb::Connection::connect_with_extensions(
             None,
-            &[xcb::Extension::RandR, xcb::Extension::Xkb],
+            &[
+                xcb::Extension::RandR,
+                xcb::Extension::Input,
+                xcb::Extension::Xkb,
+            ],
             &[],
         )
         .unwrap();
@@ -54,6 +61,13 @@ impl X11Client {
             }))
             .unwrap();
         assert!(xkb_ver.supported());
+
+        xcb_connection
+            .wait_for_reply(xcb_connection.send_request(&xcb::xinput::XiQueryVersion {
+                major_version: 2,
+                minor_version: 0,
+            }))
+            .expect("xinput2 not supported");
 
         let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
         let xcb_connection = Rc::new(xcb_connection);
@@ -70,6 +84,46 @@ impl X11Client {
             xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
 
+        let device_list = xcb_connection
+            .wait_for_reply(xcb_connection.send_request(&xcb::xinput::ListInputDevices {}))
+            .unwrap();
+
+        let scroll_devices = device_list
+            .devices()
+            .iter()
+            .scan(0, |class_info_idx, device_info| {
+                Some(*class_info_idx + device_info.num_class_info())
+            })
+            .zip(device_list.devices().iter())
+            .map(|(class_info_idx, device_info)| {
+                (
+                    device_info,
+                    device_list.infos().collect::<Vec<_>>()[(class_info_idx as usize
+                        - device_info.num_class_info() as usize)
+                        ..(class_info_idx as usize)]
+                        .to_vec(),
+                )
+            })
+            .filter(|(device_info, class_info)| {
+                device_info.device_use() == xcb::xinput::DeviceUse::IsXExtensionPointer
+                    && class_info.iter().any(|class_info| match class_info.info() {
+                        xcb::xinput::InputInfoInfo::Valuator { mode, .. } => {
+                            mode == xcb::xinput::ValuatorMode::Relative
+                        }
+                        _ => false,
+                    })
+            })
+            .map(|(device_info, _)| device_info)
+            .collect::<Vec<_>>();
+
+        for device in &scroll_devices {
+            xcb_connection
+                .wait_for_reply(xcb_connection.send_request(&xcb::xinput::OpenDevice {
+                    device_id: device.device_id(),
+                }))
+                .unwrap();
+        }
+
         let client: Rc<X11Client> = Rc::new(Self {
             platform_inner: inner.clone(),
             xcb_connection: Rc::clone(&xcb_connection),
@@ -78,7 +132,13 @@ impl X11Client {
             state: RefCell::new(X11ClientState {
                 windows: HashMap::default(),
                 xkb: xkb_state,
+                scroll_x: None,
+                scroll_y: None,
             }),
+            scroll_devices: scroll_devices
+                .iter()
+                .map(|device| xcb::xinput::Device::from_id(device.device_id() as u16))
+                .collect::<Vec<_>>(),
         });
 
         // Safety: Safe if xcb::Connection always returns a valid fd
@@ -205,17 +265,47 @@ impl X11Client {
                         modifiers,
                         click_count: 1,
                     }));
-                } else if event.detail() >= 4 && event.detail() <= 5 {
-                    // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
-                    let delta_x = if event.detail() == 4 { 1.0 } else { -1.0 };
-                    window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                        position,
-                        delta: ScrollDelta::Lines(Point::new(0.0, delta_x)),
-                        modifiers,
-                        touch_phase: TouchPhase::default(),
-                    }));
                 } else {
                     log::warn!("Unknown button press: {event:?}");
+                }
+            }
+            xcb::Event::Input(xcb::xinput::Event::Motion(event)) => {
+                if event.valuator_mask()[0] == 4 || event.valuator_mask()[0] == 8 {
+                    let is_x_scroll = event.valuator_mask()[0] == 4;
+
+                    let window = self.get_window(event.event())?;
+                    let position = Point::new(
+                        (event.event_x() as f32 / u16::MAX as f32).into(),
+                        (event.event_y() as f32 / u16::MAX as f32).into(),
+                    );
+
+                    let new_scroll = event.axisvalues()[0].integral;
+                    let old_scroll = if is_x_scroll {
+                        self.state.borrow().scroll_x
+                    } else {
+                        self.state.borrow().scroll_y
+                    };
+
+                    if let Some(old_scroll) = old_scroll {
+                        let delta_scroll = (old_scroll as f32 - new_scroll as f32).into();
+
+                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Pixels(if is_x_scroll {
+                                Point::new(delta_scroll, (0.0).into())
+                            } else {
+                                Point::new((0.0).into(), delta_scroll)
+                            }),
+                            modifiers: crate::Modifiers::none(),
+                            touch_phase: TouchPhase::default(),
+                        }));
+                    }
+
+                    if is_x_scroll {
+                        self.state.borrow_mut().scroll_x = Some(new_scroll);
+                    } else {
+                        self.state.borrow_mut().scroll_y = Some(new_scroll);
+                    };
                 }
             }
             xcb::Event::X(x::Event::ButtonRelease(event)) => {
@@ -299,6 +389,7 @@ impl Client for X11Client {
             self.x_root_index,
             x_window,
             &self.atoms,
+            &self.scroll_devices,
         ));
 
         let cookie = self
