@@ -1634,22 +1634,20 @@ impl Conversation {
         let messages = self
             .messages(cx)
             .into_iter()
-            .filter_map(|message| {
-                Some(tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(
-                        self.buffer
-                            .read(cx)
-                            .text_for_range(message.offset_range)
-                            .collect(),
-                    ),
-                    name: None,
-                    function_call: None,
-                })
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(
+                    self.buffer
+                        .read(cx)
+                        .text_for_range(message.offset_range)
+                        .collect(),
+                ),
+                name: None,
+                function_call: None,
             })
             .collect::<Vec<_>>();
         let model = self.model;

@@ -839,12 +839,10 @@ impl ChannelStore {
             Ok(users
                 .into_iter()
                 .zip(response.members)
-                .filter_map(|(user, member)| {
-                    Some(ChannelMembership {
-                        user,
-                        role: member.role(),
-                        kind: member.kind(),
-                    })
+                .map(|(user, member)| ChannelMembership {
+                    user,
+                    role: member.role(),
+                    kind: member.kind(),
                 })
                 .collect())
         })

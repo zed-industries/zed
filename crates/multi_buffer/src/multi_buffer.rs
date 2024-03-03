@@ -3172,7 +3172,7 @@ impl MultiBufferSnapshot {
             let buffer_hunks = excerpt
                 .buffer
                 .git_diff_hunks_intersecting_range_rev(buffer_start..buffer_end)
-                .filter_map(move |hunk| {
+                .map(move |hunk| {
                     let start = multibuffer_start.row
                         + hunk
                             .buffer_range
@@ -3185,10 +3185,10 @@ impl MultiBufferSnapshot {
                             .min(excerpt_end_point.row + 1)
                             .saturating_sub(excerpt_start_point.row);
 
-                    Some(DiffHunk {
+                    DiffHunk {
                         buffer_range: start..end,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                    })
+                    }
                 });
 
             cursor.prev(&());
@@ -3234,7 +3234,7 @@ impl MultiBufferSnapshot {
             let buffer_hunks = excerpt
                 .buffer
                 .git_diff_hunks_intersecting_range(buffer_start..buffer_end)
-                .filter_map(move |hunk| {
+                .map(move |hunk| {
                     let start = multibuffer_start.row
                         + hunk
                             .buffer_range
@@ -3247,10 +3247,10 @@ impl MultiBufferSnapshot {
                             .min(excerpt_end_point.row + 1)
                             .saturating_sub(excerpt_start_point.row);
 
-                    Some(DiffHunk {
+                    DiffHunk {
                         buffer_range: start..end,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                    })
+                    }
                 });
 
             cursor.next(&());

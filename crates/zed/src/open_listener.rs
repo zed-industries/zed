@@ -184,7 +184,7 @@ pub async fn handle_cli_connection(
                 } else {
                     paths
                         .into_iter()
-                        .filter_map(|path_with_position_string| {
+                        .map(|path_with_position_string| {
                             let path_with_position = PathLikeWithPosition::parse_str(
                                 &path_with_position_string,
                                 |path_str| {
@@ -203,7 +203,7 @@ pub async fn handle_cli_connection(
                                     caret_positions.insert(path.clone(), Point::new(row, col));
                                 }
                             }
-                            Some(path)
+                            path
                         })
                         .collect()
                 };

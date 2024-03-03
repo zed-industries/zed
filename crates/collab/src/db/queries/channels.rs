@@ -529,10 +529,7 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            let channels = channels
-                .into_iter()
-                .filter_map(|channel| Some(Channel::from_model(channel)))
-                .collect();
+            let channels = channels.into_iter().map(Channel::from_model).collect();
 
             Ok(channels)
         })

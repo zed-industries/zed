@@ -441,17 +441,13 @@ impl CollabPanel {
                 // Populate remote participants.
                 self.match_candidates.clear();
                 self.match_candidates
-                    .extend(
-                        room.remote_participants()
-                            .iter()
-                            .filter_map(|(_, participant)| {
-                                Some(StringMatchCandidate {
-                                    id: participant.user.id as usize,
-                                    string: participant.user.github_login.clone(),
-                                    char_bag: participant.user.github_login.chars().collect(),
-                                })
-                            }),
-                    );
+                    .extend(room.remote_participants().values().map(|participant| {
+                        StringMatchCandidate {
+                            id: participant.user.id as usize,
+                            string: participant.user.github_login.clone(),
+                            char_bag: participant.user.github_login.chars().collect(),
+                        }
+                    }));
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
