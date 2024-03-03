@@ -4,8 +4,10 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 pub use language::*;
+use lazy_static::lazy_static;
 use log::warn;
-use lsp::LanguageServerBinary;
+use lsp::{CodeActionKind, LanguageServerBinary};
+use regex::Regex;
 use smol::fs::{self};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
@@ -62,7 +64,7 @@ impl LspAdapter for JavaLspAdapter {
 
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
-            archive.unpack(container_dir).await?;
+            archive.unpack(container_dir.clone()).await?;
 
             // todo!("windows")
             #[cfg(not(windows))]
@@ -78,7 +80,10 @@ impl LspAdapter for JavaLspAdapter {
         Ok(LanguageServerBinary {
             path: binary_path,
             env: None,
-            arguments: Default::default(),
+            arguments: vec![
+                "-configuration".into(),
+                container_dir.join("config_mac").into(),
+            ],
         })
     }
 
@@ -93,6 +98,17 @@ impl LspAdapter for JavaLspAdapter {
         } else {
             None
         }
+    }
+
+    // TODO: code actions don't work
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::EMPTY,
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::REFACTOR,
+            CodeActionKind::REFACTOR_EXTRACT,
+            CodeActionKind::SOURCE,
+        ])
     }
 
     async fn installation_test_binary(
@@ -111,6 +127,10 @@ impl LspAdapter for JavaLspAdapter {
         vec!["java".into()]
     }
 
+    // TODO: filter diagnostics to get rid of annoying messages while typing
+    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+    }
+
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
@@ -123,28 +143,24 @@ impl LspAdapter for JavaLspAdapter {
                 | lsp::CompletionItemKind::FIELD,
             ) => {
                 if let Some((name, detail)) = completion.label.split_once(" : ") {
-                    let text = format!("{name} {detail}");
-                    let source = Rope::from(format!("{} = null;", text).as_str());
-                    let runs = language.highlight_text(&source, 0..text.len());
+                    let highlight_id = language.grammar()?.highlight_id_for_name("constant")?;
+                    let mut label = CodeLabel::plain(format!("{name}: {detail}"), None);
 
-                    return Some(CodeLabel {
-                        text,
-                        runs,
-                        filter_range: detail.len() + 1..detail.len() + 1 + name.len(),
-                    });
+                    label.runs.push((0..name.len(), highlight_id));
+
+                    return Some(label);
                 }
             }
             Some(lsp::CompletionItemKind::METHOD) => {
                 if let Some((name, detail)) = completion.label.split_once(" : ") {
-                    let text = format!("{name} {detail}");
-                    let source = Rope::from(format!("{} {{}}", text).as_str());
-                    let runs = language.highlight_text(&source, 0..text.len());
+                    let highlight_id = language
+                        .grammar()?
+                        .highlight_id_for_name("function.method")?;
+                    let mut label = CodeLabel::plain(format!("{name}: {detail}"), None);
 
-                    return Some(CodeLabel {
-                        text,
-                        runs,
-                        filter_range: detail.len() + 1..detail.len() + 1 + name.rfind('(')?,
-                    });
+                    label.runs.push((0..name.len(), highlight_id));
+
+                    return Some(label);
                 }
             }
             Some(lsp::CompletionItemKind::ENUM_MEMBER) => {
