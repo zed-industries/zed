@@ -326,7 +326,7 @@ impl DisplayMap {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).language());
-        language_settings(language.as_deref(), None, cx).tab_size
+        language_settings(language, None, cx).tab_size
     }
 
     #[cfg(test)]
