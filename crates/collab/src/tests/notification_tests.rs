@@ -137,7 +137,7 @@ async fn test_notifications(
         assert_eq!(
             entry.notification,
             Notification::ChannelInvitation {
-                channel_id,
+                channel_id: channel_id.0,
                 channel_name: "the-channel".to_string(),
                 inviter_id: client_a.id()
             }

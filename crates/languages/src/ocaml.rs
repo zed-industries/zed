@@ -18,10 +18,6 @@ impl LspAdapter for OCamlLspAdapter {
         LanguageServerName("ocamllsp".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "ocaml"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -66,7 +62,7 @@ impl LspAdapter for OCamlLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<CodeLabel> {
         let name = &completion.label;
-        let detail = completion.detail.as_ref().map(|s| s.replace("\n", " "));
+        let detail = completion.detail.as_ref().map(|s| s.replace('\n', " "));
 
         match completion.kind.zip(detail) {
             // Error of 'b : ('a, 'b) result
@@ -128,7 +124,7 @@ impl LspAdapter for OCamlLspAdapter {
             // version : string
             // NOTE: (~|?) are omitted as we don't use them in the fuzzy filtering
             Some((CompletionItemKind::FIELD, detail))
-                if name.starts_with("~") || name.starts_with("?") =>
+                if name.starts_with('~') || name.starts_with('?') =>
             {
                 let label = name.trim_start_matches(&['~', '?']);
                 let text = format!("{} : {}", label, detail);
@@ -144,7 +140,7 @@ impl LspAdapter for OCamlLspAdapter {
                 }
 
                 let mut label_highlight = vec![(
-                    0..0 + label.len(),
+                    0..label.len(),
                     language.grammar()?.highlight_id_for_name("property")?,
                 )];
 

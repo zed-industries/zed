@@ -18,10 +18,6 @@ impl LspAdapter for TaploLspAdapter {
         LanguageServerName("taplo-ls".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "taplo-ls"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -72,7 +68,7 @@ impl LspAdapter for TaploLspAdapter {
 
             futures::io::copy(decompressed_bytes, &mut file).await?;
 
-            // todo!("windows")
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(

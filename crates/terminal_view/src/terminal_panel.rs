@@ -31,7 +31,7 @@ use workspace::{
 
 use anyhow::Result;
 
-const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
+const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
 actions!(terminal_panel, [ToggleFocus]);
 
@@ -192,8 +192,8 @@ impl TerminalPanel {
             let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
                 panel.update(cx, |panel, cx| {
                     cx.notify();
-                    panel.height = serialized_panel.height;
-                    panel.width = serialized_panel.width;
+                    panel.height = serialized_panel.height.map(|h| h.round());
+                    panel.width = serialized_panel.width.map(|w| w.round());
                     panel.pane.update(cx, |_, cx| {
                         serialized_panel
                             .items

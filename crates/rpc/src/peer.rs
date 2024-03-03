@@ -315,10 +315,13 @@ impl Peer {
                             "incoming response: requester resumed"
                         );
                     } else {
+                        let message_type = proto::build_typed_envelope(connection_id, incoming)
+                            .map(|p| p.payload_type_name());
                         tracing::warn!(
                             %connection_id,
                             message_id,
                             responding_to,
+                            message_type,
                             "incoming response: unknown request"
                         );
                     }
@@ -358,8 +361,8 @@ impl Peer {
         self.connections.write().remove(&connection_id);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn reset(&self, epoch: u32) {
-        self.teardown();
         self.next_connection_id.store(0, SeqCst);
         self.epoch.store(epoch, SeqCst);
     }

@@ -49,6 +49,11 @@
 (setter (identifier) @function.method)
 (method name: [(identifier) (constant)] @function.method)
 (singleton_method name: [(identifier) (constant)] @function.method)
+(method_parameters [
+  (identifier) @variable.parameter
+  (optional_parameter name: (identifier) @variable.parameter)
+  (keyword_parameter [name: (identifier) (":")] @variable.parameter)
+  ])
 
 ; Identifiers
 
@@ -69,6 +74,18 @@
 (global_variable) @constant
 
 (constant) @type
+
+(superclass
+  (constant) @type.super)
+
+(superclass
+  (scope_resolution
+    (constant) @type.super))
+
+(superclass
+  (scope_resolution
+    (scope_resolution
+      (constant) @type.super)))
 
 (self) @variable.special
 (super) @variable.special
@@ -164,6 +181,7 @@
   ","
   ";"
   "."
+  "::"
 ] @punctuation.delimiter
 
 [

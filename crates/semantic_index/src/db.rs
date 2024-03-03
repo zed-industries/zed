@@ -125,7 +125,7 @@ impl VectorDatabase {
             // Delete existing tables, if SEMANTIC_INDEX_VERSION is bumped
             let version_query = db.prepare("SELECT version from semantic_index_config");
             let version = version_query
-                .and_then(|mut query| query.query_row([], |row| Ok(row.get::<_, i64>(0)?)));
+                .and_then(|mut query| query.query_row([], |row| row.get::<_, i64>(0)));
             if version.map_or(false, |version| version == SEMANTIC_INDEX_VERSION as i64) {
                 log::trace!("vector database schema up to date");
                 return Ok(());
@@ -275,14 +275,10 @@ impl VectorDatabase {
         self.transact(move |db| {
             let mut worktree_query =
                 db.prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
-            let worktree_id = worktree_query
-                .query_row(params![worktree_root_path], |row| Ok(row.get::<_, i64>(0)?));
+            let worktree_id =
+                worktree_query.query_row(params![worktree_root_path], |row| row.get::<_, i64>(0));
 
-            if worktree_id.is_ok() {
-                return Ok(true);
-            } else {
-                return Ok(false);
-            }
+            Ok(worktree_id.is_ok())
         })
     }
 
@@ -302,17 +298,15 @@ impl VectorDatabase {
             let digests = Rc::new(
                 digests
                     .into_iter()
-                    .map(|p| Value::Blob(p.0.to_vec()))
+                    .map(|digest| Value::Blob(digest.0.to_vec()))
                     .collect::<Vec<_>>(),
             );
             let rows = query.query_map(params![digests], |row| {
                 Ok((row.get::<_, SpanDigest>(0)?, row.get::<_, Embedding>(1)?))
             })?;
 
-            for row in rows {
-                if let Ok(row) = row {
-                    embeddings_by_digest.insert(row.0, row.1);
-                }
+            for (digest, embedding) in rows.flatten() {
+                embeddings_by_digest.insert(digest, embedding);
             }
 
             Ok(embeddings_by_digest)
@@ -344,10 +338,8 @@ impl VectorDatabase {
                     Ok((row.get::<_, SpanDigest>(0)?, row.get::<_, Embedding>(1)?))
                 })?;
 
-                for row in rows {
-                    if let Ok(row) = row {
-                        embeddings_by_digest.insert(row.0, row.1);
-                    }
+                for (digest, embedding) in rows.flatten() {
+                    embeddings_by_digest.insert(digest, embedding);
                 }
             }
 
@@ -364,7 +356,7 @@ impl VectorDatabase {
                 db.prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
             let worktree_id = worktree_query
                 .query_row(params![worktree_root_path.to_string_lossy()], |row| {
-                    Ok(row.get::<_, i64>(0)?)
+                    row.get::<_, i64>(0)
                 });
 
             if worktree_id.is_ok() {
@@ -456,8 +448,7 @@ impl VectorDatabase {
                 if batch_ids.len() == batch_n {
                     let embeddings = std::mem::take(&mut batch_embeddings);
                     let ids = std::mem::take(&mut batch_ids);
-                    let array =
-                        Array2::from_shape_vec((ids.len(), embedding_len.clone()), embeddings);
+                    let array = Array2::from_shape_vec((ids.len(), embedding_len), embeddings);
                     match array {
                         Ok(array) => {
                             batches.push((ids, array));

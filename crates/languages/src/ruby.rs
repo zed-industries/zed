@@ -12,10 +12,6 @@ impl LspAdapter for RubyLanguageServer {
         LanguageServerName("solargraph".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "solargraph"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

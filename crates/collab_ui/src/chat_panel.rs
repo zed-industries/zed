@@ -2,7 +2,7 @@ use crate::{collab_panel, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
-use client::Client;
+use client::{ChannelId, Client};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -34,7 +34,7 @@ use workspace::{
 mod message_editor;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
-const CHAT_PANEL_KEY: &'static str = "ChatPanel";
+const CHAT_PANEL_KEY: &str = "ChatPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -169,7 +169,7 @@ impl ChatPanel {
         })
     }
 
-    pub fn channel_id(&self, cx: &AppContext) -> Option<u64> {
+    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
         self.active_chat
             .as_ref()
             .map(|(chat, _)| chat.read(cx).channel_id)
@@ -204,7 +204,7 @@ impl ChatPanel {
                 let panel = Self::new(workspace, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width;
+                        panel.width = serialized_panel.width.map(|r| r.round());
                         cx.notify();
                     });
                 }
@@ -444,8 +444,7 @@ impl ChatPanel {
 
         let reply_to_message = message
             .reply_to_message_id
-            .map(|id| active_chat.read(cx).find_loaded_message(id))
-            .flatten()
+            .and_then(|id| active_chat.read(cx).find_loaded_message(id))
             .cloned();
 
         let replied_to_you =
@@ -632,14 +631,12 @@ impl ChatPanel {
                     "Copy message text",
                     None,
                     cx.handler_for(&this, move |this, cx| {
-                        this.active_chat().map(|active_chat| {
-                            if let Some(message) =
-                                active_chat.read(cx).find_loaded_message(message_id)
-                            {
-                                let text = message.body.clone();
-                                cx.write_to_clipboard(ClipboardItem::new(text))
-                            }
-                        });
+                        if let Some(message) = this.active_chat().and_then(|active_chat| {
+                            active_chat.read(cx).find_loaded_message(message_id)
+                        }) {
+                            let text = message.body.clone();
+                            cx.write_to_clipboard(ClipboardItem::new(text))
+                        }
                     }),
                 )
                 .when(can_delete_message, move |menu| {
@@ -710,7 +707,7 @@ impl ChatPanel {
 
     pub fn select_channel(
         &mut self,
-        selected_channel_id: u64,
+        selected_channel_id: ChannelId,
         scroll_to_message_id: Option<u64>,
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {
@@ -839,16 +836,11 @@ impl Render for ChatPanel {
             .when_some(reply_to_message_id, |el, reply_to_message_id| {
                 let reply_message = self
                     .active_chat()
-                    .map(|active_chat| {
-                        active_chat.read(cx).messages().iter().find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
+                    .and_then(|active_chat| {
+                        active_chat.read(cx).messages().iter().find(|message| {
+                            message.id == ChannelMessageId::Saved(reply_to_message_id)
                         })
                     })
-                    .flatten()
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {

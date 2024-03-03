@@ -383,7 +383,9 @@ To override settings for a language, add an entry for that language server's nam
   "enabled": false,
   "show_type_hints": true,
   "show_parameter_hints": true,
-  "show_other_hints": true
+  "show_other_hints": true,
+  "edit_debounce_ms": 700,
+  "scroll_debounce_ms": 50
 }
 ```
 
@@ -401,6 +403,9 @@ The following languages have inlay hints preconfigured by Zed:
 - [Typescript](https://docs.zed.dev/languages/typescript)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
+
+Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
+Settings-related hint updates are not debounced.
 
 ## Journal
 
@@ -676,6 +681,9 @@ These values take in the same options as the root-level settings with the same n
   "font_size": null,
   "option_as_meta": false,
   "shell": {},
+  "toolbar": {
+    "title": true
+  },
   "working_directory": "current_project_directory"
 }
 ```
@@ -833,6 +841,22 @@ See Buffer Font Features
   }
 }
 ```
+
+## Terminal Toolbar
+
+- Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
+- Setting: `toolbar`
+- Default:
+
+```json
+"toolbar": {
+  "title": true,
+},
+```
+
+**Options**
+
+At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
 
 ### Working Directory
 

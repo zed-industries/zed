@@ -51,6 +51,9 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
         run: |
@@ -83,9 +86,14 @@ jobs:
           clean: false
           submodules: "recursive"
 
+      - name: Install cargo-component
+        run: |
+          if ! which cargo-component > /dev/null; then
+            cargo install cargo-component
+          fi
+
       - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -96,7 +104,7 @@ jobs:
       - name: Build other binaries and features
         run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
 
-  # todo!(linux): Actually run the tests
+  # todo(linux): Actually run the tests
   linux_tests:
     name: (Linux) Run Clippy and tests
     runs-on: ubuntu-latest
@@ -107,29 +115,22 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Restore from cache
-        uses: actions/cache@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: configure linux
         shell: bash -euxo pipefail {0}
         run: script/linux
 
       - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
       - name: Build Zed
         run: cargo build -p zed
 
-  # todo!(windows): Actually run the tests
+  # todo(windows): Actually run the tests
   windows_tests:
     name: (Windows) Run Clippy and tests
     runs-on: windows-latest
@@ -140,20 +141,13 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Restore from cache
-        uses: actions/cache@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
       - name: Build Zed
         run: cargo build -p zed

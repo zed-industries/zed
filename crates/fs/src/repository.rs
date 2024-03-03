@@ -363,19 +363,19 @@ impl GitFileStatus {
     ) -> Option<GitFileStatus> {
         if prefer_other {
             return other;
-        } else {
-            match (this, other) {
-                (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
-                    Some(GitFileStatus::Conflict)
-                }
-                (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
-                    Some(GitFileStatus::Modified)
-                }
-                (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
-                    Some(GitFileStatus::Added)
-                }
-                _ => None,
+        }
+
+        match (this, other) {
+            (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
+                Some(GitFileStatus::Conflict)
             }
+            (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
+                Some(GitFileStatus::Modified)
+            }
+            (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
+                Some(GitFileStatus::Added)
+            }
+            _ => None,
         }
     }
 }
@@ -428,7 +428,7 @@ pub struct RepoPathDescendants<'a>(pub &'a Path);
 
 impl<'a> MapSeekTarget<RepoPath> for RepoPathDescendants<'a> {
     fn cmp_cursor(&self, key: &RepoPath) -> Ordering {
-        if key.starts_with(&self.0) {
+        if key.starts_with(self.0) {
             Ordering::Greater
         } else {
             self.0.cmp(key)

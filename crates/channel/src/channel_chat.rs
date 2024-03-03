@@ -1,9 +1,9 @@
-use crate::{Channel, ChannelId, ChannelStore};
+use crate::{Channel, ChannelStore};
 use anyhow::{anyhow, Result};
 use client::{
     proto,
     user::{User, UserStore},
-    Client, Subscription, TypedEnvelope, UserId,
+    ChannelId, Client, Subscription, TypedEnvelope, UserId,
 };
 use collections::HashSet;
 use futures::lock::Mutex;
@@ -104,10 +104,12 @@ impl ChannelChat {
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         let channel_id = channel.id;
-        let subscription = client.subscribe_to_entity(channel_id).unwrap();
+        let subscription = client.subscribe_to_entity(channel_id.0).unwrap();
 
         let response = client
-            .request(proto::JoinChannelChat { channel_id })
+            .request(proto::JoinChannelChat {
+                channel_id: channel_id.0,
+            })
             .await?;
 
         let handle = cx.new_model(|cx| {
@@ -143,7 +145,7 @@ impl ChannelChat {
     fn release(&mut self, _: &mut AppContext) {
         self.rpc
             .send(proto::LeaveChannelChat {
-                channel_id: self.channel_id,
+                channel_id: self.channel_id.0,
             })
             .log_err();
     }
@@ -200,7 +202,7 @@ impl ChannelChat {
         Ok(cx.spawn(move |this, mut cx| async move {
             let outgoing_message_guard = outgoing_messages_lock.lock().await;
             let request = rpc.request(proto::SendChannelMessage {
-                channel_id,
+                channel_id: channel_id.0,
                 body: message.text,
                 nonce: Some(nonce.into()),
                 mentions: mentions_to_proto(&message.mentions),
@@ -220,7 +222,7 @@ impl ChannelChat {
 
     pub fn remove_message(&mut self, id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let response = self.rpc.request(proto::RemoveChannelMessage {
-            channel_id: self.channel_id,
+            channel_id: self.channel_id.0,
             message_id: id,
         });
         cx.spawn(move |this, mut cx| async move {
@@ -245,7 +247,7 @@ impl ChannelChat {
             async move {
                 let response = rpc
                     .request(proto::GetChannelMessages {
-                        channel_id,
+                        channel_id: channel_id.0,
                         before_message_id,
                     })
                     .await?;
@@ -323,7 +325,7 @@ impl ChannelChat {
             {
                 self.rpc
                     .send(proto::AckChannelMessage {
-                        channel_id: self.channel_id,
+                        channel_id: self.channel_id.0,
                         message_id: latest_message_id,
                     })
                     .ok();
@@ -401,7 +403,11 @@ impl ChannelChat {
         let channel_id = self.channel_id;
         cx.spawn(move |this, mut cx| {
             async move {
-                let response = rpc.request(proto::JoinChannelChat { channel_id }).await?;
+                let response = rpc
+                    .request(proto::JoinChannelChat {
+                        channel_id: channel_id.0,
+                    })
+                    .await?;
                 Self::handle_loaded_messages(
                     this.clone(),
                     user_store.clone(),
@@ -418,7 +424,7 @@ impl ChannelChat {
 
                 for pending_message in pending_messages {
                     let request = rpc.request(proto::SendChannelMessage {
-                        channel_id,
+                        channel_id: channel_id.0,
                         body: pending_message.body,
                         mentions: mentions_to_proto(&pending_message.mentions),
                         nonce: Some(pending_message.nonce.into()),
@@ -461,7 +467,7 @@ impl ChannelChat {
         if self.acknowledged_message_ids.insert(id) {
             self.rpc
                 .send(proto::AckChannelMessage {
-                    channel_id: self.channel_id,
+                    channel_id: self.channel_id.0,
                     message_id: id,
                 })
                 .ok();
@@ -675,7 +681,7 @@ pub fn mentions_to_proto(mentions: &[(Range<usize>, UserId)]) -> Vec<proto::Chat
                 start: range.start as u64,
                 end: range.end as u64,
             }),
-            user_id: *user_id as u64,
+            user_id: *user_id,
         })
         .collect()
 }

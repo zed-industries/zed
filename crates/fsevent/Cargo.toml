@@ -11,7 +11,7 @@ path = "src/fsevent.rs"
 doctest = false
 
 [dependencies]
-bitflags = "1"
+bitflags.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

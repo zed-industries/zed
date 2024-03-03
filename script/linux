@@ -12,7 +12,7 @@ if [[ -n $apt ]]; then
     libfontconfig-dev
     libwayland-dev
     libxkbcommon-x11-dev
-    openssl
+    libssl-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -60,6 +60,21 @@ if [[ -n $pacman ]]; then
     openssl
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
+  exit 0
+fi
+
+# Void
+# https://voidlinux.org/packages/
+xbps=$(command -v xbps-install || true)
+if [[ -n $xbps ]]; then
+  deps=(
+    alsa-lib-devel
+    fontconfig-devel
+    wayland-devel
+    libxkbcommon-devel
+    openssl-devel
+  )
+  $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
 fi
 

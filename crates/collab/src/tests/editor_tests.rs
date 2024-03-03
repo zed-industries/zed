@@ -1,11 +1,7 @@
-use std::{
-    path::Path,
-    sync::{
-        atomic::{self, AtomicBool, AtomicUsize},
-        Arc,
-    },
+use crate::{
+    rpc::RECONNECT_TIMEOUT,
+    tests::{rust_lang, TestServer},
 };
-
 use call::ActiveCall;
 use editor::{
     actions::{
@@ -19,15 +15,20 @@ use gpui::{TestAppContext, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
-    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    FakeLspAdapter,
 };
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
+use std::{
+    path::Path,
+    sync::{
+        atomic::{self, AtomicBool, AtomicUsize},
+        Arc,
+    },
+};
 use text::Point;
 use workspace::Workspace;
-
-use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -265,20 +266,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
@@ -288,9 +279,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -455,19 +445,10 @@ async fn test_collaborating_with_code_actions(
     cx_b.update(editor::init);
 
     // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry().add(Arc::new(language));
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
 
     client_a
         .fs()
@@ -671,19 +652,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     cx_b.update(editor::init);
 
     // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                     prepare_provider: Some(true),
@@ -692,9 +664,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -858,25 +829,14 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     cx_b.update(editor::init);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             name: "the-language-server",
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -1152,20 +1112,10 @@ async fn test_on_input_format_from_host_to_guest(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
                     first_trigger_character: ":".to_string(),
@@ -1174,9 +1124,8 @@ async fn test_on_input_format_from_host_to_guest(
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -1283,20 +1232,10 @@ async fn test_on_input_format_from_guest_to_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
                     first_trigger_character: ":".to_string(),
@@ -1305,9 +1244,8 @@ async fn test_on_input_format_from_guest_to_host(
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -1426,6 +1364,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
@@ -1438,6 +1378,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: true,
                     show_parameter_hints: false,
                     show_other_hints: true,
@@ -1446,29 +1388,18 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         });
     });
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    let language = Arc::new(language);
-    client_a.language_registry().add(Arc::clone(&language));
-    client_b.language_registry().add(language);
+        },
+    );
 
     // Client A opens a project.
     client_a
@@ -1695,6 +1626,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: false,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: false,
                     show_parameter_hints: false,
                     show_other_hints: false,
@@ -1707,6 +1640,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: true,
                     show_parameter_hints: true,
                     show_other_hints: true,
@@ -1715,29 +1650,18 @@ async fn test_inlay_hint_refresh_is_forwarded(
         });
     });
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    let language = Arc::new(language);
-    client_a.language_registry().add(Arc::clone(&language));
-    client_b.language_registry().add(language);
+        },
+    );
 
     client_a
         .fs()

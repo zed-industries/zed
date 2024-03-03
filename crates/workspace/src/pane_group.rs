@@ -88,6 +88,7 @@ impl PaneGroup {
         };
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &self,
         project: &Model<Project>,
@@ -159,6 +160,7 @@ impl Member {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         project: &Model<Project>,
@@ -471,6 +473,7 @@ impl PaneAxis {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
         project: &Model<Project>,
@@ -588,9 +591,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, InteractiveBounds,
-        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakView, WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WeakView, WindowContext,
     };
     use parking_lot::Mutex;
     use settings::Settings;
@@ -640,6 +643,7 @@ mod element {
             self
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn compute_resize(
             flexes: &Arc<Mutex<Vec<f32>>>,
             e: &MouseMoveEvent,
@@ -728,6 +732,7 @@ mod element {
             cx.refresh();
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn push_handle(
             flexes: Arc<Mutex<Vec<f32>>>,
             dragged_handle: Rc<RefCell<Option<usize>>>,
@@ -754,15 +759,13 @@ mod element {
             };
 
             cx.with_z_index(3, |cx| {
-                let interactive_handle_bounds = InteractiveBounds {
-                    bounds: handle_bounds,
-                    stacking_order: cx.stacking_order().clone(),
-                };
-                if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
-                    cx.set_cursor_style(match axis {
+                if handle_bounds.contains(&cx.mouse_position()) {
+                    let stacking_order = cx.stacking_order().clone();
+                    let cursor_style = match axis {
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
-                    })
+                    };
+                    cx.set_cursor_style(cursor_style, stacking_order);
                 }
 
                 cx.add_opaque_layer(handle_bounds);
@@ -885,7 +888,8 @@ mod element {
 
                 let child_size = bounds
                     .size
-                    .apply_along(self.axis, |_| space_per_flex * child_flex);
+                    .apply_along(self.axis, |_| space_per_flex * child_flex)
+                    .map(|d| d.round());
 
                 let child_bounds = Bounds {
                     origin,

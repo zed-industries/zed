@@ -53,8 +53,8 @@ impl Database {
             let mut membership = None;
 
             if let Some(parent_channel_id) = parent_channel_id {
-                let parent_channel = self.get_channel_internal(parent_channel_id, &*tx).await?;
-                self.check_user_is_channel_admin(&parent_channel, admin_id, &*tx)
+                let parent_channel = self.get_channel_internal(parent_channel_id, &tx).await?;
+                self.check_user_is_channel_admin(&parent_channel, admin_id, &tx)
                     .await?;
                 parent = Some(parent_channel);
             }
@@ -105,14 +105,14 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<(JoinRoom, Option<MembershipUpdated>, ChannelRole)> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            let mut role = self.channel_role_for_user(&channel, user_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            let mut role = self.channel_role_for_user(&channel, user_id, &tx).await?;
 
             let mut accept_invite_result = None;
 
             if role.is_none() {
                 if let Some(invitation) = self
-                    .pending_invite_for_channel(&channel, user_id, &*tx)
+                    .pending_invite_for_channel(&channel, user_id, &tx)
                     .await?
                 {
                     // note, this may be a parent channel
@@ -125,12 +125,12 @@ impl Database {
                     .await?;
 
                     accept_invite_result = Some(
-                        self.calculate_membership_updated(&channel, user_id, &*tx)
+                        self.calculate_membership_updated(&channel, user_id, &tx)
                             .await?,
                     );
 
                     debug_assert!(
-                        self.channel_role_for_user(&channel, user_id, &*tx).await? == role
+                        self.channel_role_for_user(&channel, user_id, &tx).await? == role
                     );
                 } else if channel.visibility == ChannelVisibility::Public {
                     role = Some(ChannelRole::Guest);
@@ -145,12 +145,12 @@ impl Database {
                     .await?;
 
                     accept_invite_result = Some(
-                        self.calculate_membership_updated(&channel, user_id, &*tx)
+                        self.calculate_membership_updated(&channel, user_id, &tx)
                             .await?,
                     );
 
                     debug_assert!(
-                        self.channel_role_for_user(&channel, user_id, &*tx).await? == role
+                        self.channel_role_for_user(&channel, user_id, &tx).await? == role
                     );
                 }
             }
@@ -162,10 +162,10 @@ impl Database {
 
             let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
             let room_id = self
-                .get_or_create_channel_room(channel_id, &live_kit_room, &*tx)
+                .get_or_create_channel_room(channel_id, &live_kit_room, &tx)
                 .await?;
 
-            self.join_channel_room_internal(room_id, user_id, connection, role, &*tx)
+            self.join_channel_room_internal(room_id, user_id, connection, role, &tx)
                 .await
                 .map(|jr| (jr, accept_invite_result, role))
         })
@@ -180,13 +180,13 @@ impl Database {
         admin_id: UserId,
     ) -> Result<(Channel, Vec<channel_member::Model>)> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, admin_id, &tx)
                 .await?;
 
             if visibility == ChannelVisibility::Public {
                 if let Some(parent_id) = channel.parent_id() {
-                    let parent = self.get_channel_internal(parent_id, &*tx).await?;
+                    let parent = self.get_channel_internal(parent_id, &tx).await?;
 
                     if parent.visibility != ChannelVisibility::Public {
                         Err(ErrorCode::BadPublicNesting
@@ -196,7 +196,7 @@ impl Database {
                 }
             } else if visibility == ChannelVisibility::Members {
                 if self
-                    .get_channel_descendants_excluding_self([&channel], &*tx)
+                    .get_channel_descendants_excluding_self([&channel], &tx)
                     .await?
                     .into_iter()
                     .any(|channel| channel.visibility == ChannelVisibility::Public)
@@ -228,7 +228,7 @@ impl Database {
         requires_zed_cla: bool,
     ) -> Result<()> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
             let mut model = channel.into_active_model();
             model.requires_zed_cla = ActiveValue::Set(requires_zed_cla);
             model.update(&*tx).await?;
@@ -244,8 +244,8 @@ impl Database {
         user_id: UserId,
     ) -> Result<(Vec<ChannelId>, Vec<UserId>)> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, user_id, &tx)
                 .await?;
 
             let members_to_notify: Vec<UserId> = channel_member::Entity::find()
@@ -258,7 +258,7 @@ impl Database {
                 .await?;
 
             let channels_to_remove = self
-                .get_channel_descendants_excluding_self([&channel], &*tx)
+                .get_channel_descendants_excluding_self([&channel], &tx)
                 .await?
                 .into_iter()
                 .map(|channel| channel.id)
@@ -284,8 +284,8 @@ impl Database {
         role: ChannelRole,
     ) -> Result<InviteMemberResult> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, inviter_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, inviter_id, &tx)
                 .await?;
             if !channel.is_root() {
                 Err(ErrorCode::NotARootChannel.anyhow())?
@@ -312,7 +312,7 @@ impl Database {
                         inviter_id: inviter_id.to_proto(),
                     },
                     true,
-                    &*tx,
+                    &tx,
                 )
                 .await?
                 .into_iter()
@@ -344,8 +344,8 @@ impl Database {
         self.transaction(move |tx| async move {
             let new_name = Self::sanitize_channel_name(new_name)?.to_string();
 
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, admin_id, &tx)
                 .await?;
 
             let mut model = channel.into_active_model();
@@ -370,7 +370,7 @@ impl Database {
         accept: bool,
     ) -> Result<RespondToChannelInvite> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
 
             let membership_update = if accept {
                 let rows_affected = channel_member::Entity::update_many()
@@ -393,7 +393,7 @@ impl Database {
                 }
 
                 Some(
-                    self.calculate_membership_updated(&channel, user_id, &*tx)
+                    self.calculate_membership_updated(&channel, user_id, &tx)
                         .await?,
                 )
             } else {
@@ -425,7 +425,7 @@ impl Database {
                             inviter_id: Default::default(),
                         },
                         accept,
-                        &*tx,
+                        &tx,
                     )
                     .await?
                     .into_iter()
@@ -466,10 +466,10 @@ impl Database {
         admin_id: UserId,
     ) -> Result<RemoveChannelMemberResult> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
 
             if member_id != admin_id {
-                self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+                self.check_user_is_channel_admin(&channel, admin_id, &tx)
                     .await?;
             }
 
@@ -488,7 +488,7 @@ impl Database {
 
             Ok(RemoveChannelMemberResult {
                 membership_update: self
-                    .calculate_membership_updated(&channel, member_id, &*tx)
+                    .calculate_membership_updated(&channel, member_id, &tx)
                     .await?,
                 notification_id: self
                     .remove_notification(
@@ -498,7 +498,7 @@ impl Database {
                             channel_name: Default::default(),
                             inviter_id: Default::default(),
                         },
-                        &*tx,
+                        &tx,
                     )
                     .await?,
             })
@@ -529,10 +529,7 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            let channels = channels
-                .into_iter()
-                .filter_map(|channel| Some(Channel::from_model(channel)))
-                .collect();
+            let channels = channels.into_iter().map(Channel::from_model).collect();
 
             Ok(channels)
         })
@@ -652,9 +649,14 @@ impl Database {
             .observed_channel_messages(&channel_ids, user_id, &*tx)
             .await?;
 
+        let hosted_projects = self
+            .get_hosted_projects(&channel_ids, &roles_by_channel_id, &*tx)
+            .await?;
+
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
+            hosted_projects,
             channel_participants,
             latest_buffer_versions,
             latest_channel_messages,
@@ -672,8 +674,8 @@ impl Database {
         role: ChannelRole,
     ) -> Result<SetMemberRoleResult> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, admin_id, &tx)
                 .await?;
 
             let membership = channel_member::Entity::find()
@@ -695,7 +697,7 @@ impl Database {
 
             if updated.accepted {
                 Ok(SetMemberRoleResult::MembershipUpdated(
-                    self.calculate_membership_updated(&channel, for_user, &*tx)
+                    self.calculate_membership_updated(&channel, for_user, &tx)
                         .await?,
                 ))
             } else {
@@ -715,13 +717,13 @@ impl Database {
     ) -> Result<Vec<proto::ChannelMember>> {
         let (role, members) = self
             .transaction(move |tx| async move {
-                let channel = self.get_channel_internal(channel_id, &*tx).await?;
+                let channel = self.get_channel_internal(channel_id, &tx).await?;
                 let role = self
-                    .check_user_is_channel_participant(&channel, user_id, &*tx)
+                    .check_user_is_channel_participant(&channel, user_id, &tx)
                     .await?;
                 Ok((
                     role,
-                    self.get_channel_participant_details_internal(&channel, &*tx)
+                    self.get_channel_participant_details_internal(&channel, &tx)
                         .await?,
                 ))
             })
@@ -913,8 +915,8 @@ impl Database {
     /// Returns the channel with the given ID.
     pub async fn get_channel(&self, channel_id: ChannelId, user_id: UserId) -> Result<Channel> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_participant(&channel, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?;
 
             Ok(Channel::from_model(channel))
@@ -969,10 +971,10 @@ impl Database {
         admin_id: UserId,
     ) -> Result<(Vec<Channel>, Vec<channel_member::Model>)> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, admin_id, &tx)
                 .await?;
-            let new_parent = self.get_channel_internal(new_parent_id, &*tx).await?;
+            let new_parent = self.get_channel_internal(new_parent_id, &tx).await?;
 
             if new_parent.root_id() != channel.root_id() {
                 Err(anyhow!(ErrorCode::WrongMoveTarget))?;

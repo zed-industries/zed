@@ -88,6 +88,7 @@ id_type!(FlagId);
 id_type!(ExtensionId);
 id_type!(NotificationId);
 id_type!(NotificationKindId);
+id_type!(HostedProjectId);
 
 /// ChannelRole gives you permissions for both channels and calls.
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]

@@ -37,6 +37,9 @@ pub struct InlayHintCache {
     version: usize,
     pub(super) enabled: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
+    refresh_task: Option<Task<()>>,
+    invalidate_debounce: Option<Duration>,
+    append_debounce: Option<Duration>,
     lsp_request_limiter: Arc<Semaphore>,
 }
 
@@ -267,6 +270,9 @@ impl InlayHintCache {
             enabled: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
+            refresh_task: None,
+            invalidate_debounce: debounce_value(inlay_hint_settings.edit_debounce_ms),
+            append_debounce: debounce_value(inlay_hint_settings.scroll_debounce_ms),
             version: 0,
             lsp_request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_LSP_REQUESTS)),
         }
@@ -282,6 +288,8 @@ impl InlayHintCache {
         visible_hints: Vec<Inlay>,
         cx: &mut ViewContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
+        self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
+        self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
         match (self.enabled, new_hint_settings.enabled) {
             (false, false) => {
@@ -332,15 +340,15 @@ impl InlayHintCache {
     /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
     pub(super) fn spawn_hint_refresh(
         &mut self,
-        reason: &'static str,
+        reason_description: &'static str,
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
+        ignore_debounce: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
             return None;
         }
-
         let mut invalidated_hints = Vec::new();
         if invalidate.should_invalidate() {
             self.update_tasks
@@ -358,12 +366,23 @@ impl InlayHintCache {
         }
 
         let cache_version = self.version + 1;
-        cx.spawn(|editor, mut cx| async move {
+        let debounce_duration = if ignore_debounce {
+            None
+        } else if invalidate.should_invalidate() {
+            self.invalidate_debounce
+        } else {
+            self.append_debounce
+        };
+        self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
+            if let Some(debounce_duration) = debounce_duration {
+                cx.background_executor().timer(debounce_duration).await;
+            }
+
             editor
                 .update(&mut cx, |editor, cx| {
                     spawn_new_update_tasks(
                         editor,
-                        reason,
+                        reason_description,
                         excerpts_to_query,
                         invalidate,
                         cache_version,
@@ -371,8 +390,7 @@ impl InlayHintCache {
                     )
                 })
                 .ok();
-        })
-        .detach();
+        }));
 
         if invalidated_hints.is_empty() {
             None
@@ -609,6 +627,14 @@ impl InlayHintCache {
                 }
             }
         }
+    }
+}
+
+fn debounce_value(debounce_ms: u64) -> Option<Duration> {
+    if debounce_ms > 0 {
+        Some(Duration::from_millis(debounce_ms))
+    } else {
+        None
     }
 }
 
@@ -1259,6 +1285,8 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
@@ -1389,6 +1417,8 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -1506,6 +1536,8 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -1521,12 +1553,14 @@ pub mod tests {
                     }),
                 )
                 .await;
+
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let mut rs_fake_servers = None;
         let mut md_fake_servers = None;
         for (name, path_suffix) in [("Rust", "rs"), ("Markdown", "md")] {
-            let mut language = Language::new(
+            language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
                     name: name.into(),
                     matcher: LanguageMatcher {
@@ -1536,25 +1570,23 @@ pub mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            );
-            let fake_servers = language
-                .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            )));
+            let fake_servers = language_registry.register_fake_lsp_adapter(
+                name,
+                FakeLspAdapter {
                     name,
                     capabilities: lsp::ServerCapabilities {
                         inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                         ..Default::default()
                     },
                     ..Default::default()
-                }))
-                .await;
+                },
+            );
             match name {
                 "Rust" => rs_fake_servers = Some(fake_servers),
                 "Markdown" => md_fake_servers = Some(fake_servers),
                 _ => unreachable!(),
             }
-            project.update(cx, |project, _| {
-                project.languages().add(Arc::new(language));
-            });
         }
 
         let rs_buffer = project
@@ -1734,6 +1766,8 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
@@ -1895,6 +1929,8 @@ pub mod tests {
             update_test_language_settings(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    edit_debounce_ms: 0,
+                    scroll_debounce_ms: 0,
                     show_type_hints: new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                     show_parameter_hints: new_allowed_hint_kinds
                         .contains(&Some(InlayHintKind::Parameter)),
@@ -1939,6 +1975,8 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: false,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: another_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
@@ -1997,6 +2035,8 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: final_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
@@ -2071,6 +2111,8 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -2155,7 +2197,7 @@ pub mod tests {
             "another change #3",
         ] {
             expected_changes.push(async_later_change);
-            let task_editor = editor.clone();
+            let task_editor = editor;
             edits.push(cx.spawn(|mut cx| async move {
                 task_editor
                     .update(&mut cx, |editor, cx| {
@@ -2203,32 +2245,14 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
             })
         });
 
-        let mut language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-            .await;
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/a",
@@ -2238,8 +2262,22 @@ pub mod tests {
             }),
         )
         .await;
+
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(crate::editor_tests::rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer("/a/main.rs", cx)
@@ -2361,6 +2399,11 @@ pub mod tests {
         editor
             .update(cx, |editor, cx| {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, cx| {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), cx);
             })
             .unwrap();
@@ -2497,33 +2540,14 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
             })
         });
 
-        let mut language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-            .await;
-        let language = Arc::new(language);
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
                 "/a",
@@ -2533,10 +2557,23 @@ pub mod tests {
                 }),
             )
             .await;
+
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        project.update(cx, |project, _| {
-            project.languages().add(Arc::clone(&language))
-        });
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let language = crate::editor_tests::rust_lang();
+        language_registry.add(language);
+        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         });
@@ -2782,6 +2819,9 @@ pub mod tests {
                 });
             })
             .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(
+            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
+        ));
         cx.executor().run_until_parked();
         editor.update(cx, |editor, cx| {
                 let expected_hints = vec![
@@ -2816,12 +2856,12 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor.update(cx, |editor, cx| {
             let expected_hints = vec![
-                "main hint(edited) #0".to_string(),
-                "main hint(edited) #1".to_string(),
-                "main hint(edited) #2".to_string(),
-                "main hint(edited) #3".to_string(),
-                "main hint(edited) #4".to_string(),
-                "main hint(edited) #5".to_string(),
+                "main hint #0".to_string(),
+                "main hint #1".to_string(),
+                "main hint #2".to_string(),
+                "main hint #3".to_string(),
+                "main hint #4".to_string(),
+                "main hint #5".to_string(),
                 "other hint(edited) #0".to_string(),
                 "other hint(edited) #1".to_string(),
             ];
@@ -2834,11 +2874,12 @@ pub mod tests {
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
 
             let current_cache_version = editor.inlay_hint_cache().version;
-            let expected_version = last_scroll_update_version + expected_hints.len();
-            assert!(
-                current_cache_version == expected_version || current_cache_version == expected_version + 1 ,
-                // TODO we sometimes get an extra cache version bump, why?
-                "We should have updated cache N times == N of new hints arrived (separately from each excerpt), or hit a bug and do that one extra time"
+            // We expect two new hints for the excerpts from `other.rs`:
+            let expected_version = last_scroll_update_version + 2;
+            assert_eq!(
+                current_cache_version,
+                expected_version,
+                "We should have updated cache N times == N of new hints arrived (separately from each edited excerpt)"
             );
         }).unwrap();
     }
@@ -2848,33 +2889,14 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: false,
                 show_parameter_hints: false,
                 show_other_hints: false,
             })
         });
 
-        let mut language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-            .await;
-        let language = Arc::new(language);
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/a",
@@ -2884,10 +2906,22 @@ pub mod tests {
             }),
         )
         .await;
+
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        project.update(cx, |project, _| {
-            project.languages().add(Arc::clone(&language))
-        });
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(crate::editor_tests::rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         });
@@ -3049,6 +3083,8 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -3082,32 +3118,14 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
             })
         });
 
-        let mut language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-            .await;
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/a",
@@ -3117,8 +3135,22 @@ pub mod tests {
             }),
         )
         .await;
+
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(crate::editor_tests::rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer("/a/main.rs", cx)
@@ -3180,6 +3212,8 @@ pub mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: false,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -3258,6 +3292,8 @@ pub mod tests {
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
@@ -3331,27 +3367,6 @@ pub mod tests {
     async fn prepare_test_objects(
         cx: &mut TestAppContext,
     ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
-        let mut language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-            .await;
-
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/a",
@@ -3363,7 +3378,30 @@ pub mod tests {
         .await;
 
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer("/a/main.rs", cx)

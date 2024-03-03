@@ -359,7 +359,7 @@ impl Database {
         const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
         if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
             let base_delay = SLEEPS[prev_attempt_count];
-            let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
+            let randomized_delay = base_delay * self.rng.lock().await.gen_range(0.5..=2.0);
             log::info!(
                 "retrying transaction after serialization error. delay: {} ms.",
                 randomized_delay
@@ -375,7 +375,7 @@ impl Database {
 }
 
 fn is_serialization_error(error: &Error) -> bool {
-    const SERIALIZATION_FAILURE_CODE: &'static str = "40001";
+    const SERIALIZATION_FAILURE_CODE: &str = "40001";
     match error {
         Error::Database(
             DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error))
@@ -587,6 +587,7 @@ pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
+    pub hosted_projects: Vec<proto::HostedProject>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
     pub observed_channel_messages: Vec<proto::ChannelMessageId>,

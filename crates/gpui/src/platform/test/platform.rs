@@ -126,7 +126,7 @@ impl Platform for TestPlatform {
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        // todo!("windows")
+        // todo("windows")
         #[cfg(target_os = "windows")]
         unimplemented!()
     }
