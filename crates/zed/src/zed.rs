@@ -2845,10 +2845,10 @@ mod tests {
         ))
     }
     #[track_caller]
-    fn assert_key_bindings_for<'a>(
+    fn assert_key_bindings_for(
         window: AnyWindowHandle,
         cx: &TestAppContext,
-        actions: Vec<(&'static str, &'a dyn Action)>,
+        actions: Vec<(&'static str, &dyn Action)>,
         line: u32,
     ) {
         let available_actions = cx
