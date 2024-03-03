@@ -278,11 +278,7 @@ impl VectorDatabase {
             let worktree_id = worktree_query
                 .query_row(params![worktree_root_path], |row| Ok(row.get::<_, i64>(0)?));
 
-            if worktree_id.is_ok() {
-                return Ok(true);
-            } else {
-                return Ok(false);
-            }
+            Ok(worktree_id.is_ok())
         })
     }
 
@@ -302,17 +298,15 @@ impl VectorDatabase {
             let digests = Rc::new(
                 digests
                     .into_iter()
-                    .map(|p| Value::Blob(p.0.to_vec()))
+                    .map(|digest| Value::Blob(digest.0.to_vec()))
                     .collect::<Vec<_>>(),
             );
             let rows = query.query_map(params![digests], |row| {
                 Ok((row.get::<_, SpanDigest>(0)?, row.get::<_, Embedding>(1)?))
             })?;
 
-            for row in rows {
-                if let Ok(row) = row {
-                    embeddings_by_digest.insert(row.0, row.1);
-                }
+            for (digest, embedding) in rows.flatten() {
+                embeddings_by_digest.insert(digest, embedding);
             }
 
             Ok(embeddings_by_digest)
@@ -344,10 +338,8 @@ impl VectorDatabase {
                     Ok((row.get::<_, SpanDigest>(0)?, row.get::<_, Embedding>(1)?))
                 })?;
 
-                for row in rows {
-                    if let Ok(row) = row {
-                        embeddings_by_digest.insert(row.0, row.1);
-                    }
+                for (digest, embedding) in rows.flatten() {
+                    embeddings_by_digest.insert(digest, embedding);
                 }
             }
 
