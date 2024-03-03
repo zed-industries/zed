@@ -3918,16 +3918,14 @@ impl BackgroundScanner {
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
 
-        for new_job in new_jobs {
-            if let Some(mut new_job) = new_job {
-                if let Some(containing_repository) = &repository {
-                    new_job.containing_repository = Some(containing_repository.clone());
-                }
-
-                job.scan_queue
-                    .try_send(new_job)
-                    .expect("channel is unbounded");
+        for mut new_job in new_jobs.into_iter().flatten() {
+            if let Some(containing_repository) = &repository {
+                new_job.containing_repository = Some(containing_repository.clone());
             }
+
+            job.scan_queue
+                .try_send(new_job)
+                .expect("channel is unbounded");
         }
 
         Ok(())

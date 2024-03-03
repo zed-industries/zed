@@ -296,9 +296,9 @@ fn main() {
             let task = workspace::open_paths(&paths, &app_state, None, cx);
             cx.spawn(|_| async move {
                 if let Some((_window, results)) = task.await.log_err() {
-                    for result in results {
-                        if let Some(Err(e)) = result {
-                            log::error!("Error opening path: {}", e);
+                    for result in results.into_iter().flatten() {
+                        if let Err(err) = result {
+                            log::error!("Error opening path: {err}",);
                         }
                     }
                 }
