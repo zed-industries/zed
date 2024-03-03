@@ -335,7 +335,7 @@ impl TestAppContext {
             .map(Keystroke::parse)
             .map(Result::unwrap)
         {
-            self.dispatch_keystroke(window, keystroke.into());
+            self.dispatch_keystroke(window, keystroke);
         }
 
         self.background_executor.run_until_parked()
@@ -347,7 +347,7 @@ impl TestAppContext {
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
-            self.dispatch_keystroke(window, keystroke.into());
+            self.dispatch_keystroke(window, keystroke);
         }
 
         self.background_executor.run_until_parked()

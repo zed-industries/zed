@@ -536,7 +536,7 @@ mod tests {
             !cx.has_pending_prompt(),
             "Should have no pending prompt on dirty project before opening the new recent project"
         );
-        cx.dispatch_action((*workspace).into(), menu::Confirm);
+        cx.dispatch_action(*workspace, menu::Confirm);
         workspace
             .update(cx, |workspace, cx| {
                 assert!(

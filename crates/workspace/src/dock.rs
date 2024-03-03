@@ -221,7 +221,7 @@ impl Dock {
                     return;
                 };
                 if panel.is_zoomed(cx) {
-                    workspace.zoomed = Some(panel.to_any().downgrade().into());
+                    workspace.zoomed = Some(panel.to_any().downgrade());
                     workspace.zoomed_position = Some(position);
                 } else {
                     workspace.zoomed = None;

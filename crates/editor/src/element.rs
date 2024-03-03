@@ -2004,7 +2004,7 @@ impl EditorElement {
             let text_width = bounds.size.width - gutter_dimensions.width;
             let overscroll = size(em_width, px(0.));
             let _snapshot = {
-                editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
+                editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
                 let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
                 let wrap_width = match editor.soft_wrap_mode(cx) {
@@ -2037,7 +2037,7 @@ impl EditorElement {
             // The scroll position is a fractional point, the whole number of which represents
             // the top of the window in terms of display rows.
             let start_row = scroll_position.y as u32;
-            let height_in_lines = f32::from(bounds.size.height / line_height);
+            let height_in_lines = bounds.size.height / line_height;
             let max_row = snapshot.max_point().row();
 
             // Add 1 to ensure selections bleed off screen
@@ -2262,7 +2262,7 @@ impl EditorElement {
             });
 
             let scroll_max = point(
-                f32::from((scroll_width - text_size.width) / em_width).max(0.0),
+                ((scroll_width - text_size.width) / em_width).max(0.0),
                 max_row as f32,
             );
 
@@ -2722,11 +2722,8 @@ impl EditorElement {
                         };
 
                         let scroll_position = position_map.snapshot.scroll_position();
-                        let x = f32::from(
-                            (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width,
-                        );
-                        let y =
-                            f32::from((scroll_position.y * line_height - delta.y) / line_height);
+                        let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
+                        let y = (scroll_position.y * line_height - delta.y) / line_height;
                         let scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         editor.scroll(scroll_position, axis, cx);
@@ -3268,7 +3265,7 @@ impl PositionMap {
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
         let x = position.x + (scroll_position.x * self.em_width);
-        let row = (f32::from(y / self.line_height) + scroll_position.y) as u32;
+        let row = ((y / self.line_height) + scroll_position.y) as u32;
 
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts

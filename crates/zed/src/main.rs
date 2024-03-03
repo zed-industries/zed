@@ -662,7 +662,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 
         let panic_data = Panic {
             thread: thread_name.into(),
-            payload: payload.into(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),

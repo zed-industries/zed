@@ -502,7 +502,7 @@ impl DisplaySnapshot {
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     pub fn reverse_text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
-        (0..=display_row).into_iter().rev().flat_map(|row| {
+        (0..=display_row).rev().flat_map(|row| {
             self.block_snapshot
                 .chunks(row..row + 1, false, Highlights::default())
                 .map(|h| h.text)
@@ -1455,10 +1455,8 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("mod.body", Hsla::red().into()),
-            ("fn.name", Hsla::blue().into()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("mod.body", Hsla::red()), ("fn.name", Hsla::blue())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1545,10 +1543,8 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("mod.body", Hsla::red().into()),
-            ("fn.name", Hsla::blue().into()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("mod.body", Hsla::red()), ("fn.name", Hsla::blue())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1616,10 +1612,8 @@ pub mod tests {
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("operator", Hsla::red().into()),
-            ("string", Hsla::green().into()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("operator", Hsla::red()), ("string", Hsla::green())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {

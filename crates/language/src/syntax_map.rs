@@ -766,7 +766,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer).into_iter(),
+            self.layers_for_range(range, buffer),
             query,
         )
     }
@@ -780,7 +780,7 @@ impl SyntaxSnapshot {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer).into_iter(),
+            self.layers_for_range(range, buffer),
             query,
         )
     }

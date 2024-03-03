@@ -311,7 +311,7 @@ async fn configure_disabled_globs(
 fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_copilot_suggestions = all_language_settings(None, cx).copilot_enabled(None, None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
-        file.defaults.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
+        file.defaults.show_copilot_suggestions = Some(!show_copilot_suggestions)
     });
 }
 
