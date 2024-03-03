@@ -657,9 +657,9 @@ impl SemanticIndex {
                 if register.await.log_err().is_none() {
                     // Stop tracking this worktree if the registration failed.
                     this.update(&mut cx, |this, _| {
-                        this.projects.get_mut(&project).map(|project_state| {
+                        if let Some(project_state) = this.projects.get_mut(&project) {
                             project_state.worktrees.remove(&worktree_id);
-                        });
+                        }
                     })
                     .ok();
                 }

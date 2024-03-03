@@ -957,14 +957,14 @@ impl CompletionsMenu {
                                 .selected(item_ix == selected_item)
                                 .on_click(cx.listener(move |editor, _event, cx| {
                                     cx.stop_propagation();
-                                    editor
-                                        .confirm_completion(
-                                            &ConfirmCompletion {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            cx,
-                                        )
-                                        .map(|task| task.detach_and_log_err(cx));
+                                    if let Some(task) = editor.confirm_completion(
+                                        &ConfirmCompletion {
+                                            item_ix: Some(item_ix),
+                                        },
+                                        cx,
+                                    ) {
+                                        task.detach_and_log_err(cx)
+                                    }
                                 }))
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Div>(documentation_label),
@@ -1175,14 +1175,14 @@ impl CodeActionsMenu {
                                 MouseButton::Left,
                                 cx.listener(move |editor, _, cx| {
                                     cx.stop_propagation();
-                                    editor
-                                        .confirm_code_action(
-                                            &ConfirmCodeAction {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            cx,
-                                        )
-                                        .map(|task| task.detach_and_log_err(cx));
+                                    if let Some(task) = editor.confirm_code_action(
+                                        &ConfirmCodeAction {
+                                            item_ix: Some(item_ix),
+                                        },
+                                        cx,
+                                    ) {
+                                        task.detach_and_log_err(cx)
+                                    }
                                 }),
                             )
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.

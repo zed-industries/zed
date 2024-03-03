@@ -1627,8 +1627,11 @@ impl Workspace {
         action: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) =
+            self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+        {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn close_all_items_and_panes(
@@ -1636,8 +1639,11 @@ impl Workspace {
         action: &CloseAllItemsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) =
+            self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+        {
+            task.detach_and_log_err(cx)
+        }
     }
 
     fn close_all_internal(
@@ -2599,8 +2605,9 @@ impl Workspace {
         if Some(leader_id) == self.unfollow(&pane, cx) {
             return;
         }
-        self.start_following(leader_id, cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) = self.start_following(leader_id, cx) {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) {
@@ -2642,8 +2649,9 @@ impl Workspace {
         }
 
         // Otherwise, follow.
-        self.start_following(leader_id, cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) = self.start_following(leader_id, cx) {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {

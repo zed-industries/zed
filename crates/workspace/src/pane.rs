@@ -1433,16 +1433,20 @@ impl Pane {
                             "Close Clean",
                             Some(Box::new(CloseCleanItems)),
                             cx.handler_for(&pane, move |pane, cx| {
-                                pane.close_clean_items(&CloseCleanItems, cx)
-                                    .map(|task| task.detach_and_log_err(cx));
+                                if let Some(task) = pane.close_clean_items(&CloseCleanItems, cx) {
+                                    task.detach_and_log_err(cx)
+                                }
                             }),
                         )
                         .entry(
                             "Close All",
                             Some(Box::new(CloseAllItems { save_intent: None })),
                             cx.handler_for(&pane, |pane, cx| {
-                                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
-                                    .map(|task| task.detach_and_log_err(cx));
+                                if let Some(task) =
+                                    pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+                                {
+                                    task.detach_and_log_err(cx)
+                                }
                             }),
                         );
 
@@ -1783,42 +1787,49 @@ impl Render for Pane {
             }))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                    pane.close_active_item(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_active_item(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseInactiveItems, cx| {
-                    pane.close_inactive_items(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_inactive_items(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseCleanItems, cx| {
-                    pane.close_clean_items(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_clean_items(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseItemsToTheLeft, cx| {
-                    pane.close_items_to_the_left(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_items_to_the_left(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseItemsToTheRight, cx| {
-                    pane.close_items_to_the_right(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_items_to_the_right(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(cx.listener(|pane: &mut Self, action: &CloseAllItems, cx| {
-                pane.close_all_items(action, cx)
-                    .map(|task| task.detach_and_log_err(cx));
+                if let Some(task) = pane.close_all_items(action, cx) {
+                    task.detach_and_log_err(cx)
+                }
             }))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                    pane.close_active_item(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_active_item(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
