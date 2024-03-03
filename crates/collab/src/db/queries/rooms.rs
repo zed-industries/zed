@@ -321,7 +321,7 @@ impl Database {
             }
 
             let participant_index = self
-                .get_next_participant_index_internal(room_id, &*tx)
+                .get_next_participant_index_internal(room_id, &tx)
                 .await?;
 
             let result = room_participant::Entity::update_many()
@@ -1010,7 +1010,7 @@ impl Database {
                 .ok_or_else(|| anyhow!("only admins can set participant role"))?;
 
             if role.requires_cla() {
-                self.check_user_has_signed_cla(user_id, room_id, &*tx)
+                self.check_user_has_signed_cla(user_id, room_id, &tx)
                     .await?;
             }
 
@@ -1076,10 +1076,9 @@ impl Database {
 
     pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {
         self.transaction(|tx| async move {
-            self.room_connection_lost(connection, &*tx).await?;
-            self.channel_buffer_connection_lost(connection, &*tx)
-                .await?;
-            self.channel_chat_connection_lost(connection, &*tx).await?;
+            self.room_connection_lost(connection, &tx).await?;
+            self.channel_buffer_connection_lost(connection, &tx).await?;
+            self.channel_chat_connection_lost(connection, &tx).await?;
             Ok(())
         })
         .await

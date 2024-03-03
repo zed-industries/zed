@@ -466,7 +466,7 @@ impl TestServer {
         let active_call_a = cx_a.read(ActiveCall::global);
 
         for (client_b, cx_b) in right {
-            let user_id_b = client_b.current_user_id(*cx_b).to_proto();
+            let user_id_b = client_b.current_user_id(cx_b).to_proto();
             active_call_a
                 .update(*cx_a, |call, cx| call.invite(user_id_b, None, cx))
                 .await

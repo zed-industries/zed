@@ -6774,7 +6774,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
                 move |_, leader, event, cx| {
                     leader
                         .read(cx)
-                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                        .add_event_to_update_proto(event, &mut update.borrow_mut(), cx);
                 },
             )
             .detach();
@@ -6943,7 +6943,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
             cx.subscribe(&leader, move |_, leader, event, cx| {
                 leader
                     .read(cx)
-                    .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                    .add_event_to_update_proto(event, &mut update.borrow_mut(), cx);
             })
             .detach();
         }
