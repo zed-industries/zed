@@ -119,7 +119,9 @@ impl Render for CopilotButton {
 
 impl CopilotButton {
     pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
-        Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
+        if let Some(copilot) = Copilot::global(cx) {
+            cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
+        }
 
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
