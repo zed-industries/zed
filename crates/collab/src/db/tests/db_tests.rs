@@ -87,8 +87,7 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         },
     )
     .await
-    .unwrap()
-    .user_id;
+    .unwrap();
     let user_id2 = db
         .create_user(
             "user2@example.com",
