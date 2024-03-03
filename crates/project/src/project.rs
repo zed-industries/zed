@@ -7123,7 +7123,7 @@ impl Project {
                             .set_local_settings(
                                 worktree_id.as_u64() as usize,
                                 directory.clone(),
-                                file_content.as_ref().map(String::as_str),
+                                file_content.as_deref(),
                                 cx,
                             )
                             .log_err();
@@ -7424,7 +7424,7 @@ impl Project {
                         .set_local_settings(
                             worktree.entity_id().as_u64() as usize,
                             PathBuf::from(&envelope.payload.path).into(),
-                            envelope.payload.content.as_ref().map(String::as_str),
+                            envelope.payload.content.as_deref(),
                             cx,
                         )
                         .log_err();
