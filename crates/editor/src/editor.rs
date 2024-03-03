@@ -965,10 +965,10 @@ impl CompletionsMenu {
 
                         let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
-                        let max_len = px(510.);
-                        let mut first_part_end = completion.label.filter_range.end;
-                        let mut label_text = completion.label.text.clone();
-                        let mut first_length_truncated: i32 = 0;
+                        let max_completion_len = px(510.);
+                        let mut variable_name_end = completion.label.filter_range.end;
+                        let mut completion_label_text = completion.label.text.clone();
+                        let mut variable_name_length_truncated: i32 = 0;
                         if let Ok(completion_layout_line) =
                             completion_label.line_layout(font_size, cx)
                         {
@@ -978,7 +978,7 @@ impl CompletionsMenu {
                                 if inline_documentation_exists {
                                     if completion_layout_line.width
                                         + documentation_layout_line.width
-                                        > max_len
+                                        > max_completion_len
                                     {
 
                                         if let Ok(ellipsis_width) = cx.text_system().layout_line(
@@ -986,82 +986,80 @@ impl CompletionsMenu {
                                             font_size,
                                             &[style.text.to_run("...".len())],
                                         ) {
-                                            let width_of_first_part = completion_layout_line
+                                            let width_of_variable_name = completion_layout_line
                                                 .x_for_index(completion.label.filter_range.end);
-                                            let width_of_second_part = documentation_layout_line
+                                            let width_of_documentation = documentation_layout_line
                                                 .x_for_index(documentation_text.len());
 
-                                            let max_width_of_first_part =
-                                                if width_of_second_part < max_len * 0.2 {
-                                                    max_len - width_of_second_part
+                                            let max_width_of_variable_name =
+                                                if width_of_documentation < max_completion_len * 0.2 {
+                                                    max_completion_len - width_of_documentation
                                                 } else {
-                                                    max_len * 0.8
+                                                    max_completion_len * 0.8
                                                 };
 
-                                            if width_of_first_part < max_width_of_first_part {
+                                            if width_of_variable_name < max_width_of_variable_name {
                                                 // truncate second part only
-                                                if let Some(index) = documentation_layout_line
-                                                    .index_for_x((max_len * 0.65).min(
-                                                        max_len
+                                                if let Some(documentation_truncation_index) = documentation_layout_line
+                                                    .index_for_x((max_completion_len * 0.65).min(
+                                                        max_completion_len
                                                             - ellipsis_width.width
-                                                            - width_of_first_part
-                                                            - px(30.),
+                                                            - width_of_variable_name
                                                     ))
                                                 {
-                                                    first_part_end = index + 3;
+                                                    variable_name_end = documentation_truncation_index + 3;
                                                     documentation_text = documentation_text
                                                         .chars()
-                                                        .take(index)
+                                                        .take(documentation_truncation_index)
                                                         .collect::<String>()
                                                         + "...";
                                                 }
                                             } else {
                                                 // truncate first part (and optionally second part too)
-                                                if let Some(index) = completion_layout_line
+                                                if let Some(variable_name_truncation_index) = completion_layout_line
                                                     .index_for_x(
-                                                        max_width_of_first_part
+                                                        max_width_of_variable_name
                                                             - ellipsis_width.width,
                                                     )
                                                 {
-                                                    first_length_truncated =
+                                                    variable_name_length_truncated =
                                                         completion.label.filter_range.end as i32
-                                                            - index as i32
+                                                            - variable_name_truncation_index as i32
                                                             - 3;
-                                                    first_part_end = index + 3;
+                                                    variable_name_end = variable_name_truncation_index + 3;
 
-                                                    label_text = completion
+                                                    completion_label_text = completion
                                                         .label
                                                         .text
                                                         .chars()
-                                                        .take(index)
+                                                        .take(variable_name_truncation_index)
                                                         .collect::<String>()
                                                         + "...";
                                                     completion_label = completion_label
-                                                        .with_text(label_text.clone());
+                                                        .with_text(completion_label_text.clone());
                                                     if let Ok(new_completion_layout_line) =
                                                         completion_label.line_layout(font_size, cx)
                                                     {
                                                         let combined_width =
                                                             new_completion_layout_line
-                                                                .x_for_index(label_text.len())
-                                                                + width_of_second_part;
-                                                        if combined_width > max_len {
-                                                            if let Some(index) =
+                                                                .x_for_index(completion_label_text.len())
+                                                                + width_of_documentation;
+                                                        if combined_width > max_completion_len {
+                                                            if let Some(documentation_truncation_index) =
                                                                 documentation_layout_line
                                                                     .index_for_x(
-                                                                        (max_len * 0.65).min(
-                                                                            max_len
+                                                                        (max_completion_len * 0.65).min(
+                                                                            max_completion_len
                                                                                 - ellipsis_width
                                                                                     .width
-                                                                                -max_width_of_first_part
-                                                                                - px(30.),
+                                                                                -max_width_of_variable_name
                                                                         ),
                                                                     )
                                                             {
                                                                 documentation_text =
                                                                     documentation_text
                                                                         .chars()
-                                                                        .take(index)
+                                                                        .take(documentation_truncation_index)
                                                                         .collect::<String>()
                                                                         + "...";
                                                             }
@@ -1072,82 +1070,82 @@ impl CompletionsMenu {
                                         }
                                     }
                                 } else {
-                                    if completion_layout_line.width > max_len {
+                                    if completion_layout_line.width > max_completion_len {
                                         if let Ok(ellipsis_width) = cx.text_system().layout_line(
                                             "...",
                                             font_size,
                                             &[style.text.to_run("...".len())],
                                         ) {
-                                            let width_of_first_part = completion_layout_line
+                                            let width_of_variable_name = completion_layout_line
                                                 .x_for_index(completion.label.filter_range.end);
-                                            let width_of_second_part =
-                                                completion_layout_line.width - width_of_first_part;
+                                            let width_of_type_annotation =
+                                                completion_layout_line.width - width_of_variable_name;
 
-                                            let max_width_of_first_part =
-                                                if width_of_second_part < max_len * 0.2 {
-                                                    max_len - width_of_second_part
+                                            let max_width_of_variable_name =
+                                                if width_of_type_annotation < max_completion_len * 0.2 {
+                                                    max_completion_len - width_of_type_annotation
                                                 } else {
-                                                    max_len * 0.8
+                                                    max_completion_len * 0.8
                                                 };
 
-                                            if width_of_first_part < max_width_of_first_part {
+                                            if width_of_variable_name < max_width_of_variable_name {
                                                 // truncate second part only
 
-                                                if let Some(index) = completion_layout_line
-                                                    .index_for_x(max_len - ellipsis_width.width)
+                                                if let Some(type_annotation_truncation_index) = completion_layout_line
+                                                    .index_for_x(max_completion_len - ellipsis_width.width)
                                                 {
-                                                    first_part_end = index + 3;
-                                                    label_text = completion
+                                                    variable_name_end = type_annotation_truncation_index + 3;
+                                                    completion_label_text = completion
                                                         .label
                                                         .text
                                                         .chars()
-                                                        .take(index)
+                                                        .take(type_annotation_truncation_index)
                                                         .collect::<String>()
                                                         + "...";
                                                 }
                                             } else {
                                                 // truncate first part (and optionally second part too)
-                                                if let Some(index) = completion_layout_line
+                                                if let Some(variable_name_truncation_index) = completion_layout_line
                                                     .index_for_x(
-                                                        max_width_of_first_part
+                                                        max_width_of_variable_name
                                                             - ellipsis_width.width,
                                                     )
                                                 {
-                                                    first_length_truncated =
+                                                    variable_name_length_truncated =
                                                         completion.label.filter_range.end as i32
-                                                            - index as i32
+                                                            - variable_name_truncation_index as i32
                                                             - 3;
-                                                    first_part_end = index + 3;
+                                                    variable_name_end = variable_name_truncation_index + 3;
 
                                                     let second_part_text =
                                                         &completion.label.text.as_str()
                                                             [completion.label.filter_range.end..];
 
-                                                    label_text = completion
+                                                    completion_label_text = completion
                                                         .label
                                                         .text
                                                         .chars()
-                                                        .take(index)
+                                                        .take(variable_name_truncation_index)
                                                         .collect::<String>()
                                                         + "..."
                                                         + second_part_text;
                                                     completion_label = completion_label
-                                                        .with_text(label_text.clone());
+                                                        .with_text(completion_label_text.clone());
                                                     if let Ok(layout_line) =
                                                         completion_label.line_layout(font_size, cx)
                                                     {
                                                         let combined_width = layout_line
-                                                            .x_for_index(label_text.len());
-                                                        if combined_width > max_len {
-                                                            if let Some(index) = layout_line
+                                                            .x_for_index(completion_label_text.len());
+                                                        if combined_width > max_completion_len {
+                                                            if let Some(type_annotation_truncation_index) = layout_line
                                                                 .index_for_x(
-                                                                    max_len
+                                                                    max_completion_len
                                                                         - ellipsis_width.width,
                                                                 )
                                                             {
-                                                                label_text = label_text
+                                                                completion_label_text = completion_label_text
                                                                     .chars()
-                                                                    .take(index)
+                                                                    .take(type_annotation_truncation_index)
                                                                     .collect::<String>()
                                                                     + "...";
                                                             }
@@ -1162,28 +1160,28 @@ impl CompletionsMenu {
                         };
 
                         //recompute syntax highlighting
-                        completion.label.text = label_text.clone();
+                        completion.label.text = completion_label_text.clone();
 
 
                         if inline_documentation_exists{
-                            completion.label.filter_range.end = label_text.len();
+                            completion.label.filter_range.end = completion_label_text.len();
                             for run in completion.label.runs.iter_mut() {
                                 if run.0.start == 0 {
                                     run.0.start = 0;
-                                    run.0.end = label_text.len();
+                                    run.0.end = completion_label_text.len();
                                 }
                             }
                         }else{
-                            completion.label.filter_range.end = first_part_end;
+                            completion.label.filter_range.end = variable_name_end;
                             for run in completion.label.runs.iter_mut() {
                                 if run.0.start == 0 {
                                     run.0.start = 0;
-                                    run.0.end = first_part_end;
+                                    run.0.end = variable_name_end;
                                 } else{
                                     run.0.start =
-                                        (run.0.start as i32 - first_length_truncated as i32) as usize;
+                                        (run.0.start as i32 - variable_name_length_truncated as i32) as usize;
                                     run.0.end =
-                                        (run.0.end as i32 - first_length_truncated as i32) as usize;
+                                        (run.0.end as i32 - variable_name_length_truncated as i32) as usize;
                                 }
                             }
                         }
@@ -1200,7 +1198,7 @@ impl CompletionsMenu {
                         );
 
                         let completion_label =
-                            StyledText::new(label_text).with_highlights(&style.text, highlights);
+                            StyledText::new(completion_label_text).with_highlights(&style.text, highlights);
 
                         let documentation_style = style.clone().text;
                         let documentation_highlight_style = HighlightStyle {
@@ -1219,10 +1217,10 @@ impl CompletionsMenu {
                             .with_highlights(&documentation_style, documentation_highlights);
 
                         let min_w = match inline_documentation_exists {
-                            true => max_len + px(30.),
+                            true => max_completion_len + px(30.),
                             false => px(210.),
                         };
-                        div().min_w(min_w).max_w(max_len + px(30.)).child(
+                        div().min_w(min_w).max_w(max_completion_len + px(30.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .selected(item_ix == selected_item)
