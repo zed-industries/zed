@@ -68,11 +68,12 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .unwrap();
 
     let mut buffer_a = Buffer::new(0, text::BufferId::new(1).unwrap(), "".to_string());
-    let mut operations = Vec::new();
-    operations.push(buffer_a.edit([(0..0, "hello world")]));
-    operations.push(buffer_a.edit([(5..5, ", cruel")]));
-    operations.push(buffer_a.edit([(0..5, "goodbye")]));
-    operations.push(buffer_a.undo().unwrap().1);
+    let operations = vec![
+        buffer_a.edit([(0..0, "hello world")]),
+        buffer_a.edit([(5..5, ", cruel")]),
+        buffer_a.edit([(0..5, "goodbye")]),
+        buffer_a.undo().unwrap().1,
+    ];
     assert_eq!(buffer_a.text(), "hello, cruel world");
 
     let operations = operations
