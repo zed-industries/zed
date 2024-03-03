@@ -10052,7 +10052,7 @@ impl ViewInputHandler for Editor {
                     .disjoint_anchors()
                     .iter()
                     .map(|selection| {
-                        selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
                     })
                     .collect::<Vec<_>>()
             };

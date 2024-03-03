@@ -80,7 +80,7 @@ impl Database {
                 github_login,
                 github_user_id,
                 github_email,
-                &*tx,
+                &tx,
             )
             .await
         })

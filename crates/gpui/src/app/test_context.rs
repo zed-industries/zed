@@ -160,7 +160,7 @@ impl TestAppContext {
     /// Gives you an `&AppContext` for the duration of the closure
     pub fn read<R>(&self, f: impl FnOnce(&AppContext) -> R) -> R {
         let cx = self.app.borrow();
-        f(&*cx)
+        f(&cx)
     }
 
     /// Adds a new window. The Window will always be backed by a `TestWindow` which

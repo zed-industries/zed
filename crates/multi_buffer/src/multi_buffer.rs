@@ -1859,7 +1859,7 @@ impl MultiBuffer {
                     .cloned()
                     .collect::<Vec<_>>();
                 let snapshot = self.snapshot.borrow();
-                excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &*snapshot));
+                excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
                 drop(snapshot);
                 log::info!("Removing excerpts {:?}", excerpts_to_remove);
                 self.remove_excerpts(excerpts_to_remove, cx);
@@ -1920,7 +1920,7 @@ impl MultiBuffer {
 
         for (ix, entry) in excerpt_ids.iter().enumerate() {
             if ix == 0 {
-                if entry.id.cmp(&ExcerptId::min(), &*snapshot).is_le() {
+                if entry.id.cmp(&ExcerptId::min(), &snapshot).is_le() {
                     panic!("invalid first excerpt id {:?}", entry.id);
                 }
             } else {

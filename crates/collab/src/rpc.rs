@@ -353,7 +353,7 @@ impl Server {
                                     &refreshed_room.room,
                                     &refreshed_room.channel_members,
                                     &peer,
-                                    &*pool.lock(),
+                                    &pool.lock(),
                                 );
                             }
                             contacts_to_update
@@ -754,13 +754,13 @@ impl<'a> Deref for ConnectionPoolGuard<'a> {
     type Target = ConnectionPool;
 
     fn deref(&self) -> &Self::Target {
-        &*self.guard
+        &self.guard
     }
 }
 
 impl<'a> DerefMut for ConnectionPoolGuard<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.guard
+        &mut self.guard
     }
 }
 
@@ -2226,7 +2226,7 @@ async fn request_contact(
         session.peer.send(connection_id, update.clone())?;
     }
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2283,7 +2283,7 @@ async fn respond_to_contact_request(
             session.peer.send(connection_id, update.clone())?;
         }
 
-        send_notifications(&*pool, &session.peer, notifications);
+        send_notifications(&pool, &session.peer, notifications);
     }
 
     response.send(proto::Ack {})?;
@@ -2451,7 +2451,7 @@ async fn invite_channel_member(
         session.peer.send(connection_id, update.clone())?;
     }
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2713,7 +2713,7 @@ async fn respond_to_channel_invite(
         }
     };
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
 

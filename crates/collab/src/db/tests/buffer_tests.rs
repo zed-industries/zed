@@ -222,7 +222,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             .unwrap();
 
         buffers.push(
-            db.transaction(|tx| async move { db.get_channel_buffer(channel, &*tx).await })
+            db.transaction(|tx| async move { db.get_channel_buffer(channel, &tx).await })
                 .await
                 .unwrap(),
         );
@@ -238,7 +238,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.get_latest_operations_for_buffers([buffers[0].id, buffers[2].id], &*tx)
+                db.get_latest_operations_for_buffers([buffers[0].id, buffers[2].id], &tx)
                     .await
             }
         })
@@ -302,7 +302,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.get_latest_operations_for_buffers([buffers[1].id, buffers[2].id], &*tx)
+                db.get_latest_operations_for_buffers([buffers[1].id, buffers[2].id], &tx)
                     .await
             }
         })
@@ -320,7 +320,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.get_latest_operations_for_buffers([buffers[0].id, buffers[1].id], &*tx)
+                db.get_latest_operations_for_buffers([buffers[0].id, buffers[1].id], &tx)
                     .await
             }
         })
@@ -342,7 +342,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             hash.insert(buffers[1].id, buffers[1].channel_id);
             hash.insert(buffers[2].id, buffers[2].channel_id);
 
-            async move { db.latest_channel_buffer_changes(&hash, &*tx).await }
+            async move { db.latest_channel_buffer_changes(&hash, &tx).await }
         })
         .await
         .unwrap();
