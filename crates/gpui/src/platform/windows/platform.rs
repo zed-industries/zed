@@ -46,12 +46,12 @@ use windows::{
                 FOS_ALLOWMULTISELECT, FOS_PICKFOLDERS, SIGDN_PARENTRELATIVEPARSING,
             },
             WindowsAndMessaging::{
-                AppendMenuW, CreateAcceleratorTableW, CreateMenu, DefWindowProcW, DispatchMessageW,
-                GetMessageW, LoadAcceleratorsW, LoadImageW, PostQuitMessage, SetCursor,
-                TranslateAcceleratorW, TranslateMessage, ACCEL, ACCEL_VIRT_FLAGS, HACCEL, HCURSOR,
-                HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
-                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MF_POPUP, MF_SEPARATOR, MF_STRING,
-                SW_SHOWDEFAULT, WM_COMMAND, WM_DESTROY,
+                AppendMenuW, CreateAcceleratorTableW, CreateMenu, DefWindowProcW,
+                DestroyAcceleratorTable, DispatchMessageW, GetMessageW, LoadAcceleratorsW,
+                LoadImageW, PostQuitMessage, SetCursor, TranslateAcceleratorW, TranslateMessage,
+                ACCEL, ACCEL_VIRT_FLAGS, HACCEL, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND,
+                IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED,
+                MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_COMMAND, WM_DESTROY,
             },
         },
     },
@@ -211,6 +211,7 @@ impl Platform for WindowsPlatform {
                     DispatchMessageW(&msg);
                 }
             }
+            let _ = DestroyAcceleratorTable(table);
         }
         if let Some(ref mut func) = self.inner.callbacks.borrow_mut().quit {
             func();
