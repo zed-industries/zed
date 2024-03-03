@@ -11,8 +11,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-block = "0.1"
-bytes = "1.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

@@ -1,6 +1,6 @@
 use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::{Extension, ExtensionStatus, ExtensionStore};
+use extension::{ExtensionApiResponse, ExtensionStatus, ExtensionStore};
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
     FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
@@ -11,7 +11,7 @@ use settings::Settings;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, Tooltip};
+use ui::{prelude::*, ToggleButton, Tooltip};
 
 use workspace::{
     item::{Item, ItemEvent},
@@ -24,19 +24,25 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
         workspace.register_action(move |workspace, _: &Extensions, cx| {
             let extensions_page = ExtensionsPage::new(workspace, cx);
-            workspace.add_item(Box::new(extensions_page), cx)
+            workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
         });
     })
     .detach();
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum ExtensionFilter {
+    All,
+    Installed,
+    NotInstalled,
 }
 
 pub struct ExtensionsPage {
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
-    is_showing_installed_extensions: bool,
-    is_showing_not_installed_extensions: bool,
-    extension_entries: Vec<Extension>,
+    filter: ExtensionFilter,
+    extension_entries: Vec<ExtensionApiResponse>,
     query_editor: View<Editor>,
     query_contains_error: bool,
     _subscription: gpui::Subscription,
@@ -49,15 +55,18 @@ impl ExtensionsPage {
             let store = ExtensionStore::global(cx);
             let subscription = cx.observe(&store, |_, _, cx| cx.notify());
 
-            let query_editor = cx.new_view(|cx| Editor::single_line(cx));
+            let query_editor = cx.new_view(|cx| {
+                let mut input = Editor::single_line(cx);
+                input.set_placeholder_text("Search extensions...", cx);
+                input
+            });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
-                is_showing_installed_extensions: true,
-                is_showing_not_installed_extensions: true,
+                filter: ExtensionFilter::All,
                 extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
@@ -69,22 +78,22 @@ impl ExtensionsPage {
         })
     }
 
-    fn filtered_extension_entries(&self, cx: &mut ViewContext<Self>) -> Vec<Extension> {
+    fn filtered_extension_entries(&self, cx: &mut ViewContext<Self>) -> Vec<ExtensionApiResponse> {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         self.extension_entries
             .iter()
-            .filter(|extension| {
-                let status = extension_store.extension_status(&extension.id);
+            .filter(|extension| match self.filter {
+                ExtensionFilter::All => true,
+                ExtensionFilter::Installed => {
+                    let status = extension_store.extension_status(&extension.id);
 
-                match [
-                    self.is_showing_installed_extensions,
-                    self.is_showing_not_installed_extensions,
-                ] {
-                    [true, true] => true,
-                    [true, false] => matches!(status, ExtensionStatus::Installed(_)),
-                    [false, true] => matches!(status, ExtensionStatus::NotInstalled),
-                    [false, false] => false,
+                    matches!(status, ExtensionStatus::Installed(_))
+                }
+                ExtensionFilter::NotInstalled => {
+                    let status = extension_store.extension_status(&extension.id);
+
+                    matches!(status, ExtensionStatus::NotInstalled)
                 }
             })
             .cloned()
@@ -145,7 +154,7 @@ impl ExtensionsPage {
             .collect()
     }
 
-    fn render_entry(&self, extension: &Extension, cx: &mut ViewContext<Self>) -> Div {
+    fn render_entry(&self, extension: &ExtensionApiResponse, cx: &mut ViewContext<Self>) -> Div {
         let status = ExtensionStore::global(cx)
             .read(cx)
             .extension_status(&extension.id);
@@ -359,7 +368,7 @@ impl ExtensionsPage {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -421,17 +430,33 @@ impl ExtensionsPage {
     }
 
     fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let is_filtering = self.search_query(cx).is_some()
-            || self.is_showing_installed_extensions
-            || self.is_showing_not_installed_extensions;
+        let has_search = self.search_query(cx).is_some();
 
         let message = if self.is_fetching_extensions {
             "Loading extensions..."
         } else {
-            if is_filtering {
-                "No extensions that match your search criteria."
-            } else {
-                "No extensions."
+            match self.filter {
+                ExtensionFilter::All => {
+                    if has_search {
+                        "No extensions that match your search."
+                    } else {
+                        "No extensions."
+                    }
+                }
+                ExtensionFilter::Installed => {
+                    if has_search {
+                        "No installed extensions that match your search."
+                    } else {
+                        "No installed extensions."
+                    }
+                }
+                ExtensionFilter::NotInstalled => {
+                    if has_search {
+                        "No not installed extensions that match your search."
+                    } else {
+                        "No not installed extensions."
+                    }
+                }
             }
         };
 
@@ -443,56 +468,73 @@ impl Render for ExtensionsPage {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .p_4()
-            .gap_4()
             .bg(cx.theme().colors().editor_background)
             .child(
-                h_flex()
-                    .w_full()
-                    .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+                v_flex()
+                    .gap_4()
+                    .p_4()
+                    .border_b()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .child(h_flex().child(self.render_search(cx)))
+                            .child(
+                                h_flex()
+                                    .child(
+                                        ToggleButton::new("filter-all", "All")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
+                                            .selected(self.filter == ExtensionFilter::All)
+                                            .on_click(cx.listener(|this, _event, _cx| {
+                                                this.filter = ExtensionFilter::All;
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Show all extensions", cx)
+                                            })
+                                            .first(),
+                                    )
+                                    .child(
+                                        ToggleButton::new("filter-installed", "Installed")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
+                                            .selected(self.filter == ExtensionFilter::Installed)
+                                            .on_click(cx.listener(|this, _event, _cx| {
+                                                this.filter = ExtensionFilter::Installed;
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Show installed extensions", cx)
+                                            })
+                                            .middle(),
+                                    )
+                                    .child(
+                                        ToggleButton::new("filter-not-installed", "Not Installed")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
+                                            .selected(self.filter == ExtensionFilter::NotInstalled)
+                                            .on_click(cx.listener(|this, _event, _cx| {
+                                                this.filter = ExtensionFilter::NotInstalled;
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Show not installed extensions", cx)
+                                            })
+                                            .last(),
+                                    ),
+                            ),
+                    ),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(h_flex().child(self.render_search(cx)))
-                    .child(CheckboxWithLabel::new(
-                        "Installed",
-                        Label::new("Installed"),
-                        if self.is_showing_installed_extensions {
-                            Selection::Selected
-                        } else {
-                            Selection::Unselected
-                        },
-                        cx.listener(|this, selection, _cx| {
-                            this.is_showing_installed_extensions = match selection {
-                                Selection::Selected => true,
-                                Selection::Unselected => false,
-                                Selection::Indeterminate => return,
-                            }
-                        }),
-                    ))
-                    .child(CheckboxWithLabel::new(
-                        "not installed",
-                        Label::new("Not installed"),
-                        if self.is_showing_not_installed_extensions {
-                            Selection::Selected
-                        } else {
-                            Selection::Unselected
-                        },
-                        cx.listener(|this, selection, _cx| {
-                            this.is_showing_not_installed_extensions = match selection {
-                                Selection::Selected => true,
-                                Selection::Unselected => false,
-                                Selection::Indeterminate => return,
-                            }
-                        }),
-                    )),
-            )
-            .child(v_flex().size_full().overflow_y_hidden().map(|this| {
+            .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let entries = self.filtered_extension_entries(cx);
                 if entries.is_empty() {
-                    return this.child(self.render_empty_state(cx));
+                    return this.py_4().child(self.render_empty_state(cx));
                 }
 
                 this.child(
@@ -508,6 +550,7 @@ impl Render for ExtensionsPage {
                                 Self::render_extensions,
                             )
                             .size_full()
+                            .pb_4()
                             .track_scroll(scroll_handle)
                             .into_any_element()
                             .draw(

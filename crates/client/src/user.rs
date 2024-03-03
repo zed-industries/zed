@@ -15,6 +15,15 @@ use util::TryFutureExt as _;
 
 pub type UserId = u64;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub struct ChannelId(pub u64);
+
+impl std::fmt::Display for ChannelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParticipantIndex(pub u32);
 
@@ -644,7 +653,7 @@ impl UserStore {
                 let users = response
                     .users
                     .into_iter()
-                    .map(|user| User::new(user))
+                    .map(User::new)
                     .collect::<Vec<_>>();
 
                 this.update(&mut cx, |this, _| {

@@ -36,6 +36,7 @@ mod ruby;
 mod rust;
 mod svelte;
 mod tailwind;
+mod terraform;
 mod toml;
 mod typescript;
 mod uiua;
@@ -121,15 +122,17 @@ pub fn init(
         ("dart", tree_sitter_dart::language()),
     ]);
 
-    let language = |asset_dir_name: &'static str, adapters| {
+    let language = |asset_dir_name: &'static str, adapters: Vec<Arc<dyn LspAdapter>>| {
         let config = load_config(asset_dir_name);
+        for adapter in adapters {
+            languages.register_lsp_adapter(config.name.clone(), adapter);
+        }
         languages.register_language(
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            adapters,
             move || Ok((config.clone(), load_queries(asset_dir_name))),
-        )
+        );
     };
 
     language(
@@ -312,8 +315,11 @@ pub fn init(
     );
     language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language("proto", vec![]);
-    language("terraform", vec![]);
-    language("terraform-vars", vec![]);
+    language("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
+    language(
+        "terraform-vars",
+        vec![Arc::new(terraform::TerraformLspAdapter)],
+    );
     language("hcl", vec![]);
     language(
         "prisma",
@@ -325,15 +331,9 @@ pub fn init(
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub async fn language(
-    name: &str,
-    grammar: tree_sitter::Language,
-    lsp_adapter: Option<Arc<dyn LspAdapter>>,
-) -> Arc<Language> {
+pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     Arc::new(
         Language::new(load_config(name), Some(grammar))
-            .with_lsp_adapters(lsp_adapter.into_iter().collect())
-            .await
             .with_queries(load_queries(name))
             .unwrap(),
     )

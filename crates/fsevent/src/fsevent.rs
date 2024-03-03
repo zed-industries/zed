@@ -17,6 +17,7 @@ pub struct Event {
 // Synchronize with
 // /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Headers/FSEvents.h
 bitflags! {
+  #[derive(Debug, PartialEq, Eq, Clone, Copy)]
   #[repr(C)]
   pub struct StreamFlags: u32 {
     const NONE = 0x00000000;

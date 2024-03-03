@@ -3,13 +3,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-use gpui::{AsyncAppContext, Task};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
 use std::env::consts::{ARCH, OS};
 use std::ffi::OsString;
-use std::sync::Arc;
 use std::{any::Any, path::PathBuf};
 use util::async_maybe;
 use util::github::latest_github_release;
@@ -21,10 +19,6 @@ pub struct ZlsAdapter;
 impl LspAdapter for ZlsAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("zls".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "zls"
     }
 
     async fn fetch_latest_server_version(
@@ -47,23 +41,16 @@ impl LspAdapter for ZlsAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
-    fn check_if_user_installed(
+    async fn check_if_user_installed(
         &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
-        let delegate = delegate.clone();
-
-        Some(cx.spawn(|cx| async move {
-            match cx.update(|cx| delegate.which_command(OsString::from("zls"), cx)) {
-                Ok(task) => task.await.map(|(path, env)| LanguageServerBinary {
-                    path,
-                    arguments: vec![],
-                    env: Some(env),
-                }),
-                Err(_) => None,
-            }
-        }))
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let (path, env) = delegate.which_command(OsString::from("zls")).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(
@@ -86,7 +73,7 @@ impl LspAdapter for ZlsAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo!("windows")
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(

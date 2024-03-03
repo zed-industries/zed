@@ -19,11 +19,9 @@ pub struct Embedding(pub Vec<f32>);
 impl FromSql for Embedding {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
         let bytes = value.as_blob()?;
-        let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
-        if embedding.is_err() {
-            return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
-        }
-        Ok(Embedding(embedding.unwrap()))
+        let embedding =
+            bincode::deserialize(bytes).map_err(|err| rusqlite::types::FromSqlError::Other(err))?;
+        Ok(Embedding(embedding))
     }
 }
 
@@ -112,7 +110,7 @@ mod tests {
         }
 
         fn round_to_decimals(n: OrderedFloat<f32>, decimal_places: i32) -> f32 {
-            let factor = (10.0 as f32).powi(decimal_places);
+            let factor = 10.0_f32.powi(decimal_places);
             (n * factor).round() / factor
         }
 

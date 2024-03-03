@@ -11,66 +11,33 @@ doctest = false
 
 [features]
 test-support = [
-    "copilot/test-support",
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
     "util/test-support",
-    "tree-sitter-rust",
-    "tree-sitter-typescript"
 ]
 
 [dependencies]
-aho-corasick = "1.1"
 anyhow.workspace = true
-client.workspace = true
 clock.workspace = true
 collections.workspace = true
-convert_case = "0.6.0"
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
-indoc = "1.0.4"
-itertools = "0.10"
 language.workspace = true
-lazy_static.workspace = true
 log.workspace = true
-lsp.workspace = true
-ordered-float.workspace = true
 parking_lot.workspace = true
-postage.workspace = true
-pulldown-cmark.workspace = true
 rand.workspace = true
-rich_text.workspace = true
-schemars.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
-smallvec.workspace = true
-smol.workspace = true
-snippet.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
-tree-sitter-html = { workspace = true, optional = true }
-tree-sitter-rust = { workspace = true, optional = true }
-tree-sitter-typescript = { workspace = true, optional = true }
 util.workspace = true
 
 [dev-dependencies]
-copilot = { workspace = true, features = ["test-support"] }
-ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-lsp = { workspace = true, features = ["test-support"] }
-project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
-tree-sitter-html.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-typescript.workspace = true
-tree-sitter.workspace = true
-unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }

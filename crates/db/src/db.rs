@@ -22,20 +22,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use util::{async_maybe, ResultExt};
 
-const CONNECTION_INITIALIZE_QUERY: &'static str = sql!(
+const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;
 );
 
-const DB_INITIALIZE_QUERY: &'static str = sql!(
+const DB_INITIALIZE_QUERY: &str = sql!(
     PRAGMA journal_mode=WAL;
     PRAGMA busy_timeout=1;
     PRAGMA case_sensitive_like=TRUE;
     PRAGMA synchronous=NORMAL;
 );
 
-const FALLBACK_DB_NAME: &'static str = "FALLBACK_MEMORY_DB";
+const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 
-const DB_FILE_NAME: &'static str = "db.sqlite";
+const DB_FILE_NAME: &str = "db.sqlite";
 
 lazy_static::lazy_static! {
     pub static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());

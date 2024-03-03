@@ -451,7 +451,7 @@ impl<T: Item> ItemHandle for View<T> {
                         if item.focus_handle(cx).contains_focused(cx)
                             && item.add_event_to_update_proto(
                                 event,
-                                &mut *pending_update.borrow_mut(),
+                                &mut pending_update.borrow_mut(),
                                 cx,
                             )
                             && !pending_update_scheduled.load(Ordering::SeqCst)

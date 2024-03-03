@@ -1,5 +1,9 @@
 use std::ops::Range;
 
+use crate::{
+    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
+    visual::visual_object, Vim,
+};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -9,11 +13,6 @@ use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::{char_kind, BufferSnapshot, CharKind, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
-
-use crate::{
-    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
-    visual::visual_object, Vim,
-};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Object {
@@ -28,6 +27,7 @@ pub enum Object {
     CurlyBrackets,
     AngleBrackets,
     Argument,
+    Tag,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -51,7 +51,8 @@ actions!(
         SquareBrackets,
         CurlyBrackets,
         AngleBrackets,
-        Argument
+        Argument,
+        Tag
     ]
 );
 
@@ -61,6 +62,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             object(Object::Word { ignore_punctuation }, cx)
         },
     );
+    workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| object(Object::Tag, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
@@ -108,6 +110,7 @@ impl Object {
             | Object::DoubleQuotes => false,
             Object::Sentence
             | Object::Parentheses
+            | Object::Tag
             | Object::AngleBrackets
             | Object::CurlyBrackets
             | Object::SquareBrackets
@@ -124,6 +127,7 @@ impl Object {
             | Object::VerticalBars
             | Object::Parentheses
             | Object::SquareBrackets
+            | Object::Tag
             | Object::CurlyBrackets
             | Object::AngleBrackets => true,
         }
@@ -131,17 +135,23 @@ impl Object {
 
     pub fn target_visual_mode(self, current_mode: Mode) -> Mode {
         match self {
-            Object::Word { .. } if current_mode == Mode::VisualLine => Mode::Visual,
-            Object::Word { .. } => current_mode,
-            Object::Sentence
+            Object::Word { .. }
+            | Object::Sentence
             | Object::Quotes
             | Object::BackQuotes
-            | Object::DoubleQuotes
-            | Object::VerticalBars
-            | Object::Parentheses
+            | Object::DoubleQuotes => {
+                if current_mode == Mode::VisualBlock {
+                    Mode::VisualBlock
+                } else {
+                    Mode::Visual
+                }
+            }
+            Object::Parentheses
             | Object::SquareBrackets
             | Object::CurlyBrackets
             | Object::AngleBrackets
+            | Object::VerticalBars
+            | Object::Tag
             | Object::Argument => Mode::Visual,
         }
     }
@@ -176,6 +186,7 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
+            Object::Tag => surrounding_html_tag(map, relative_to, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -236,6 +247,72 @@ fn in_word(
     Some(start..end)
 }
 
+fn surrounding_html_tag(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    surround: bool,
+) -> Option<Range<DisplayPoint>> {
+    fn read_tag(chars: impl Iterator<Item = char>) -> String {
+        chars
+            .take_while(|c| c.is_alphanumeric() || *c == ':' || *c == '-' || *c == '_' || *c == '.')
+            .collect()
+    }
+    fn open_tag(mut chars: impl Iterator<Item = char>) -> Option<String> {
+        if Some('<') != chars.next() {
+            return None;
+        }
+        Some(read_tag(chars))
+    }
+    fn close_tag(mut chars: impl Iterator<Item = char>) -> Option<String> {
+        if (Some('<'), Some('/')) != (chars.next(), chars.next()) {
+            return None;
+        }
+        Some(read_tag(chars))
+    }
+
+    let snapshot = &map.buffer_snapshot;
+    let offset = relative_to.to_offset(map, Bias::Left);
+    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let buffer = excerpt.buffer();
+    let offset = excerpt.map_offset_to_buffer(offset);
+
+    // Find the most closest to current offset
+    let mut cursor = buffer.syntax_layer_at(offset)?.node().walk();
+    let mut last_child_node = cursor.node();
+    while cursor.goto_first_child_for_byte(offset).is_some() {
+        last_child_node = cursor.node();
+    }
+
+    let mut last_child_node = Some(last_child_node);
+    while let Some(cur_node) = last_child_node {
+        if cur_node.child_count() >= 2 {
+            let first_child = cur_node.child(0);
+            let last_child = cur_node.child(cur_node.child_count() - 1);
+            if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
+                let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
+                let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
+                if open_tag.is_some()
+                    && open_tag == close_tag
+                    && (first_child.end_byte() + 1..last_child.start_byte()).contains(&offset)
+                {
+                    let range = if surround {
+                        first_child.byte_range().start..last_child.byte_range().end
+                    } else {
+                        first_child.byte_range().end..last_child.byte_range().start
+                    };
+                    if excerpt.contains_buffer_range(range.clone()) {
+                        let result = excerpt.map_range_from_buffer(range);
+                        return Some(
+                            result.start.to_display_point(map)..result.end.to_display_point(map),
+                        );
+                    }
+                }
+            }
+        }
+        last_child_node = cur_node.parent();
+    }
+    None
+}
 /// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
 ///
@@ -381,7 +458,7 @@ fn argument(
             parent_covers_bracket_range = covers_bracket_range;
 
             // Unable to find a child node with a parent that covers the bracket range, so no argument to select
-            if !cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.goto_first_child_for_byte(offset).is_none() {
                 return None;
             }
         }
@@ -758,7 +835,7 @@ mod test {
         test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
     };
 
-    const WORD_LOCATIONS: &'static str = indoc! {"
+    const WORD_LOCATIONS: &str = indoc! {"
         The quick ˇbrowˇnˇ•••
         fox ˇjuˇmpsˇ over
         the lazy dogˇ••
@@ -1240,5 +1317,27 @@ mod test {
             cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
                 .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_html(cx).await;
+
+        cx.set_state("<html><head></head><body><b>hˇi!</b></body>", Mode::Normal);
+        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            Mode::Visual,
+        );
     }
 }

@@ -17,13 +17,13 @@ util.workspace = true
 sum_tree.workspace = true
 
 anyhow.workspace = true
+async-tar.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tempfile.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
-regex.workspace = true
 git2.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

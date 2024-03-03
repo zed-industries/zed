@@ -1,7 +1,7 @@
 use crate::{
     project_settings::ProjectSettings,
+    worktree::{Entry, EntryKind, PathChange, Worktree},
     worktree::{Event, Snapshot, WorktreeModelHandle},
-    Entry, EntryKind, PathChange, Project, Worktree,
 };
 use anyhow::Result;
 use client::Client;
@@ -14,7 +14,7 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::{
     env,
     fmt::Write,
@@ -2102,7 +2102,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 async fn test_git_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    const IGNORE_RULE: &'static str = "**/target";
+    const IGNORE_RULE: &str = "**/target";
 
     let root = temp_tree(json!({
         "project": {
@@ -2122,12 +2122,12 @@ async fn test_git_status(cx: &mut TestAppContext) {
 
     }));
 
-    const A_TXT: &'static str = "a.txt";
-    const B_TXT: &'static str = "b.txt";
-    const E_TXT: &'static str = "c/d/e.txt";
-    const F_TXT: &'static str = "f.txt";
-    const DOTGITIGNORE: &'static str = ".gitignore";
-    const BUILD_FILE: &'static str = "target/build_file";
+    const A_TXT: &str = "a.txt";
+    const B_TXT: &str = "b.txt";
+    const E_TXT: &str = "c/d/e.txt";
+    const F_TXT: &str = "f.txt";
+    const DOTGITIGNORE: &str = ".gitignore";
+    const BUILD_FILE: &str = "target/build_file";
     let project_path = Path::new("project");
 
     // Set up git repository before creating the worktree.
@@ -2243,7 +2243,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     let mut renamed_dir_name = "first_directory/second_directory";
-    const RENAMED_FILE: &'static str = "rf.txt";
+    const RENAMED_FILE: &str = "rf.txt";
 
     std::fs::create_dir_all(work_dir.join(renamed_dir_name)).unwrap();
     std::fs::write(
@@ -2535,6 +2535,6 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        Project::init_settings(cx);
+        ProjectSettings::register(cx);
     });
 }

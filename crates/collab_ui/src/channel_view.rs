@@ -1,9 +1,9 @@
 use anyhow::Result;
 use call::report_call_event_for_channel;
-use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId, ChannelStore};
+use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelStore};
 use client::{
     proto::{self, PeerId},
-    Collaborator, ParticipantIndex,
+    ChannelId, Collaborator, ParticipantIndex,
 };
 use collections::HashMap;
 use editor::{
@@ -171,10 +171,8 @@ impl ChannelView {
                 let this = this.clone();
                 Some(ui::ContextMenu::build(cx, move |menu, _| {
                     menu.entry("Copy link to section", None, move |cx| {
-                        this.update(cx, |this, cx| {
-                            this.copy_link_for_position(position.clone(), cx)
-                        })
-                        .ok();
+                        this.update(cx, |this, cx| this.copy_link_for_position(position, cx))
+                            .ok();
                     })
                 }))
             });
@@ -378,7 +376,7 @@ impl Item for ChannelView {
                 (_, false) => format!("#{} (disconnected)", channel.name),
             }
         } else {
-            format!("channel notes (disconnected)")
+            "channel notes (disconnected)".to_string()
         };
         Label::new(label)
             .color(if selected {
@@ -454,7 +452,7 @@ impl FollowableItem for ChannelView {
 
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel_buffer.channel_id,
+                channel_id: channel_buffer.channel_id.0,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
                 {
@@ -480,7 +478,8 @@ impl FollowableItem for ChannelView {
             unreachable!()
         };
 
-        let open = ChannelView::open_in_pane(state.channel_id, None, pane, workspace, cx);
+        let open =
+            ChannelView::open_in_pane(ChannelId(state.channel_id), None, pane, workspace, cx);
 
         Some(cx.spawn(|mut cx| async move {
             let this = open.await?;

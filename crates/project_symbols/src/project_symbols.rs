@@ -127,12 +127,13 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     let position = buffer
                         .read(cx)
                         .clip_point_utf16(symbol.range.start, Bias::Left);
-
-                    let editor = if secondary {
-                        workspace.split_project_item::<Editor>(buffer, cx)
+                    let pane = if secondary {
+                        workspace.adjacent_pane(cx)
                     } else {
-                        workspace.open_project_item::<Editor>(buffer, cx)
+                        workspace.active_pane().clone()
                     };
+
+                    let editor = workspace.open_project_item::<Editor>(pane, buffer, cx);
 
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::center()), cx, |s| {
@@ -270,7 +271,13 @@ mod tests {
     async fn test_project_symbols(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let mut language = Language::new(
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
+
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: LanguageMatcher {
@@ -280,16 +287,9 @@ mod tests {
                 ..Default::default()
             },
             None,
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::<FakeLspAdapter>::default())
-            .await;
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
-
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+        )));
+        let mut fake_servers =
+            language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
 
         let _buffer = project
             .update(cx, |project, cx| {

@@ -375,3 +375,13 @@ CREATE TABLE extension_versions (
 
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
+
+CREATE TABLE hosted_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    name TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    deleted_at TIMESTAMP NULL
+);
+CREATE INDEX idx_hosted_projects_on_channel_id ON hosted_projects (channel_id);
+CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_projects (channel_id, name) WHERE (deleted_at IS NULL);

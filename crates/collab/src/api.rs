@@ -1,5 +1,7 @@
 pub mod events;
 pub mod extensions;
+pub mod ips_file;
+pub mod slack;
 
 use crate::{
     auth,
@@ -21,7 +23,6 @@ use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower::ServiceBuilder;
-use tracing::instrument;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
 
@@ -29,7 +30,6 @@ pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Rou
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
-        .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .route("/contributors", get(get_contributors).post(add_contributor))
         .route("/contributor", get(check_is_contributor))
@@ -120,20 +120,6 @@ struct CreateUserResponse {
     metrics_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct Panic {
-    version: String,
-    release_channel: String,
-    backtrace_hash: String,
-    text: String,
-}
-
-#[instrument(skip(panic))]
-async fn trace_panic(panic: Json<Panic>) -> Result<()> {
-    tracing::error!(version = %panic.version, release_channel = %panic.release_channel, backtrace_hash = %panic.backtrace_hash, text = %panic.text, "panic report");
-    Ok(())
-}
-
 async fn get_rpc_server_snapshot(
     Extension(rpc_server): Extension<Option<Arc<rpc::Server>>>,
 ) -> Result<ErasedJson> {
@@ -193,14 +179,13 @@ async fn add_contributor(
     Json(params): Json<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
-    Ok(app
-        .db
+    app.db
         .add_contributor(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
         )
-        .await?)
+        .await
 }
 
 #[derive(Deserialize)]

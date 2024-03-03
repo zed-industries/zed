@@ -12,7 +12,6 @@ name = "collab"
 
 [[bin]]
 name = "seed"
-required-features = ["seed-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -21,9 +20,7 @@ aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.3", features = ["erased-json"] }
-base64 = "0.13"
 chrono.workspace = true
-clap = { version = "3.1", features = ["derive"], optional = true }
 clock.workspace = true
 clickhouse.workspace = true
 collections.workspace = true
@@ -32,8 +29,6 @@ envy = "0.4.2"
 futures.workspace = true
 hex.workspace = true
 hyper = "0.14"
-lazy_static.workspace = true
-lipsum = { version = "0.8", optional = true }
 live_kit_server.workspace = true
 log.workspace = true
 nanoid = "0.4"
@@ -41,7 +36,7 @@ parking_lot.workspace = true
 prometheus = "0.13"
 prost.workspace = true
 rand.workspace = true
-reqwest = { version = "0.11", features = ["json"], optional = true }
+reqwest = { version = "0.11", features = ["json"] }
 rpc.workspace = true
 scrypt = "0.7"
 sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
@@ -49,17 +44,14 @@ semver.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-sha-1 = "0.9"
 sha2.workspace = true
-smallvec.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.17"
 toml.workspace = true
-tonic = "0.6"
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
 tracing = "0.1.34"
@@ -103,6 +95,3 @@ theme.workspace = true
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
-
-[features]
-seed-support = ["clap", "lipsum", "reqwest"]

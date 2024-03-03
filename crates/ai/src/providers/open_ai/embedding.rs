@@ -8,7 +8,6 @@ use gpui::BackgroundExecutor;
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
-use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 use parse_duration::parse;
 use postage::watch;
@@ -16,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::env;
 use std::ops::Add;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
@@ -29,8 +28,9 @@ use crate::providers::open_ai::OpenAiLanguageModel;
 
 use crate::providers::open_ai::OPEN_AI_API_URL;
 
-lazy_static! {
-    pub(crate) static ref OPEN_AI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
+pub(crate) fn open_ai_bpe_tokenizer() -> &'static CoreBPE {
+    static OPEN_AI_BPE_TOKENIZER: OnceLock<CoreBPE> = OnceLock::new();
+    OPEN_AI_BPE_TOKENIZER.get_or_init(|| cl100k_base().unwrap())
 }
 
 #[derive(Clone)]

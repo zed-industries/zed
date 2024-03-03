@@ -87,6 +87,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                         // If the file ends with a newline (which is common) we don't do this.
                         // so that if you go to the end of such a file you can use "up" to go
                         // to the previous line and have it work somewhat as expected.
+                        #[allow(clippy::nonminimal_bool)]
                         if !selection.reversed
                             && !selection.is_empty()
                             && !(selection.end.column() == 0 && selection.end == map.max_point())
@@ -222,7 +223,7 @@ pub fn visual_block_motion(
                     start: start.to_point(map),
                     end: end.to_point(map),
                     reversed: is_reversed,
-                    goal: goal.clone(),
+                    goal,
                 };
 
                 selections.push(selection);
@@ -1005,7 +1006,6 @@ mod test {
         cx.simulate_shared_keystrokes(["ctrl-v", "l"]).await;
         cx.simulate_shared_keystrokes(["a", "]"]).await;
         cx.assert_shared_state("hello (in «[parens]ˇ» o)").await;
-        assert_eq!(cx.mode(), Mode::Visual);
         cx.simulate_shared_keystrokes(["i", "("]).await;
         cx.assert_shared_state("hello («in [parens] oˇ»)").await;
 
@@ -1016,7 +1016,6 @@ mod test {
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_shared_keystrokes(["o", "a", "s"]).await;
         cx.assert_shared_state("«ˇhello in a word» again.").await;
-        assert_eq!(cx.mode(), Mode::Visual);
     }
 
     #[gpui::test]

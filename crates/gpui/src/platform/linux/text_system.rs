@@ -9,6 +9,8 @@ use cosmic_text::{
     fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont,
     FontSystem, SwashCache,
 };
+
+use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -32,7 +34,7 @@ impl LinuxTextSystem {
     pub(crate) fn new() -> Self {
         let mut font_system = FontSystem::new();
 
-        // todo!(linux) make font loading non-blocking
+        // todo(linux) make font loading non-blocking
         font_system.db_mut().load_system_fonts();
 
         Self(RwLock::new(LinuxTextSystemState {
@@ -59,7 +61,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    // todo!(linux) ensure that this integrates with platform font loading
+    // todo(linux) ensure that this integrates with platform font loading
     // do we need to do more than call load_system_fonts()?
     fn all_font_names(&self) -> Vec<String> {
         self.0
@@ -71,13 +73,18 @@ impl PlatformTextSystem for LinuxTextSystem {
             .collect()
     }
 
-    // todo!(linux)
     fn all_font_families(&self) -> Vec<String> {
-        Vec::new()
+        self.0
+            .read()
+            .font_system
+            .db()
+            .faces()
+            .filter_map(|face| Some(face.families.get(0)?.0.clone()))
+            .collect_vec()
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
-        // todo!(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
+        // todo(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
             Ok(*font_id)
@@ -127,13 +134,13 @@ impl PlatformTextSystem for LinuxTextSystem {
         FontMetrics {
             units_per_em: metrics.units_per_em as u32,
             ascent: metrics.ascent,
-            descent: -metrics.descent, // todo!(linux) confirm this is correct
+            descent: -metrics.descent, // todo(linux) confirm this is correct
             line_gap: metrics.leading,
             underline_position: metrics.underline_offset,
             underline_thickness: metrics.stroke_size,
             cap_height: metrics.cap_height,
             x_height: metrics.x_height,
-            // todo!(linux): Compute this correctly
+            // todo(linux): Compute this correctly
             bounding_box: Bounds {
                 origin: point(0.0, 0.0),
                 size: size(metrics.max_width, metrics.ascent + metrics.descent),
@@ -146,7 +153,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         let metrics = lock.fonts[font_id.0].as_swash().metrics(&[]);
         let glyph_metrics = lock.fonts[font_id.0].as_swash().glyph_metrics(&[]);
         let glyph_id = glyph_id.0 as u16;
-        // todo!(linux): Compute this correctly
+        // todo(linux): Compute this correctly
         // see https://github.com/servo/font-kit/blob/master/src/loaders/freetype.rs#L614-L620
         Ok(Bounds {
             origin: point(0.0, 0.0),
@@ -181,7 +188,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         self.0.write().layout_line(text, font_size, runs)
     }
 
-    // todo!(linux) Confirm that this has been superseded by the LineWrapper
+    // todo(linux) Confirm that this has been superseded by the LineWrapper
     fn wrap_line(
         &self,
         text: &str,
@@ -256,7 +263,7 @@ impl LinuxTextSystemState {
     }
 
     fn is_emoji(&self, font_id: FontId) -> bool {
-        // todo!(linux): implement this correctly
+        // todo(linux): implement this correctly
         self.postscript_names_by_font_id
             .get(&font_id)
             .map_or(false, |postscript_name| {
@@ -264,7 +271,7 @@ impl LinuxTextSystemState {
             })
     }
 
-    // todo!(linux) both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
+    // todo(linux) both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let font_system = &mut self.font_system;
@@ -297,7 +304,7 @@ impl LinuxTextSystemState {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))
         } else {
-            // todo!(linux) handle subpixel variants
+            // todo(linux) handle subpixel variants
             let bitmap_size = glyph_bounds.size;
             let font = &self.fonts[params.font_id.0];
             let font_system = &mut self.font_system;
@@ -320,13 +327,13 @@ impl LinuxTextSystemState {
         }
     }
 
-    // todo!(linux) This is all a quick first pass, maybe we should be using cosmic_text::Buffer
+    // todo(linux) This is all a quick first pass, maybe we should be using cosmic_text::Buffer
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         let mut attrs_list = AttrsList::new(Attrs::new());
         let mut offs = 0;
         for run in font_runs {
-            // todo!(linux) We need to check we are doing utf properly
+            // todo(linux) We need to check we are doing utf properly
             let font = &self.fonts[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
@@ -343,11 +350,11 @@ impl LinuxTextSystemState {
         let layout = line.layout(
             &mut self.font_system,
             font_size.0,
-            f32::MAX, // todo!(linux) we don't have a width cause this should technically not be wrapped I believe
+            f32::MAX, // todo(linux) we don't have a width cause this should technically not be wrapped I believe
             cosmic_text::Wrap::None,
         );
         let mut runs = Vec::new();
-        // todo!(linux) what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering
+        // todo(linux) what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering
         let layout = layout.first().unwrap();
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
@@ -358,7 +365,7 @@ impl LinuxTextSystemState {
                     .unwrap(),
             );
             let mut glyphs = SmallVec::new();
-            // todo!(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
+            // todo(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point((glyph.x).into(), glyph.y.into()),

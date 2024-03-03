@@ -132,7 +132,7 @@ impl MarkdownPreviewView {
                 workspace,
                 contents,
                 list_state,
-                tab_description: tab_description.into(),
+                tab_description: tab_description,
             }
         })
     }

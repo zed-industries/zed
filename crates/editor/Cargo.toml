@@ -21,6 +21,7 @@ test-support = [
     "workspace/test-support",
     "tree-sitter-rust",
     "tree-sitter-typescript",
+    "tree-sitter-html"
 ]
 
 [dependencies]
@@ -37,7 +38,7 @@ fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
 indoc = "1.0.4"
-itertools = "0.10"
+itertools.workspace = true
 language.workspace = true
 lazy_static.workspace = true
 linkify.workspace = true
@@ -46,20 +47,16 @@ lsp.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
-postage.workspace = true
 project.workspace = true
 rand.workspace = true
-rich_text.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true
-sqlez.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
@@ -87,7 +84,6 @@ text = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
-tree-sitter.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

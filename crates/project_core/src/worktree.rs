@@ -1,12 +1,12 @@
 use crate::{
-    copy_recursive, ignore::IgnoreStack, project_settings::ProjectSettings, DiagnosticSummary,
-    ProjectEntryId, RemoveOptions,
+    ignore::IgnoreStack, project_settings::ProjectSettings, DiagnosticSummary, ProjectEntryId,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
+use fs::{copy_recursive, RemoveOptions};
 use fs::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     Fs,
@@ -67,6 +67,11 @@ use util::{
     paths::{PathMatcher, HOME},
     ResultExt,
 };
+
+#[cfg(feature = "test-support")]
+pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+#[cfg(not(feature = "test-support"))]
+const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -215,7 +220,7 @@ impl Deref for WorkDirectoryEntry {
     }
 }
 
-impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
+impl From<ProjectEntryId> for WorkDirectoryEntry {
     fn from(value: ProjectEntryId) -> Self {
         WorkDirectoryEntry(value)
     }
@@ -255,6 +260,12 @@ pub struct LocalRepositoryEntry {
     /// Path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) git_dir_path: Arc<Path>,
+}
+
+impl LocalRepositoryEntry {
+    pub fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
+        self.repo_ptr.lock().load_index_text(relative_file_path)
+    }
 }
 
 impl Deref for LocalSnapshot {
@@ -646,7 +657,7 @@ fn start_background_scan_tasks(
         let abs_path = abs_path.to_path_buf();
         let background = cx.background_executor().clone();
         async move {
-            let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
+            let events = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
             let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
                 log::error!(
                     "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
@@ -718,7 +729,7 @@ impl LocalWorktree {
         path.starts_with(&self.abs_path)
     }
 
-    pub(crate) fn load_buffer(
+    pub fn load_buffer(
         &mut self,
         id: BufferId,
         path: &Path,
@@ -980,7 +991,7 @@ impl LocalWorktree {
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
-            let mut is_scanning = is_scanning_rx.borrow().clone();
+            let mut is_scanning = *is_scanning_rx.borrow();
             while is_scanning {
                 if let Some(value) = is_scanning_rx.recv().await {
                     is_scanning = value;
@@ -1593,7 +1604,7 @@ impl RemoteWorktree {
         self.completed_scan_id >= scan_id
     }
 
-    pub(crate) fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
@@ -1659,7 +1670,7 @@ impl RemoteWorktree {
         })
     }
 
-    pub(crate) fn delete_entry(
+    pub fn delete_entry(
         &mut self,
         id: ProjectEntryId,
         scan_id: usize,
@@ -2093,7 +2104,7 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub(crate) fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
+    pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
         self.git_repositories.get(&repo.work_directory.0)
     }
 
@@ -2744,7 +2755,7 @@ impl WorktreeId {
         Self(handle_id)
     }
 
-    pub(crate) fn from_proto(id: u64) -> Self {
+    pub fn from_proto(id: u64) -> Self {
         Self(id as usize)
     }
 
@@ -2829,10 +2840,10 @@ pub struct File {
     pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-    pub(crate) entry_id: Option<ProjectEntryId>,
-    pub(crate) is_local: bool,
-    pub(crate) is_deleted: bool,
-    pub(crate) is_private: bool,
+    pub entry_id: Option<ProjectEntryId>,
+    pub is_local: bool,
+    pub is_deleted: bool,
+    pub is_private: bool,
 }
 
 impl language::File for File {
@@ -3288,6 +3299,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,
@@ -3906,16 +3918,14 @@ impl BackgroundScanner {
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
 
-        for new_job in new_jobs {
-            if let Some(mut new_job) = new_job {
-                if let Some(containing_repository) = &repository {
-                    new_job.containing_repository = Some(containing_repository.clone());
-                }
-
-                job.scan_queue
-                    .try_send(new_job)
-                    .expect("channel is unbounded");
+        for mut new_job in new_jobs.into_iter().flatten() {
+            if let Some(containing_repository) = &repository {
+                new_job.containing_repository = Some(containing_repository.clone());
             }
+
+            job.scan_queue
+                .try_send(new_job)
+                .expect("channel is unbounded");
         }
 
         Ok(())
@@ -4334,7 +4344,7 @@ impl BackgroundScanner {
             return self.executor.simulate_random_delay().await;
         }
 
-        smol::Timer::after(Duration::from_millis(100)).await;
+        smol::Timer::after(FS_WATCH_LATENCY).await;
     }
 }
 

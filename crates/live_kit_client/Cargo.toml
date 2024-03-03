@@ -49,32 +49,22 @@ nanoid = "0.4"
 [dev-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-block = "0.1"
-byteorder = "1.4"
-bytes = "1.2"
 collections = { workspace = true, features = ["test-support"] }
-foreign-types = "0.3"
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-hmac = "0.12"
-jwt = "0.16"
 live_kit_server.workspace = true
 media.workspace = true
 nanoid = "0.4"
 parking_lot.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 simplelog = "0.9"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-cocoa = "0.25"
 core-foundation.workspace = true
-core-graphics = "0.22.3"
-foreign-types = "0.3"
-objc = "0.2"
 
 [build-dependencies]
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["serde_json"]

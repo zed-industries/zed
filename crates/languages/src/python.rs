@@ -12,7 +12,7 @@ use std::{
 };
 use util::ResultExt;
 
-const SERVER_PATH: &'static str = "node_modules/pyright/langserver.index.js";
+const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -32,10 +32,6 @@ impl PythonLspAdapter {
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "pyright"
     }
 
     async fn fetch_latest_server_version(
@@ -87,7 +83,7 @@ impl LspAdapter for PythonLspAdapter {
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
         // and `name` is the symbol name itself.
         //
-        // Because the the symbol name is included, there generally are not ties when
+        // Because the symbol name is included, there generally are not ties when
         // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
         // into account. Here, we remove the symbol name from the sortText in order
         // to allow our own fuzzy score to be used to break ties.
@@ -188,7 +184,7 @@ mod tests {
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
-        let language = crate::language("python", tree_sitter_python::language(), None).await;
+        let language = crate::language("python", tree_sitter_python::language());
         cx.update(|cx| {
             let test_settings = SettingsStore::test(cx);
             cx.set_global(test_settings);

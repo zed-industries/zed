@@ -273,7 +273,9 @@ impl EditorElement {
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
+        register_action(view, cx, Editor::open_excerpts_in_split);
         register_action(view, cx, Editor::toggle_soft_wrap);
+        register_action(view, cx, Editor::toggle_line_numbers);
         register_action(view, cx, Editor::toggle_inlay_hints);
         register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
@@ -336,6 +338,7 @@ impl EditorElement {
         register_action(view, cx, Editor::display_cursor_names);
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
+        register_action(view, cx, Editor::accept_partial_copilot_suggestion);
     }
 
     fn register_key_listeners(
@@ -716,6 +719,11 @@ impl EditorElement {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
+        if bounds.contains(&cx.mouse_position()) {
+            let stacking_order = cx.stacking_order().clone();
+            cx.set_cursor_style(CursorStyle::Arrow, stacking_order);
+        }
+
         let show_git_gutter = matches!(
             ProjectSettings::get_global(cx).git.git_gutter,
             Some(GitGutterSetting::TrackedFiles)
@@ -915,7 +923,7 @@ impl EditorElement {
                     bounds: text_bounds,
                     stacking_order: cx.stacking_order().clone(),
                 };
-                if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+                if text_bounds.contains(&cx.mouse_position()) {
                     if self
                         .editor
                         .read(cx)
@@ -923,9 +931,15 @@ impl EditorElement {
                         .as_ref()
                         .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                     {
-                        cx.set_cursor_style(CursorStyle::PointingHand);
+                        cx.set_cursor_style(
+                            CursorStyle::PointingHand,
+                            interactive_text_bounds.stacking_order.clone(),
+                        );
                     } else {
-                        cx.set_cursor_style(CursorStyle::IBeam);
+                        cx.set_cursor_style(
+                            CursorStyle::IBeam,
+                            interactive_text_bounds.stacking_order.clone(),
+                        );
                     }
                 }
 
@@ -1551,8 +1565,11 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
         let mut mouse_position = cx.mouse_position();
-        if interactive_track_bounds.visibly_contains(&mouse_position, cx) {
-            cx.set_cursor_style(CursorStyle::Arrow);
+        if track_bounds.contains(&mouse_position) {
+            cx.set_cursor_style(
+                CursorStyle::Arrow,
+                interactive_track_bounds.stacking_order.clone(),
+            );
         }
 
         cx.on_mouse_event({
@@ -1570,7 +1587,7 @@ impl EditorElement {
                         let new_y = event.position.y;
                         if (track_bounds.top()..track_bounds.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
-                            position.y += (new_y - y) * (max_row as f32) / height;
+                            position.y += (new_y - y) * max_row / height;
                             if position.y < 0.0 {
                                 position.y = 0.0;
                             }
@@ -1617,8 +1634,7 @@ impl EditorElement {
 
                             let y = event.position.y;
                             if y < thumb_top || thumb_bottom < y {
-                                let center_row =
-                                    ((y - top) * max_row as f32 / height).round() as u32;
+                                let center_row = ((y - top) * max_row / height).round() as u32;
                                 let top_row = center_row
                                     .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                                 let mut position = editor.scroll_position(cx);
@@ -1948,7 +1964,7 @@ impl EditorElement {
                 chunks,
                 &self.style.text,
                 MAX_LINE_LEN,
-                rows.len() as usize,
+                rows.len(),
                 line_number_layouts,
                 snapshot.mode,
                 cx,
@@ -1989,7 +2005,7 @@ impl EditorElement {
             let text_width = bounds.size.width - gutter_dimensions.width;
             let overscroll = size(em_width, px(0.));
             let _snapshot = {
-                editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
+                editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
                 let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
                 let wrap_width = match editor.soft_wrap_mode(cx) {
@@ -2022,7 +2038,7 @@ impl EditorElement {
             // The scroll position is a fractional point, the whole number of which represents
             // the top of the window in terms of display rows.
             let start_row = scroll_position.y as u32;
-            let height_in_lines = f32::from(bounds.size.height / line_height);
+            let height_in_lines = bounds.size.height / line_height;
             let max_row = snapshot.max_point().row();
 
             // Add 1 to ensure selections bleed off screen
@@ -2247,7 +2263,7 @@ impl EditorElement {
             });
 
             let scroll_max = point(
-                f32::from((scroll_width - text_size.width) / em_width).max(0.0),
+                ((scroll_width - text_size.width) / em_width).max(0.0),
                 max_row as f32,
             );
 
@@ -2707,11 +2723,8 @@ impl EditorElement {
                         };
 
                         let scroll_position = position_map.snapshot.scroll_position();
-                        let x = f32::from(
-                            (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width,
-                        );
-                        let y =
-                            f32::from((scroll_position.y * line_height - delta.y) / line_height);
+                        let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
+                        let y = (scroll_position.y * line_height - delta.y) / line_height;
                         let scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         editor.scroll(scroll_position, axis, cx);
@@ -2868,7 +2881,7 @@ impl LineWithInvisibles {
                         .unwrap();
                     layouts.push(Self {
                         line: shaped_line,
-                        invisibles: invisibles.drain(..).collect(),
+                        invisibles: std::mem::take(&mut invisibles),
                     });
 
                     line.clear();
@@ -2977,6 +2990,7 @@ impl LineWithInvisibles {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_invisibles(
         &self,
         selection_ranges: &[Range<DisplayPoint>],
@@ -3252,12 +3266,12 @@ impl PositionMap {
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
         let x = position.x + (scroll_position.x * self.em_width);
-        let row = (f32::from(y / self.line_height) + scroll_position.y) as u32;
+        let row = ((y / self.line_height) + scroll_position.y) as u32;
 
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y as usize)
-            .map(|&LineWithInvisibles { ref line, .. }| line)
+            .map(|LineWithInvisibles { line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, px(0.))
@@ -4068,8 +4082,7 @@ mod tests {
             .position_map
             .line_layouts
             .iter()
-            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
-            .flatten()
+            .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
             .cloned()
             .collect()
     }

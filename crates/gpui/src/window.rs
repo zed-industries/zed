@@ -280,7 +280,6 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    graphics_profiler_enabled: bool,
 }
 
 #[derive(Default, Debug)]
@@ -474,7 +473,6 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
-            graphics_profiler_enabled: false,
         }
     }
     fn new_focus_listener(
@@ -1023,13 +1021,10 @@ impl<'a> WindowContext<'a> {
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
-        let cursor_style = self
-            .window
-            .next_frame
-            .requested_cursor_style
-            .take()
-            .unwrap_or(CursorStyle::Arrow);
+        let cursor_style_request = self.window.next_frame.requested_cursor_style.take();
         if self.is_window_active() {
+            let cursor_style =
+                cursor_style_request.map_or(CursorStyle::Arrow, |request| request.style);
             self.platform.set_cursor_style(cursor_style);
         }
 
@@ -1122,6 +1117,22 @@ impl<'a> WindowContext<'a> {
         }
 
         false
+    }
+
+    /// Represent this action as a key binding string, to display in the UI.
+    pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
+        self.bindings_for_action(action)
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| action.name().to_string())
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1504,14 +1515,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-    }
-
-    /// Toggle the graphics profiler to debug your application's rendering performance.
-    pub fn toggle_graphics_profiler(&mut self) {
-        self.window.graphics_profiler_enabled = !self.window.graphics_profiler_enabled;
-        self.window
-            .platform_window
-            .set_graphics_profiler_enabled(self.window.graphics_profiler_enabled);
     }
 
     /// Register the given handler to be invoked whenever the global of the given type

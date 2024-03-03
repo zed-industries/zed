@@ -202,7 +202,7 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.new_view(|cx| {
                 ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.add_item(Box::new(diagnostics), cx);
+            workspace.add_item_to_active_pane(Box::new(diagnostics), cx);
         }
     }
 
@@ -347,7 +347,7 @@ impl ProjectDiagnosticsEditor {
                 .diagnostic_groups
                 .last()
                 .unwrap();
-            prev_path_last_group.excerpts.last().unwrap().clone()
+            *prev_path_last_group.excerpts.last().unwrap()
         } else {
             ExcerptId::min()
         };
@@ -451,10 +451,10 @@ impl ProjectDiagnosticsEditor {
                                 .pop()
                                 .unwrap();
 
-                            prev_excerpt_id = excerpt_id.clone();
-                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
-                            group_state.excerpts.push(excerpt_id.clone());
-                            let header_position = (excerpt_id.clone(), language::Anchor::MIN);
+                            prev_excerpt_id = excerpt_id;
+                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                            group_state.excerpts.push(excerpt_id);
+                            let header_position = (excerpt_id, language::Anchor::MIN);
 
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;
@@ -483,7 +483,7 @@ impl ProjectDiagnosticsEditor {
                                 if !diagnostic.message.is_empty() {
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
-                                        position: (excerpt_id.clone(), entry.range.start),
+                                        position: (excerpt_id, entry.range.start),
                                         height: diagnostic.message.matches('\n').count() as u8 + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(diagnostic, true),
@@ -506,8 +506,8 @@ impl ProjectDiagnosticsEditor {
                     group_ixs_to_remove.push(group_ix);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group)) = to_keep {
-                    prev_excerpt_id = group.excerpts.last().unwrap().clone();
-                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
+                    prev_excerpt_id = *group.excerpts.last().unwrap();
+                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
                 }
             }
 
@@ -591,7 +591,7 @@ impl ProjectDiagnosticsEditor {
                     if let Some(group) = groups.get(group_ix) {
                         let offset = excerpts_snapshot
                             .anchor_in_excerpt(
-                                group.excerpts[group.primary_excerpt_ix].clone(),
+                                group.excerpts[group.primary_excerpt_ix],
                                 group.primary_diagnostic.range.start,
                             )
                             .to_offset(&excerpts_snapshot);
@@ -797,7 +797,7 @@ impl Item for ProjectDiagnosticsEditor {
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
-    let message: SharedString = message.into();
+    let message: SharedString = message;
     Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()

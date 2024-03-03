@@ -5,7 +5,7 @@ use crate::{
     MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowOptions,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -496,11 +496,14 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
+        // Clippy thinks that this evaluates to `()`, for some reason.
+        #[allow(clippy::unit_arg, clippy::clone_on_copy)]
+        let renderer_context = self.0.lock().renderer_context.clone();
         Box::new(MacWindow::open(
             handle,
             options,
             self.foreground_executor(),
-            self.0.lock().renderer_context.clone(),
+            renderer_context,
         ))
     }
 
@@ -685,6 +688,9 @@ impl Platform for MacPlatform {
                 Err(anyhow!("app is not running inside a bundle"))
             } else {
                 let version: id = msg_send![bundle, objectForInfoDictionaryKey: ns_string("CFBundleShortVersionString")];
+                if version.is_null() {
+                    bail!("bundle does not have version");
+                }
                 let len = msg_send![version, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
                 let bytes = version.UTF8String() as *const u8;
                 let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();

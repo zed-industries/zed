@@ -16,12 +16,14 @@ members = [
     "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",
+    "crates/command_palette_hooks",
     "crates/copilot",
     "crates/copilot_ui",
     "crates/db",
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extension_api",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -52,6 +54,7 @@ members = [
     "crates/picker",
     "crates/prettier",
     "crates/project",
+    "crates/project_core",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/quick_action_bar",
@@ -89,6 +92,8 @@ members = [
     "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
+    "extensions/gleam",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -111,6 +116,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
+command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
 copilot_ui = { path = "crates/copilot_ui" }
 db = { path = "crates/db" }
@@ -133,6 +139,7 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
+languages = { path = "crates/languages" }
 live_kit_client = { path = "crates/live_kit_client" }
 live_kit_server = { path = "crates/live_kit_server" }
 lsp = { path = "crates/lsp" }
@@ -148,6 +155,7 @@ plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
+project_core = { path = "crates/project_core" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 quick_action_bar = { path = "crates/quick_action_bar" }
@@ -188,10 +196,12 @@ anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-tar = "0.4.2"
 async-trait = "0.1"
+bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
+clap = "4.4"
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
@@ -202,19 +212,22 @@ futures = "0.3"
 git2 = { version = "0.15", default-features = false }
 globset = "0.4"
 hex = "0.4.3"
+ignore = "0.4.22"
 indoc = "1"
-# We explicitly disable a http2 support in isahc.
+# We explicitly disable http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
+itertools = "0.11.0"
 lazy_static = "1.4.0"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
+palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.11.1"
 profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
 prost = "0.8"
-pulldown-cmark = { version = "0.9.2", default-features = false }
+pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
@@ -228,6 +241,7 @@ serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
 serde_repr = "0.1"
 sha2 = "0.10"
+shellexpand = "2.1.0"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
@@ -260,6 +274,7 @@ tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" 
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
 tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "8a99848fc734f9c4ea523b3f2a07df133cbbcec2" }
 tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
+rustc-demangle = "0.1.23"
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
@@ -285,15 +300,28 @@ tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", r
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 unindent = "0.1.7"
+unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
-wasmtime = "16"
+wasmparser = "0.121"
+wasmtime = "18.0"
+wasmtime-wasi = "18.0"
 which = "6.0.0"
 sys-locale = "0.3.1"
 
+[workspace.dependencies.windows]
+version = "0.53.0"
+features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Security",
+    "Win32_System_Threading",
+]
+
+
+
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1d8975319c2d5de1bf710e7e21db25b0eee4bc66" }
-wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fcda0d5259d0acf902aee6de7d2501f2bd6629" }
 
@@ -301,15 +329,20 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fc
 split-debuginfo = "unpacked"
 debug = "limited"
 
-# todo!(linux) - Remove this
+# todo(linux) - Remove this
 [profile.dev.package.blade-graphics]
 split-debuginfo = "off"
 debug = "full"
 
-[profile.dev.package.taffy]
-opt-level = 3
+[profile.dev.package]
+taffy = { opt-level = 3 }
+cranelift-codegen = { opt-level = 3 }
+wasmtime-cranelift = { opt-level = 3 }
 
 [profile.release]
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+[workspace.metadata.cargo-machete]
+ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
