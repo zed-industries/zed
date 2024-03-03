@@ -839,12 +839,8 @@ impl Render for ChatPanel {
                 let reply_message = self
                     .active_chat()
                     .and_then(|active_chat| {
-                        active_chat.read(cx).messages().iter().find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
+                        active_chat.read(cx).messages().iter().find(|message| {
+                            message.id == ChannelMessageId::Saved(reply_to_message_id)
                         })
                     })
                     .cloned();
