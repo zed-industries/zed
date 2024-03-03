@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     fmt::Write,
+    os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -13,6 +14,7 @@ use std::{
 
 use async_task::Runnable;
 use futures::channel::oneshot;
+use itertools::Itertools;
 use time::UtcOffset;
 use windows::{
     core::{PCWSTR, PWSTR},
@@ -55,14 +57,14 @@ use windows::{
                 PostQuitMessage, SetCursor, TranslateAcceleratorW, TranslateMessage, ACCEL,
                 ACCEL_VIRT_FLAGS, HACCEL, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND,
                 IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED,
-                MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_COMMAND, WM_DESTROY,
+                MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_DESTROY,
             },
         },
     },
 };
 
 use crate::{
-    encode_wide, log_windows_error, log_windows_error_with_message, loword,
+    encode_wide, log_windows_error, log_windows_error_with_message,
     platform::cross_platform::CosmicTextSystem, set_windowdata, Keystroke, WindowsWindow,
     WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
     ACCEL_FVIRTKEY, CF_UNICODETEXT, CLIPBOARD_METADATA, CLIPBOARD_TEXT_HASH, DISPATCH_WINDOW_CLASS,
@@ -293,39 +295,45 @@ impl Platform for WindowsPlatform {
         self.foreground_executor()
             .spawn(async move {
                 unsafe {
-                    let dialog = show_openfile_dialog(options).expect("error show openfile dialog");
-                    if let Ok(_) = dialog.Show(None) {
-                        let Ok(items) = dialog.GetResults() else {
-                            log_windows_error_with_message!("Error get result from dialog");
-                            let _ = tx.send(None);
-                            return;
+                    let Ok(dialog) = show_openfile_dialog(options) else {
+                        log_windows_error_with_message!("error show openfile dialog");
+                        let _ = tx.send(None);
+                        return;
+                    };
+                    let Ok(_) = dialog.Show(None) else {
+                        let _ = tx.send(None); // user cancel
+                        return;
+                    };
+                    let Ok(items) = dialog.GetResults() else {
+                        log_windows_error_with_message!("Error get result from dialog");
+                        let _ = tx.send(None);
+                        return;
+                    };
+                    let Ok(count) = items.GetCount() else {
+                        log_windows_error_with_message!("Error get results count from dialog");
+                        let _ = tx.send(None);
+                        return;
+                    };
+                    let mut path_vec = Vec::new();
+                    for index in 0..count {
+                        let Ok(item) = items.GetItemAt(index) else {
+                            log_windows_error_with_message!("Error get item dialog");
+                            continue;
                         };
-                        let Ok(count) = items.GetCount() else {
-                            log_windows_error_with_message!("Error get results count from dialog");
-                            let _ = tx.send(None);
-                            return;
+                        let Ok(item_string) = item.GetDisplayName(SIGDN_PARENTRELATIVEPARSING)
+                        else {
+                            log_windows_error_with_message!("Error parsing item name");
+                            continue;
                         };
-                        let mut path_vec = Vec::new();
-                        for index in 0..count {
-                            let Ok(item) = items.GetItemAt(index) else {
-                                log_windows_error_with_message!("Error get item dialog");
-                                continue;
-                            };
-                            let Ok(item_string) = item.GetDisplayName(SIGDN_PARENTRELATIVEPARSING)
-                            else {
-                                log_windows_error_with_message!("Error parsing item name");
-                                continue;
-                            };
-                            let Ok(path_string) = item_string.to_string() else {
-                                log_windows_error_with_message!(
-                                    "Error parsing item name from utf16 to string"
-                                );
-                                continue;
-                            };
-                            path_vec.push(PathBuf::from(path_string));
-                        }
-                        let _ = tx.send(Some(path_vec));
+                        let Ok(path_string) = item_string.to_string() else {
+                            log_windows_error_with_message!(
+                                "Error parsing item name from utf16 to string"
+                            );
+                            continue;
+                        };
+                        path_vec.push(PathBuf::from(path_string));
                     }
+                    let _ = tx.send(Some(path_vec));
                 }
             })
             .detach();
@@ -339,15 +347,18 @@ impl Platform for WindowsPlatform {
         self.foreground_executor()
             .spawn(async move {
                 unsafe {
-                    let dialog =
-                        show_savefile_dialog(directory).expect("error open savefile dialog");
-                    if let Ok(_) = dialog.Show(None) {
-                        if let Ok(shell_item) = dialog.GetResult() {
-                            if let Ok(file) = shell_item.GetDisplayName(SIGDN_PARENTRELATIVEPARSING)
-                            {
-                                let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
-                                return;
-                            }
+                    let Ok(dialog) = show_savefile_dialog(directory) else {
+                        let _ = tx.send(None);
+                        return;
+                    };
+                    let Ok(_) = dialog.Show(None) else {
+                        let _ = tx.send(None); // user cancel
+                        return;
+                    };
+                    if let Ok(shell_item) = dialog.GetResult() {
+                        if let Ok(file) = shell_item.GetDisplayName(SIGDN_PARENTRELATIVEPARSING) {
+                            let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
+                            return;
                         }
                     }
                     let _ = tx.send(None);
@@ -744,13 +755,6 @@ impl WindowsWindowBase for WindowsPlatformInner {
                 self.close_one_window();
                 LRESULT(0)
             }
-            WM_COMMAND => {
-                let action_index = loword!(wparam.0, u16) as usize;
-                if action_index != 0 {
-                    self.do_action(action_index);
-                }
-                LRESULT(0)
-            }
             MENU_ACTIONS => {
                 self.do_action(wparam.0);
                 LRESULT(0)
@@ -804,23 +808,28 @@ fn show_openfile_dialog(options: PathPromptOptions) -> anyhow::Result<IFileOpenD
     }
 }
 
-fn show_savefile_dialog(directory: PathBuf) -> anyhow::Result<IFileSaveDialog> {
-    unsafe {
-        let dialog: IFileSaveDialog =
-            CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).inspect_err(log_windows_error)?;
-        let dir_str = directory.to_str().unwrap();
-        println!("Target dir: {}", dir_str);
-        let dir_vec = encode_wide(dir_str);
-        let bind_context = CreateBindCtx(0).inspect_err(log_windows_error)?;
-        let dir_shell_item: IShellItem =
-            SHCreateItemFromParsingName(PCWSTR::from_raw(dir_vec.as_ptr()), &bind_context)
-                .inspect_err(log_windows_error)?;
+unsafe fn show_savefile_dialog(directory: PathBuf) -> anyhow::Result<IFileSaveDialog> {
+    let dialog: IFileSaveDialog =
+        CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).inspect_err(log_windows_error)?;
+    let bind_context = CreateBindCtx(0).inspect_err(log_windows_error)?;
+    let Ok(full_path) = directory.canonicalize() else {
+        return Ok(dialog);
+    };
+    let dir_str = full_path.into_os_string();
+    if dir_str.is_empty() {
+        return Ok(dialog);
+    }
+    let dir_vec = dir_str.encode_wide().collect_vec();
+    let ret = SHCreateItemFromParsingName(PCWSTR::from_raw(dir_vec.as_ptr()), &bind_context)
+        .inspect_err(log_windows_error);
+    if ret.is_ok() {
+        let dir_shell_item: IShellItem = ret.unwrap();
         let _ = dialog
             .SetFolder(&dir_shell_item)
             .inspect_err(log_windows_error);
-
-        Ok(dialog)
     }
+
+    Ok(dialog)
 }
 
 // todo("windows")
@@ -873,20 +882,24 @@ unsafe fn generate_menu(
                 let action_index = actions_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if let Some(keystrokes) = keystrokes {
                     // TODO: deal with os action
-                    if keystrokes.len() == 1 {
-                        let keystroke = &keystrokes[0];
-                        item_name.push('\t');
-                        keystroke_to_menu_string(keystroke, &mut item_name);
-                        let accel = keystroke_to_accel(keystroke, action_index as _);
+                    let keystroke = &keystrokes[0];
+                    item_name.push('\t');
+                    keystroke_to_menu_string(keystroke, &mut item_name);
+                    if let Some(accel) = register_shortcuts(keystroke, action_index) {
                         accelerator_vec.push(accel);
-                    } else {
-                        // windows cant show multiple chortcuts on menu item
-                        for keystroke in keystrokes.iter() {
-                            keystroke_to_menu_string(keystroke, &mut item_name);
-                            let accel = keystroke_to_accel(keystroke, action_index as _);
-                            accelerator_vec.push(accel);
-                        }
                     }
+                    // the below codes can work, but disable them for now,
+                    // sice we don't have a default keymap for windows
+                    // if keystrokes.len() > 1 {
+                    //     // windows can not show multiple chortcuts on menu item
+                    //     for keystroke in keystrokes.iter() {
+                    //         if let Some(accel) =
+                    //             register_shortcuts(hashmap, keystroke, action_index)
+                    //         {
+                    //             accelerator_vec.push(accel);
+                    //         }
+                    //     }
+                    // }
                 }
                 let name_vec = encode_wide(&item_name);
                 AppendMenuW(
@@ -917,7 +930,7 @@ fn keystroke_to_menu_string(keystroke: &Keystroke, menu_string: &mut String) {
     let _ = write!(menu_string, "{}", keystroke.key.to_uppercase());
 }
 
-fn keystroke_to_accel(keystroke: &Keystroke, action_index: u16) -> ACCEL {
+fn register_shortcuts(keystroke: &Keystroke, action_index: usize) -> Option<ACCEL> {
     let mut table = ACCEL::default();
     if keystroke.modifiers.control {
         table.fVirt |= ACCEL_VIRT_FLAGS(ACCEL_FCONTROL);
@@ -930,9 +943,9 @@ fn keystroke_to_accel(keystroke: &Keystroke, action_index: u16) -> ACCEL {
     }
     table.fVirt |= ACCEL_VIRT_FLAGS(ACCEL_FVIRTKEY);
     table.key = keycode_to_vkey(&keystroke.key).unwrap_or(VK_DELETE).0;
-    table.cmd = action_index;
+    table.cmd = action_index as _;
 
-    table
+    Some(table)
 }
 
 fn keycode_to_vkey(keycode: &str) -> Option<VIRTUAL_KEY> {

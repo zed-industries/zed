@@ -3,7 +3,6 @@ use std::{cell::RefCell, mem, path::PathBuf, rc::Rc, str::FromStr, sync::Arc};
 use futures::channel::oneshot;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
-use util::ResultExt;
 use windows::{
     core::{implement, PCWSTR},
     Win32::{
@@ -23,7 +22,7 @@ use windows::{
         UI::{
             Controls::{
                 TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
-                TD_INFORMATION_ICON, TD_WARNING_ICON,
+                TD_INFORMATION_ICON, TD_WARNING_ICON, WM_MOUSELEAVE,
             },
             HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
             Input::{
@@ -31,19 +30,19 @@ use windows::{
                     ImmGetContext, ImmReleaseContext, ImmSetCompositionWindow, CFS_POINT,
                     COMPOSITIONFORM,
                 },
-                KeyboardAndMouse::SetActiveWindow,
+                KeyboardAndMouse::{SetActiveWindow, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
-                DefWindowProcW, GetClientRect, GetCursorPos, KillTimer, PostMessageW,
-                PostQuitMessage, SetTimer, SetWindowTextW, ShowWindow, CW_USEDEFAULT,
-                GWLP_HINSTANCE, HMENU, SIZE_MINIMIZED, SW_MINIMIZE, SW_SHOW, TIMERPROC, WA_ACTIVE,
-                WA_CLICKACTIVE, WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR,
-                WM_COMMAND, WM_DESTROY, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP,
-                WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
-                WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
-                WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
-                WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WS_MAXIMIZE, WS_POPUP, WS_VISIBLE,
+                DefWindowProcW, GetClientRect, GetCursorPos, KillTimer, PostMessageW, SetTimer,
+                SetWindowTextW, ShowWindow, CW_USEDEFAULT, GWLP_HINSTANCE, HMENU, SIZE_MINIMIZED,
+                SW_MINIMIZE, SW_SHOW, TIMERPROC, WA_ACTIVE, WA_CLICKACTIVE, WA_INACTIVE,
+                WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_DESTROY,
+                WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+                WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
+                WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WM_XBUTTONDBLCLK,
+                WM_XBUTTONDOWN, WM_XBUTTONUP, WS_MAXIMIZE, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -148,7 +147,6 @@ impl WindowsWindow {
             height: window_handle.size().height as _,
             depth: 1,
         };
-        println!("Window size: {:#?}", gpu_extent);
         let renderer = BladeRenderer::new(gpu, gpu_extent);
         let inner = WindowsWindowinner::new(
             dispatch_window_handle,
@@ -304,7 +302,6 @@ impl WindowsWindowinner {
                 height,
                 depth: 1,
             };
-            println!("Resize with: {:#?}", gpu_size);
             let mut render = self.renderer.borrow_mut();
             if render.viewport_size() != gpu_size {
                 render.update_drawable_size(crate::size(gpu_size.width as _, gpu_size.height as _));
@@ -360,13 +357,11 @@ impl WindowsWindowBase for WindowsWindowinner {
                     func();
                 }
                 let _ = KillTimer(handle, WINDOW_REFRESH_TIMER);
-                PostQuitMessage(0);
                 LRESULT(0)
             }
             WM_COMMAND => {
                 let action_index = loword!(wparam.0, u16) as usize;
                 if action_index != 0 {
-                    println!("Get action: {}", action_index);
                     let _ = PostMessageW(
                         self.dispatch_window_handle,
                         MENU_ACTIONS,
@@ -379,24 +374,63 @@ impl WindowsWindowBase for WindowsWindowinner {
             }
             WM_ACTIVATE => {
                 if loword!(wparam.0, u16) as u32 & (WA_ACTIVE | WA_CLICKACTIVE) > 0 {
+                    let mut config = TRACKMOUSEEVENT {
+                        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as _,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: handle,
+                        dwHoverTime: 0,
+                    };
+                    let _ = TrackMouseEvent(&mut config).inspect_err(log_windows_error);
                     self.set_focused(true);
                 } else if loword!(wparam.0, u16) as u32 & WA_INACTIVE > 0 {
                     self.set_focused(false);
                 }
                 LRESULT(0)
             }
+            WM_SYSKEYDOWN | WM_SYSKEYUP => {
+                // alt key is pressed
+                let old_state = self.modifiers.borrow().alt;
+                let mut update = false;
+                if lparam.0 & (0x1 << 29) > 0 {
+                    if message == WM_SYSKEYDOWN {
+                        if !old_state {
+                            self.modifiers.borrow_mut().alt = true;
+                            update = true;
+                        }
+                    } else {
+                        if old_state {
+                            self.modifiers.borrow_mut().alt = false;
+                            update = true;
+                        }
+                    }
+                }
+                if update {
+                    let input = PlatformInput::ModifiersChanged(crate::ModifiersChangedEvent {
+                        modifiers: self.modifiers.borrow().clone(),
+                    });
+                    self.handle_input(input);
+                }
+                // let Windows to hanle the left things, so we still have the system-wide
+                // Alt+Tab, Alt+F4 ... working
+                DefWindowProcW(handle, message, wparam, lparam)
+            }
             WM_KEYDOWN | WM_KEYUP => {
-                let mut modifiers = self.modifiers.borrow().clone();
+                let mut old_state = self.modifiers.borrow_mut();
+                let mut modifiers = old_state.clone();
+                let mut update = false;
                 if let Some(key) = parse_system_key(message, wparam, lparam, &mut modifiers) {
                     self.handle_input(key);
-                    let mut old_state = self.modifiers.borrow_mut();
-                    if modifiers != *old_state {
-                        let input = PlatformInput::ModifiersChanged(crate::ModifiersChangedEvent {
-                            modifiers: modifiers.clone(),
-                        });
-                        self.handle_input(input);
-                        (*old_state) = modifiers;
-                    }
+                    update = true;
+                }
+                if modifiers != *old_state {
+                    let input = PlatformInput::ModifiersChanged(crate::ModifiersChangedEvent {
+                        modifiers: modifiers.clone(),
+                    });
+                    self.handle_input(input);
+                    update = true;
+                    (*old_state) = modifiers;
+                }
+                if update {
                     self.update_now();
                 }
                 LRESULT(0)
@@ -445,6 +479,15 @@ impl WindowsWindowBase for WindowsWindowinner {
                 self.update_now();
                 LRESULT(0)
             }
+            WM_MOUSELEAVE => {
+                let input = PlatformInput::MouseExited(crate::MouseExitEvent {
+                    position: Point::default(),
+                    pressed_button: None,
+                    modifiers: self.modifiers.borrow().clone(),
+                });
+                self.handle_input(input);
+                LRESULT(0)
+            }
             WM_SIZE => {
                 if wparam.0 as u32 == SIZE_MINIMIZED {
                     return DefWindowProcW(handle, message, wparam, lparam);
@@ -471,10 +514,6 @@ impl WindowsWindowBase for WindowsWindowinner {
                 config.ptCurrentPos.y = cursor.y;
                 ImmSetCompositionWindow(ctx, &config as _);
                 ImmReleaseContext(handle, ctx);
-                println!(
-                    "Set composition pos: ({}, {})",
-                    config.ptCurrentPos.x, config.ptCurrentPos.y
-                );
                 LRESULT(0)
             }
             _ => DefWindowProcW(handle, message, wparam, lparam),
@@ -854,7 +893,11 @@ impl RawWindow {
 
     pub fn size(&self) -> Size<i32> {
         let mut rect: RECT = unsafe { mem::zeroed() };
-        unsafe { GetClientRect(self.hwnd(), &mut rect).log_err() };
+        unsafe {
+            GetClientRect(self.hwnd(), &mut rect)
+                .inspect_err(log_windows_error)
+                .expect("unable to get window size")
+        };
         Size {
             width: (rect.right - rect.left) as i32,
             height: (rect.bottom - rect.top) as i32,

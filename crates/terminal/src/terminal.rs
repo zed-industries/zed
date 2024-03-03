@@ -674,7 +674,6 @@ impl Terminal {
         if pid < 0 {
             pid = self.shell_pid as i32;
         }
-        println!("Updated PID: {}", pid);
 
         if let Some(process_info) = LocalProcessInfo::with_root_pid(pid as u32) {
             let res = self

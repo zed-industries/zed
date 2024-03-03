@@ -88,6 +88,7 @@ pub unsafe fn get_windowdata(handle: HWND) -> isize {
     GetWindowLongPtrW(handle, GWL_USERDATA)
 }
 
+#[track_caller]
 pub fn log_windows_error(_e: &windows::core::Error) {
     log_windows_error_with_message!(None);
 }

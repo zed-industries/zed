@@ -189,13 +189,9 @@ pub fn parse_keyboard_input(
         return None;
     }
     let src = [wparam.0 as u16];
-    let Ok(first_char) = char::decode_utf16(src)
-        .map(|r| r.map_err(|e| e.unpaired_surrogate()))
-        .collect::<Vec<_>>()[0]
-    else {
+    let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
         return None;
     };
-    println!("{} => {:?}", wparam.0, first_char);
     if first_char.is_control() {
         // ctrl is handled by zed
         return None;
