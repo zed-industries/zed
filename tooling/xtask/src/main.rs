@@ -114,7 +114,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::unnecessary_to_owned",
         "clippy::unnecessary_unwrap",
         "clippy::useless_conversion",
-        "clippy::useless_format",
         "clippy::vec_init_then_push",
     ];
 
