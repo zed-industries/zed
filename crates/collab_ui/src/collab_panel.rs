@@ -952,7 +952,7 @@ impl CollabPanel {
                         })
                         .ok();
                 }))
-                .tooltip(move |cx| Tooltip::text(format!("Open shared screen"), cx))
+                .tooltip(move |cx| Tooltip::text("Open shared screen", cx))
             })
     }
 
@@ -2220,7 +2220,7 @@ impl CollabPanel {
                 });
 
                 if let Some(name) = channel_name {
-                    SharedString::from(format!("{}", name))
+                    SharedString::from(name.to_string())
                 } else {
                     SharedString::from("Current Call")
                 }

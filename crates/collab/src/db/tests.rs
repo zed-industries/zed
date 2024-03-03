@@ -23,7 +23,7 @@ pub struct TestDb {
 
 impl TestDb {
     pub fn sqlite(background: BackgroundExecutor) -> Self {
-        let url = format!("sqlite::memory:");
+        let url = "sqlite::memory:";
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()

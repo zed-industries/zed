@@ -376,7 +376,7 @@ impl Item for ChannelView {
                 (_, false) => format!("#{} (disconnected)", channel.name),
             }
         } else {
-            format!("channel notes (disconnected)")
+            "channel notes (disconnected)".to_string()
         };
         Label::new(label)
             .color(if selected {

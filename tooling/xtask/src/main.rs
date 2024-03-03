@@ -113,7 +113,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::type_complexity",
         "clippy::unnecessary_to_owned",
         "clippy::useless_conversion",
-        "clippy::useless_format",
         "clippy::vec_init_then_push",
     ];
 
