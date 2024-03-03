@@ -51,9 +51,9 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreateAcceleratorTableW, CreateMenu, DefWindowProcW,
-                DestroyAcceleratorTable, DispatchMessageW, GetMessageW, LoadAcceleratorsW,
-                LoadImageW, PostQuitMessage, SetCursor, TranslateAcceleratorW, TranslateMessage,
-                ACCEL, ACCEL_VIRT_FLAGS, HACCEL, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND,
+                DestroyAcceleratorTable, DispatchMessageW, GetMessageW, LoadImageW,
+                PostQuitMessage, SetCursor, TranslateAcceleratorW, TranslateMessage, ACCEL,
+                ACCEL_VIRT_FLAGS, HACCEL, HCURSOR, HMENU, IDC_ARROW, IDC_CROSS, IDC_HAND,
                 IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED,
                 MF_POPUP, MF_SEPARATOR, MF_STRING, SW_SHOWDEFAULT, WM_COMMAND, WM_DESTROY,
             },
@@ -62,7 +62,7 @@ use windows::{
 };
 
 use crate::{
-    encode_wide, get_module_handle, log_windows_error, log_windows_error_with_message, loword,
+    encode_wide, log_windows_error, log_windows_error_with_message, loword,
     platform::cross_platform::CosmicTextSystem, set_windowdata, Keystroke, WindowsWindow,
     WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
     ACCEL_FVIRTKEY, CF_UNICODETEXT, CLIPBOARD_METADATA, CLIPBOARD_TEXT_HASH, DISPATCH_WINDOW_CLASS,
@@ -182,7 +182,6 @@ impl WindowsPlatformInner {
     fn do_action(&self, action_index: usize) {
         if let Some(ref mut callback) = self.callbacks.borrow_mut().app_menu_action {
             if let Some(action) = self.menu_actions.borrow().get(action_index - 1) {
-                println!("Action index: {}", action_index);
                 let action = action.boxed_clone();
                 callback(&*action);
             }
@@ -228,19 +227,19 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    //todo!(windows)
+    // todo("windows")
     fn restart(&self) {}
 
-    //todo!(windows)
+    // todo("windows")
     fn activate(&self, _ignoring_other_apps: bool) {}
 
-    //todo!(windows)
+    // todo("windows")
     fn hide(&self) {}
 
-    //todo!(windows)
+    // todo("windows")
     fn hide_other_apps(&self) {}
 
-    //todo!(windows)
+    // todo("windows")
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -251,7 +250,7 @@ impl Platform for WindowsPlatform {
         Some(Rc::new(WindowsDisplay::new(id)))
     }
 
-    //todo!(windows)
+    // todo("windows")
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
     }
@@ -275,7 +274,6 @@ impl Platform for WindowsPlatform {
 
     fn open_url(&self, url: &str) {
         let url_string = url.to_string();
-        println!("Open: {}", url_string);
         self.background_executor()
             .spawn(async move {
                 open_target(url_string);
@@ -420,11 +418,14 @@ impl Platform for WindowsPlatform {
                 patch: info.dwBuildNumber as _,
             })
         } else {
-            Err(anyhow::anyhow!("{}", std::io::Error::last_os_error()))
+            Err(anyhow::anyhow!(
+                "unable to get Windows version: {}",
+                std::io::Error::last_os_error()
+            ))
         }
     }
 
-    // todo!(windows)
+    // todo("windows")
     fn app_version(&self) -> Result<SemanticVersion> {
         Ok(SemanticVersion {
             major: 1,
@@ -433,12 +434,11 @@ impl Platform for WindowsPlatform {
         })
     }
 
-    // todo!(windows)
+    // todo("windows")
     fn app_path(&self) -> Result<PathBuf> {
         unimplemented!()
     }
 
-    //todo!(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
         let mut actions_vec = Vec::new();
         let mut accelerator_vec = Vec::new();
@@ -553,7 +553,7 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    //todo!(windows)
+    // todo("windows")
     fn should_auto_hide_scrollbars(&self) -> bool {
         false
     }
@@ -747,7 +747,6 @@ impl WindowsWindowBase for WindowsPlatformInner {
             WM_COMMAND => {
                 let action_index = loword!(wparam.0, u16) as usize;
                 if action_index != 0 {
-                    println!("Get shorcut index: {}", action_index);
                     self.do_action(action_index);
                 }
                 LRESULT(0)
@@ -772,11 +771,10 @@ fn platform_init() -> anyhow::Result<()> {
 
 fn open_target(target: String) {
     unsafe {
-        let operation = encode_wide("open");
         let file_path_vec = encode_wide(&target);
         let ret = ShellExecuteW(
             None,
-            PCWSTR::from_raw(operation.as_ptr()),
+            windows::core::w!("open"),
             PCWSTR::from_raw(file_path_vec.as_ptr()),
             None,
             None,
@@ -870,7 +868,6 @@ unsafe fn generate_menu(
                     .bindings_for_action(action.as_ref())
                     .next()
                     .map(|binding| binding.keystrokes());
-                // println!("Shortcut: {:#?}", keystrokes);
 
                 let mut item_name = name.to_string();
                 let action_index = actions_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -970,9 +967,7 @@ fn keycode_to_vkey(keycode: &str) -> Option<VIRTUAL_KEY> {
         let Ok(this_char) = char::from_str(keycode) else {
             return None;
         };
-        // TODO: is this correct?
         key = unsafe { Some(VIRTUAL_KEY(VkKeyScanW(this_char as _) as _)) };
-        println!("Char {} to vk {:?}", this_char, key);
     }
 
     key
