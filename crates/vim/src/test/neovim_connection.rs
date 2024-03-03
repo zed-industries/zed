@@ -272,10 +272,7 @@ impl NeovimConnection {
 
     #[cfg(feature = "neovim")]
     pub async fn exec(&mut self, value: &str) {
-        self.nvim
-            .command_output(format!("{}", value).as_str())
-            .await
-            .unwrap();
+        self.nvim.command_output(value).await.unwrap();
 
         self.data.push_back(NeovimData::Exec {
             command: value.to_string(),

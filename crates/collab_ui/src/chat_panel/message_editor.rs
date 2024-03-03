@@ -137,9 +137,9 @@ impl MessageEditor {
     ) {
         self.editor.update(cx, |editor, cx| {
             if let Some(channel_name) = channel_name {
-                editor.set_placeholder_text(format!("Message #{}", channel_name), cx);
+                editor.set_placeholder_text(format!("Message #{channel_name}"), cx);
             } else {
-                editor.set_placeholder_text(format!("Message Channel"), cx);
+                editor.set_placeholder_text("Message Channel", cx);
             }
         });
         self.channel_id = Some(channel_id);
