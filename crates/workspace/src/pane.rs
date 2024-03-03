@@ -159,6 +159,10 @@ impl fmt::Debug for Event {
     }
 }
 
+/// A container for 0 to many items that are open in the workspace.
+/// Treats all items uniformly via the [`ItemHandle`] trait, whether it's an editor, search results multibuffer, terminal or something else,
+/// responsible for managing item tabs, focus and zoom states and drag and drop features.
+/// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
