@@ -275,8 +275,8 @@ impl VectorDatabase {
         self.transact(move |db| {
             let mut worktree_query =
                 db.prepare("SELECT id FROM worktrees WHERE absolute_path = ?1")?;
-            let worktree_id = worktree_query
-                .query_row(params![worktree_root_path], |row| row.get::<_, i64>(0));
+            let worktree_id =
+                worktree_query.query_row(params![worktree_root_path], |row| row.get::<_, i64>(0));
 
             Ok(worktree_id.is_ok())
         })

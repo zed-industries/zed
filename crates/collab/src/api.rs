@@ -179,8 +179,7 @@ async fn add_contributor(
     Json(params): Json<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
-    app
-        .db
+    app.db
         .add_contributor(
             &params.github_login,
             params.github_user_id,
