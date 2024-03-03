@@ -871,7 +871,6 @@ impl Workspace {
 
                 cx.open_window(options, {
                     let app_state = app_state.clone();
-                    let workspace_id = workspace_id;
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {

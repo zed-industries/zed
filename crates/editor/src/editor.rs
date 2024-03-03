@@ -8810,7 +8810,6 @@ impl Editor {
                     Ok(i) | Err(i) => i,
                 };
 
-                let right_position = right_position;
                 ranges[start_ix..]
                     .iter()
                     .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())

@@ -111,7 +111,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::option_map_unit_fn",
         "clippy::redundant_closure_call",
         "clippy::redundant_guards",
-        "clippy::redundant_locals",
         "clippy::reversed_empty_ranges",
         "clippy::single_range_in_vec_init",
         "clippy::suspicious_to_owned",
