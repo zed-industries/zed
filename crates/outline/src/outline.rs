@@ -98,6 +98,8 @@ struct OutlineViewDelegate {
     last_query: String,
 }
 
+enum OutlineRowHighlights {}
+
 impl OutlineViewDelegate {
     fn new(
         outline_view: WeakView<OutlineView>,
@@ -149,8 +151,6 @@ impl OutlineViewDelegate {
         }
     }
 }
-
-enum OutlineRowHighlights {}
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;

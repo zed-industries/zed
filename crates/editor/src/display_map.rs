@@ -351,6 +351,9 @@ pub(crate) struct Highlights<'a> {
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
     pub suggestion: Option<HighlightStyle>,
+    pub git_created: Option<HighlightStyle>,
+    pub git_modified: Option<HighlightStyle>,
+    pub git_deleted: Option<HighlightStyle>,
 }
 
 pub struct HighlightedChunk<'a> {
@@ -366,6 +369,7 @@ pub struct DisplaySnapshot {
     inlay_snapshot: inlay_map::InlaySnapshot,
     tab_snapshot: tab_map::TabSnapshot,
     wrap_snapshot: wrap_map::WrapSnapshot,
+    // TODO kb try this instead of git inlays
     block_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
@@ -555,6 +559,19 @@ impl DisplaySnapshot {
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
                 suggestion: Some(editor_style.suggestions_style),
+                git_created: Some(HighlightStyle {
+                    // TODO kb background is not on the whole line
+                    background_color: Some(editor_style.status.git().created),
+                    ..HighlightStyle::default()
+                }),
+                git_modified: Some(HighlightStyle {
+                    background_color: Some(editor_style.status.git().modified),
+                    ..HighlightStyle::default()
+                }),
+                git_deleted: Some(HighlightStyle {
+                    background_color: Some(editor_style.status.git().deleted),
+                    ..HighlightStyle::default()
+                }),
             },
         )
         .map(|chunk| {

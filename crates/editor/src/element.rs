@@ -13,18 +13,23 @@ use crate::{
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GitRowHighlight, GutterDimensions,
+    HalfPageDown, HalfPageUp, HoveredCursor, Inlay, LineDown, LineUp, OpenExcerpts, PageDown,
+    PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
-use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
+use git::{
+    blame::BlameEntry,
+    diff::{DiffHunk, DiffHunkStatus},
+    Oid,
+};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
+    transparent_black, Action, AnchorCorner, AnyElement, AppContext, AvailableSpace, Bounds,
+    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+     ElementInputHandler, Entity,
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
@@ -34,7 +39,7 @@ use gpui::{
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, MultiBuffer, MultiBufferSnapshot};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -54,7 +59,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
@@ -411,6 +416,7 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
+        hovered_hunk: Option<&HoveredHunk>,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
@@ -425,6 +431,8 @@ impl EditorElement {
 
         if gutter_hitbox.is_hovered(cx) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+        } else if let Some(hovered_hunk) = hovered_hunk {
+            try_click_diff_hunk(editor, hovered_hunk, cx);
         } else if !text_hitbox.is_hovered(cx) {
             return;
         }
@@ -615,11 +623,17 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
+        clickable_hunks: Option<&ClickableHunks>,
         cx: &mut ViewContext<Editor>,
     ) {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(cx);
         editor.set_gutter_hovered(gutter_hovered, cx);
+        if let Some(clickable_hunks) = clickable_hunks {
+            if clickable_hunks.hover_changed(&event.position) {
+                cx.notify()
+            }
+        }
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(cx) {
@@ -2258,7 +2272,11 @@ impl EditorElement {
         })
     }
 
-    fn paint_gutter(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+    fn paint_gutter(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut WindowContext,
+    ) -> Option<ClickableHunks> {
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -2271,9 +2289,16 @@ impl EditorElement {
             Some(GitGutterSetting::TrackedFiles)
         );
 
-        if show_git_gutter {
-            Self::paint_diff_hunks(layout, cx);
-        }
+        let clickable_hunks = if show_git_gutter {
+            Some(Self::paint_diff_hunks(
+                layout.gutter_hitbox.bounds,
+                layout,
+                &cx.mouse_position(),
+                cx,
+            ))
+        } else {
+            None
+        };
 
         if layout.blamed_display_rows.is_some() {
             self.paint_blamed_display_rows(layout, cx);
@@ -2303,113 +2328,148 @@ impl EditorElement {
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
                 indicator.paint(cx);
             }
-        })
+        });
+
+        clickable_hunks
     }
 
-    fn paint_diff_hunks(layout: &EditorLayout, cx: &mut WindowContext) {
+    fn paint_diff_hunks(
+        bounds: Bounds<Pixels>,
+        layout: &EditorLayout,
+        mouse_position: &gpui::Point<Pixels>,
+        cx: &mut WindowContext,
+    ) -> ClickableHunks {
+        let mut clickable_hunks = ClickableHunks::default();
         if layout.display_hunks.is_empty() {
-            return;
+            return clickable_hunks;
         }
 
         let line_height = layout.position_map.line_height;
-
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y * line_height;
-
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             for hunk in &layout.display_hunks {
-                let (display_row_range, status) = match hunk {
-                    //TODO: This rendering is entirely a horrible hack
-                    &DisplayDiffHunk::Folded { display_row: row } => {
-                        let start_y = row as f32 * line_height - scroll_top;
-                        let end_y = start_y + line_height;
-
-                        let width = 0.275 * line_height;
-                        let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
-                        let highlight_size = size(width * 2., end_y - start_y);
-                        let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-                        cx.paint_quad(quad(
-                            highlight_bounds,
-                            Corners::all(1. * line_height),
-                            cx.theme().status().modified,
-                            Edges::default(),
-                            transparent_black(),
-                        ));
-
-                        continue;
-                    }
-
+                let (clickable_hunk, background_color, corner_radii) = match hunk {
+                    DisplayDiffHunk::Folded { .. } => (
+                        None,
+                        cx.theme().status().modified,
+                        Corners::all(1. * line_height),
+                    ),
                     DisplayDiffHunk::Unfolded {
-                        display_row_range,
                         status,
-                    } => (display_row_range, status),
-                };
-
-                let color = match status {
-                    DiffHunkStatus::Added => cx.theme().status().created,
-                    DiffHunkStatus::Modified => cx.theme().status().modified,
-
-                    //TODO: This rendering is entirely a horrible hack
-                    DiffHunkStatus::Removed => {
-                        let row = display_row_range.start;
-
-                        let offset = line_height / 2.;
-                        let start_y = row as f32 * line_height - offset - scroll_top;
-                        let end_y = start_y + line_height;
-
-                        let width = 0.275 * line_height;
-                        let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
-                        let highlight_size = size(width * 2., end_y - start_y);
-                        let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-                        cx.paint_quad(quad(
-                            highlight_bounds,
-                            Corners::all(1. * line_height),
+                        display_row_range,
+                    } => match status {
+                        DiffHunkStatus::Added => (
+                            Some((display_row_range, status)),
+                            cx.theme().status().created,
+                            Corners::all(0.05 * line_height),
+                        ),
+                        DiffHunkStatus::Modified => (
+                            Some((display_row_range, status)),
+                            cx.theme().status().modified,
+                            Corners::all(0.05 * line_height),
+                        ),
+                        DiffHunkStatus::Removed => (
+                            Some((display_row_range, status)),
                             cx.theme().status().deleted,
-                            Edges::default(),
-                            transparent_black(),
-                        ));
-
-                        continue;
-                    }
+                            Corners::all(1. * line_height),
+                        ),
+                    },
                 };
 
-                let start_row = display_row_range.start;
-                let end_row = display_row_range.end;
-                // If we're in a multibuffer, row range span might include an
-                // excerpt header, so if we were to draw the marker straight away,
-                // the hunk might include the rows of that header.
-                // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
-                // Instead, we simply check whether the range we're dealing with includes
-                // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
-                let end_row_in_current_excerpt = layout
-                    .position_map
-                    .snapshot
-                    .blocks_in_range(start_row..end_row)
-                    .find_map(|(start_row, block)| {
-                        if matches!(block, TransformBlock::ExcerptHeader { .. }) {
-                            Some(start_row)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(end_row);
+                let hunk_bounds = Self::diff_hunk_bounds(
+                    &layout.position_map.snapshot,
+                    line_height,
+                    bounds,
+                    &hunk,
+                );
+                if let Some((display_row_range, status)) = clickable_hunk {
+                    clickable_hunks.all.push(hunk_bounds);
+                    if hunk_bounds.contains(mouse_position) {
+                        clickable_hunks.hovered = Some(HoveredHunk {
+                            display_row_range: display_row_range.clone(),
+                            status: *status,
+                            bounds,
+                        });
+                    }
+                }
 
-                let start_y = start_row as f32 * line_height - scroll_top;
-                let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
-
-                let width = 0.275 * line_height;
-                let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
-                let highlight_size = size(width * 2., end_y - start_y);
-                let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
                 cx.paint_quad(quad(
-                    highlight_bounds,
-                    Corners::all(0.05 * line_height),
-                    color,
+                    hunk_bounds,
+                    corner_radii,
+                    background_color,
                     Edges::default(),
                     transparent_black(),
                 ));
             }
-        })
+        });
+
+        clickable_hunks
+    }
+
+    fn diff_hunk_bounds(
+        snapshot: &EditorSnapshot,
+        line_height: Pixels,
+        bounds: Bounds<Pixels>,
+        hunk: &DisplayDiffHunk,
+    ) -> Bounds<Pixels> {
+        let scroll_position = snapshot.scroll_position();
+        let scroll_top = scroll_position.y * line_height;
+
+        match hunk {
+            DisplayDiffHunk::Folded { display_row } => {
+                let start_y = *display_row as f32 * line_height - scroll_top;
+                let end_y = start_y + line_height;
+
+                let width = 0.275 * line_height;
+                let highlight_origin = bounds.origin + point(-width, start_y);
+                let highlight_size = size(width * 2., end_y - start_y);
+                Bounds::new(highlight_origin, highlight_size)
+            }
+            DisplayDiffHunk::Unfolded {
+                display_row_range,
+                status,
+            } => match status {
+                DiffHunkStatus::Added | DiffHunkStatus::Modified => {
+                    let start_row = display_row_range.start;
+                    let end_row = display_row_range.end;
+                    // If we're in a multibuffer, row range span might include an
+                    // excerpt header, so if we were to draw the marker straight away,
+                    // the hunk might include the rows of that header.
+                    // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
+                    // Instead, we simply check whether the range we're dealing with includes
+                    // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
+                    let end_row_in_current_excerpt = snapshot
+                        .blocks_in_range(start_row..end_row)
+                        .find_map(|(start_row, block)| {
+                            if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                                Some(start_row)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(end_row);
+
+                    let start_y = start_row as f32 * line_height - scroll_top;
+                    let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
+
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    Bounds::new(highlight_origin, highlight_size)
+                }
+                DiffHunkStatus::Removed => {
+                    let row = display_row_range.start;
+
+                    let offset = line_height / 2.;
+                    let start_y = row as f32 * line_height - offset - scroll_top;
+                    let end_y = start_y + line_height;
+
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    Bounds::new(highlight_origin, highlight_size)
+                }
+            },
+        }
     }
 
     fn paint_blamed_display_rows(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -3025,9 +3085,18 @@ impl EditorElement {
         });
     }
 
-    fn paint_mouse_listeners(&mut self, layout: &EditorLayout, cx: &mut WindowContext) {
+    fn paint_mouse_listeners(
+        &mut self,
+        layout: &EditorLayout,
+        clickable_hunks: Option<ClickableHunks>,
+        cx: &mut WindowContext,
+    ) {
         self.paint_scroll_wheel_listener(layout, cx);
 
+        let clickable_hunk_hovered = clickable_hunks
+            .as_ref()
+            .and_then(|hunks| hunks.hovered_hunk())
+            .cloned();
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
@@ -3041,6 +3110,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
+                                clickable_hunk_hovered.as_ref(),
                                 &position_map,
                                 &text_hitbox,
                                 &gutter_hitbox,
@@ -3097,6 +3167,8 @@ impl EditorElement {
                             &position_map,
                             &text_hitbox,
                             &gutter_hitbox,
+                            // TODO kb order by left coordinate to improve lookup
+                            clickable_hunks.as_ref(),
                             cx,
                         )
                     });
@@ -3262,6 +3334,113 @@ fn deploy_blame_entry_context_menu(
         editor.mouse_context_menu = Some(MouseContextMenu::new(position, context_menu, cx));
         cx.notify();
     });
+}
+
+// TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
+fn try_click_diff_hunk(
+    editor: &mut Editor,
+    hovered_hunk: &HoveredHunk,
+    cx: &mut ViewContext<'_, Editor>,
+) -> Option<()> {
+    let editor_snapshot = editor.snapshot(cx);
+    let buffer_range = buffer_range(
+        &hovered_hunk.display_row_range,
+        &editor_snapshot.display_snapshot,
+    );
+    let (buffer_snapshot, original_text) = editor.buffer().update(cx, |buffer, cx| {
+        let buffer_snapshot = buffer.snapshot(cx);
+        let original_text = original_text(buffer, buffer_range.clone(), cx)?;
+        Some((buffer_snapshot, original_text))
+    })?;
+
+    match hovered_hunk.status {
+        DiffHunkStatus::Removed => {
+            let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+            let inlay = Inlay::git_hunk(
+                post_inc(&mut editor.next_inlay_id),
+                position,
+                original_text,
+                hovered_hunk.status,
+            );
+            editor.git_inlays.insert(inlay.id, inlay.clone());
+            editor.splice_inlays(Vec::new(), vec![inlay], cx);
+        }
+        DiffHunkStatus::Added => {
+            editor.highlight_rows::<GitRowHighlight>(
+                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
+                    ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                Some(cx.theme().status().git().created),
+                cx,
+            );
+        }
+        DiffHunkStatus::Modified => {
+            let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+            let inlay = Inlay::git_hunk(
+                post_inc(&mut editor.next_inlay_id),
+                position,
+                original_text,
+                DiffHunkStatus::Removed,
+            );
+            editor.git_inlays.insert(inlay.id, inlay.clone());
+            editor.splice_inlays(Vec::new(), vec![inlay], cx);
+            editor.highlight_rows::<GitRowHighlight>(
+                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
+                    ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                Some(cx.theme().status().git().created),
+                cx,
+            );
+        }
+    }
+
+    Some(())
+}
+
+fn original_text(
+    buffer: &MultiBuffer,
+    buffer_range: Range<Point>,
+    cx: &mut AppContext,
+) -> Option<String> {
+    let snapshot = buffer.snapshot(cx);
+    let diff_base = clicked_buffer_diff_base(buffer, buffer_range.clone(), cx)?;
+    let hunk = buffer_diff_hunk(&snapshot, buffer_range)?;
+    diff_base
+        .get(hunk.diff_base_byte_range)
+        .map(ToString::to_string)
+}
+
+fn clicked_buffer_diff_base(
+    buffer: &MultiBuffer,
+    row_range: Range<Point>,
+    cx: &mut AppContext,
+) -> Option<String> {
+    let mut clicked_ranges = buffer.range_to_buffer_ranges(row_range, cx);
+    if clicked_ranges.len() == 1 {
+        let (clicked_buffer, _, _) = clicked_ranges.pop()?;
+        clicked_buffer.read(cx).diff_base().map(ToString::to_string)
+    } else {
+        None
+    }
+}
+
+fn buffer_diff_hunk(
+    buffer_snapshot: &MultiBufferSnapshot,
+    row_range: Range<Point>,
+) -> Option<DiffHunk<u32>> {
+    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
+    let hunk = hunks.next()?;
+    let second_hunk = hunks.next();
+    if second_hunk.is_none() {
+        return Some(hunk);
+    }
+    None
+}
+
+fn buffer_range(
+    display_row_range: &Range<u32>,
+    display_snapshot: &DisplaySnapshot,
+) -> Range<Point> {
+    DisplayPoint::new(display_row_range.start, 0).to_point(display_snapshot)
+        ..DisplayPoint::new(display_row_range.end, 0).to_point(display_snapshot)
 }
 
 #[derive(Debug)]
@@ -3679,6 +3858,19 @@ impl Element for EditorElement {
                 );
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
+                cx.set_cursor_style(CursorStyle::Arrow, &gutter_hitbox);
+                for hunk in &display_hunks {
+                    if let DisplayDiffHunk::Unfolded { .. } = hunk {
+                        let hunk_bounds = Self::diff_hunk_bounds(
+                            &snapshot,
+                            line_height,
+                            gutter_hitbox.bounds,
+                            hunk,
+                        );
+                        let clickable_hunk_hitbox = cx.insert_hitbox(hunk_bounds, true);
+                        cx.set_cursor_style(CursorStyle::PointingHand, &clickable_hunk_hitbox);
+                    }
+                }
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3990,12 +4182,13 @@ impl Element for EditorElement {
         };
         cx.with_text_style(Some(text_style), |cx| {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                self.paint_mouse_listeners(layout, cx);
-
                 self.paint_background(layout, cx);
-                if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                    self.paint_gutter(layout, cx);
-                }
+                let clickable_hunks = if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                    self.paint_gutter(layout, cx)
+                } else {
+                    None
+                };
+                self.paint_mouse_listeners(layout, clickable_hunks, cx);
                 self.paint_text(layout, cx);
 
                 if !layout.blocks.is_empty() {
@@ -4565,6 +4758,7 @@ mod tests {
     use language::language_settings;
     use log::info;
     use std::num::NonZeroU32;
+    use ui::Context;
     use util::test::sample_text;
 
     #[gpui::test]
@@ -5051,4 +5245,30 @@ fn compute_auto_height_layout(
         .min(line_height * max_lines as f32);
 
     Some(size(width, height))
+}
+
+#[derive(Default, Debug, Clone)]
+struct ClickableHunks {
+    hovered: Option<HoveredHunk>,
+    all: Vec<Bounds<Pixels>>,
+}
+
+#[derive(Debug, Clone)]
+struct HoveredHunk {
+    display_row_range: Range<u32>,
+    status: DiffHunkStatus,
+    bounds: Bounds<Pixels>,
+}
+
+impl ClickableHunks {
+    fn hovered_hunk(&self) -> Option<&HoveredHunk> {
+        self.hovered.as_ref()
+    }
+
+    fn hover_changed(&self, hovered_at: &gpui::Point<Pixels>) -> bool {
+        match &self.hovered {
+            Some(hovered) => !hovered.bounds.contains(hovered_at),
+            None => self.all.iter().any(|bounds| bounds.contains(hovered_at)),
+        }
+    }
 }
