@@ -7310,7 +7310,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
 #[test]
 fn test_split_words() {
-    fn split<'a>(text: &'a str) -> Vec<&'a str> {
+    fn split(text: &str) -> Vec<&str> {
         split_words(text).collect()
     }
 

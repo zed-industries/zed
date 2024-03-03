@@ -982,7 +982,7 @@ impl InlaySnapshot {
         summary
     }
 
-    pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
+    pub fn buffer_rows(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());

@@ -512,13 +512,13 @@ impl DisplaySnapshot {
         })
     }
 
-    pub fn chunks<'a>(
-        &'a self,
+    pub fn chunks(
+        &self,
         display_rows: Range<u32>,
         language_aware: bool,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
-    ) -> DisplayChunks<'a> {
+    ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
@@ -1826,10 +1826,10 @@ pub mod tests {
         )
     }
 
-    fn syntax_chunks<'a>(
+    fn syntax_chunks(
         rows: Range<u32>,
         map: &Model<DisplayMap>,
-        theme: &'a SyntaxTheme,
+        theme: &SyntaxTheme,
         cx: &mut AppContext,
     ) -> Vec<(String, Option<Hsla>)> {
         chunks(rows, map, theme, cx)
@@ -1838,10 +1838,10 @@ pub mod tests {
             .collect()
     }
 
-    fn chunks<'a>(
+    fn chunks(
         rows: Range<u32>,
         map: &Model<DisplayMap>,
-        theme: &'a SyntaxTheme,
+        theme: &SyntaxTheme,
         cx: &mut AppContext,
     ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));

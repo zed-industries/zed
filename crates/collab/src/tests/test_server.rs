@@ -138,7 +138,7 @@ impl TestServer {
         (server, client_a, client_b, channel_id)
     }
 
-    pub async fn start1<'a>(cx: &'a mut TestAppContext) -> TestClient {
+    pub async fn start1(cx: &mut TestAppContext) -> TestClient {
         let mut server = Self::start(cx.executor().clone()).await;
         server.create_client(cx, "user_a").await
     }
