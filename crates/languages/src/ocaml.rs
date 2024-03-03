@@ -140,7 +140,7 @@ impl LspAdapter for OCamlLspAdapter {
                 }
 
                 let mut label_highlight = vec![(
-                    0..0 + label.len(),
+                    0..label.len(),
                     language.grammar()?.highlight_id_for_name("property")?,
                 )];
 
