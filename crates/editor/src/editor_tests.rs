@@ -3999,7 +3999,7 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches::default(), cx))
+    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 }
