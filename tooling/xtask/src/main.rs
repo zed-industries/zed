@@ -92,7 +92,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::eq_op",
         "clippy::expect_fun_call",
         "clippy::explicit_counter_loop",
-        "clippy::extra_unused_lifetimes",
         "clippy::identity_op",
         "clippy::implied_bounds_in_impls",
         "clippy::iter_kv_map",

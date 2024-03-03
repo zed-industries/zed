@@ -575,7 +575,7 @@ pub struct VisualTestContext {
     window: AnyWindowHandle,
 }
 
-impl<'a> VisualTestContext {
+impl VisualTestContext {
     /// Get the underlying window handle underlying this context.
     pub fn handle(&self) -> AnyWindowHandle {
         self.window
