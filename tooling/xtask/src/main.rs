@@ -85,7 +85,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::cast_abs_to_unsigned",
         "clippy::cmp_owned",
         "clippy::crate_in_macro_def",
-        "clippy::default_constructed_unit_structs",
         "clippy::derivable_impls",
         "clippy::derive_ord_xor_partial_ord",
         "clippy::eq_op",
