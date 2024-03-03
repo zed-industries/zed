@@ -80,7 +80,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::almost_complete_range",
         "clippy::arc_with_non_send_sync",
         "clippy::await_holding_lock",
-        "clippy::bool_comparison",
         "clippy::borrow_deref_ref",
         "clippy::borrowed_box",
         "clippy::cast_abs_to_unsigned",
