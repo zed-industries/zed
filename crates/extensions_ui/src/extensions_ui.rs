@@ -8,24 +8,48 @@ use gpui::{
     WindowContext,
 };
 use settings::Settings;
+use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, ToggleButton, Tooltip};
+use util::ResultExt as _;
 
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
 };
 
-actions!(zed, [Extensions]);
+actions!(zed, [Extensions, InstallLocalExtension]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
-        workspace.register_action(move |workspace, _: &Extensions, cx| {
-            let extensions_page = ExtensionsPage::new(workspace, cx);
-            workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
-        });
+        workspace
+            .register_action(move |workspace, _: &Extensions, cx| {
+                let extensions_page = ExtensionsPage::new(workspace, cx);
+                workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+            })
+            .register_action(move |_, _: &InstallLocalExtension, cx| {
+                let store = ExtensionStore::global(cx);
+                let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
+                    files: false,
+                    directories: true,
+                    multiple: false,
+                });
+
+                cx.deref_mut()
+                    .spawn(|mut cx| async move {
+                        let extension_path = prompt.await.log_err()??.pop()?;
+                        let task = store
+                            .update(&mut cx, |store, cx| {
+                                store.install_local_extension(extension_path, cx)
+                            })
+                            .ok()?;
+                        task.await.log_err()?;
+                        Some(())
+                    })
+                    .detach();
+            });
     })
     .detach();
 }

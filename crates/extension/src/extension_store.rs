@@ -1,19 +1,23 @@
+mod build_extension;
 mod extension_lsp_adapter;
+mod extension_manifest;
 mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
 
+use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use build_extension::{CompileExtensionOptions, ExtensionBuilder};
 use collections::{BTreeMap, HashSet};
+use extension_manifest::ExtensionLibraryKind;
 use fs::{Fs, RemoveOptions};
 use futures::{channel::mpsc::unbounded, io::BufReader, AsyncReadExt as _, StreamExt as _};
 use gpui::{actions, AppContext, Context, Global, Model, ModelContext, Task};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, LanguageServerName,
-    QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -32,7 +36,7 @@ use util::{
 };
 use wasm_host::{WasmExtension, WasmHost};
 
-use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
+pub use extension_manifest::{ExtensionManifest, GrammarManifestEntry, OldExtensionManifest};
 
 #[derive(Deserialize)]
 pub struct ExtensionsApiResponse {
@@ -48,69 +52,6 @@ pub struct ExtensionApiResponse {
     pub authors: Vec<String>,
     pub repository: String,
     pub download_count: usize,
-}
-
-/// This is the old version of the extension manifest, from when it was `extension.json`.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct OldExtensionManifest {
-    pub name: String,
-    pub version: Arc<str>,
-
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub repository: Option<String>,
-    #[serde(default)]
-    pub authors: Vec<String>,
-
-    #[serde(default)]
-    pub themes: BTreeMap<Arc<str>, PathBuf>,
-    #[serde(default)]
-    pub languages: BTreeMap<Arc<str>, PathBuf>,
-    #[serde(default)]
-    pub grammars: BTreeMap<Arc<str>, PathBuf>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct ExtensionManifest {
-    pub id: Arc<str>,
-    pub name: String,
-    pub version: Arc<str>,
-
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub repository: Option<String>,
-    #[serde(default)]
-    pub authors: Vec<String>,
-    #[serde(default)]
-    pub lib: LibManifestEntry,
-
-    #[serde(default)]
-    pub themes: Vec<PathBuf>,
-    #[serde(default)]
-    pub languages: Vec<PathBuf>,
-    #[serde(default)]
-    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
-    #[serde(default)]
-    pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
-}
-
-#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct LibManifestEntry {
-    path: Option<PathBuf>,
-}
-
-#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct GrammarManifestEntry {
-    repository: String,
-    #[serde(alias = "commit")]
-    rev: String,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct LanguageServerManifestEntry {
-    language: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -137,6 +78,7 @@ impl ExtensionStatus {
 }
 
 pub struct ExtensionStore {
+    builder: Arc<ExtensionBuilder>,
     extension_index: ExtensionIndex,
     fs: Arc<dyn Fs>,
     http_client: Arc<HttpClientWithUrl>,
@@ -227,6 +169,10 @@ impl ExtensionStore {
             extension_index: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
             manifest_path: extensions_dir.join("manifest.json"),
+            builder: Arc::new(ExtensionBuilder::new(
+                extensions_dir.join("build"),
+                http_client.clone(),
+            )),
             extensions_being_installed: Default::default(),
             extensions_being_uninstalled: Default::default(),
             reload_task: None,
@@ -358,6 +304,20 @@ impl ExtensionStore {
         self.extensions_being_installed.insert(extension_id.clone());
 
         cx.spawn(move |this, mut cx| async move {
+            let _finish = util::defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                let extension_id = extension_id.clone();
+                move || {
+                    this.update(&mut cx, |this, cx| {
+                        this.extensions_being_installed
+                            .remove(extension_id.as_ref());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
+
             let mut response = http_client
                 .get(&url, Default::default(), true)
                 .await
@@ -367,12 +327,7 @@ impl ExtensionStore {
             archive
                 .unpack(extensions_dir.join(extension_id.as_ref()))
                 .await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.extensions_being_installed
-                    .remove(extension_id.as_ref());
-                this.reload(cx)
-            })
+            this.update(&mut cx, |this, cx| this.reload(cx))
         })
         .detach_and_log_err(cx);
     }
@@ -385,6 +340,20 @@ impl ExtensionStore {
             .insert(extension_id.clone());
 
         cx.spawn(move |this, mut cx| async move {
+            let _finish = util::defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                let extension_id = extension_id.clone();
+                move || {
+                    this.update(&mut cx, |this, cx| {
+                        this.extensions_being_uninstalled
+                            .remove(extension_id.as_ref());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
+
             fs.remove_dir(
                 &extensions_dir.join(extension_id.as_ref()),
                 RemoveOptions {
@@ -394,13 +363,72 @@ impl ExtensionStore {
             )
             .await?;
 
-            this.update(&mut cx, |this, cx| {
-                this.extensions_being_uninstalled
-                    .remove(extension_id.as_ref());
-                this.reload(cx)
-            })
+            this.update(&mut cx, |this, cx| this.reload(cx))
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn install_local_extension(
+        &mut self,
+        extension_source_path: PathBuf,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let extensions_dir = self.extensions_dir();
+        let fs = self.fs.clone();
+        let builder = self.builder.clone();
+
+        cx.spawn(move |this, mut cx| async move {
+            let extension_manifest =
+                Self::load_extension_manifest(fs.clone(), &extension_source_path).await?;
+            let extension_id = extension_manifest.id.clone();
+
+            this.update(&mut cx, |this, cx| {
+                this.extensions_being_installed.insert(extension_id.clone());
+                cx.notify();
+            })?;
+
+            let _finish = util::defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                let extension_id = extension_id.clone();
+                move || {
+                    this.update(&mut cx, |this, cx| {
+                        this.extensions_being_installed
+                            .remove(extension_id.as_ref());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
+
+            builder
+                .compile_extension(
+                    &extension_source_path,
+                    CompileExtensionOptions { release: true },
+                )
+                .await?;
+
+            let output_path = &extensions_dir.join(extension_id.as_ref());
+            if let Some(metadata) = fs.metadata(&output_path).await? {
+                if metadata.is_symlink {
+                    fs.remove_file(
+                        &output_path,
+                        RemoveOptions {
+                            recursive: false,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await?;
+                } else {
+                    bail!("extension {extension_id} is already installed");
+                }
+            }
+
+            fs.create_symlink(output_path, extension_source_path)
+                .await?;
+
+            this.update(&mut cx, |this, cx| this.reload(cx))
+        })
     }
 
     /// Updates the set of installed extensions.
@@ -593,15 +621,12 @@ impl ExtensionStore {
 
             let mut wasm_extensions = Vec::new();
             for extension_manifest in extension_manifests {
-                let Some(wasm_path) = &extension_manifest.lib.path else {
+                if extension_manifest.lib.kind.is_none() {
                     continue;
                 };
 
                 let mut path = root_dir.clone();
-                path.extend([
-                    Path::new(extension_manifest.id.as_ref()),
-                    wasm_path.as_path(),
-                ]);
+                path.extend([extension_manifest.id.as_ref(), "extension.wasm"]);
                 let mut wasm_file = fs
                     .open_sync(&path)
                     .await
@@ -759,60 +784,9 @@ impl ExtensionStore {
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
     ) -> Result<()> {
-        let extension_name = extension_dir
-            .file_name()
-            .and_then(OsStr::to_str)
-            .ok_or_else(|| anyhow!("invalid extension name"))?;
-
-        let mut extension_manifest_path = extension_dir.join("extension.json");
-        let mut extension_manifest;
-        if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            extension_manifest = ExtensionManifest {
-                id: extension_name.into(),
-                name: manifest_json.name,
-                version: manifest_json.version,
-                description: manifest_json.description,
-                repository: manifest_json.repository,
-                authors: manifest_json.authors,
-                lib: Default::default(),
-                themes: {
-                    let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-                    themes.sort();
-                    themes.dedup();
-                    themes
-                },
-                languages: {
-                    let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-                    languages.sort();
-                    languages.dedup();
-                    languages
-                },
-                grammars: manifest_json
-                    .grammars
-                    .into_iter()
-                    .map(|(grammar_name, _)| (grammar_name, Default::default()))
-                    .collect(),
-                language_servers: Default::default(),
-            };
-        } else {
-            extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            extension_manifest = ::toml::from_str(&manifest_content).with_context(|| {
-                format!("invalid extension.json for extension {extension_name}")
-            })?;
-        };
+        let mut extension_manifest =
+            Self::load_extension_manifest(fs.clone(), &extension_dir).await?;
+        let extension_id = extension_manifest.id.clone();
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
             while let Some(language_path) = language_paths.next().await {
@@ -837,7 +811,7 @@ impl ExtensionStore {
                 index.languages.insert(
                     config.name.clone(),
                     ExtensionIndexLanguageEntry {
-                        extension: extension_name.into(),
+                        extension: extension_id.clone(),
                         path: relative_path,
                         matcher: config.matcher,
                         grammar: config.grammar,
@@ -869,7 +843,7 @@ impl ExtensionStore {
                     index.themes.insert(
                         theme.name.into(),
                         ExtensionIndexEntry {
-                            extension: extension_name.into(),
+                            extension: extension_id.clone(),
                             path: relative_path.clone(),
                         },
                     );
@@ -877,19 +851,84 @@ impl ExtensionStore {
             }
         }
 
-        let default_extension_wasm_path = extension_dir.join("extension.wasm");
-        if fs.is_file(&default_extension_wasm_path).await {
+        let extension_wasm_path = extension_dir.join("extension.wasm");
+        if fs.is_file(&extension_wasm_path).await {
             extension_manifest
                 .lib
-                .path
-                .get_or_insert(default_extension_wasm_path);
+                .kind
+                .get_or_insert(ExtensionLibraryKind::Rust);
         }
 
         index
             .extensions
-            .insert(extension_name.into(), Arc::new(extension_manifest));
+            .insert(extension_id.clone(), Arc::new(extension_manifest));
 
         Ok(())
+    }
+
+    async fn load_extension_manifest(
+        fs: Arc<dyn Fs>,
+        extension_dir: &Path,
+    ) -> Result<ExtensionManifest> {
+        let extension_name = extension_dir
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or_else(|| anyhow!("invalid extension name"))?;
+
+        let mut extension_manifest_path = extension_dir.join("extension.json");
+        if fs.is_file(&extension_manifest_path).await {
+            let manifest_content = fs
+                .load(&extension_manifest_path)
+                .await
+                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
+            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+                .with_context(|| {
+                    format!("invalid extension.json for extension {extension_name}")
+                })?;
+
+            Ok(manifest_from_old_manifest(manifest_json, extension_name))
+        } else {
+            extension_manifest_path.set_extension("toml");
+            let manifest_content = fs
+                .load(&extension_manifest_path)
+                .await
+                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
+            toml::from_str(&manifest_content)
+                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+        }
+    }
+}
+
+fn manifest_from_old_manifest(
+    manifest_json: OldExtensionManifest,
+    extension_id: &str,
+) -> ExtensionManifest {
+    ExtensionManifest {
+        id: extension_id.into(),
+        name: manifest_json.name,
+        version: manifest_json.version,
+        description: manifest_json.description,
+        repository: manifest_json.repository,
+        authors: manifest_json.authors,
+        lib: Default::default(),
+        themes: {
+            let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
+            themes.sort();
+            themes.dedup();
+            themes
+        },
+        languages: {
+            let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
+            languages.sort();
+            languages.dedup();
+            languages
+        },
+        grammars: manifest_json
+            .grammars
+            .into_iter()
+            .map(|(grammar_name, _)| (grammar_name, Default::default()))
+            .collect(),
+        language_servers: Default::default(),
     }
 }
 
