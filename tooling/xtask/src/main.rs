@@ -121,7 +121,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::single_range_in_vec_init",
         "clippy::suspicious_to_owned",
         "clippy::type_complexity",
-        "clippy::unit_arg",
         "clippy::unnecessary_operation",
         "clippy::unnecessary_to_owned",
         "clippy::unnecessary_unwrap",
