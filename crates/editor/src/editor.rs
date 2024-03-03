@@ -970,10 +970,10 @@ impl CompletionsMenu {
                         let mut completion_label_text = completion.label.text.clone();
                         let mut variable_name_length_truncated: i32 = 0;
                         if let Ok(completion_layout_line) =
-                            completion_label.line_layout(font_size, cx)
+                            completion_label.layout_line(font_size, cx)
                         {
                             if let Ok(documentation_layout_line) =
-                                documentation_label.line_layout(font_size, cx)
+                                documentation_label.layout_line(font_size, cx)
                             {
                                 if inline_documentation_exists {
                                     if completion_layout_line.width
@@ -1038,7 +1038,7 @@ impl CompletionsMenu {
                                                     completion_label = completion_label
                                                         .with_text(completion_label_text.clone());
                                                     if let Ok(new_completion_layout_line) =
-                                                        completion_label.line_layout(font_size, cx)
+                                                        completion_label.layout_line(font_size, cx)
                                                     {
                                                         let combined_width =
                                                             new_completion_layout_line
@@ -1132,7 +1132,7 @@ impl CompletionsMenu {
                                                     completion_label = completion_label
                                                         .with_text(completion_label_text.clone());
                                                     if let Ok(layout_line) =
-                                                        completion_label.line_layout(font_size, cx)
+                                                        completion_label.layout_line(font_size, cx)
                                                     {
                                                         let combined_width = layout_line
                                                             .x_for_index(completion_label_text.len());

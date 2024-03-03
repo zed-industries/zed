@@ -143,7 +143,7 @@ impl StyledText {
     }
 
     /// line_layout returns metadata about how the line will be rendered
-    pub fn line_layout(
+    pub fn layout_line(
         &self,
         font_size: Pixels,
         cx: &WindowContext,
