@@ -100,7 +100,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::map_entry",
         "clippy::needless_lifetimes",
         "clippy::needless_option_as_deref",
-        "clippy::needless_question_mark",
         "clippy::needless_update",
         "clippy::never_loop",
         "clippy::non_canonical_clone_impl",
