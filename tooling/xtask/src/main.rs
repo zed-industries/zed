@@ -101,7 +101,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::iter_overeager_cloned",
         "clippy::let_underscore_future",
         "clippy::map_entry",
-        "clippy::needless_arbitrary_self_type",
         "clippy::needless_borrowed_reference",
         "clippy::needless_lifetimes",
         "clippy::needless_option_as_deref",
