@@ -23,7 +23,7 @@ pub struct TestDb {
 
 impl TestDb {
     pub fn sqlite(background: BackgroundExecutor) -> Self {
-        let url = format!("sqlite::memory:");
+        let url = "sqlite::memory:";
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -168,7 +168,7 @@ async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
         email,
         false,
         NewUserParams {
-            github_login: email[0..email.find("@").unwrap()].to_string(),
+            github_login: email[0..email.find('@').unwrap()].to_string(),
             github_user_id: GITHUB_USER_ID.fetch_add(1, SeqCst),
         },
     )

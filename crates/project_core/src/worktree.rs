@@ -220,7 +220,7 @@ impl Deref for WorkDirectoryEntry {
     }
 }
 
-impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
+impl From<ProjectEntryId> for WorkDirectoryEntry {
     fn from(value: ProjectEntryId) -> Self {
         WorkDirectoryEntry(value)
     }
@@ -991,7 +991,7 @@ impl LocalWorktree {
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
-            let mut is_scanning = is_scanning_rx.borrow().clone();
+            let mut is_scanning = *is_scanning_rx.borrow();
             while is_scanning {
                 if let Some(value) = is_scanning_rx.recv().await {
                     is_scanning = value;
@@ -3299,6 +3299,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,
@@ -3917,16 +3918,14 @@ impl BackgroundScanner {
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
 
-        for new_job in new_jobs {
-            if let Some(mut new_job) = new_job {
-                if let Some(containing_repository) = &repository {
-                    new_job.containing_repository = Some(containing_repository.clone());
-                }
-
-                job.scan_queue
-                    .try_send(new_job)
-                    .expect("channel is unbounded");
+        for mut new_job in new_jobs.into_iter().flatten() {
+            if let Some(containing_repository) = &repository {
+                new_job.containing_repository = Some(containing_repository.clone());
             }
+
+            job.scan_queue
+                .try_send(new_job)
+                .expect("channel is unbounded");
         }
 
         Ok(())

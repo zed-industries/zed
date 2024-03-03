@@ -219,7 +219,7 @@ impl Inventory {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_inventory {
     use std::{
         path::{Path, PathBuf},

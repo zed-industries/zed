@@ -20,10 +20,6 @@ impl super::LspAdapter for CLspAdapter {
         LanguageServerName("clangd".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "clangd"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -296,7 +292,7 @@ mod tests {
                 });
             });
         });
-        let language = crate::language("c", tree_sitter_c::language(), None).await;
+        let language = crate::language("c", tree_sitter_c::language());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

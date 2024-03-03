@@ -22,6 +22,16 @@ impl WorkspaceLocation {
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
         self.0.clone()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new<P: AsRef<Path>>(paths: Vec<P>) -> Self {
+        Self(Arc::new(
+            paths
+                .into_iter()
+                .map(|p| p.as_ref().to_path_buf())
+                .collect(),
+        ))
+    }
 }
 
 impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {

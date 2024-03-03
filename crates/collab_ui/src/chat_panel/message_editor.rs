@@ -137,9 +137,9 @@ impl MessageEditor {
     ) {
         self.editor.update(cx, |editor, cx| {
             if let Some(channel_name) = channel_name {
-                editor.set_placeholder_text(format!("Message #{}", channel_name), cx);
+                editor.set_placeholder_text(format!("Message #{channel_name}"), cx);
             } else {
-                editor.set_placeholder_text(format!("Message Channel"), cx);
+                editor.set_placeholder_text("Message Channel", cx);
             }
         });
         self.channel_id = Some(channel_id);
@@ -310,7 +310,7 @@ impl MessageEditor {
                 for range in ranges {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
-                    if let Some(username) = text.strip_prefix("@") {
+                    if let Some(username) = text.strip_prefix('@') {
                         if let Some(user_id) = this.channel_members.get(username) {
                             let start = multi_buffer.anchor_after(range.start);
                             let end = multi_buffer.anchor_after(range.end);
@@ -357,7 +357,7 @@ impl Render for MessageEditor {
             font_size: UiTextSize::Small.rems().into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,

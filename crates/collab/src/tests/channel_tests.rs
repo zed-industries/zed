@@ -1431,7 +1431,7 @@ fn assert_channels(
                 .ordered_channels()
                 .map(|(depth, channel)| ExpectedChannel {
                     depth,
-                    name: channel.name.clone().into(),
+                    name: channel.name.clone(),
                     id: channel.id,
                 })
                 .collect::<Vec<_>>()

@@ -57,10 +57,10 @@ pub struct StringMatch {
 }
 
 impl StringMatch {
-    pub fn ranges<'a>(&'a self) -> impl 'a + Iterator<Item = Range<usize>> {
+    pub fn ranges(&self) -> impl '_ + Iterator<Item = Range<usize>> {
         let mut positions = self.positions.iter().peekable();
         iter::from_fn(move || {
-            while let Some(start) = positions.next().copied() {
+            if let Some(start) = positions.next().copied() {
                 let mut end = start + self.char_len_at_index(start);
                 while let Some(next_start) = positions.peek() {
                     if end == **next_start {

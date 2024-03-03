@@ -55,12 +55,12 @@ impl Anchor {
             if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id.clone(),
+                    excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
                 };
             }
         }
-        self.clone()
+        *self
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
@@ -68,12 +68,12 @@ impl Anchor {
             if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
                 return Self {
                     buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id.clone(),
+                    excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
                 };
             }
         }
-        self.clone()
+        *self
     }
 
     pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D

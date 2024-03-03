@@ -593,7 +593,7 @@ impl Item for Editor {
         None
     }
 
-    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
+    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
         let path = path_for_buffer(&self.buffer, detail, true, cx)?;
         Some(path.to_string_lossy().to_string().into())
     }
@@ -952,14 +952,14 @@ impl Item for Editor {
                     let buffer = project_item
                         .downcast::<Buffer>()
                         .map_err(|_| anyhow!("Project item at stored path was not a buffer"))?;
-                    Ok(pane.update(&mut cx, |_, cx| {
+                    pane.update(&mut cx, |_, cx| {
                         cx.new_view(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
 
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor
                         })
-                    })?)
+                    })
                 })
             })
             .unwrap_or_else(|error| Task::ready(Err(error)))
@@ -1147,8 +1147,8 @@ impl SearchableItem for Editor {
                                 let end = excerpt
                                     .buffer
                                     .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id.clone(), start)
-                                    ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
+                                buffer.anchor_in_excerpt(excerpt.id, start)
+                                    ..buffer.anchor_in_excerpt(excerpt.id, end)
                             }),
                     );
                 }

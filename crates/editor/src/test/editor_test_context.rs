@@ -236,7 +236,7 @@ impl EditorTestContext {
     pub fn set_state(&mut self, marked_text: &str) -> ContextHandle {
         let state_context = self.add_assertion_context(format!(
             "Initial Editor State: \"{}\"",
-            marked_text.escape_debug().to_string()
+            marked_text.escape_debug()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(&mut self.cx, |editor, cx| {
@@ -252,7 +252,7 @@ impl EditorTestContext {
     pub fn set_selections_state(&mut self, marked_text: &str) -> ContextHandle {
         let state_context = self.add_assertion_context(format!(
             "Initial Editor State: \"{}\"",
-            marked_text.escape_debug().to_string()
+            marked_text.escape_debug()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(&mut self.cx, |editor, cx| {

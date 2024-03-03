@@ -108,9 +108,7 @@ fn main() {
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |cx| {
-        if let Some(app_state) = AppState::try_global(cx)
-            .map(|app_state| app_state.upgrade())
-            .flatten()
+        if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
             workspace::open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -178,6 +176,7 @@ fn main() {
         extension::init(
             fs.clone(),
             http.clone(),
+            node_runtime.clone(),
             languages.clone(),
             ThemeRegistry::global(cx),
             cx,
@@ -297,9 +296,9 @@ fn main() {
             let task = workspace::open_paths(&paths, &app_state, None, cx);
             cx.spawn(|_| async move {
                 if let Some((_window, results)) = task.await.log_err() {
-                    for result in results {
-                        if let Some(Err(e)) = result {
-                            log::error!("Error opening path: {}", e);
+                    for result in results.into_iter().flatten() {
+                        if let Err(err) = result {
+                            log::error!("Error opening path: {err}",);
                         }
                     }
                 }
@@ -663,7 +662,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 
         let panic_data = Panic {
             thread: thread_name.into(),
-            payload: payload.into(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),
@@ -807,7 +806,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.build_url("/api/crash");
+    let crash_report_url = http.build_zed_api_url("/telemetry/crashes");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;

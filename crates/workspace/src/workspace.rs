@@ -679,8 +679,7 @@ impl Workspace {
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
-            let mut subscriptions = Vec::new();
-            subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
+            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
 
@@ -871,7 +870,6 @@ impl Workspace {
 
                 cx.open_window(options, {
                     let app_state = app_state.clone();
-                    let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {
@@ -1244,11 +1242,10 @@ impl Workspace {
                 }
             }
 
-            Ok(this
-                .update(&mut cx, |this, cx| {
-                    this.save_all_internal(SaveIntent::Close, cx)
-                })?
-                .await?)
+            this.update(&mut cx, |this, cx| {
+                this.save_all_internal(SaveIntent::Close, cx)
+            })?
+            .await
         })
     }
 
@@ -1260,7 +1257,7 @@ impl Workspace {
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
         let mut keystrokes: Vec<Keystroke> = action
             .0
-            .split(" ")
+            .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
             .collect();
         keystrokes.reverse();
@@ -1628,8 +1625,11 @@ impl Workspace {
         action: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) =
+            self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+        {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn close_all_items_and_panes(
@@ -1637,8 +1637,11 @@ impl Workspace {
         action: &CloseAllItemsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) =
+            self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+        {
+            task.detach_and_log_err(cx)
+        }
     }
 
     fn close_all_internal(
@@ -2600,8 +2603,9 @@ impl Workspace {
         if Some(leader_id) == self.unfollow(&pane, cx) {
             return;
         }
-        self.start_following(leader_id, cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) = self.start_following(leader_id, cx) {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) {
@@ -2643,8 +2647,9 @@ impl Workspace {
         }
 
         // Otherwise, follow.
-        self.start_following(leader_id, cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) = self.start_following(leader_id, cx) {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
@@ -2955,7 +2960,7 @@ impl Workspace {
         })?;
 
         let Some(id) = view.id.clone() else {
-            return Err(anyhow!("no id for view")).into();
+            return Err(anyhow!("no id for view"));
         };
         let id = ViewId::from_proto(id)?;
 
@@ -3355,7 +3360,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3365,7 +3370,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3375,7 +3380,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3713,7 +3718,7 @@ fn open_items(
             project_paths_to_open
                 .into_iter()
                 .enumerate()
-                .map(|(i, (abs_path, project_path))| {
+                .map(|(ix, (abs_path, project_path))| {
                     let workspace = workspace.clone();
                     cx.spawn(|mut cx| {
                         let fs = app_state.fs.clone();
@@ -3721,7 +3726,7 @@ fn open_items(
                             let file_project_path = project_path?;
                             if fs.is_file(&abs_path).await {
                                 Some((
-                                    i,
+                                    ix,
                                     workspace
                                         .update(&mut cx, |workspace, cx| {
                                             workspace.open_path(file_project_path, None, true, cx)
@@ -3738,11 +3743,9 @@ fn open_items(
 
         let tasks = tasks.collect::<Vec<_>>();
 
-        let tasks = futures::future::join_all(tasks.into_iter());
-        for maybe_opened_path in tasks.await.into_iter() {
-            if let Some((i, path_open_result)) = maybe_opened_path {
-                opened_items[i] = Some(path_open_result);
-            }
+        let tasks = futures::future::join_all(tasks);
+        for (ix, path_open_result) in tasks.await.into_iter().flatten() {
+            opened_items[ix] = Some(path_open_result);
         }
 
         Ok(opened_items)
@@ -3790,7 +3793,7 @@ impl Render for Workspace {
             let theme_settings = ThemeSettings::get_global(cx);
             (
                 theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size.clone(),
+                theme_settings.ui_font_size,
             )
         };
 
@@ -4393,7 +4396,7 @@ pub fn open_paths(
     cx.spawn(move |mut cx| async move {
         if let Some(existing) = existing {
             Ok((
-                existing.clone(),
+                existing,
                 existing
                     .update(&mut cx, |workspace, cx| {
                         workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
@@ -5489,7 +5492,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             // Since panel_2 was not visible on the right, we don't open the left dock.
             assert!(!workspace.left_dock().read(cx).is_open());
-            // And the right dock is unaffected in it's displaying of panel_1
+            // And the right dock is unaffected in its displaying of panel_1
             assert!(workspace.right_dock().read(cx).is_open());
             assert_eq!(
                 workspace

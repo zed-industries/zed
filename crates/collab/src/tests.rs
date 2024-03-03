@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use call::Room;
 use client::ChannelId;
 use gpui::{Model, TestAppContext};
@@ -15,6 +17,7 @@ mod random_project_collaboration_tests;
 mod randomized_test_helpers;
 mod test_server;
 
+use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
 pub use randomized_test_helpers::{
     run_randomized_test, save_randomized_test_plan, RandomizedTest, TestError, UserTestPlan,
 };
@@ -46,4 +49,18 @@ fn room_participants(room: &Model<Room>, cx: &mut TestAppContext) -> RoomPartici
 
 fn channel_id(room: &Model<Room>, cx: &mut TestAppContext) -> Option<ChannelId> {
     cx.read(|cx| room.read(cx).channel_id())
+}
+
+fn rust_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ))
 }

@@ -84,7 +84,7 @@ impl Telemetry {
         TelemetrySettings::register(cx);
 
         let state = Arc::new(Mutex::new(TelemetryState {
-            settings: TelemetrySettings::get_global(cx).clone(),
+            settings: *TelemetrySettings::get_global(cx),
             app_metadata: cx.app_metadata(),
             architecture: env::consts::ARCH,
             release_channel,
@@ -119,7 +119,7 @@ impl Telemetry {
 
             move |cx| {
                 let mut state = state.lock();
-                state.settings = TelemetrySettings::get_global(cx).clone();
+                state.settings = *TelemetrySettings::get_global(cx);
             }
         })
         .detach();
@@ -168,7 +168,7 @@ impl Telemetry {
     ) {
         let mut state = self.state.lock();
         state.installation_id = installation_id.map(|id| id.into());
-        state.session_id = Some(session_id.into());
+        state.session_id = Some(session_id);
         drop(state);
 
         let this = self.clone();
@@ -263,7 +263,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &'static str,
+        model: &str,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
@@ -387,11 +387,9 @@ impl Telemetry {
             event,
         });
 
-        if state.installation_id.is_some() {
-            if state.events_queue.len() >= state.max_queue_size {
-                drop(state);
-                self.flush_events();
-            }
+        if state.installation_id.is_some() && state.events_queue.len() >= state.max_queue_size {
+            drop(state);
+            self.flush_events();
         }
     }
 
@@ -433,7 +431,7 @@ impl Telemetry {
                             json_bytes.clear();
                             serde_json::to_writer(&mut json_bytes, event)?;
                             file.write_all(&json_bytes)?;
-                            file.write(b"\n")?;
+                            file.write_all(b"\n")?;
                         }
                     }
 
@@ -442,7 +440,7 @@ impl Telemetry {
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
-                            is_staff: state.is_staff.clone(),
+                            is_staff: state.is_staff,
                             app_version: state
                                 .app_metadata
                                 .app_version

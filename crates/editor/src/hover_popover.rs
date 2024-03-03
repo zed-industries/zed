@@ -297,10 +297,10 @@ fn show_hover(
                     let range = if let Some(range) = hover_result.range {
                         let start = snapshot
                             .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id.clone(), range.start);
+                            .anchor_in_excerpt(excerpt_id, range.start);
                         let end = snapshot
                             .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id.clone(), range.end);
+                            .anchor_in_excerpt(excerpt_id, range.end);
 
                         start..end
                     } else {
@@ -597,7 +597,7 @@ impl DiagnosticPopover {
             .as_ref()
             .unwrap_or(&self.local_diagnostic);
 
-        (entry.diagnostic.group_id, entry.range.start.clone())
+        (entry.diagnostic.group_id, entry.range.start)
     }
 }
 

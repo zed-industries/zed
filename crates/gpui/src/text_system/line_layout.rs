@@ -40,7 +40,7 @@ pub struct ShapedGlyph {
     /// The ID for this glyph, as determined by the text system.
     pub id: GlyphId,
 
-    /// The position of this glyph in it's containing line.
+    /// The position of this glyph in its containing line.
     pub position: Point<Pixels>,
 
     /// The index of this glyph in the original text.

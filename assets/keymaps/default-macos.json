@@ -152,7 +152,8 @@
           "center_cursor": true
         }
       ],
-      "ctrl-cmd-space": "editor::ShowCharacterPalette"
+      "ctrl-cmd-space": "editor::ShowCharacterPalette",
+      "cmd-;": "editor::ToggleLineNumbers"
     }
   },
   {
@@ -175,10 +176,21 @@
           "focus": false
         }
       ],
-      "alt-\\": "copilot::Suggest",
+      "cmd->": "assistant::QuoteSelection"
+    }
+  },
+  {
+    "context": "Editor && mode == full && copilot_suggestion",
+    "bindings": {
       "alt-]": "copilot::NextSuggestion",
       "alt-[": "copilot::PreviousSuggestion",
-      "cmd->": "assistant::QuoteSelection"
+      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
+  {
+    "context": "Editor && !copilot_suggestion",
+    "bindings": {
+      "alt-\\": "copilot::Suggest"
     }
   },
   {
@@ -385,6 +397,13 @@
   {
     "context": "Workspace",
     "bindings": {
+      // Change the default action on `menu::Confirm` by setting the parameter
+      // "alt-cmd-o": [
+      //     "projects::OpenRecent",
+      //     {
+      //         "create_new_window": true
+      //     }
+      // ]
       "alt-cmd-o": "projects::OpenRecent",
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",

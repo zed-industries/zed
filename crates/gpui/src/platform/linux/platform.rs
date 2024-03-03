@@ -122,18 +122,15 @@ impl Platform for LinuxPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
+
         self.inner
             .event_loop
             .borrow_mut()
-            .run(None, &mut (), |data| {})
+            .run(None, &mut (), |&mut ()| {})
             .expect("Run loop failed");
 
-        let mut lock = self.inner.callbacks.borrow_mut();
-        if let Some(mut fun) = lock.quit.take() {
-            drop(lock);
+        if let Some(mut fun) = self.inner.callbacks.borrow_mut().quit.take() {
             fun();
-            let mut lock = self.inner.callbacks.borrow_mut();
-            lock.quit = Some(fun);
         }
     }
 
