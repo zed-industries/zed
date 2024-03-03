@@ -1627,6 +1627,10 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
+        if self.has_active_copilot_suggestion(cx) {
+            key_context.add("copilot_suggestion");
+        }
+
         key_context
     }
 
@@ -3962,6 +3966,39 @@ impl Editor {
             true
         } else {
             false
+        }
+    }
+
+    fn accept_partial_copilot_suggestion(
+        &mut self,
+        _: &AcceptPartialCopilotSuggestion,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.selections.count() == 1 && self.has_active_copilot_suggestion(cx) {
+            if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
+                let mut partial_suggestion = suggestion
+                    .text
+                    .chars()
+                    .by_ref()
+                    .take_while(|c| c.is_alphabetic())
+                    .collect::<String>();
+                if partial_suggestion.is_empty() {
+                    partial_suggestion = suggestion
+                        .text
+                        .chars()
+                        .by_ref()
+                        .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
+                        .collect::<String>();
+                }
+
+                cx.emit(EditorEvent::InputHandled {
+                    utf16_range_to_replace: None,
+                    text: partial_suggestion.clone().into(),
+                });
+                self.insert_with_autoindent_mode(&partial_suggestion, None, cx);
+                self.refresh_copilot_suggestions(true, cx);
+                cx.notify();
+            }
         }
     }
 

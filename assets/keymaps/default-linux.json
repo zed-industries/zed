@@ -135,10 +135,21 @@
           "focus": true
         }
       ],
-      "alt-\\": "copilot::Suggest",
+      "ctrl->": "assistant::QuoteSelection"
+    }
+  },
+  {
+    "context": "Editor && mode == full && copilot_suggestion",
+    "bindings": {
       "alt-]": "copilot::NextSuggestion",
       "alt-[": "copilot::PreviousSuggestion",
-      "ctrl->": "assistant::QuoteSelection"
+      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
+  {
+    "context": "Editor && !copilot_suggestion",
+    "bindings": {
+      "alt-\\": "copilot::Suggest"
     }
   },
   {
