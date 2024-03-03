@@ -679,8 +679,7 @@ impl Workspace {
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
-            let mut subscriptions = Vec::new();
-            subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
+            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
 

@@ -108,7 +108,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::suspicious_to_owned",
         "clippy::type_complexity",
         "clippy::unnecessary_to_owned",
-        "clippy::vec_init_then_push",
     ];
 
     // When fixing violations automatically for a single package we don't care
