@@ -65,7 +65,7 @@ pub(crate) struct WaylandClientStateInner {
     loop_handle: Rc<LoopHandle<'static, ()>>,
 }
 
-pub(crate) struct CursorStateInner {
+pub(crate) struct CursorState {
     cursor_icon_name: String,
     cursor: Option<Cursor>,
 }
@@ -73,7 +73,7 @@ pub(crate) struct CursorStateInner {
 #[derive(Clone)]
 pub(crate) struct WaylandClientState {
     client_state_inner: Rc<RefCell<WaylandClientStateInner>>,
-    cursor_state_inner: Rc<RefCell<CursorStateInner>>,
+    cursor_state: Rc<RefCell<CursorState>>,
 }
 
 pub(crate) struct KeyRepeat {
@@ -142,16 +142,16 @@ impl WaylandClient {
             loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
         }));
 
-        let mut cursor_state_inner = Rc::new(RefCell::new(CursorStateInner{
+        let mut cursor_state = Rc::new(RefCell::new(CursorState {
             cursor_icon_name: "arrow".to_string(),
             cursor: None,
         }));
 
         let source = WaylandSource::new(conn, event_queue);
 
-        let mut state = WaylandClientState{
+        let mut state = WaylandClientState {
             client_state_inner: Rc::clone(&state_inner),
-            cursor_state_inner: Rc::clone(&cursor_state_inner)
+            cursor_state: Rc::clone(&cursor_state),
         };
         linux_platform_inner
             .loop_handle
@@ -162,7 +162,10 @@ impl WaylandClient {
 
         Self {
             platform_inner: linux_platform_inner,
-            state: WaylandClientState{client_state_inner: state_inner, cursor_state_inner},
+            state: WaylandClientState {
+                client_state_inner: state_inner,
+                cursor_state,
+            },
             qh: Arc::new(qh),
         }
     }
@@ -259,7 +262,7 @@ impl Client for WaylandClient {
             CursorStyle::ContextualMenu => "context-menu".to_string(),
         };
 
-        let mut cursor_state = self.state.cursor_state_inner.borrow_mut();
+        let mut cursor_state = self.state.cursor_state.borrow_mut();
         cursor_state.cursor_icon_name = cursor_icon_name;
     }
 }
@@ -612,7 +615,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut cursor_state = state.cursor_state_inner.borrow_mut();
+        let mut cursor_state = state.cursor_state.borrow_mut();
         let mut state = state.client_state_inner.borrow_mut();
 
         if cursor_state.cursor.is_none() {

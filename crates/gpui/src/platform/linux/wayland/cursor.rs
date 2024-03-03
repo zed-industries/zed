@@ -1,11 +1,11 @@
+use crate::platform::linux::wayland::WaylandClientState;
 use wayland_backend::client::InvalidId;
-use wayland_client::{Connection, QueueHandle};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_pointer::WlPointer;
 use wayland_client::protocol::wl_shm::WlShm;
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::{Connection, QueueHandle};
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
-use crate::platform::linux::wayland::WaylandClientState;
 
 pub(crate) struct Cursor {
     theme: Result<CursorTheme, InvalidId>,
@@ -15,8 +15,13 @@ pub(crate) struct Cursor {
 }
 
 impl Cursor {
-    pub fn new(connection: &Connection, compositor: &WlCompositor,
-               qh: &QueueHandle<WaylandClientState>, shm: &WlShm, size: u32) -> Self {
+    pub fn new(
+        connection: &Connection,
+        compositor: &WlCompositor,
+        qh: &QueueHandle<WaylandClientState>,
+        shm: &WlShm,
+        size: u32,
+    ) -> Self {
         Self {
             theme: CursorTheme::load(&connection, shm.clone(), size),
             current_icon_name: "".to_string(),
@@ -37,14 +42,22 @@ impl Cursor {
                     let (width, height) = buffer.dimensions();
                     let (hot_x, hot_y) = buffer.hotspot();
 
-                    wl_pointer.set_cursor(self.serial_id, Some(&self.surface), hot_x as i32, hot_y as i32);
+                    wl_pointer.set_cursor(
+                        self.serial_id,
+                        Some(&self.surface),
+                        hot_x as i32,
+                        hot_y as i32,
+                    );
                     self.surface.attach(Some(&buffer), 0, 0);
                     self.surface.damage(0, 0, width as i32, height as i32);
                     self.surface.commit();
 
                     self.current_icon_name = cursor_icon_name;
                 } else {
-                    log::warn!("Linux: Wayland: Unable to get cursor icon: {}", cursor_icon_name);
+                    log::warn!(
+                        "Linux: Wayland: Unable to get cursor icon: {}",
+                        cursor_icon_name
+                    );
                 }
             } else {
                 log::warn!("Linux: Wayland: Unable to load cursor themes");
