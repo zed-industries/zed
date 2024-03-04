@@ -58,37 +58,6 @@ mod zig;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-/// A context provider that fills out LanguageContext without inspecting the contents.
-struct DefaultContextProvider;
-
-impl LanguageContextProvider for DefaultContextProvider {
-    fn build_context(
-        &self,
-        location: Location,
-        cx: &mut AppContext,
-    ) -> gpui::Result<LanguageContext> {
-        let symbols = location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .symbols_containing(location.range.start, None);
-        let symbol = symbols.and_then(|symbols| {
-            symbols.last().map(|symbol| {
-                let range = symbol
-                    .name_ranges
-                    .last()
-                    .cloned()
-                    .unwrap_or(0..symbol.text.len());
-                symbol.text[range].to_string()
-            })
-        });
-        Ok(LanguageContext {
-            package: None,
-            symbol,
-        })
-    }
-}
-
 pub fn init(
     languages: Arc<LanguageRegistry>,
     node_runtime: Arc<dyn NodeRuntime>,
@@ -160,7 +129,7 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new(DefaultContextProvider)),
+                Some(Arc::new(language::DefaultContextProvider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
@@ -175,7 +144,7 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new(DefaultContextProvider)),
+                Some(Arc::new(language::DefaultContextProvider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };

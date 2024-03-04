@@ -129,6 +129,37 @@ pub trait LanguageContextProvider: Send + Sync {
     fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
 }
 
+/// A context provider that fills out LanguageContext without inspecting the contents.
+pub struct DefaultContextProvider;
+
+impl LanguageContextProvider for DefaultContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut AppContext,
+    ) -> gpui::Result<LanguageContext> {
+        let symbols = location
+            .buffer
+            .read(cx)
+            .snapshot()
+            .symbols_containing(location.range.start, None);
+        let symbol = symbols.and_then(|symbols| {
+            symbols.last().map(|symbol| {
+                let range = symbol
+                    .name_ranges
+                    .last()
+                    .cloned()
+                    .unwrap_or(0..symbol.text.len());
+                symbol.text[range].to_string()
+            })
+        });
+        Ok(LanguageContext {
+            package: None,
+            symbol,
+        })
+    }
+}
+
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
