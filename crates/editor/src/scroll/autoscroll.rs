@@ -62,7 +62,7 @@ impl Editor {
         line_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        let visible_lines = f32::from(viewport_height / line_height);
+        let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
@@ -241,11 +241,10 @@ impl Editor {
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = (target_left / max_glyph_width).into();
+            self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x =
-                ((target_right - viewport_width) / max_glyph_width).into();
+            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
             true
         } else {
             false

@@ -90,7 +90,7 @@ impl VimTestContext {
         T: 'static,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
     {
-        let window = self.window.clone();
+        let window = self.window;
         self.update_window(window, move |_, cx| view.update(cx, update))
             .unwrap()
     }

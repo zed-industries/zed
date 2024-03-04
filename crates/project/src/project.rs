@@ -46,7 +46,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf,
+    MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -1016,7 +1016,7 @@ impl Project {
     }
 
     /// Collect all worktrees, including ones that don't appear in the project panel
-    pub fn worktrees<'a>(&'a self) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
+    pub fn worktrees(&self) -> impl '_ + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees
             .iter()
             .filter_map(move |worktree| worktree.upgrade())
@@ -2775,7 +2775,7 @@ impl Project {
         let project_settings =
             ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
-        let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
+        let override_options = lsp.and_then(|s| s.initialization_options.clone());
 
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
@@ -2909,6 +2909,7 @@ impl Project {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
         worktree_path: &Path,
@@ -3140,6 +3141,50 @@ impl Project {
 
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
+
+        language_server
+            .on_notification::<ServerStatus, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let name = name.to_string();
+                    if let Some(ref message) = params.message {
+                        let message = message.trim();
+                        if !message.is_empty() {
+                            let formatted_message = format!(
+                                "Language server {name} (id {server_id}) status update: {message}"
+                            );
+                            match params.health {
+                                ServerHealthStatus::Ok => log::info!("{}", formatted_message),
+                                ServerHealthStatus::Warning => log::warn!("{}", formatted_message),
+                                ServerHealthStatus::Error => {
+                                    log::error!("{}", formatted_message);
+                                    let (tx, _rx) = smol::channel::bounded(1);
+                                    let request = LanguageServerPromptRequest {
+                                        level: PromptLevel::Critical,
+                                        message: params.message.unwrap_or_default(),
+                                        actions: Vec::new(),
+                                        response_channel: tx,
+                                        lsp_name: name.clone(),
+                                    };
+                                    let _ = this
+                                        .update(&mut cx, |_, cx| {
+                                            cx.emit(Event::LanguageServerPrompt(request));
+                                        })
+                                        .ok();
+                                }
+                                ServerHealthStatus::Other(status) => {
+                                    log::info!(
+                                        "Unknown server health: {status}\n{formatted_message}"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
 
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
@@ -3621,7 +3666,7 @@ impl Project {
                                 proto::LspWorkStart {
                                     token,
                                     message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
+                                    percentage: report.percentage,
                                 },
                             ),
                         })
@@ -3647,7 +3692,7 @@ impl Project {
                                 proto::LspWorkProgress {
                                     token,
                                     message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
+                                    percentage: report.percentage,
                                 },
                             ),
                         })
@@ -4238,6 +4283,7 @@ impl Project {
                             })
                             .collect();
 
+                        #[allow(clippy::nonminimal_bool)]
                         if !code_actions.is_empty()
                             && !(trigger == FormatTrigger::Save
                                 && settings.format_on_save == FormatOnSave::Off)
@@ -5378,11 +5424,11 @@ impl Project {
                         return Err(err);
                     }
 
-                    return Ok(this.update(&mut cx, |this, _| {
+                    return this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id())
                             .unwrap_or_default()
-                    })?);
+                    });
                 }
 
                 Ok(ProjectTransaction::default())
@@ -6138,6 +6184,7 @@ impl Project {
     }
 
     /// Pick paths that might potentially contain a match of a given search query.
+    #[allow(clippy::too_many_arguments)]
     async fn background_search(
         unnamed_buffers: Vec<Model<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
@@ -6956,7 +7003,7 @@ impl Project {
                 .spawn(async move {
                     future_buffers
                         .into_iter()
-                        .filter_map(|e| e)
+                        .flatten()
                         .chain(current_buffers)
                         .filter_map(|(buffer, path)| {
                             let (work_directory, repo) =
@@ -7077,7 +7124,7 @@ impl Project {
                             .set_local_settings(
                                 worktree_id.as_u64() as usize,
                                 directory.clone(),
-                                file_content.as_ref().map(String::as_str),
+                                file_content.as_deref(),
                                 cx,
                             )
                             .log_err();
@@ -7378,7 +7425,7 @@ impl Project {
                         .set_local_settings(
                             worktree.entity_id().as_u64() as usize,
                             PathBuf::from(&envelope.payload.path).into(),
-                            envelope.payload.content.as_ref().map(String::as_str),
+                            envelope.payload.content.as_deref(),
                             cx,
                         )
                         .log_err();
@@ -7818,13 +7865,13 @@ impl Project {
 
         this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
-        Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: Some(buffer.saved_mtime().into()),
             fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
-        })?)
+        })
     }
 
     async fn handle_reload_buffers(
@@ -8159,7 +8206,7 @@ impl Project {
             .await
             .context("inlay hints fetch")?;
 
-        Ok(this.update(&mut cx, |project, cx| {
+        this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(
                 buffer_hints,
                 project,
@@ -8167,7 +8214,7 @@ impl Project {
                 &buffer.read(cx).version(),
                 cx,
             )
-        })?)
+        })
     }
 
     async fn handle_resolve_inlay_hint(
@@ -9108,7 +9155,7 @@ fn subscribe_for_copilot_events(
     )
 }
 
-fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
+fn glob_literal_prefix(glob: &str) -> &str {
     let mut literal_end = 0;
     for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
         if part.contains(&['*', '?', '{', '}']) {
@@ -9332,7 +9379,7 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
             }
             (None, _) => components.push(Component::ParentDir),
             (Some(a), Some(b)) if components.is_empty() && a == b => (),
-            (Some(a), Some(b)) if b == Component::CurDir => components.push(a),
+            (Some(a), Some(Component::CurDir)) => components.push(a),
             (Some(a), Some(_)) => {
                 components.push(Component::ParentDir);
                 for _ in base_components {

@@ -297,7 +297,7 @@ fn strip_invalid_spans_from_codeblock(
         } else if buffer.starts_with("<|")
             || buffer.starts_with("<|S")
             || buffer.starts_with("<|S|")
-            || buffer.ends_with("|")
+            || buffer.ends_with('|')
             || buffer.ends_with("|E")
             || buffer.ends_with("|E|")
         {
@@ -335,7 +335,7 @@ fn strip_invalid_spans_from_codeblock(
                 .strip_suffix("|E|>")
                 .or_else(|| text.strip_suffix("E|>"))
                 .or_else(|| text.strip_prefix("|>"))
-                .or_else(|| text.strip_prefix(">"))
+                .or_else(|| text.strip_prefix('>'))
                 .unwrap_or(&text)
                 .to_string();
         };

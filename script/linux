@@ -1,7 +1,7 @@
 #!/usr/bin/bash -e
 
 # if sudo is not installed, define an empty alias
-maysudo=$(command -v sudo || true)
+maysudo=$(command -v sudo || command -v doas || true)
 
 # Ubuntu, Debian, etc.
 # https://packages.ubuntu.com/
@@ -13,6 +13,7 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     libssl-dev
+    libzstd-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -28,6 +29,7 @@ if [[ -n $dnf ]]; then
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
+    libzstd-devel
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -43,6 +45,7 @@ if [[ -n $zyp ]]; then
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
+    libzstd-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -58,6 +61,7 @@ if [[ -n $pacman ]]; then
     wayland
     libxkbcommon-x11
     openssl
+    zstd
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
@@ -73,6 +77,7 @@ if [[ -n $xbps ]]; then
     wayland-devel
     libxkbcommon-devel
     openssl-devel
+    libzstd-devel
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0

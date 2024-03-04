@@ -3999,7 +3999,7 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches::default(), cx))
+    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 }
@@ -6752,8 +6752,8 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         cx.open_window(
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds::from_corners(
-                    gpui::Point::new((0. as f64).into(), (0. as f64).into()),
-                    gpui::Point::new((10. as f64).into(), (80. as f64).into()),
+                    gpui::Point::new(0_f64.into(), 0_f64.into()),
+                    gpui::Point::new(10_f64.into(), 80_f64.into()),
                 )),
                 ..Default::default()
             },
@@ -6774,7 +6774,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
                 move |_, leader, event, cx| {
                     leader
                         .read(cx)
-                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                        .add_event_to_update_proto(event, &mut update.borrow_mut(), cx);
                 },
             )
             .detach();
@@ -6943,7 +6943,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
             cx.subscribe(&leader, move |_, leader, event, cx| {
                 leader
                     .read(cx)
-                    .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                    .add_event_to_update_proto(event, &mut update.borrow_mut(), cx);
             })
             .detach();
         }
@@ -7310,7 +7310,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
 #[test]
 fn test_split_words() {
-    fn split<'a>(text: &'a str) -> Vec<&'a str> {
+    fn split(text: &str) -> Vec<&str> {
         split_words(text).collect()
     }
 
@@ -7620,6 +7620,128 @@ async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContex
         assert!(!editor.has_active_copilot_suggestion(cx));
         assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_accept_partial_copilot_suggestion(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    // flaky
+    init_test(cx, |_| {});
+
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Setup the editor with a completion request.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+
+        // Accepting the first word of the suggestion should only accept the first word and still show the rest.
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.copilot\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+
+        // Accepting next word should accept the non-word and copilot suggestion should be gone
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+    });
+
+    // Reset the editor and check non-word and whitespace completion
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.123. copilot\n 456".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+
+        // Accepting the first word (non-word) of the suggestion should only accept the first word and still show the rest.
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.123. \ntwo\nthree\n");
+        assert_eq!(
+            editor.display_text(cx),
+            "one.123. copilot\n 456\ntwo\nthree\n"
+        );
+
+        // Accepting next word should accept the next word and copilot suggestion should still exist
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.123. copilot\ntwo\nthree\n");
+        assert_eq!(
+            editor.display_text(cx),
+            "one.123. copilot\n 456\ntwo\nthree\n"
+        );
+
+        // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
+        assert_eq!(
+            editor.display_text(cx),
+            "one.123. copilot\n 456\ntwo\nthree\n"
+        );
     });
 }
 

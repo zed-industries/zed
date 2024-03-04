@@ -164,6 +164,34 @@ struct Error {
     message: String,
 }
 
+/// Experimental: Informs the end user about the state of the server
+///
+/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
+#[derive(Debug)]
+pub enum ServerStatus {}
+
+/// Other(String) variant to handle unknown values due to this still being experimental
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum ServerHealthStatus {
+    Ok,
+    Warning,
+    Error,
+    Other(String),
+}
+
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStatusParams {
+    pub health: ServerHealthStatus,
+    pub message: Option<String>,
+}
+
+impl lsp_types::notification::Notification for ServerStatus {
+    type Params = ServerStatusParams;
+    const METHOD: &'static str = "experimental/serverStatus";
+}
+
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -201,7 +229,7 @@ impl LanguageServer {
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let mut server = Self::new_internal(
-            server_id.clone(),
+            server_id,
             stdin,
             stdout,
             Some(stderr),
@@ -233,6 +261,7 @@ impl LanguageServer {
         Ok(server)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         stdin: Stdin,
@@ -312,7 +341,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            server: Arc::new(Mutex::new(server.map(|server| server))),
+            server: Arc::new(Mutex::new(server)),
         }
     }
 
@@ -349,7 +378,7 @@ impl LanguageServer {
             let headers = std::str::from_utf8(&buffer)?;
 
             let message_len = headers
-                .split("\n")
+                .split('\n')
                 .find(|line| line.starts_with(CONTENT_LEN_HEADER))
                 .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
                 .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
@@ -949,7 +978,7 @@ impl LanguageServer {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
                         CancelParams {
-                            id: NumberOrString::Number(id as i32),
+                            id: NumberOrString::Number(id),
                         },
                     )
                     .log_err();

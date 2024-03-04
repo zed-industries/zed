@@ -129,21 +129,24 @@ impl HttpClient for isahc::HttpClient {
 }
 
 #[cfg(feature = "test-support")]
+type FakeHttpHandler = Box<
+    dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
+#[cfg(feature = "test-support")]
 pub struct FakeHttpClient {
-    handler: Box<
-        dyn 'static
-            + Send
-            + Sync
-            + Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>,
-    >,
+    handler: FakeHttpHandler,
 }
 
 #[cfg(feature = "test-support")]
 impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
-        Fut: 'static + Send + futures::Future<Output = Result<Response<AsyncBody>, Error>>,
-        F: 'static + Send + Sync + Fn(Request<AsyncBody>) -> Fut,
+        Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
+        F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),

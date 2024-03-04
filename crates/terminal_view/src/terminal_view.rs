@@ -454,7 +454,7 @@ fn subscribe_for_terminal_events(
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
-                if !terminal.task().is_some() {
+                if terminal.task().is_none() {
                     if let Some(foreground_info) = &terminal.foreground_process_info {
                         let cwd = foreground_info.cwd.clone();
 
@@ -879,12 +879,9 @@ impl Item for TerminalView {
                 .or_else(|| {
                     cx.update(|cx| {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
-                        workspace
-                            .upgrade()
-                            .map(|workspace| {
-                                get_working_directory(workspace.read(cx), cx, strategy)
-                            })
-                            .flatten()
+                        workspace.upgrade().and_then(|workspace| {
+                            get_working_directory(workspace.read(cx), cx, strategy)
+                        })
                     })
                     .ok()
                     .flatten()
@@ -900,7 +897,7 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if !self.terminal().read(cx).task().is_some() {
+        if self.terminal().read(cx).task().is_none() {
             cx.background_executor()
                 .spawn(TERMINAL_DB.update_workspace_id(
                     workspace.database_id(),

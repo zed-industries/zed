@@ -916,7 +916,7 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let mut completion = completions_guard[candidate_id].clone();
+                        let completion = completions_guard[candidate_id].clone();
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -933,14 +933,14 @@ impl CompletionsMenu {
                             &style,
                             cx,
                             mat,
-                            &mut completion,
+                            &mut completion.clone(),
                             documentation,
                         );
-
                         let min_w = match inline_documentation_exists {
                             true => max_completion_len + px(30.),
                             false => px(210.),
                         };
+
                         div()
                             .min_w(min_w)
                             .max_w(max_completion_len + px(30.))
@@ -950,14 +950,14 @@ impl CompletionsMenu {
                                     .selected(item_ix == selected_item)
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
-                                        editor
-                                            .confirm_completion(
-                                                &ConfirmCompletion {
-                                                    item_ix: Some(item_ix),
-                                                },
-                                                cx,
-                                            )
-                                            .map(|task| task.detach_and_log_err(cx));
+                                        if let Some(task) = editor.confirm_completion(
+                                            &ConfirmCompletion {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx)
+                                        }
                                     }))
                                     .child(h_flex().overflow_hidden().child(completion_label))
                                     .end_slot(documentation_label),
@@ -982,7 +982,7 @@ impl CompletionsMenu {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
         mat: &StringMatch,
-        mut completion: &mut Completion,
+        completion: &mut Completion,
         documentation: &Option<Documentation>,
     ) -> (bool, Pixels, StyledText, StyledText) {
         let highlights = gpui::combine_highlights(
@@ -1453,14 +1453,14 @@ impl CodeActionsMenu {
                                 MouseButton::Left,
                                 cx.listener(move |editor, _, cx| {
                                     cx.stop_propagation();
-                                    editor
-                                        .confirm_code_action(
-                                            &ConfirmCodeAction {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            cx,
-                                        )
-                                        .map(|task| task.detach_and_log_err(cx));
+                                    if let Some(task) = editor.confirm_code_action(
+                                        &ConfirmCodeAction {
+                                            item_ix: Some(item_ix),
+                                        },
+                                        cx,
+                                    ) {
+                                        task.detach_and_log_err(cx)
+                                    }
                                 }),
                             )
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
@@ -1905,6 +1905,10 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
+        if self.has_active_copilot_suggestion(cx) {
+            key_context.add("copilot_suggestion");
+        }
+
         key_context
     }
 
@@ -1979,18 +1983,14 @@ impl Editor {
         }
     }
 
-    pub fn language_at<'a, T: ToOffset>(
-        &self,
-        point: T,
-        cx: &'a AppContext,
-    ) -> Option<Arc<Language>> {
+    pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
     }
 
-    pub fn file_at<'a, T: ToOffset>(
+    pub fn file_at<T: ToOffset>(
         &self,
         point: T,
-        cx: &'a AppContext,
+        cx: &AppContext,
     ) -> Option<Arc<dyn language::File>> {
         self.buffer.read(cx).read(cx).file_at(point).cloned()
     }
@@ -2151,7 +2151,7 @@ impl Editor {
         let new_cursor_position = self.selections.newest_anchor().head();
 
         self.push_to_nav_history(
-            old_cursor_position.clone(),
+            *old_cursor_position,
             Some(new_cursor_position.to_point(buffer)),
             cx,
         );
@@ -2170,8 +2170,7 @@ impl Editor {
 
             if let Some(completion_menu) = completion_menu {
                 let cursor_position = new_cursor_position.to_offset(buffer);
-                let (word_range, kind) =
-                    buffer.surrounding_word(completion_menu.initial_position.clone());
+                let (word_range, kind) = buffer.surrounding_word(completion_menu.initial_position);
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
@@ -2392,7 +2391,7 @@ impl Editor {
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
-                end = start.clone();
+                end = start;
                 mode = SelectMode::Character;
                 auto_scroll = true;
             }
@@ -2400,7 +2399,7 @@ impl Editor {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
-                mode = SelectMode::Word(start.clone()..end.clone());
+                mode = SelectMode::Word(start..end);
                 auto_scroll = true;
             }
             3 => {
@@ -2414,7 +2413,7 @@ impl Editor {
                 );
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
-                mode = SelectMode::Line(start.clone()..end.clone());
+                mode = SelectMode::Line(start..end);
                 auto_scroll = true;
             }
             _ => {
@@ -3010,9 +3009,8 @@ impl Editor {
 
         let mut edits = Vec::new();
         let mut rows = Vec::new();
-        let mut rows_inserted = 0;
 
-        for selection in self.selections.all_adjusted(cx) {
+        for (rows_inserted, selection) in self.selections.all_adjusted(cx).into_iter().enumerate() {
             let cursor = selection.head();
             let row = cursor.row;
 
@@ -3021,8 +3019,7 @@ impl Editor {
             let newline = "\n".to_string();
             edits.push((start_of_line..start_of_line, newline));
 
-            rows.push(row + rows_inserted);
-            rows_inserted += 1;
+            rows.push(row + rows_inserted as u32);
         }
 
         self.transact(cx, |editor, cx| {
@@ -3486,7 +3483,7 @@ impl Editor {
         let (buffer, buffer_position) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(position.clone(), cx)?;
+            .text_anchor_for_position(position, cx)?;
 
         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
         // hence we do LSP request & edit on host side only — add formats to host's history.
@@ -3530,17 +3527,14 @@ impl Editor {
         };
 
         let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)
-        {
-            output
-        } else {
-            return;
-        };
+        let (buffer, buffer_position) =
+            if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
+                output
+            } else {
+                return;
+            };
 
-        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
+        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
         let completions = provider.completions(&buffer, buffer_position, cx);
 
         let id = post_inc(&mut self.next_completion_id);
@@ -3978,7 +3972,7 @@ impl Editor {
         let newest_selection = self.selections.newest_anchor().clone();
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
-            buffer.text_anchor_for_position(cursor_position.clone(), cx)?;
+            buffer.text_anchor_for_position(cursor_position, cx)?;
         let (tail_buffer, _) = buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
         if cursor_buffer != tail_buffer {
             return None;
@@ -4036,7 +4030,7 @@ impl Editor {
 
                             let range = Anchor {
                                 buffer_id,
-                                excerpt_id: excerpt_id.clone(),
+                                excerpt_id: excerpt_id,
                                 text_anchor: start,
                             }..Anchor {
                                 buffer_id,
@@ -4247,6 +4241,39 @@ impl Editor {
         }
     }
 
+    fn accept_partial_copilot_suggestion(
+        &mut self,
+        _: &AcceptPartialCopilotSuggestion,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.selections.count() == 1 && self.has_active_copilot_suggestion(cx) {
+            if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
+                let mut partial_suggestion = suggestion
+                    .text
+                    .chars()
+                    .by_ref()
+                    .take_while(|c| c.is_alphabetic())
+                    .collect::<String>();
+                if partial_suggestion.is_empty() {
+                    partial_suggestion = suggestion
+                        .text
+                        .chars()
+                        .by_ref()
+                        .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
+                        .collect::<String>();
+                }
+
+                cx.emit(EditorEvent::InputHandled {
+                    utf16_range_to_replace: None,
+                    text: partial_suggestion.clone().into(),
+                });
+                self.insert_with_autoindent_mode(&partial_suggestion, None, cx);
+                self.refresh_copilot_suggestions(true, cx);
+                cx.notify();
+            }
+        }
+    }
+
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
             if let Some(copilot) = Copilot::global(cx) {
@@ -4385,7 +4412,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            IconButton::new(ix as usize, ui::IconName::ChevronDown)
+                            IconButton::new(ix, ui::IconName::ChevronDown)
                                 .on_click({
                                     let view = editor_view.clone();
                                     move |_e, cx| {
@@ -5019,7 +5046,7 @@ impl Editor {
                 row_range.end - 1,
                 snapshot.line_len(row_range.end - 1),
             ));
-            cursor_positions.push(anchor.clone()..anchor);
+            cursor_positions.push(anchor..anchor);
         }
 
         self.transact(cx, |this, cx| {
@@ -5123,7 +5150,7 @@ impl Editor {
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
 
-            let mut lines = text.split("\n").collect_vec();
+            let mut lines = text.split('\n').collect_vec();
 
             let lines_before = lines.len();
             callback(&mut lines);
@@ -5191,7 +5218,7 @@ impl Editor {
         self.manipulate_text(cx, |text| {
             // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
             // https://github.com/rutrum/convert-case/issues/16
-            text.split("\n")
+            text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
         })
@@ -5213,7 +5240,7 @@ impl Editor {
         self.manipulate_text(cx, |text| {
             // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
             // https://github.com/rutrum/convert-case/issues/16
-            text.split("\n")
+            text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
         })
@@ -6726,10 +6753,9 @@ impl Editor {
                             && !movement::is_inside_word(&display_map, display_range.end))
                     {
                         // TODO: This is n^2, because we might check all the selections
-                        if selections
+                        if !selections
                             .iter()
-                            .find(|selection| selection.range().overlaps(&offset_range))
-                            .is_none()
+                            .any(|selection| selection.range().overlaps(&offset_range))
                         {
                             next_selected_range = Some(offset_range);
                             break;
@@ -7725,10 +7751,8 @@ impl Editor {
 
     pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
         let position = self.selections.newest_anchor().head();
-        let Some((buffer, buffer_position)) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
         else {
             return;
         };
@@ -8190,7 +8214,7 @@ impl Editor {
                     let block_id = this.insert_blocks(
                         [BlockProperties {
                             style: BlockStyle::Flex,
-                            position: range.start.clone(),
+                            position: range.start,
                             height: 1,
                             render: Arc::new({
                                 let rename_editor = rename_editor.clone();
@@ -8254,11 +8278,11 @@ impl Editor {
         let (start_buffer, start) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(rename.range.start.clone(), cx)?;
+            .text_anchor_for_position(rename.range.start, cx)?;
         let (end_buffer, end) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(rename.range.end.clone(), cx)?;
+            .text_anchor_for_position(rename.range.end, cx)?;
         if start_buffer != end_buffer {
             return None;
         }
@@ -9095,7 +9119,6 @@ impl Editor {
                     Ok(i) | Err(i) => i,
                 };
 
-                let right_position = right_position.clone();
                 ranges[start_ix..]
                     .iter()
                     .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())
@@ -9671,7 +9694,7 @@ impl Editor {
             let highlight = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.name(&style.syntax));
-            let mut chunk_lines = chunk.text.split("\n").peekable();
+            let mut chunk_lines = chunk.text.split('\n').peekable();
             while let Some(text) = chunk_lines.next() {
                 let mut merged_with_last_token = false;
                 if let Some(last_token) = line.back_mut() {
@@ -10344,7 +10367,7 @@ impl ViewInputHandler for Editor {
                     .disjoint_anchors()
                     .iter()
                     .map(|selection| {
-                        selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
                     })
                     .collect::<Vec<_>>()
             };
@@ -10696,7 +10719,7 @@ pub fn styled_runs_for_code_label<'a>(
         })
 }
 
-pub(crate) fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
+pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {
     let mut index = 0;
     let mut codepoints = text.char_indices().peekable();
 

@@ -325,10 +325,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .unzip();
 
         let highlighted_match = HighlightedMatchWithPaths {
-            match_label: HighlightedText::join(
-                match_labels.into_iter().filter_map(|name| name),
-                ", ",
-            ),
+            match_label: HighlightedText::join(match_labels.into_iter().flatten(), ", "),
             paths: if self.render_paths { paths } else { Vec::new() },
         };
         Some(
@@ -539,7 +536,7 @@ mod tests {
             !cx.has_pending_prompt(),
             "Should have no pending prompt on dirty project before opening the new recent project"
         );
-        cx.dispatch_action((*workspace).into(), menu::Confirm);
+        cx.dispatch_action(*workspace, menu::Confirm);
         workspace
             .update(cx, |workspace, cx| {
                 assert!(

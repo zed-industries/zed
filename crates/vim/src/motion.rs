@@ -1176,7 +1176,7 @@ fn window_middle(
             (visible_rows as u32).min(map.max_point().row() - first_visible_line.row());
 
         let new_row =
-            (first_visible_line.row() + (max_visible_rows / 2) as u32).min(map.max_point().row());
+            (first_visible_line.row() + (max_visible_rows / 2)).min(map.max_point().row());
         let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)

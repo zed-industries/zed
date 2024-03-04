@@ -979,7 +979,7 @@ impl AssistantPanel {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -1483,7 +1483,7 @@ impl Conversation {
             max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
             api_url: Some(api_url),
-            model: model.clone(),
+            model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -1527,7 +1527,7 @@ impl Conversation {
                 .as_ref()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
-            model: self.model.clone(),
+            model: self.model,
             api_url: self.api_url.clone(),
         }
     }
@@ -1633,26 +1633,23 @@ impl Conversation {
     fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let messages = self
             .messages(cx)
-            .into_iter()
-            .filter_map(|message| {
-                Some(tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(
-                        self.buffer
-                            .read(cx)
-                            .text_for_range(message.offset_range)
-                            .collect(),
-                    ),
-                    name: None,
-                    function_call: None,
-                })
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(
+                    self.buffer
+                        .read(cx)
+                        .text_for_range(message.offset_range)
+                        .collect(),
+                ),
+                name: None,
+                function_call: None,
             })
             .collect::<Vec<_>>();
-        let model = self.model.clone();
+        let model = self.model;
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
@@ -2835,6 +2832,7 @@ impl FocusableView for InlineAssistant {
 }
 
 impl InlineAssistant {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: usize,
         measurements: Rc<Cell<BlockMeasurements>>,
@@ -3200,7 +3198,7 @@ impl InlineAssistant {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,

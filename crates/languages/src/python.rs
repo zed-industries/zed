@@ -83,7 +83,7 @@ impl LspAdapter for PythonLspAdapter {
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
         // and `name` is the symbol name itself.
         //
-        // Because the the symbol name is included, there generally are not ties when
+        // Because the symbol name is included, there generally are not ties when
         // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
         // into account. Here, we remove the symbol name from the sortText in order
         // to allow our own fuzzy score to be used to break ties.

@@ -92,24 +92,31 @@ media.workspace = true
 metal = "0.25"
 objc = "0.2"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 flume = "0.11"
-open = "5.0.1"
-ashpd = "0.7.0"
-xcb = { version = "1.3", features = ["as-raw-xcb-connection", "randr", "xkb"] }
-wayland-client= { version = "0.31.2" }
-wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unstable"] }
-wayland-backend = { version = "0.3.3", features = ["client_system"] }
-xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
-as-raw-xcb-connection = "1"
-calloop = "0.12.4"
-calloop-wayland-source = "0.2.0"
 #TODO: use these on all platforms
 blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+open = "5.0.1"
+ashpd = "0.7.0"
+xcb = { version = "1.3", features = ["as-raw-xcb-connection", "randr", "xkb"] }
+wayland-client= { version = "0.31.2" }
+wayland-cursor = "0.31.1"
+wayland-protocols = { version = "0.31.2", features = ["client", "staging", "unstable"] }
+wayland-backend = { version = "0.3.3", features = ["client_system"] }
+xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
+as-raw-xcb-connection = "1"
+calloop = "0.12.4"
+calloop-wayland-source = "0.2.0"
+oo7 = "0.3.0"
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 
 [[example]]
 name = "hello_world"

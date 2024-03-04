@@ -607,7 +607,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
-            let new_path = entry.path.join(&filename.trim_start_matches("/"));
+            let new_path = entry.path.join(&filename.trim_start_matches('/'));
             if path_already_exists(new_path.as_path()) {
                 return None;
             }
@@ -1028,7 +1028,7 @@ impl ProjectPanel {
                 cx.foreground_executor().spawn(task).detach_and_log_err(cx);
             }
 
-            Some(project.worktree_id_for_entry(destination, cx)?)
+            project.worktree_id_for_entry(destination, cx)
         });
 
         if let Some(destination_worktree) = destination_worktree {

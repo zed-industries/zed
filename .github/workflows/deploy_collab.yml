@@ -28,8 +28,7 @@ jobs:
         uses: ./.github/actions/check_style
 
       - name: Run clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
 
   tests:
     name: Run tests
