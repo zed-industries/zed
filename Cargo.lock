@@ -3390,6 +3390,7 @@ dependencies = [
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "extension",

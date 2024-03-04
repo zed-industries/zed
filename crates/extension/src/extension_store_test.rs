@@ -1,6 +1,6 @@
 use crate::{
-    ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionManifest,
-    ExtensionStore, GrammarManifestEntry,
+    ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionIndexThemeEntry,
+    ExtensionManifest, ExtensionStore, GrammarManifestEntry,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
@@ -131,45 +131,49 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         extensions: [
             (
                 "zed-ruby".into(),
-                ExtensionManifest {
-                    id: "zed-ruby".into(),
-                    name: "Zed Ruby".into(),
-                    version: "1.0.0".into(),
-                    description: None,
-                    authors: Vec::new(),
-                    repository: None,
-                    themes: Default::default(),
-                    lib: Default::default(),
-                    languages: vec!["languages/erb".into(), "languages/ruby".into()],
-                    grammars: [
-                        ("embedded_template".into(), GrammarManifestEntry::default()),
-                        ("ruby".into(), GrammarManifestEntry::default()),
-                    ]
-                    .into_iter()
-                    .collect(),
-                    language_servers: BTreeMap::default(),
-                }
-                .into(),
+                ExtensionIndexEntry {
+                    manifest: Arc::new(ExtensionManifest {
+                        id: "zed-ruby".into(),
+                        name: "Zed Ruby".into(),
+                        version: "1.0.0".into(),
+                        description: None,
+                        authors: Vec::new(),
+                        repository: None,
+                        themes: Default::default(),
+                        lib: Default::default(),
+                        languages: vec!["languages/erb".into(), "languages/ruby".into()],
+                        grammars: [
+                            ("embedded_template".into(), GrammarManifestEntry::default()),
+                            ("ruby".into(), GrammarManifestEntry::default()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                        language_servers: BTreeMap::default(),
+                    }),
+                    dev: false,
+                },
             ),
             (
                 "zed-monokai".into(),
-                ExtensionManifest {
-                    id: "zed-monokai".into(),
-                    name: "Zed Monokai".into(),
-                    version: "2.0.0".into(),
-                    description: None,
-                    authors: vec![],
-                    repository: None,
-                    themes: vec![
-                        "themes/monokai-pro.json".into(),
-                        "themes/monokai.json".into(),
-                    ],
-                    lib: Default::default(),
-                    languages: Default::default(),
-                    grammars: BTreeMap::default(),
-                    language_servers: BTreeMap::default(),
-                }
-                .into(),
+                ExtensionIndexEntry {
+                    manifest: Arc::new(ExtensionManifest {
+                        id: "zed-monokai".into(),
+                        name: "Zed Monokai".into(),
+                        version: "2.0.0".into(),
+                        description: None,
+                        authors: vec![],
+                        repository: None,
+                        themes: vec![
+                            "themes/monokai-pro.json".into(),
+                            "themes/monokai.json".into(),
+                        ],
+                        lib: Default::default(),
+                        languages: Default::default(),
+                        grammars: BTreeMap::default(),
+                        language_servers: BTreeMap::default(),
+                    }),
+                    dev: false,
+                },
             ),
         ]
         .into_iter()
@@ -205,28 +209,28 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         themes: [
             (
                 "Monokai Dark".into(),
-                ExtensionIndexEntry {
+                ExtensionIndexThemeEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai.json".into(),
                 },
             ),
             (
                 "Monokai Light".into(),
-                ExtensionIndexEntry {
+                ExtensionIndexThemeEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai.json".into(),
                 },
             ),
             (
                 "Monokai Pro Dark".into(),
-                ExtensionIndexEntry {
+                ExtensionIndexThemeEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai-pro.json".into(),
                 },
             ),
             (
                 "Monokai Pro Light".into(),
-                ExtensionIndexEntry {
+                ExtensionIndexThemeEntry {
                     extension: "zed-monokai".into(),
                     path: "themes/monokai-pro.json".into(),
                 },
@@ -305,24 +309,26 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     expected_index.extensions.insert(
         "zed-gruvbox".into(),
-        ExtensionManifest {
-            id: "zed-gruvbox".into(),
-            name: "Zed Gruvbox".into(),
-            version: "1.0.0".into(),
-            description: None,
-            authors: vec![],
-            repository: None,
-            themes: vec!["themes/gruvbox.json".into()],
-            lib: Default::default(),
-            languages: Default::default(),
-            grammars: BTreeMap::default(),
-            language_servers: BTreeMap::default(),
-        }
-        .into(),
+        ExtensionIndexEntry {
+            manifest: Arc::new(ExtensionManifest {
+                id: "zed-gruvbox".into(),
+                name: "Zed Gruvbox".into(),
+                version: "1.0.0".into(),
+                description: None,
+                authors: vec![],
+                repository: None,
+                themes: vec!["themes/gruvbox.json".into()],
+                lib: Default::default(),
+                languages: Default::default(),
+                grammars: BTreeMap::default(),
+                language_servers: BTreeMap::default(),
+            }),
+            dev: false,
+        },
     );
     expected_index.themes.insert(
         "Gruvbox".into(),
-        ExtensionIndexEntry {
+        ExtensionIndexThemeEntry {
             extension: "zed-gruvbox".into(),
             path: "themes/gruvbox.json".into(),
         },

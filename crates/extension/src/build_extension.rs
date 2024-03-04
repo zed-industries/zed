@@ -79,6 +79,7 @@ impl ExtensionBuilder {
                 .await?;
         }
 
+        log::info!("finished compiling extension {}", extension_dir.display());
         Ok(())
     }
 
@@ -93,7 +94,7 @@ impl ExtensionBuilder {
         let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
-        log::info!("compiling rust extension {:?}", extension_dir.display());
+        log::info!("compiling rust extension {}", extension_dir.display());
         let output = Command::new("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))

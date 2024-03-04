@@ -12,6 +12,7 @@ path = "src/extensions_ui.rs"
 test-support = []
 
 [dependencies]
+anyhow.workspace = true
 client.workspace = true
 editor.workspace = true
 extension.workspace = true
