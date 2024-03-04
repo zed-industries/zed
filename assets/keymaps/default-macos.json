@@ -302,9 +302,10 @@
       "cmd-alt-down": "editor::AddSelectionBelow",
       "cmd-ctrl-n": "editor::AddSelectionBelow",
       "cmd-shift-k": "editor::DeleteLine",
-      "alt-shift-down": "editor::DuplicateLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
+      "alt-shift-up": ["workspace::SendKeystrokes", "alt-shift-down up"],
+      "alt-shift-down": "editor::DuplicateLine",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
       "cmd-d": [
