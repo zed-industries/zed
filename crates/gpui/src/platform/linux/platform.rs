@@ -354,12 +354,21 @@ impl Platform for LinuxPlatform {
         false
     }
 
-    // todo(linux)
-    fn write_to_clipboard(&self, item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        let clipboard = self.client.get_clipboard();
+        clipboard.borrow_mut().set_contents(item.text);
+    }
 
-    // todo(linux)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        let clipboard = self.client.get_clipboard();
+        let contents = clipboard.borrow_mut().get_contents();
+        match contents {
+            Ok(text) => Some(ClipboardItem {
+                metadata: None,
+                text,
+            }),
+            _ => None,
+        }
     }
 
     //todo!(linux)
@@ -381,6 +390,8 @@ impl Platform for LinuxPlatform {
             Ok(())
         })
     }
+
+    //todo!(linux): add trait methods for accessing the primary selection
 
     //todo!(linux)
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {

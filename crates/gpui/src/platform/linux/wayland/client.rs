@@ -6,6 +6,8 @@ use std::time::Duration;
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::LoopHandle;
 use calloop_wayland_source::WaylandSource;
+use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
+use copypasta::ClipboardProvider;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
@@ -74,6 +76,8 @@ pub(crate) struct CursorState {
 pub(crate) struct WaylandClientState {
     client_state_inner: Rc<RefCell<WaylandClientStateInner>>,
     cursor_state: Rc<RefCell<CursorState>>,
+    clipboard: Rc<RefCell<Clipboard>>,
+    primary: Rc<RefCell<Primary>>,
 }
 
 pub(crate) struct KeyRepeat {
@@ -110,6 +114,9 @@ impl WaylandClient {
                 }
             }
         });
+
+        let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
+        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
             compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
@@ -152,20 +159,20 @@ impl WaylandClient {
         let mut state = WaylandClientState {
             client_state_inner: Rc::clone(&state_inner),
             cursor_state: Rc::clone(&cursor_state),
+            clipboard: Rc::new(RefCell::new(clipboard)),
+            primary: Rc::new(RefCell::new(primary)),
         };
+        let mut state_loop = state.clone();
         linux_platform_inner
             .loop_handle
             .insert_source(source, move |_, queue, _| {
-                queue.dispatch_pending(&mut state)
+                queue.dispatch_pending(&mut state_loop)
             })
             .unwrap();
 
         Self {
             platform_inner: linux_platform_inner,
-            state: WaylandClientState {
-                client_state_inner: state_inner,
-                cursor_state,
-            },
+            state,
             qh: Arc::new(qh),
         }
     }
@@ -264,6 +271,14 @@ impl Client for WaylandClient {
 
         let mut cursor_state = self.state.cursor_state.borrow_mut();
         cursor_state.cursor_icon_name = cursor_icon_name;
+    }
+
+    fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
+        self.state.clipboard.clone()
+    }
+
+    fn get_primary(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
+        self.state.primary.clone()
     }
 }
 
