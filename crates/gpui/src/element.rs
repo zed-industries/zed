@@ -32,9 +32,8 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, AfterLayoutIndex, ArenaBox, AvailableSpace, Bounds, DeferredDraw,
-    ElementContext, ElementId, LayoutId, PaintIndex, Pixels, Point, Size, ViewContext,
-    WindowContext, ELEMENT_ARENA,
+    util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, ElementContext, ElementId, LayoutId,
+    Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -444,24 +443,6 @@ impl AnyElement {
         let size = self.measure(available_space, cx);
         cx.with_absolute_element_offset(absolute_offset, |cx| self.after_layout(cx));
         size
-    }
-
-    /// Defers the drawing of this element, scheduling it to be painted on top of the currently-drawn tree
-    /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
-    /// with higher values being drawn on top.
-    pub fn defer_draw(
-        self,
-        absolute_offset: Point<Pixels>,
-        priority: usize,
-        cx: &mut ElementContext,
-    ) {
-        cx.window.next_frame.deferred_draws.push(DeferredDraw {
-            priority,
-            element: Some(self),
-            absolute_offset,
-            layout_range: AfterLayoutIndex::default()..AfterLayoutIndex::default(),
-            paint_range: PaintIndex::default()..PaintIndex::default(),
-        });
     }
 }
 

@@ -176,7 +176,7 @@ impl Element for Overlay {
         );
 
         for child in self.children.drain(..) {
-            child.defer_draw(before_layout.offset, 1, cx);
+            cx.defer_draw(child, before_layout.offset, 1);
         }
     }
 

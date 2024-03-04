@@ -30,10 +30,10 @@ use smallvec::SmallVec;
 
 use crate::{
     prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
-    ContentMask, Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId,
-    ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent,
-    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
+    ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
+    ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId,
+    Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite,
+    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
     RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle, Window,
     WindowContext, SUBPIXEL_VARIANTS,
@@ -87,11 +87,11 @@ impl Hitbox {
 pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
 pub(crate) struct DeferredDraw {
-    pub(crate) priority: usize,
-    pub(crate) element: Option<AnyElement>,
-    pub(crate) absolute_offset: Point<Pixels>,
-    pub(crate) layout_range: Range<AfterLayoutIndex>,
-    pub(crate) paint_range: Range<PaintIndex>,
+    priority: usize,
+    element: Option<AnyElement>,
+    absolute_offset: Point<Pixels>,
+    layout_range: Range<AfterLayoutIndex>,
+    paint_range: Range<PaintIndex>,
 }
 
 pub(crate) struct Frame {
@@ -756,6 +756,24 @@ impl<'a> ElementContext<'a> {
                 }
             }
         })
+    }
+
+    /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
+    /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
+    /// with higher values being drawn on top.
+    pub fn defer_draw(
+        &mut self,
+        element: AnyElement,
+        absolute_offset: Point<Pixels>,
+        priority: usize,
+    ) {
+        self.window.next_frame.deferred_draws.push(DeferredDraw {
+            priority,
+            element: Some(element),
+            absolute_offset,
+            layout_range: AfterLayoutIndex::default()..AfterLayoutIndex::default(),
+            paint_range: PaintIndex::default()..PaintIndex::default(),
+        });
     }
 
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
