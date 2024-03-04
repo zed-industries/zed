@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, Hitbox, HitboxId, IntoElement,
+    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, HitboxId, IntoElement,
     LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
     WindowContext,
 };

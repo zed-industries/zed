@@ -15,6 +15,7 @@
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
+    mem,
     ops::Range,
     rc::Rc,
     sync::Arc,
@@ -28,14 +29,14 @@ use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 
 use crate::{
-    prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
-    Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
-    EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
-    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle,
-    Style, TextStyleRefinement, Underline, UnderlineStyle, Window, WindowContext,
-    SUBPIXEL_VARIANTS,
+    prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
+    ContentMask, Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId,
+    ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent,
+    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle, Window,
+    WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -85,6 +86,14 @@ impl Hitbox {
 #[derive(Default)]
 pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
+pub(crate) struct DeferredDraw {
+    pub(crate) priority: usize,
+    pub(crate) element: Option<AnyElement>,
+    pub(crate) absolute_offset: Point<Pixels>,
+    pub(crate) layout_range: Range<AfterLayoutIndex>,
+    pub(crate) paint_range: Range<PaintIndex>,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -93,6 +102,7 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
@@ -108,6 +118,7 @@ pub(crate) struct Frame {
 pub(crate) struct AfterLayoutIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
+    deferred_draws_index: usize,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -128,6 +139,7 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            deferred_draws: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
@@ -151,6 +163,7 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.deferred_draws.clear();
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
@@ -158,6 +171,7 @@ impl Frame {
         AfterLayoutIndex {
             hitboxes_index: self.hitboxes.len(),
             tooltips_index: self.tooltip_requests.len(),
+            deferred_draws_index: self.deferred_draws.len(),
         }
     }
 
@@ -351,7 +365,7 @@ impl<'a> VisualContext for ElementContext<'a> {
 
 impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
-        // Measure and commit bounds for all root elements.
+        // Measure and layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
         let available_space = self.window.viewport_size.map(Into::into);
         root_element.layout(Point::default(), available_space, self);
@@ -374,6 +388,12 @@ impl<'a> ElementContext<'a> {
             tooltip_element = Some(element);
         }
 
+        let mut sorted_deferred_draws =
+            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
+        sorted_deferred_draws
+            .sort_unstable_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+        self.layout_deferred_draws(&sorted_deferred_draws);
+
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
 
         // Now actually paint the elements.
@@ -390,14 +410,48 @@ impl<'a> ElementContext<'a> {
                 }
             }
 
-            root_element.paint(cx)
-        });
+            root_element.paint(cx);
 
-        if let Some(mut drag_element) = active_drag_element {
-            drag_element.paint(self);
-        } else if let Some(mut tooltip_element) = tooltip_element {
-            tooltip_element.paint(self);
+            if let Some(mut drag_element) = active_drag_element {
+                drag_element.paint(cx);
+            } else if let Some(mut tooltip_element) = tooltip_element {
+                tooltip_element.paint(cx);
+            }
+
+            cx.paint_deferred_draws(&sorted_deferred_draws);
+        });
+    }
+
+    fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+        let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
+        for deferred_draw_ix in deferred_draw_indices {
+            let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            if let Some(element) = deferred_draw.element.as_mut() {
+                deferred_draw.layout_range.start = self.window.next_frame.after_layout_index();
+                self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
+                    element.after_layout(cx)
+                });
+                deferred_draw.layout_range.end = self.window.next_frame.after_layout_index();
+            } else {
+                self.reuse_after_layout(deferred_draw.layout_range.clone());
+            }
         }
+        self.window.next_frame.deferred_draws = deferred_draws;
+    }
+
+    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+        let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
+        for deferred_draw_ix in deferred_draw_indices {
+            let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            if let Some(element) = deferred_draw.element.as_mut() {
+                deferred_draw.paint_range.start = self.window.next_frame.paint_index();
+                element.paint(self);
+                deferred_draw.paint_range.end = self.window.next_frame.paint_index();
+            } else {
+                self.reuse_paint(deferred_draw.paint_range.clone());
+            }
+        }
+        self.window.next_frame.deferred_draws = deferred_draws;
     }
 
     pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
@@ -412,6 +466,18 @@ impl<'a> ElementContext<'a> {
                 [range.start.tooltips_index..range.end.tooltips_index]
                 .iter_mut()
                 .map(|request| request.take()),
+        );
+        window.next_frame.deferred_draws.extend(
+            window.rendered_frame.deferred_draws
+                [range.start.deferred_draws_index..range.end.deferred_draws_index]
+                .iter()
+                .map(|deferred_draw| DeferredDraw {
+                    priority: deferred_draw.priority,
+                    element: None,
+                    absolute_offset: deferred_draw.absolute_offset,
+                    layout_range: deferred_draw.layout_range.clone(),
+                    paint_range: deferred_draw.paint_range.clone(),
+                }),
         );
     }
 
@@ -527,41 +593,6 @@ impl<'a> ElementContext<'a> {
         } else {
             f(self)
         }
-    }
-
-    /// Invoke the given function with the content mask reset to that
-    /// of the window.
-    pub fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        todo!()
-        // let mask = ContentMask {
-        //     bounds: Bounds {
-        //         origin: Point::default(),
-        //         size: self.window().viewport_size,
-        //     },
-        // };
-
-        // let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
-        // let new_stacking_order_id = post_inc(
-        //     self.window_mut()
-        //         .next_frame
-        //         .next_stacking_order_ids
-        //         .last_mut()
-        //         .unwrap(),
-        // );
-        // let new_context = StackingContext {
-        //     z_index: new_root_z_index,
-        //     id: new_stacking_order_id,
-        // };
-
-        // let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
-
-        // self.window_mut().next_frame.z_index_stack.push(new_context);
-        // self.window_mut().next_frame.content_mask_stack.push(mask);
-        // let result = f(self);
-        // self.window_mut().next_frame.content_mask_stack.pop();
-        // self.window_mut().next_frame.z_index_stack = old_stacking_order;
-
-        // result
     }
 
     /// Updates the global element offset relative to the current offset. This is used to implement

@@ -175,13 +175,9 @@ impl Element for Overlay {
             before_layout.offset.y.round(),
         );
 
-        cx.with_absolute_element_offset(before_layout.offset, |cx| {
-            cx.break_content_mask(|cx| {
-                for child in &mut self.children {
-                    child.after_layout(cx);
-                }
-            })
-        })
+        for child in self.children.drain(..) {
+            child.defer_draw(before_layout.offset, 1, cx);
+        }
     }
 
     fn paint(
@@ -189,13 +185,8 @@ impl Element for Overlay {
         _bounds: crate::Bounds<crate::Pixels>,
         _before_layout: &mut Self::BeforeLayout,
         _after_layout: &mut Self::AfterLayout,
-        cx: &mut ElementContext,
+        _cx: &mut ElementContext,
     ) {
-        cx.break_content_mask(|cx| {
-            for child in &mut self.children {
-                child.paint(cx);
-            }
-        })
     }
 }
 
