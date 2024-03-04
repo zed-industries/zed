@@ -28,7 +28,10 @@ use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
+use gpui::{
+    Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+    WindowContext,
+};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -593,13 +596,13 @@ impl DisplaySnapshot {
         &self,
         display_row: u32,
         TextLayoutDetails {
-            text_system,
             editor_style,
             rem_size,
             scroll_anchor: _,
             visible_rows: _,
             vertical_scroll_margin: _,
         }: &TextLayoutDetails,
+        cx: &WindowContext,
     ) -> Arc<LineLayout> {
         let mut runs = Vec::new();
         let mut line = String::new();
@@ -628,7 +631,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system
+        cx.text_system()
             .layout_line(&line, font_size, &runs)
             .expect("we expect the font to be loaded because it's rendered by the editor")
     }
@@ -637,8 +640,9 @@ impl DisplaySnapshot {
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
+        cx: &WindowContext,
     ) -> Pixels {
-        let line = self.layout_row(display_point.row(), text_layout_details);
+        let line = self.layout_row(display_point.row(), text_layout_details, cx);
         line.x_for_index(display_point.column() as usize)
     }
 
@@ -647,8 +651,9 @@ impl DisplaySnapshot {
         display_row: u32,
         x: Pixels,
         details: &TextLayoutDetails,
+        cx: &WindowContext,
     ) -> u32 {
-        let layout_line = self.layout_row(display_row, details);
+        let layout_line = self.layout_row(display_row, details, cx);
         layout_line.closest_index_for_x(x) as u32
     }
 
@@ -1336,7 +1341,8 @@ pub mod tests {
                 DisplayPoint::new(0, 7)
             );
 
-            let x = snapshot.x_for_display_point(DisplayPoint::new(1, 10), &text_layout_details);
+            let x =
+                snapshot.x_for_display_point(DisplayPoint::new(1, 10), &text_layout_details, cx);
             assert_eq!(
                 movement::up(
                     &snapshot,

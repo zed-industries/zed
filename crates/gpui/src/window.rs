@@ -584,7 +584,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+    pub fn text_system(&self) -> &WindowTextSystem {
         &self.window.text_system
     }
 

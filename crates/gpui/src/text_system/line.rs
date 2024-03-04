@@ -118,11 +118,13 @@ fn paint_line(
     let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
     let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
     let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
-    let text_system = cx.text_system().clone();
     let mut glyph_origin = origin;
     let mut prev_glyph_position = Point::default();
     for (run_ix, run) in layout.runs.iter().enumerate() {
-        let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+        let max_glyph_size = cx
+            .text_system()
+            .bounding_box(run.font_id, layout.font_size)
+            .size;
 
         for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
             glyph_origin.x += glyph.position.x - prev_glyph_position.x;
