@@ -263,24 +263,25 @@ impl WindowsWindowInner {
                 return;
             }
         }
-        match input.clone() {
-            PlatformInput::KeyDown(event) => {
-                if let Some(mut input_handler) = self.input_handler.borrow_mut().as_mut() {
-                    input_handler.replace_text_in_range(None, &event.keystroke.key);
-                }
+        if let PlatformInput::KeyDown(event) = input {
+            if event.keystroke.key.len() > 1 {
+                return;
             }
-            PlatformInput::KeyUp(_) => {}
-            PlatformInput::ModifiersChanged(_) => {}
-            PlatformInput::MouseDown(_) => {
-                if let Some(ref mut input_handler) = self.callbacks.borrow_mut().input {
-                    input_handler(input);
-                }
-            }
-            PlatformInput::MouseUp(_) => {}
-            PlatformInput::MouseMove(_) => {}
-            PlatformInput::MouseExited(_) => {}
-            PlatformInput::ScrollWheel(_) => {}
-            PlatformInput::FileDrop(_) => {}
+            self.with_input_handler(|input_handler| {
+                input_handler.replace_text_in_range(None, &event.keystroke.key)
+            });
+        }
+    }
+
+    fn with_input_handler<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut PlatformInputHandler) -> R,
+    {
+        if let Some(ref mut input_handler) = *self.input_handler.borrow_mut() {
+            let result = f(input_handler);
+            Some(result)
+        } else {
+            None
         }
     }
 
