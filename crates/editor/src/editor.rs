@@ -924,9 +924,9 @@ impl CompletionsMenu {
                             &None
                         };
 
+                        let max_completion_len = px(510.);
                         let (
                             inline_documentation_exists,
-                            max_completion_len,
                             completion_label,
                             documentation_label,
                         ) = Self::truncate_completion(
@@ -935,14 +935,15 @@ impl CompletionsMenu {
                             mat,
                             &mut completion.clone(),
                             documentation,
+                            max_completion_len
                         );
-                        let min_w = match inline_documentation_exists {
-                            true => max_completion_len + px(30.),
-                            false => px(210.),
+                        let min_completion_len = match inline_documentation_exists {
+                            true => max_completion_len,
+                            false => px(190.),
                         };
 
                         div()
-                            .min_w(min_w)
+                            .min_w(min_completion_len + px(30.))
                             .max_w(max_completion_len + px(30.))
                             .child(
                                 ListItem::new(mat.candidate_id)
@@ -984,7 +985,8 @@ impl CompletionsMenu {
         mat: &StringMatch,
         completion: &mut Completion,
         documentation: &Option<Documentation>,
-    ) -> (bool, Pixels, StyledText, StyledText) {
+        max_completion_len: Pixels,
+    ) -> (bool, StyledText, StyledText) {
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
             styled_runs_for_code_label(&completion.label, &style.syntax).map(
@@ -1028,7 +1030,6 @@ impl CompletionsMenu {
 
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
-        let max_completion_len = px(510.);
         let mut variable_name_end = completion.label.filter_range.end;
         let mut completion_label_text = completion.label.text.clone();
         let mut variable_name_length_truncated: i32 = 0;
@@ -1257,7 +1258,6 @@ impl CompletionsMenu {
             .with_highlights(&documentation_style, documentation_highlights);
         (
             inline_documentation_exists,
-            max_completion_len,
             completion_label,
             documentation_label,
         )
