@@ -9468,6 +9468,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "subst"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca1318e5d6716d6541696727c88d9b8dfc8cfe6afd6908e186546fd4af7f5b98"
+dependencies = [
+ "memchr",
+ "unicode-width",
+]
+
+[[package]]
 name = "subtle"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9698,6 +9708,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json_lenient",
+ "subst",
  "util",
 ]
 
@@ -9716,6 +9727,8 @@ dependencies = [
  "serde",
  "serde_json",
  "task",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
  "ui",
  "util",
  "workspace",
