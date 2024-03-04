@@ -110,11 +110,11 @@ fn task_context(
                     ("ZED_COLUMN".into(), column.to_string()),
                 ]);
                 if let Some(path) = current_file {
-                    env.insert("ZED_CURRENT_FILE".into(), path);
+                    env.insert("ZED_FILE".into(), path);
                 }
                 if let Some(language_context) = context {
                     if let Some(symbol) = language_context.symbol {
-                        env.insert("ZED_CURRENT_SYMBOL".into(), symbol);
+                        env.insert("ZED_SYMBOL".into(), symbol);
                     }
                 }
 
@@ -305,7 +305,7 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
-                        ("ZED_CURRENT_FILE".into(), "rust/b.rs".into()),
+                        ("ZED_FILE".into(), "rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "1".into()),
@@ -321,9 +321,9 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
-                        ("ZED_CURRENT_FILE".into(), "rust/b.rs".into()),
+                        ("ZED_FILE".into(), "rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_rust_file".into()),
+                        ("ZED_SYMBOL".into(), "this_is_a_rust_file".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "15".into()),
                     ])
@@ -337,9 +337,9 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
-                        ("ZED_CURRENT_FILE".into(), "a.ts".into()),
+                        ("ZED_FILE".into(), "a.ts".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_test".into()),
+                        ("ZED_SYMBOL".into(), "this_is_a_test".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "1".into()),
                     ])
