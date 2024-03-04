@@ -1448,7 +1448,7 @@ pub fn parse_zed_link<'a>(link: &'a str, cx: &AppContext) -> Option<&'a str> {
     let server_url = &ClientSettings::get_global(cx).server_url;
     if let Some(stripped) = link
         .strip_prefix(server_url)
-        .and_then(|result| result.strip_prefix("/"))
+        .and_then(|result| result.strip_prefix('/'))
     {
         return Some(stripped);
     }
