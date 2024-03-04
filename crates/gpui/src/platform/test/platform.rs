@@ -298,4 +298,8 @@ impl Platform for TestPlatform {
     fn double_click_interval(&self) -> std::time::Duration {
         Duration::from_millis(500)
     }
+
+    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        unimplemented!()
+    }
 }

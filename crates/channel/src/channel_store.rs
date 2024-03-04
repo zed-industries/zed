@@ -3,7 +3,7 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
-use client::{ChannelId, Client, Subscription, User, UserId, UserStore};
+use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
@@ -11,11 +11,11 @@ use gpui::{
     Task, WeakModel,
 };
 use language::Capability;
-use release_channel::RELEASE_CHANNEL;
 use rpc::{
     proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
+use settings::Settings;
 use std::{mem, sync::Arc, time::Duration};
 use util::{async_maybe, maybe, ResultExt};
 
@@ -93,16 +93,17 @@ pub struct ChannelState {
 }
 
 impl Channel {
-    pub fn link(&self) -> String {
-        RELEASE_CHANNEL.link_prefix().to_owned()
-            + "channel/"
-            + &Self::slug(&self.name)
-            + "-"
-            + &self.id.to_string()
+    pub fn link(&self, cx: &AppContext) -> String {
+        format!(
+            "{}/channel/{}-{}",
+            ClientSettings::get_global(cx).server_url,
+            Self::slug(&self.name),
+            self.id
+        )
     }
 
-    pub fn notes_link(&self, heading: Option<String>) -> String {
-        self.link()
+    pub fn notes_link(&self, heading: Option<String>, cx: &AppContext) -> String {
+        self.link(cx)
             + "/notes"
             + &heading
                 .map(|h| format!("#{}", Self::slug(&h)))

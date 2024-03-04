@@ -2390,7 +2390,6 @@ dependencies = [
  "picker",
  "postage",
  "project",
- "release_channel",
  "serde",
  "serde_json",
  "settings",

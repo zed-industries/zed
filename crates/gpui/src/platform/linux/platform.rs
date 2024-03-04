@@ -441,6 +441,10 @@ impl Platform for LinuxPlatform {
     fn window_appearance(&self) -> crate::WindowAppearance {
         crate::WindowAppearance::Light
     }
+
+    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
 }
 
 #[cfg(test)]

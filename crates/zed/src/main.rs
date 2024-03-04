@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, UserStore};
+use client::{parse_zed_link, Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -23,7 +23,7 @@ use assets::Assets;
 use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -106,7 +106,7 @@ fn main() {
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
     let open_listener = listener.clone();
-    app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
+    app.on_open_urls(move |urls, cx| open_listener.open_urls(&urls, cx));
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
@@ -271,9 +271,9 @@ fn main() {
             #[cfg(not(target_os = "linux"))]
             upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
-            let urls = collect_url_args();
+            let urls = collect_url_args(cx);
             if !urls.is_empty() {
-                listener.open_urls(&urls)
+                listener.open_urls(&urls, cx)
             }
         } else {
             upload_panics_and_crashes(http.clone(), cx);
@@ -282,7 +282,7 @@ fn main() {
             if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
                 && !listener.triggered.load(Ordering::Acquire)
             {
-                listener.open_urls(&collect_url_args())
+                listener.open_urls(&collect_url_args(cx), cx)
             }
         }
 
@@ -921,13 +921,13 @@ fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
-fn collect_url_args() -> Vec<String> {
+fn collect_url_args(cx: &AppContext) -> Vec<String> {
     env::args()
         .skip(1)
         .filter_map(|arg| match std::fs::canonicalize(Path::new(&arg)) {
             Ok(path) => Some(format!("file://{}", path.to_string_lossy())),
             Err(error) => {
-                if let Some(_) = parse_zed_link(&arg) {
+                if let Some(_) = parse_zed_link(&arg, cx) {
                     Some(arg)
                 } else {
                     log::error!("error parsing path argument: {}", error);
