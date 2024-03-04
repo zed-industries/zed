@@ -335,9 +335,9 @@ impl Prettier {
                             .collect();
                         log::debug!(
                             "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
+                            buffer.file().map(|f| f.full_path(cx)),
                             plugins,
                             prettier_options,
-                            buffer.file().map(|f| f.full_path(cx))
                         );
 
                         anyhow::Ok(FormatParams {
