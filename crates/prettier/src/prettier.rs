@@ -197,7 +197,7 @@ impl Prettier {
                 arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
                 env: None,
             },
-            Path::new("/"),
+            &prettier_dir,
             None,
             cx.clone(),
         )
