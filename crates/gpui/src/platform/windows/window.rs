@@ -353,7 +353,7 @@ impl WindowsWindowInner {
             let offset = vk_code - VK_F1.0;
             return Some(Keystroke {
                 modifiers: self.current_modifiers(),
-                key: format!("f{}", offset),
+                key: format!("f{}", offset + 1),
                 ime_key: None,
             });
         }
