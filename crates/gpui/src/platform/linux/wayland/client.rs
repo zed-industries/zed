@@ -116,7 +116,8 @@ impl WaylandClient {
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
-            fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            // fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            fractional_scale_manager: None,
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
@@ -232,9 +233,9 @@ impl Client for WaylandClient {
             options,
         ));
 
-        if let Some(fractional_scale_manager) = state.fractional_scale_manager.as_ref() {
-            fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, xdg_surface.id());
-        }
+        // if let Some(fractional_scale_manager) = state.fractional_scale_manager.as_ref() {
+        //     fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, xdg_surface.id());
+        // }
 
         state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
@@ -297,7 +298,7 @@ delegate_noop!(WaylandClientState: ignore wl_surface::WlSurface);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
-delegate_noop!(WaylandClientState: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+// delegate_noop!(WaylandClientState: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientState: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientState: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientState: ignore wp_viewport::WpViewport);
@@ -765,26 +766,26 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
     }
 }
 
-impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientState {
-    fn event(
-        state: &mut Self,
-        _: &wp_fractional_scale_v1::WpFractionalScaleV1,
-        event: <wp_fractional_scale_v1::WpFractionalScaleV1 as Proxy>::Event,
-        id: &ObjectId,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        let mut state = state.client_state_inner.borrow_mut();
-        if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
-            for window in &state.windows {
-                if window.0.id() == *id {
-                    window.1.rescale(scale as f32 / 120.0);
-                    return;
-                }
-            }
-        }
-    }
-}
+// impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientState {
+//     fn event(
+//         state: &mut Self,
+//         _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+//         event: <wp_fractional_scale_v1::WpFractionalScaleV1 as Proxy>::Event,
+//         id: &ObjectId,
+//         _: &Connection,
+//         _: &QueueHandle<Self>,
+//     ) {
+//         let mut state = state.client_state_inner.borrow_mut();
+//         if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
+//             for window in &state.windows {
+//                 if window.0.id() == *id {
+//                     window.1.rescale(scale as f32 / 120.0);
+//                     return;
+//                 }
+//             }
+//         }
+//     }
+// }
 
 impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
     for WaylandClientState
