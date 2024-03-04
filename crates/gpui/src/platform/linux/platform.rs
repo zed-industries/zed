@@ -371,7 +371,6 @@ impl Platform for LinuxPlatform {
         }
     }
 
-    //todo!(linux)
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let url = url.to_string();
         let username = username.to_string();
@@ -393,7 +392,6 @@ impl Platform for LinuxPlatform {
 
     //todo!(linux): add trait methods for accessing the primary selection
 
-    //todo!(linux)
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -421,7 +419,6 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //todo!(linux)
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
