@@ -333,6 +333,8 @@ impl LspAdapter for NextLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
 
         let binary_path = container_dir.join("next-ls");
+        #[cfg(windows)]
+        let binary_path = binary_path.with_extension("exe");
 
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
@@ -350,7 +352,6 @@ impl LspAdapter for NextLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(

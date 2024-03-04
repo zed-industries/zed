@@ -61,6 +61,8 @@ impl LspAdapter for ZlsAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let binary_path = container_dir.join("bin/zls");
+        #[cfg(windows)]
+        let binary_path = binary_path.with_extension("exe");
 
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
@@ -73,7 +75,6 @@ impl LspAdapter for ZlsAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(

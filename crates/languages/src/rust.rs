@@ -60,6 +60,8 @@ impl LspAdapter for RustLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        #[cfg(windows)]
+        let destination_path = destination_path.with_extension("exe");
 
         if fs::metadata(&destination_path).await.is_err() {
             let mut response = delegate
@@ -70,7 +72,6 @@ impl LspAdapter for RustLspAdapter {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let mut file = File::create(&destination_path).await?;
             futures::io::copy(decompressed_bytes, &mut file).await?;
-            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
