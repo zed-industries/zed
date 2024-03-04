@@ -56,14 +56,13 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
             let workspace_root = workspace.visible_worktrees(cx).next()?.read(cx).abs_path();
 
             current_editor.update(cx, |editor, cx| {
-                let start = editor
-                    .snapshot(cx)
+                let snapshot = editor.snapshot(cx);
+                let start = snapshot
                     .display_snapshot
                     .buffer_snapshot
                     .anchor_after(cursor_offset.head())
                     .text_anchor;
-                let end = editor
-                    .snapshot(cx)
+                let end = snapshot
                     .display_snapshot
                     .buffer_snapshot
                     .anchor_after(cursor_offset.tail())
