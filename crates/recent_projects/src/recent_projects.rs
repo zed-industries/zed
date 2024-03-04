@@ -16,8 +16,12 @@ use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct OpenRecent {
-    #[serde(default)]
+    #[serde(default = "default_create_new_window")]
     pub create_new_window: bool,
+}
+
+fn default_create_new_window() -> bool {
+    true
 }
 
 gpui::impl_actions!(projects, [OpenRecent]);
@@ -269,7 +273,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace
                                         .update(&mut cx, |workspace, cx| {
                                             workspace.open_workspace_for_paths(
-                                                replace_current_window,
+                                                true,
                                                 candidate_paths,
                                                 cx,
                                             )
@@ -280,11 +284,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                             })
                         } else {
-                            workspace.open_workspace_for_paths(
-                                replace_current_window,
-                                candidate_paths,
-                                cx,
-                            )
+                            workspace.open_workspace_for_paths(false, candidate_paths, cx)
                         }
                     } else {
                         Task::ready(Ok(()))
