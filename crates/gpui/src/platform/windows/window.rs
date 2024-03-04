@@ -52,15 +52,18 @@ use crate::{
 
 #[derive(PartialEq)]
 pub(crate) enum CallbackResult {
-    Handled(bool),
+    /// handled by system or user callback
+    Handled {
+        /// `true` if user callback handled event
+        by_callback: bool,
+    },
     Unhandled,
 }
 
 impl CallbackResult {
     pub fn is_handled(&self) -> bool {
         match self {
-            Self::Handled(true) => true,
-            Self::Handled(false) => true,
+            Self::Handled { by_callback: _ } => true,
             _ => false,
         }
     }
@@ -401,7 +404,7 @@ impl WindowsWindowInner {
                     if let Some(request_frame) = callbacks.request_frame.as_mut() {
                         request_frame();
                     }
-                    CallbackResult::Handled(true)
+                    CallbackResult::Handled { by_callback: true }
                 } else if let Some(mut input_handler) = self.input_handler.take() {
                     if let Some(ime_key) = &event.keystroke.ime_key {
                         input_handler.replace_text_in_range(None, ime_key);
@@ -410,12 +413,12 @@ impl WindowsWindowInner {
                     if let Some(request_frame) = callbacks.request_frame.as_mut() {
                         request_frame();
                     }
-                    CallbackResult::Handled(true)
+                    CallbackResult::Handled { by_callback: true }
                 } else {
-                    CallbackResult::Handled(false)
+                    CallbackResult::Handled { by_callback: false }
                 }
             } else {
-                CallbackResult::Handled(false)
+                CallbackResult::Handled { by_callback: false }
             }
         } else {
             CallbackResult::Unhandled
@@ -428,9 +431,11 @@ impl WindowsWindowInner {
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
                 let event = KeyUpEvent { keystroke };
-                CallbackResult::Handled(callback(PlatformInput::KeyUp(event)))
+                CallbackResult::Handled {
+                    by_callback: callback(PlatformInput::KeyUp(event)),
+                }
             } else {
-                CallbackResult::Handled(false)
+                CallbackResult::Handled { by_callback: false }
             }
         } else {
             CallbackResult::Unhandled
