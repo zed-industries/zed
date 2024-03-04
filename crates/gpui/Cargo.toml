@@ -123,6 +123,7 @@ blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+oo7 = "0.3.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 blade-graphics.workspace = true
