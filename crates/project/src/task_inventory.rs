@@ -252,7 +252,7 @@ pub mod test_inventory {
             &self.name
         }
 
-        fn cwd(&self) -> Option<&Path> {
+        fn cwd(&self) -> Option<&str> {
             None
         }
 
