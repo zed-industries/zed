@@ -996,7 +996,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let statuses = statuses
                         .iter()
-                        .map(|(path, val)| (path.as_path(), val.clone()))
+                        .map(|(path, val)| (path.as_path(), *val))
                         .collect::<Vec<_>>();
 
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
@@ -1021,7 +1021,7 @@ impl RandomizedTest for ProjectCollaborationTest {
     }
 
     async fn on_client_added(client: &Rc<TestClient>, _: &mut TestAppContext) {
-        let mut language = Language::new(
+        client.language_registry().add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: LanguageMatcher {
@@ -1031,9 +1031,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                 ..Default::default()
             },
             None,
-        );
-        language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+        )));
+        client.language_registry().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
                 name: "the-fake-language-server",
                 capabilities: lsp::LanguageServer::full_capabilities(),
                 initializer: Some(Box::new({
@@ -1132,9 +1133,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                     }
                 })),
                 ..Default::default()
-            }))
-            .await;
-        client.app_state.languages.add(Arc::new(language));
+            },
+        );
     }
 
     async fn on_quiesce(_: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {

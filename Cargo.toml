@@ -23,6 +23,7 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extension_api",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -91,6 +92,8 @@ members = [
     "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
+    "extensions/gleam",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -193,10 +196,12 @@ anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-tar = "0.4.2"
 async-trait = "0.1"
+bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
+clap = "4.4"
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
@@ -269,6 +274,7 @@ tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" 
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
 tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "8a99848fc734f9c4ea523b3f2a07df133cbbcec2" }
 tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
+rustc-demangle = "0.1.23"
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
@@ -297,9 +303,22 @@ unindent = "0.1.7"
 unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
+wasmparser = "0.121"
 wasmtime = "18.0"
+wasmtime-wasi = "18.0"
 which = "6.0.0"
 sys-locale = "0.3.1"
+
+[workspace.dependencies.windows]
+version = "0.53.0"
+features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Security",
+    "Win32_System_Threading",
+]
+
+
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
@@ -310,7 +329,7 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fc
 split-debuginfo = "unpacked"
 debug = "limited"
 
-# todo!(linux) - Remove this
+# todo(linux) - Remove this
 [profile.dev.package.blade-graphics]
 split-debuginfo = "off"
 debug = "full"

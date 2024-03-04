@@ -62,7 +62,7 @@ struct ChannelMoveClipboard {
     channel_id: ChannelId,
 }
 
-const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
+const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -327,7 +327,7 @@ impl CollabPanel {
             let panel = CollabPanel::new(workspace, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width;
+                    panel.width = serialized_panel.width.map(|w| w.round());
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
                         .unwrap_or_else(|| Vec::new())
@@ -441,17 +441,13 @@ impl CollabPanel {
                 // Populate remote participants.
                 self.match_candidates.clear();
                 self.match_candidates
-                    .extend(
-                        room.remote_participants()
-                            .iter()
-                            .filter_map(|(_, participant)| {
-                                Some(StringMatchCandidate {
-                                    id: participant.user.id as usize,
-                                    string: participant.user.github_login.clone(),
-                                    char_bag: participant.user.github_login.chars().collect(),
-                                })
-                            }),
-                    );
+                    .extend(room.remote_participants().values().map(|participant| {
+                        StringMatchCandidate {
+                            id: participant.user.id as usize,
+                            string: participant.user.github_login.clone(),
+                            char_bag: participant.user.github_login.chars().collect(),
+                        }
+                    }));
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
@@ -956,7 +952,7 @@ impl CollabPanel {
                         })
                         .ok();
                 }))
-                .tooltip(move |cx| Tooltip::text(format!("Open shared screen"), cx))
+                .tooltip(move |cx| Tooltip::text("Open shared screen", cx))
             })
     }
 
@@ -1052,7 +1048,7 @@ impl CollabPanel {
         .indent_step_size(px(20.))
         .selected(is_selected)
         .on_click(cx.listener(move |_this, _, _cx| {
-            // todo!()
+            // todo()
         }))
         .start_slot(
             h_flex()
@@ -1531,7 +1527,7 @@ impl CollabPanel {
                         id: _id,
                         name: _name,
                     } => {
-                        // todo!()
+                        // todo()
                     }
 
                     ListEntry::OutgoingRequest(_) => {}
@@ -1633,7 +1629,7 @@ impl CollabPanel {
         self.toggle_channel_collapsed(id, cx)
     }
 
-    fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+    fn toggle_channel_collapsed(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         match self.collapsed_channels.binary_search(&channel_id) {
             Ok(ix) => {
                 self.collapsed_channels.remove(ix);
@@ -2175,7 +2171,7 @@ impl CollabPanel {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -2224,7 +2220,7 @@ impl CollabPanel {
                 });
 
                 if let Some(name) = channel_name {
-                    SharedString::from(format!("{}", name))
+                    SharedString::from(name.to_string())
                 } else {
                     SharedString::from("Current Call")
                 }
@@ -2510,7 +2506,7 @@ impl CollabPanel {
             .map(|channel| channel.visibility)
             == Some(proto::ChannelVisibility::Public);
         let disclosed =
-            has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
+            has_children.then(|| self.collapsed_channels.binary_search(&channel.id).is_err());
 
         let has_messages_notification = channel_store.has_new_messages(channel_id);
         let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);

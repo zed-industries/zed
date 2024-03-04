@@ -681,6 +681,9 @@ These values take in the same options as the root-level settings with the same n
   "font_size": null,
   "option_as_meta": false,
   "shell": {},
+  "toolbar": {
+    "title": true
+  },
   "working_directory": "current_project_directory"
 }
 ```
@@ -838,6 +841,22 @@ See Buffer Font Features
   }
 }
 ```
+
+## Terminal Toolbar
+
+- Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
+- Setting: `toolbar`
+- Default:
+
+```json
+"toolbar": {
+  "title": true,
+},
+```
+
+**Options**
+
+At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
 
 ### Working Directory
 

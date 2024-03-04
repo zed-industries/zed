@@ -88,6 +88,7 @@ impl PaneGroup {
         };
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &self,
         project: &Model<Project>,
@@ -159,6 +160,7 @@ impl Member {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         project: &Model<Project>,
@@ -471,6 +473,7 @@ impl PaneAxis {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
         project: &Model<Project>,
@@ -640,6 +643,7 @@ mod element {
             self
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn compute_resize(
             flexes: &Arc<Mutex<Vec<f32>>>,
             e: &MouseMoveEvent,
@@ -728,6 +732,7 @@ mod element {
             cx.refresh();
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn push_handle(
             flexes: Arc<Mutex<Vec<f32>>>,
             dragged_handle: Rc<RefCell<Option<usize>>>,
@@ -883,7 +888,8 @@ mod element {
 
                 let child_size = bounds
                     .size
-                    .apply_along(self.axis, |_| space_per_flex * child_flex);
+                    .apply_along(self.axis, |_| space_per_flex * child_flex)
+                    .map(|d| d.round());
 
                 let child_bounds = Bounds {
                     origin,

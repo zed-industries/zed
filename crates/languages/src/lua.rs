@@ -22,10 +22,6 @@ impl super::LspAdapter for LuaLspAdapter {
         LanguageServerName("lua-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "lua"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -83,7 +79,7 @@ impl super::LspAdapter for LuaLspAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo!("windows")
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(

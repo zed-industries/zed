@@ -71,10 +71,6 @@ impl LspAdapter for ElixirLspAdapter {
         LanguageServerName("elixir-ls".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "elixir-ls"
-    }
-
     fn will_start_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -302,10 +298,6 @@ impl LspAdapter for NextLspAdapter {
         LanguageServerName("next-ls".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "next-ls"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -358,7 +350,7 @@ impl LspAdapter for NextLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            // todo!("windows")
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
@@ -458,10 +450,6 @@ pub struct LocalLspAdapter {
 impl LspAdapter for LocalLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("local-ls".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "local-ls"
     }
 
     async fn fetch_latest_server_version(

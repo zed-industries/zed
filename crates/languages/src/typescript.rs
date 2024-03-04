@@ -56,10 +56,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         LanguageServerName("typescript-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "tsserver"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -283,10 +279,6 @@ impl LspAdapter for EsLintLspAdapter {
         LanguageServerName(Self::SERVER_NAME.into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "eslint"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -409,12 +401,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "typescript",
-            tree_sitter_typescript::language_typescript(),
-            None,
-        )
-        .await;
+        let language = crate::language("typescript", tree_sitter_typescript::language_typescript());
 
         let text = r#"
             function a() {

@@ -119,6 +119,7 @@ impl_actions!(
 gpui::actions!(
     editor,
     [
+        AcceptPartialCopilotSuggestion,
         AddSelectionAbove,
         AddSelectionBelow,
         Backspace,
@@ -239,6 +240,7 @@ gpui::actions!(
         TabPrev,
         ToggleInlayHints,
         ToggleSoftWrap,
+        ToggleLineNumbers,
         Transpose,
         Undo,
         UndoSelection,

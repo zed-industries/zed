@@ -8,7 +8,6 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
-use lazy_static::lazy_static;
 use prometheus::{exponential_buckets, register_histogram, Histogram};
 use rand::thread_rng;
 use scrypt::{
@@ -16,16 +15,8 @@ use scrypt::{
     Scrypt,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use std::{sync::Arc, time::Instant};
-
-lazy_static! {
-    static ref METRIC_ACCESS_TOKEN_HASHING_TIME: Histogram = register_histogram!(
-        "access_token_hashing_time",
-        "time spent hashing access tokens",
-        exponential_buckets(10.0, 2.0, 10).unwrap(),
-    )
-    .unwrap();
-}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Impersonator(pub Option<db::User>);
@@ -182,6 +173,16 @@ pub async fn verify_access_token(
     user_id: UserId,
     db: &Arc<Database>,
 ) -> Result<VerifyAccessTokenResult> {
+    static METRIC_ACCESS_TOKEN_HASHING_TIME: OnceLock<Histogram> = OnceLock::new();
+    let metric_access_token_hashing_time = METRIC_ACCESS_TOKEN_HASHING_TIME.get_or_init(|| {
+        register_histogram!(
+            "access_token_hashing_time",
+            "time spent hashing access tokens",
+            exponential_buckets(10.0, 2.0, 10).unwrap(),
+        )
+        .unwrap()
+    });
+
     let token: AccessTokenJson = serde_json::from_str(&token)?;
 
     let db_token = db.get_access_token(token.id).await?;
@@ -197,7 +198,7 @@ pub async fn verify_access_token(
         .is_ok();
     let duration = t0.elapsed();
     log::info!("hashed access token in {:?}", duration);
-    METRIC_ACCESS_TOKEN_HASHING_TIME.observe(duration.as_millis() as f64);
+    metric_access_token_hashing_time.observe(duration.as_millis() as f64);
     Ok(VerifyAccessTokenResult {
         is_valid,
         impersonator_id: if db_token.impersonated_user_id.is_some() {

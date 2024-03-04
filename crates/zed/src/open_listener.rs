@@ -95,10 +95,10 @@ impl OpenListener {
     }
 
     fn handle_zed_url_scheme(&self, request_path: &str) -> Option<OpenRequest> {
-        let mut parts = request_path.split("/");
+        let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split("-").last() {
+                if let Some(id_str) = slug.split('-').last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             return Some(OpenRequest::JoinChannel { channel_id });
@@ -184,7 +184,7 @@ pub async fn handle_cli_connection(
                 } else {
                     paths
                         .into_iter()
-                        .filter_map(|path_with_position_string| {
+                        .map(|path_with_position_string| {
                             let path_with_position = PathLikeWithPosition::parse_str(
                                 &path_with_position_string,
                                 |path_str| {
@@ -203,7 +203,7 @@ pub async fn handle_cli_connection(
                                     caret_positions.insert(path.clone(), Point::new(row, col));
                                 }
                             }
-                            Some(path)
+                            path
                         })
                         .collect()
                 };

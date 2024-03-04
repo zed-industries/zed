@@ -30,5 +30,8 @@ theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
 [dev-dependencies]
 rand.workspace = true
