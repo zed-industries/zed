@@ -9456,23 +9456,38 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // What we're doing here is to spawn a shell and then `cd` into
+    // the project directory to get the env in there as if the user
+    // `cd`'d into it. We do that because tools like direnv, asdf, ...
+    // hook into `cd` and only set up the env after that.
+    //
+    // In certain shells we need to execute additional_command in order to
+    // trigger the behavior of direnv, etc.
+    //
+    //
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    //
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let additional_command = PathBuf::from(&shell)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .and_then(|shell| match shell {
+            "fish" => Some("emit fish_prompt;"),
+            _ => None,
+        });
+
+    let command = format!(
+        "cd {dir:?};{} echo {marker}; /usr/bin/env -0; exit 0;",
+        additional_command.unwrap_or("")
+    );
+
     let output = smol::process::Command::new(&shell)
-        .args([
-            "-i",
-            "-c",
-            // What we're doing here is to spawn a shell and then `cd` into
-            // the project directory to get the env in there as if the user
-            // `cd`'d into it. We do that because tools like direnv, asdf, ...
-            // hook into `cd` and only set up the env after that.
-            //
-            // The `exit 0` is the result of hours of debugging, trying to find out
-            // why running this command here, without `exit 0`, would mess
-            // up signal process for our process so that `ctrl-c` doesn't work
-            // anymore.
-            // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-            // do that, but it does, and `exit 0` helps.
-            &format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
-        ])
+        .args(["-i", "-c", &command])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
