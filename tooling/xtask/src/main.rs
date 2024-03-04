@@ -89,7 +89,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         "clippy::derive_ord_xor_partial_ord",
         "clippy::eq_op",
         "clippy::implied_bounds_in_impls",
-        "clippy::iter_kv_map",
         "clippy::iter_overeager_cloned",
         "clippy::let_underscore_future",
         "clippy::map_entry",
