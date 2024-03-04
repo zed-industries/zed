@@ -34,7 +34,7 @@ impl Task for StaticTask {
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),
             env: self.definition.env.clone(),
-            separate_shell: false,
+            separate_shell: true,
         })
     }
 
