@@ -113,9 +113,12 @@ fn task_context(
                         .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
                 });
 
+                let selected_text = buffer.read(cx).chars_for_range(selection_range).collect();
+
                 let mut env = HashMap::from_iter([
                     ("ZED_ROW".into(), row.to_string()),
                     ("ZED_COLUMN".into(), column.to_string()),
+                    ("ZED_SELECTED_TEXT".into(), selected_text),
                 ]);
                 if let Some(path) = current_file {
                     env.insert("ZED_FILE".into(), path);
