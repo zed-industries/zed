@@ -14,7 +14,7 @@ pub mod metal_renderer;
 use metal_renderer as renderer;
 
 #[cfg(feature = "macos-blade")]
-use crate::platform::blade as renderer;
+use crate::platform::cross_platform as renderer;
 
 mod open_type;
 mod platform;
