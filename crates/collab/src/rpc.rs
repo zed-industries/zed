@@ -3370,7 +3370,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
             .collect(),
         observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
         observed_channel_message_id: channels.observed_channel_messages.clone(),
-        ..Default::default()
     }
 }
 
