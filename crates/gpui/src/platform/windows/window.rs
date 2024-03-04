@@ -401,7 +401,7 @@ impl WindowsWindowInner {
                     is_held: true,
                 };
 
-                if callback(PlatformInput::KeyDown(event.clone())) {
+                if callback(PlatformInput::KeyDown(event)) {
                     if let Some(request_frame) = callbacks.request_frame.as_mut() {
                         request_frame();
                     }
