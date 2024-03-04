@@ -17,11 +17,13 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::SemanticVersion;
 use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE, HWND},
+    Foundation::{CloseHandle, GetLastError, HANDLE, HMODULE, HWND, WAIT_EVENT},
     System::Threading::{CreateEventW, INFINITE},
     UI::WindowsAndMessaging::{
-        DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage,
-        TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT,
+        DispatchMessageW, GetMessageW, GetWindowModuleFileNameW, MsgWaitForMultipleObjects,
+        PostQuitMessage, SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT,
+        SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        WM_QUIT, WM_SETTINGCHANGE,
     },
 };
 
@@ -279,7 +281,23 @@ impl Platform for WindowsPlatform {
 
     // todo!("windows")
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        Err(anyhow!("not yet implemented"))
+        if name == "cli" {
+            let mut filename_buf = vec![0; 1024];
+            let filename_len = unsafe {
+                windows::Win32::System::LibraryLoader::GetModuleFileNameA(
+                    HMODULE::default(),
+                    &mut filename_buf,
+                )
+            } as usize;
+
+            filename_buf.resize(filename_len, b'\0');
+
+            return Ok(String::from_utf8(filename_buf)?.into());
+        }
+
+        Err(anyhow::Error::msg(
+            "Platform<WindowsPlatform>::path_for_auxiliary_executable is not implemented yet",
+        ))
     }
 
     // todo!("windows")
