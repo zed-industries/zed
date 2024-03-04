@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use windows::{
     core::{implement, PCWSTR},
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, POINTL, RECT, S_OK, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, POINT, POINTL, RECT, S_OK, WPARAM},
         Graphics::Gdi::{
             MonitorFromWindow, RedrawWindow, ValidateRect, HRGN, MONITOR_DEFAULTTONEAREST,
             RDW_ERASENOW, RDW_INVALIDATE, RDW_UPDATENOW,
@@ -36,8 +36,8 @@ use windows::{
             WindowsAndMessaging::{
                 DefWindowProcW, GetClientRect, GetCursorPos, KillTimer, PostMessageW, SetTimer,
                 SetWindowTextW, ShowWindow, CW_USEDEFAULT, GWLP_HINSTANCE, HMENU, SIZE_MINIMIZED,
-                SW_MINIMIZE, SW_SHOW, TIMERPROC, WA_ACTIVE, WA_CLICKACTIVE, WA_INACTIVE,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_DESTROY,
+                SW_MINIMIZE, SW_SHOW, TIMERPROC, WA_ACTIVE, WA_CLICKACTIVE, WINDOW_EX_STYLE,
+                WINDOW_STYLE, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_DESTROY,
                 WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
                 WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
                 WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
@@ -382,8 +382,6 @@ impl WindowsWindowBase for WindowsWindowinner {
                     };
                     let _ = TrackMouseEvent(&mut config).inspect_err(log_windows_error);
                     self.set_focused(true);
-                } else if loword!(wparam.0, u16) as u32 & WA_INACTIVE > 0 {
-                    self.set_focused(false);
                 }
                 LRESULT(0)
             }
@@ -500,8 +498,6 @@ impl WindowsWindowBase for WindowsWindowinner {
             }
             WM_IME_STARTCOMPOSITION => {
                 let ctx = ImmGetContext(handle);
-                let mut config = COMPOSITIONFORM::default();
-                config.dwStyle = CFS_POINT;
                 let mut cursor = std::mem::zeroed();
                 if GetCursorPos(&mut cursor)
                     .inspect_err(log_windows_error)
@@ -510,8 +506,14 @@ impl WindowsWindowBase for WindowsWindowinner {
                     cursor.x = 0;
                     cursor.y = 0;
                 }
-                config.ptCurrentPos.x = cursor.x;
-                config.ptCurrentPos.y = cursor.y;
+                let config = COMPOSITIONFORM {
+                    dwStyle: CFS_POINT,
+                    ptCurrentPos: POINT {
+                        x: cursor.x,
+                        y: cursor.y,
+                    },
+                    ..Default::default()
+                };
                 ImmSetCompositionWindow(ctx, &config as _);
                 ImmReleaseContext(handle, ctx);
                 LRESULT(0)
@@ -713,7 +715,7 @@ impl PlatformWindow for WindowsWindow {
     ) -> futures::channel::oneshot::Receiver<usize> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
-        let detail = match detail {
+        let detail_string = match detail {
             Some(info) => Some(info.to_string()),
             None => None,
         };
@@ -747,7 +749,7 @@ impl PlatformWindow for WindowsWindow {
                     let instruction = encode_wide(&msg);
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
                     let hints_encoded;
-                    if let Some(ref hints) = detail {
+                    if let Some(ref hints) = detail_string {
                         hints_encoded = encode_wide(hints);
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };

@@ -100,7 +100,7 @@ where
                 width.unwrap_or(0),
                 height.unwrap_or(0),
                 HWND::default(),
-                menu_handle.unwrap_or(HMENU::default()),
+                menu_handle.unwrap_or_default(),
                 get_module_handle(),
                 None,
             )

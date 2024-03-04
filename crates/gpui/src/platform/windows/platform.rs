@@ -211,7 +211,7 @@ impl Platform for WindowsPlatform {
             let dispatch_window_handle = self.inner.dispatch_window_handle;
             let table = self.shortcuts_table.borrow_mut().take().unwrap();
             while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
-                if TranslateAcceleratorW(dispatch_window_handle, table, &mut msg) == 0 {
+                if TranslateAcceleratorW(dispatch_window_handle, table, &msg) == 0 {
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
@@ -262,10 +262,10 @@ impl Platform for WindowsPlatform {
         _handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let menu_handle = self.menu_handle.borrow().clone();
+        let menu_handle = *self.menu_handle.borrow();
         let window = WindowsWindow::new(
             self.foreground_executor(),
-            self.inner.dispatch_window_handle.into(),
+            self.inner.dispatch_window_handle,
             &options,
             menu_handle,
         );
@@ -786,7 +786,6 @@ fn open_target(target: String) {
         );
         if ret.0 <= 32 {
             log_windows_error_with_message!("Unable to open target");
-            return;
         }
     }
 }
@@ -802,7 +801,7 @@ fn show_openfile_dialog(options: PathPromptOptions) -> anyhow::Result<IFileOpenD
         if options.multiple {
             config |= FOS_ALLOWMULTISELECT;
         }
-        let _ = dialog.SetOptions(config).inspect_err(log_windows_error)?;
+        dialog.SetOptions(config).inspect_err(log_windows_error)?;
 
         Ok(dialog)
     }

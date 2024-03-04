@@ -23,7 +23,7 @@ impl MonitorHandle {
     }
 
     pub fn scale_factor(&self) -> f32 {
-        (self.get_dpi() as f32) / (96 as f32)
+        (self.get_dpi() as f32) / 96.0
     }
 
     fn get_dpi(&self) -> u32 {

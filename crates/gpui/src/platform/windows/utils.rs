@@ -27,7 +27,7 @@ pub fn get_module_handle() -> HMODULE {
         )
         .unwrap(); // should never fail
 
-        return h_module;
+        h_module
     }
 }
 
