@@ -85,7 +85,7 @@ pub struct ExtensionStore {
     extensions_dir: PathBuf,
     extensions_being_installed: HashSet<Arc<str>>,
     extensions_being_uninstalled: HashSet<Arc<str>>,
-    manifest_path: PathBuf,
+    index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     modified_extensions: HashSet<Arc<str>>,
@@ -168,7 +168,7 @@ impl ExtensionStore {
         let mut this = Self {
             extension_index: Default::default(),
             extensions_dir: extensions_dir.join("installed"),
-            manifest_path: extensions_dir.join("manifest.json"),
+            index_path: extensions_dir.join("index.json"),
             builder: Arc::new(ExtensionBuilder::new(
                 extensions_dir.join("build"),
                 http_client.clone(),
@@ -197,34 +197,49 @@ impl ExtensionStore {
         this
     }
 
-    pub fn load(&mut self, cx: &mut ModelContext<Self>) {
-        let (manifest_content, manifest_metadata, extensions_metadata) =
+    /// Load the initial installed extensions. Normally on startup, we can discover
+    /// what extensions are installed just by consulting the index file.
+    fn load(&mut self, cx: &mut ModelContext<Self>) {
+        let (index_content, index_metadata, extensions_metadata) =
             cx.background_executor().block(async {
                 futures::join!(
-                    self.fs.load(&self.manifest_path),
-                    self.fs.metadata(&self.manifest_path),
+                    self.fs.load(&self.index_path),
+                    self.fs.metadata(&self.index_path),
                     self.fs.metadata(&self.extensions_dir),
                 )
             });
 
-        if let Some(manifest_content) = manifest_content.log_err() {
-            if let Some(manifest) = serde_json::from_str(&manifest_content).log_err() {
-                // TODO: don't detach
-                self.extensions_updated(manifest, cx).detach();
+        if let Some(index_content) = index_content.log_err() {
+            if let Some(index) = serde_json::from_str(&index_content).log_err() {
+                let update_task = self.extensions_updated(index, cx);
+                self.reload_task = Some(cx.spawn(|this, mut cx| async move {
+                    update_task.await.log_err();
+
+                    this.update(&mut cx, |this, cx| {
+                        this.reload_task.take();
+                        if this.needs_reload {
+                            this.reload(cx);
+                        }
+                    })
+                    .ok()
+                }));
+
+                // Normally on startup, the extensions index will already be up-to-date,
+                // so there is no need to perform all of the IO necessary to rebuild the
+                // index based on the content of the installed extensions directory.
+                // But if that directory's metadata indicates that it was modified more
+                // recently than the index file, then we need to rebuild the index.
+                if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
+                    (index_metadata, extensions_metadata)
+                {
+                    if index_metadata.mtime > extensions_metadata.mtime {
+                        return;
+                    }
+                }
             }
         }
 
-        let should_reload = if let (Ok(Some(manifest_metadata)), Ok(Some(extensions_metadata))) =
-            (manifest_metadata, extensions_metadata)
-        {
-            extensions_metadata.mtime > manifest_metadata.mtime
-        } else {
-            true
-        };
-
-        if should_reload {
-            self.reload(cx)
-        }
+        self.reload(cx)
     }
 
     pub fn extensions_dir(&self) -> PathBuf {
@@ -723,7 +738,7 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.extensions_dir.clone();
-        let manifest_path = self.manifest_path.clone();
+        let index_path = self.index_path.clone();
         self.needs_reload = false;
         self.reload_task = Some(cx.spawn(|this, mut cx| {
             async move {
@@ -748,14 +763,10 @@ impl ExtensionStore {
                         }
 
                         if let Ok(index_json) = serde_json::to_string_pretty(&index) {
-                            fs.save(
-                                &manifest_path,
-                                &index_json.as_str().into(),
-                                Default::default(),
-                            )
-                            .await
-                            .context("failed to save extension manifest")
-                            .log_err();
+                            fs.save(&index_path, &index_json.as_str().into(), Default::default())
+                                .await
+                                .context("failed to save extension index")
+                                .log_err();
                         }
 
                         index
