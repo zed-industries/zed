@@ -290,7 +290,6 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use workspace::AppState;
 
     use super::*;
 

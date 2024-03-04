@@ -87,7 +87,7 @@ fn task_context(
                     .and_then(|provider| provider.build_context(location, cx).ok());
 
                 let mut env = HashMap::from_iter([(
-                    "ZED_WORKSPACE_ROOT".into(),
+                    "ZED_WORKTREE_ROOT".into(),
                     workspace_root.to_string_lossy().to_string(),
                 )]);
                 if let Some(path) = current_file {
@@ -175,6 +175,7 @@ mod tests {
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
+    use language::{DefaultContextProvider, Language, LanguageConfig};
     use project::{FakeFs, Project, TaskSourceKind};
     use serde_json::json;
     use task::{oneshot_source::OneshotSource, TaskContext};
@@ -206,13 +207,44 @@ mod tests {
                 },
                 "a.ts": "function this_is_a_test() { }",
                 "rust": {
-                                    "b.rs": "fn this_is_a_rust_file() { }",
+                                    "b.rs": "use std; fn this_is_a_rust_file() { }",
                 }
 
             }),
         )
         .await;
 
+        let rust_language = Arc::new(
+            Language::new(
+                LanguageConfig::default(),
+                Some(tree_sitter_rust::language()),
+            )
+            .with_outline_query(
+                r#"(function_item
+            "fn" @context
+            name: (_) @name) @item"#,
+            )
+            .unwrap()
+            .with_context_provider(Some(Arc::new(DefaultContextProvider))),
+        );
+
+        let typescript_language = Arc::new(
+            Language::new(
+                LanguageConfig::default(),
+                Some(tree_sitter_typescript::language_typescript()),
+            )
+            .with_outline_query(
+                r#"(function_declaration
+                    "async"? @context
+                    "function" @context
+                    name: (_) @name
+                    parameters: (formal_parameters
+                      "(" @context
+                      ")" @context)) @item"#,
+            )
+            .unwrap()
+            .with_context_provider(Some(Arc::new(DefaultContextProvider))),
+        );
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, cx| {
             project.task_inventory().update(cx, |inventory, cx| {
@@ -231,6 +263,9 @@ mod tests {
             })
             .await
             .unwrap();
+        buffer1.update(cx, |this, cx| {
+            this.set_language(Some(typescript_language), cx)
+        });
         let editor1 = cx.new_view(|cx| Editor::for_buffer(buffer1, Some(project.clone()), cx));
         let buffer2 = workspace
             .update(cx, |this, cx| {
@@ -240,6 +275,7 @@ mod tests {
             })
             .await
             .unwrap();
+        buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
         let editor2 = cx.new_view(|cx| Editor::for_buffer(buffer2, Some(project), cx));
         workspace.update(cx, |this, cx| {
             this.add_item_to_center(Box::new(editor1.clone()), cx);
@@ -251,7 +287,22 @@ mod tests {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
                         ("ZED_CURRENT_FILE".into(), "rust/b.rs".into()),
-                        ("ZED_WORKSPACE_ROOT".into(), "/dir".into())
+                        ("ZED_WORKTREE_ROOT".into(), "/dir".into())
+                    ])
+                }
+            );
+            // And now, let's select an identifier.
+            editor2.update(cx, |this, cx| {
+                this.change_selections(None, cx, |selections| selections.select_ranges([14..18]))
+            });
+            assert_eq!(
+                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                TaskContext {
+                    cwd: Some("/dir".into()),
+                    env: HashMap::from_iter([
+                        ("ZED_CURRENT_FILE".into(), "rust/b.rs".into()),
+                        ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
+                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_rust_file".into())
                     ])
                 }
             );
@@ -264,7 +315,8 @@ mod tests {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
                         ("ZED_CURRENT_FILE".into(), "a.ts".into()),
-                        ("ZED_WORKSPACE_ROOT".into(), "/dir".into())
+                        ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
+                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_test".into())
                     ])
                 }
             );
