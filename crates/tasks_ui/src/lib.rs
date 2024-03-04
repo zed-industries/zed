@@ -24,14 +24,21 @@ pub fn init(cx: &mut AppContext) {
                         TasksModal::new(inventory, task_context, workspace_handle, cx)
                     })
                 })
-                .register_action(move |workspace, _: &modal::Rerun, cx| {
-                    if let Some(task) = workspace.project().update(cx, |project, cx| {
-                        project
-                            .task_inventory()
-                            .update(cx, |inventory, cx| inventory.last_scheduled_task(cx))
-                    }) {
-                        let cwd = task_cwd(workspace, cx).log_err().flatten();
-                        let task_context = task_context(workspace, cwd, cx);
+                .register_action(move |workspace, action: &modal::Rerun, cx| {
+                    if let Some((task, old_context)) =
+                        workspace.project().update(cx, |project, cx| {
+                            project
+                                .task_inventory()
+                                .update(cx, |inventory, cx| inventory.last_scheduled_task(cx))
+                        })
+                    {
+                        let task_context = if action.reevaluate_context {
+                            let cwd = task_cwd(workspace, cx).log_err().flatten();
+                            task_context(workspace, cwd, cx)
+                        } else {
+                            old_context
+                        };
+
                         schedule_task(workspace, task.as_ref(), task_context, cx)
                     };
                 });
@@ -52,30 +59,31 @@ fn task_context(
     if let Some(current_editor) = current_editor {
         (|| {
             let editor = current_editor.read(cx);
-            let cursor_offset = editor.selections.newest::<usize>(cx);
+            let selection = editor.selections.newest::<usize>(cx);
             let (buffer, _, _) = editor
                 .buffer()
                 .read(cx)
-                .point_to_buffer_offset(cursor_offset.start, cx)?;
+                .point_to_buffer_offset(selection.start, cx)?;
 
             let workspace_root = workspace.visible_worktrees(cx).next()?.read(cx).abs_path();
 
             current_editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(cx);
+                let selection_range = selection.range();
                 let start = snapshot
                     .display_snapshot
                     .buffer_snapshot
-                    .anchor_after(cursor_offset.head())
+                    .anchor_after(selection.range().start)
                     .text_anchor;
                 let end = snapshot
                     .display_snapshot
                     .buffer_snapshot
-                    .anchor_after(cursor_offset.tail())
+                    .anchor_after(selection.tail())
                     .text_anchor;
                 let Point { row, column } = snapshot
                     .display_snapshot
                     .buffer_snapshot
-                    .offset_to_point(cursor_offset.range().start);
+                    .offset_to_point(selection.range().start);
                 let row = row + 1;
                 let column = column + 1;
                 let location = Location {
@@ -134,11 +142,11 @@ fn schedule_task(
     task_cx: TaskContext,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    let spawn_in_terminal = task.exec(task_cx);
+    let spawn_in_terminal = task.exec(task_cx.clone());
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         workspace.project().update(cx, |project, cx| {
             project.task_inventory().update(cx, |inventory, _| {
-                inventory.task_scheduled(task.id().clone());
+                inventory.task_scheduled(task.id().clone(), task_cx);
             })
         });
         cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));

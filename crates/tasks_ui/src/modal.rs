@@ -2,9 +2,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    actions, impl_actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusableView,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
@@ -17,8 +17,16 @@ use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
 
 use crate::schedule_task;
+use serde::Deserialize;
+actions!(task, [Spawn]);
 
-actions!(task, [Spawn, Rerun]);
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct Rerun {
+    #[serde(default)]
+    pub reevaluate_context: bool,
+}
+
+impl_actions!(task, [Rerun]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
