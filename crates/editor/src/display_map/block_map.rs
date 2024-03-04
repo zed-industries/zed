@@ -987,7 +987,7 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
         if row >= target {
             break;
         }
-        offset += line.len() as usize;
+        offset += line.len();
     }
     (row, offset)
 }

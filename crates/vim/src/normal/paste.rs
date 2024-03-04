@@ -135,8 +135,8 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                         } else {
                             (clipboard_text.to_string(), first_selection_indent_column)
                         };
-                    let line_mode = to_insert.ends_with("\n");
-                    let is_multiline = to_insert.contains("\n");
+                    let line_mode = to_insert.ends_with('\n');
+                    let is_multiline = to_insert.contains('\n');
 
                     if line_mode && !before {
                         if selection.is_empty() {
@@ -480,7 +480,7 @@ mod test {
                 the_
                 ˇfox jumps over
                 _dog"}
-            .replace("_", " "), // Hack for trailing whitespace
+            .replace('_', " "), // Hack for trailing whitespace
         )
         .await;
         cx.assert_shared_clipboard("lazy").await;

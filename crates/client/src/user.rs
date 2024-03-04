@@ -656,7 +656,7 @@ impl UserStore {
                 let users = response
                     .users
                     .into_iter()
-                    .map(|user| User::new(user))
+                    .map(User::new)
                     .collect::<Vec<_>>();
 
                 this.update(&mut cx, |this, _| {

@@ -480,7 +480,7 @@ impl Interactivity {
         self.tooltip_builder = Some(Rc::new(build_tooltip));
     }
 
-    /// Block the mouse from interacting with this element or any of it's children
+    /// Block the mouse from interacting with this element or any of its children
     /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
     pub fn block_mouse(&mut self) {
         self.block_mouse = true;
@@ -508,7 +508,7 @@ pub trait InteractiveElement: Sized {
 
     /// Track the focus state of the given focus handle on this element.
     /// If the focus handle is focused by the application, this element will
-    /// apply it's focused styles.
+    /// apply its focused styles.
     fn track_focus(mut self, focus_handle: &FocusHandle) -> Focusable<Self> {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
@@ -834,7 +834,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of it's children
+    /// Block the mouse from interacting with this element or any of its children
     /// The fluent API equivalent to [`Interactivity::block_mouse`]
     fn block_mouse(mut self) -> Self {
         self.interactivity().block_mouse();

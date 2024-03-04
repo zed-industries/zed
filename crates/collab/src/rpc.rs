@@ -355,7 +355,7 @@ impl Server {
                                     &refreshed_room.room,
                                     &refreshed_room.channel_members,
                                     &peer,
-                                    &*pool.lock(),
+                                    &pool.lock(),
                                 );
                             }
                             contacts_to_update
@@ -545,6 +545,7 @@ impl Server {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
@@ -755,13 +756,13 @@ impl<'a> Deref for ConnectionPoolGuard<'a> {
     type Target = ConnectionPool;
 
     fn deref(&self) -> &Self::Target {
-        &*self.guard
+        &self.guard
     }
 }
 
 impl<'a> DerefMut for ConnectionPoolGuard<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.guard
+        &mut self.guard
     }
 }
 
@@ -2277,7 +2278,7 @@ async fn request_contact(
         session.peer.send(connection_id, update.clone())?;
     }
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2334,7 +2335,7 @@ async fn respond_to_contact_request(
             session.peer.send(connection_id, update.clone())?;
         }
 
-        send_notifications(&*pool, &session.peer, notifications);
+        send_notifications(&pool, &session.peer, notifications);
     }
 
     response.send(proto::Ack {})?;
@@ -2502,7 +2503,7 @@ async fn invite_channel_member(
         session.peer.send(connection_id, update.clone())?;
     }
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2764,7 +2765,7 @@ async fn respond_to_channel_invite(
         }
     };
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
 
@@ -2934,7 +2935,7 @@ async fn update_channel_buffer(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             session.peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     latest_channel_buffer_versions: vec![proto::ChannelBufferVersion {
                         channel_id: channel_id.to_proto(),
@@ -3019,8 +3020,8 @@ fn channel_buffer_updated<T: EnvelopedMessage>(
     message: &T,
     peer: &Peer,
 ) {
-    broadcast(Some(sender_id), collaborators.into_iter(), |peer_id| {
-        peer.send(peer_id.into(), message.clone())
+    broadcast(Some(sender_id), collaborators, |peer_id| {
+        peer.send(peer_id, message.clone())
     });
 }
 
@@ -3125,7 +3126,7 @@ async fn send_channel_message(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             session.peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     latest_channel_message_ids: vec![proto::ChannelMessageId {
                         channel_id: channel_id.to_proto(),
@@ -3421,7 +3422,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
             .collect(),
         observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
         observed_channel_message_id: channels.observed_channel_messages.clone(),
-        ..Default::default()
     }
 }
 
@@ -3498,7 +3498,7 @@ fn room_updated(room: &proto::Room, peer: &Peer) {
             .filter_map(|participant| Some(participant.peer_id?.into())),
         |peer_id| {
             peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::RoomUpdated {
                     room: Some(room.clone()),
                 },
@@ -3527,7 +3527,7 @@ fn channel_updated(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     channel_participants: vec![proto::ChannelParticipants {
                         channel_id: channel_id.to_proto(),

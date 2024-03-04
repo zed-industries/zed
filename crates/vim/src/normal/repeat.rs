@@ -294,7 +294,7 @@ mod test {
                     lsp::CompletionItem {
                         label: "first".to_string(),
                         text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: lsp::Range::new(position.clone(), position.clone()),
+                            range: lsp::Range::new(position, position),
                             new_text: "first".to_string(),
                         })),
                         ..Default::default()
@@ -302,7 +302,7 @@ mod test {
                     lsp::CompletionItem {
                         label: "second".to_string(),
                         text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: lsp::Range::new(position.clone(), position.clone()),
+                            range: lsp::Range::new(position, position),
                             new_text: "second".to_string(),
                         })),
                         ..Default::default()

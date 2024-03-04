@@ -123,7 +123,7 @@ impl Render for ProjectSharedNotification {
             let theme_settings = ThemeSettings::get_global(cx);
             (
                 theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size.clone(),
+                theme_settings.ui_font_size,
             )
         };
 

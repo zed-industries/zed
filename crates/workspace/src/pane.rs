@@ -44,6 +44,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but without auto formatting
+    SaveWithoutFormat,
     /// write any files that have local changes
     /// prompt before overwriting on-disk changes
     SaveAll,
@@ -899,7 +901,7 @@ impl Pane {
             if not_shown_files == 1 {
                 file_names.push(".. 1 file not shown".into());
             } else {
-                file_names.push(format!(".. {} files not shown", not_shown_files).into());
+                file_names.push(format!(".. {} files not shown", not_shown_files));
             }
         }
         (
@@ -1122,7 +1124,7 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save {
+        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
             is_dirty = true;
         }
 
@@ -1136,6 +1138,8 @@ impl Pane {
             has_conflict = false;
         }
 
+        let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+
         if has_conflict && can_save {
             let answer = pane.update(cx, |pane, cx| {
                 pane.activate_item(item_ix, true, true, cx);
@@ -1147,7 +1151,10 @@ impl Pane {
                 )
             })?;
             match answer.await {
-                Ok(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Ok(0) => {
+                    pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                        .await?
+                }
                 Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
                 _ => return Ok(false),
             }
@@ -1179,7 +1186,8 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
+                pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                    .await?;
             } else if can_save_as {
                 let start_abs_path = project
                     .update(cx, |project, cx| {
@@ -1211,7 +1219,7 @@ impl Pane {
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
-            item.save(project, cx)
+            item.save(true, project, cx)
         } else {
             Task::ready(Ok(()))
         }
@@ -1433,16 +1441,20 @@ impl Pane {
                             "Close Clean",
                             Some(Box::new(CloseCleanItems)),
                             cx.handler_for(&pane, move |pane, cx| {
-                                pane.close_clean_items(&CloseCleanItems, cx)
-                                    .map(|task| task.detach_and_log_err(cx));
+                                if let Some(task) = pane.close_clean_items(&CloseCleanItems, cx) {
+                                    task.detach_and_log_err(cx)
+                                }
                             }),
                         )
                         .entry(
                             "Close All",
                             Some(Box::new(CloseAllItems { save_intent: None })),
                             cx.handler_for(&pane, |pane, cx| {
-                                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
-                                    .map(|task| task.detach_and_log_err(cx));
+                                if let Some(task) =
+                                    pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+                                {
+                                    task.detach_and_log_err(cx)
+                                }
                             }),
                         );
 
@@ -1783,42 +1795,49 @@ impl Render for Pane {
             }))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                    pane.close_active_item(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_active_item(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseInactiveItems, cx| {
-                    pane.close_inactive_items(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_inactive_items(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseCleanItems, cx| {
-                    pane.close_clean_items(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_clean_items(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseItemsToTheLeft, cx| {
-                    pane.close_items_to_the_left(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_items_to_the_left(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseItemsToTheRight, cx| {
-                    pane.close_items_to_the_right(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_items_to_the_right(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(cx.listener(|pane: &mut Self, action: &CloseAllItems, cx| {
-                pane.close_all_items(action, cx)
-                    .map(|task| task.detach_and_log_err(cx));
+                if let Some(task) = pane.close_all_items(action, cx) {
+                    task.detach_and_log_err(cx)
+                }
             }))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                    pane.close_active_item(action, cx)
-                        .map(|task| task.detach_and_log_err(cx));
+                    if let Some(task) = pane.close_active_item(action, cx) {
+                        task.detach_and_log_err(cx)
+                    }
                 }),
             )
             .on_action(
@@ -2586,8 +2605,8 @@ mod tests {
 
             let mut index = 0;
             let items = labels.map(|mut label| {
-                if label.ends_with("*") {
-                    label = label.trim_end_matches("*");
+                if label.ends_with('*') {
+                    label = label.trim_end_matches('*');
                     active_item_index = index;
                 }
 

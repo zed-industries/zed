@@ -19,10 +19,6 @@ impl LspAdapter for DartLanguageServer {
         LanguageServerName("dart".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "dart"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

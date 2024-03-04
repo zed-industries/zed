@@ -355,40 +355,68 @@ struct ToUpload {
 
 impl ToUpload {
     pub async fn upload(&self, clickhouse_client: &clickhouse::Client) -> anyhow::Result<()> {
-        Self::upload_to_table("editor_events", &self.editor_events, clickhouse_client)
+        const EDITOR_EVENTS_TABLE: &str = "editor_events";
+        Self::upload_to_table(EDITOR_EVENTS_TABLE, &self.editor_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'editor_events'"))?;
-        Self::upload_to_table("copilot_events", &self.copilot_events, clickhouse_client)
-            .await
-            .with_context(|| format!("failed to upload to table 'copilot_events'"))?;
+            .with_context(|| format!("failed to upload to table '{EDITOR_EVENTS_TABLE}'"))?;
+
+        const COPILOT_EVENTS_TABLE: &str = "copilot_events";
         Self::upload_to_table(
-            "assistant_events",
+            COPILOT_EVENTS_TABLE,
+            &self.copilot_events,
+            clickhouse_client,
+        )
+        .await
+        .with_context(|| format!("failed to upload to table '{COPILOT_EVENTS_TABLE}'"))?;
+
+        const ASSISTANT_EVENTS_TABLE: &str = "assistant_events";
+        Self::upload_to_table(
+            ASSISTANT_EVENTS_TABLE,
             &self.assistant_events,
             clickhouse_client,
         )
         .await
-        .with_context(|| format!("failed to upload to table 'assistant_events'"))?;
-        Self::upload_to_table("call_events", &self.call_events, clickhouse_client)
+        .with_context(|| format!("failed to upload to table '{ASSISTANT_EVENTS_TABLE}'"))?;
+
+        const CALL_EVENTS_TABLE: &str = "call_events";
+        Self::upload_to_table(CALL_EVENTS_TABLE, &self.call_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'call_events'"))?;
-        Self::upload_to_table("cpu_events", &self.cpu_events, clickhouse_client)
+            .with_context(|| format!("failed to upload to table '{CALL_EVENTS_TABLE}'"))?;
+
+        const CPU_EVENTS_TABLE: &str = "cpu_events";
+        Self::upload_to_table(CPU_EVENTS_TABLE, &self.cpu_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'cpu_events'"))?;
-        Self::upload_to_table("memory_events", &self.memory_events, clickhouse_client)
+            .with_context(|| format!("failed to upload to table '{CPU_EVENTS_TABLE}'"))?;
+
+        const MEMORY_EVENTS_TABLE: &str = "memory_events";
+        Self::upload_to_table(MEMORY_EVENTS_TABLE, &self.memory_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'memory_events'"))?;
-        Self::upload_to_table("app_events", &self.app_events, clickhouse_client)
+            .with_context(|| format!("failed to upload to table '{MEMORY_EVENTS_TABLE}'"))?;
+
+        const APP_EVENTS_TABLE: &str = "app_events";
+        Self::upload_to_table(APP_EVENTS_TABLE, &self.app_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'app_events'"))?;
-        Self::upload_to_table("setting_events", &self.setting_events, clickhouse_client)
+            .with_context(|| format!("failed to upload to table '{APP_EVENTS_TABLE}'"))?;
+
+        const SETTING_EVENTS_TABLE: &str = "setting_events";
+        Self::upload_to_table(
+            SETTING_EVENTS_TABLE,
+            &self.setting_events,
+            clickhouse_client,
+        )
+        .await
+        .with_context(|| format!("failed to upload to table '{SETTING_EVENTS_TABLE}'"))?;
+
+        const EDIT_EVENTS_TABLE: &str = "edit_events";
+        Self::upload_to_table(EDIT_EVENTS_TABLE, &self.edit_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'setting_events'"))?;
-        Self::upload_to_table("edit_events", &self.edit_events, clickhouse_client)
+            .with_context(|| format!("failed to upload to table '{EDIT_EVENTS_TABLE}'"))?;
+
+        const ACTION_EVENTS_TABLE: &str = "action_events";
+        Self::upload_to_table(ACTION_EVENTS_TABLE, &self.action_events, clickhouse_client)
             .await
-            .with_context(|| format!("failed to upload to table 'edit_events'"))?;
-        Self::upload_to_table("action_events", &self.action_events, clickhouse_client)
-            .await
-            .with_context(|| format!("failed to upload to table 'action_events'"))?;
+            .with_context(|| format!("failed to upload to table '{ACTION_EVENTS_TABLE}'"))?;
+
         Ok(())
     }
 

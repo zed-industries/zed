@@ -12,11 +12,14 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
-#[cfg(any(target_os = "linux", feature = "macos-blade"))]
+#[cfg(any(target_os = "linux", target_os = "windows", feature = "macos-blade"))]
 mod blade;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
+
+#[cfg(target_os = "windows")]
+mod windows;
 
 use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
@@ -54,6 +57,8 @@ pub(crate) use mac::*;
 pub(crate) use test::*;
 use time::UtcOffset;
 pub use util::SemanticVersion;
+#[cfg(target_os = "windows")]
+pub(crate) use windows::*;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
@@ -66,7 +71,7 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 // todo("windows")
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    unimplemented!()
+    Rc::new(WindowsPlatform::new())
 }
 
 pub(crate) trait Platform: 'static {
