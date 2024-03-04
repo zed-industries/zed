@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::Point;
 use modal::TasksModal;
-use project::Location;
+use project::{Location, WorktreeId};
 use task::{Task, TaskContext};
 use util::ResultExt;
 use workspace::Workspace;
@@ -65,8 +65,6 @@ fn task_context(
                 .read(cx)
                 .point_to_buffer_offset(selection.start, cx)?;
 
-            let workspace_root = workspace.visible_worktrees(cx).next()?.read(cx).abs_path();
-
             current_editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(cx);
                 let selection_range = selection.range();
@@ -90,27 +88,40 @@ fn task_context(
                     buffer: buffer.clone(),
                     range: start..end,
                 };
+
                 let current_file = location
                     .buffer
                     .read(cx)
                     .file()
                     .map(|file| file.path().to_string_lossy().to_string());
+                let worktree_id = location
+                    .buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| WorktreeId::from_usize(file.worktree_id()));
                 let context = buffer
                     .read(cx)
                     .language()
                     .and_then(|language| language.context_provider())
                     .and_then(|provider| provider.build_context(location, cx).ok());
 
+                let worktree_path = worktree_id.and_then(|worktree_id| {
+                    workspace
+                        .project()
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+                });
+
                 let mut env = HashMap::from_iter([
-                    (
-                        "ZED_WORKTREE_ROOT".into(),
-                        workspace_root.to_string_lossy().to_string(),
-                    ),
                     ("ZED_ROW".into(), row.to_string()),
                     ("ZED_COLUMN".into(), column.to_string()),
                 ]);
                 if let Some(path) = current_file {
                     env.insert("ZED_FILE".into(), path);
+                }
+                if let Some(worktree_path) = worktree_path {
+                    env.insert("ZED_WORKTREE_ROOT".into(), worktree_path);
                 }
                 if let Some(language_context) = context {
                     if let Some(symbol) = language_context.symbol {
