@@ -363,6 +363,85 @@ impl ExtensionsPage {
             .read(cx)
             .extension_status(&extension.id);
 
+        let (install_or_uninstall_button, upgrade_button) =
+            self.buttons_for_entry(extension, &status, cx);
+        let repository_url = extension.repository.clone();
+
+        ExtensionCard::new()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_end()
+                            .child(Headline::new(extension.name.clone()).size(HeadlineSize::Medium))
+                            .child(
+                                Headline::new(format!("v{}", extension.version))
+                                    .size(HeadlineSize::XSmall),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .children(upgrade_button)
+                            .child(install_or_uninstall_button),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small),
+                    )
+                    .child(
+                        Label::new(format!("Downloads: {}", extension.download_count))
+                            .size(LabelSize::Small),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .children(extension.description.as_ref().map(|description| {
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                    }))
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("repository-{}", extension.id)),
+                            IconName::Github,
+                        )
+                        .icon_color(Color::Accent)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Filled)
+                        .on_click(cx.listener({
+                            let repository_url = repository_url.clone();
+                            move |_, _, cx| {
+                                cx.open_url(&repository_url);
+                            }
+                        }))
+                        .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
+                    ),
+            )
+    }
+
+    fn buttons_for_entry(
+        &self,
+        extension: &ExtensionApiResponse,
+        status: &ExtensionStatus,
+        cx: &mut ViewContext<Self>,
+    ) -> (Button, Option<Button>) {
         let upgrade_button = match status.clone() {
             ExtensionStatus::NotInstalled
             | ExtensionStatus::Installing
@@ -445,75 +524,7 @@ impl ExtensionsPage {
         }
         .color(Color::Accent);
 
-        let repository_url = extension.repository.clone();
-
-        ExtensionCard::new()
-            .child(
-                h_flex()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_end()
-                            .child(Headline::new(extension.name.clone()).size(HeadlineSize::Medium))
-                            .child(
-                                Headline::new(format!("v{}", extension.version))
-                                    .size(HeadlineSize::XSmall),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .children(upgrade_button)
-                            .child(install_or_uninstall_button),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .justify_between()
-                    .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
-                    )
-                    .child(
-                        Label::new(format!("Downloads: {}", extension.download_count))
-                            .size(LabelSize::Small),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .justify_between()
-                    .children(extension.description.as_ref().map(|description| {
-                        Label::new(description.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Default)
-                    }))
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("repository-{}", extension.id)),
-                            IconName::Github,
-                        )
-                        .icon_color(Color::Accent)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Filled)
-                        .on_click(cx.listener({
-                            let repository_url = repository_url.clone();
-                            move |_, _, cx| {
-                                cx.open_url(&repository_url);
-                            }
-                        }))
-                        .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
-                    ),
-            )
+        (install_or_uninstall_button, upgrade_button)
     }
 
     fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
