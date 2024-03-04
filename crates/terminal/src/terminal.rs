@@ -42,8 +42,8 @@ use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
-#[cfg(windows)]
-use windows_sys::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
+// #[cfg(windows)]
+// use windows_sys::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use std::{
     cmp::{self, min},
@@ -403,7 +403,7 @@ impl TerminalBuilder {
         let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
 
         #[cfg(windows)]
-        let (fd, shell_pid) = (pty.fd(), pty.pid());
+        let (fd, shell_pid) = (-1, 0);
 
         //And connect them together
         let event_loop = EventLoop::new(

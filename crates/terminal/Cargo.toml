@@ -11,8 +11,7 @@ doctest = false
 
 
 [dependencies]
-# alacritty_terminal = "0.22.0"
-alacritty_terminal = { git = "https://github.com/JunkuiZhang/alacritty", rev = "5f5028be3b55092a19dc0a295e0007c37c30db1c" }
+alacritty_terminal = "0.22.0"
 anyhow.workspace = true
 collections.workspace = true
 dirs = "4.0.0"
