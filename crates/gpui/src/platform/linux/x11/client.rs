@@ -6,8 +6,8 @@ use xcb::{x, Xid as _};
 use xkbcommon::xkb;
 
 use collections::HashMap;
-use copypasta::ClipboardProvider;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
+use copypasta::ClipboardProvider;
 
 use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};

@@ -363,7 +363,10 @@ impl Platform for LinuxPlatform {
         let clipboard = self.client.get_clipboard();
         let contents = clipboard.borrow_mut().get_contents();
         match contents {
-            Ok(text) => Some(ClipboardItem { metadata: None, text }),
+            Ok(text) => Some(ClipboardItem {
+                metadata: None,
+                text,
+            }),
             _ => None,
         }
     }

@@ -6,8 +6,8 @@ use std::time::Duration;
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::LoopHandle;
 use calloop_wayland_source::WaylandSource;
+use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
-use copypasta::wayland_clipboard::{Clipboard, Primary, create_clipboards_from_external};
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
@@ -116,8 +116,7 @@ impl WaylandClient {
         });
 
         let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-        let (primary, clipboard) =
-            unsafe { create_clipboards_from_external(display) };
+        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
             compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
