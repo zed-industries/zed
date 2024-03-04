@@ -111,7 +111,6 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
-use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
     observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
@@ -351,7 +350,6 @@ type CompletionId = usize;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
-type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -390,7 +388,6 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
-    inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -1528,7 +1525,6 @@ impl Editor {
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
-            inlay_background_highlights: Default::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -8955,29 +8951,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub(crate) fn highlight_inlay_background<T: 'static>(
-        &mut self,
-        ranges: Vec<InlayHighlight>,
-        color_fetcher: fn(&ThemeColors) -> Hsla,
-        cx: &mut ViewContext<Self>,
-    ) {
-        // TODO: no actual highlights happen for inlays currently, find a way to do that
-        self.inlay_background_highlights
-            .insert(Some(TypeId::of::<T>()), (color_fetcher, ranges));
-        cx.notify();
-    }
-
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
-        let inlay_highlights = self
-            .inlay_background_highlights
-            .remove(&Some(TypeId::of::<T>()));
-        if text_highlights.is_some() || inlay_highlights.is_some() {
-            cx.notify();
-        }
         text_highlights
     }
 
