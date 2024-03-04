@@ -393,6 +393,7 @@
       ],
       "t": "vim::Tag",
       "s": "vim::Sentence",
+      "p": "vim::Paragraph",
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",
