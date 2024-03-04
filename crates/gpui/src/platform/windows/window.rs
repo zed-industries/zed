@@ -255,7 +255,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_close_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.should_close.as_mut() {
             if callback() {
                 return LRESULT(0);
@@ -266,7 +266,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_destroy_msg(&self) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.close.take() {
             callback()
         }
@@ -287,7 +287,7 @@ impl WindowsWindowInner {
         let x = Pixels::from(lparam.signed_loword() as f32);
         let y = Pixels::from(lparam.signed_hiword() as f32);
         self.mouse_position.set(Point { x, y });
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
                 flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
@@ -388,7 +388,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_keydown_msg(&self, wparam: WPARAM) -> CallbackResult {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         let keystroke = self.parse_key_msg_keystroke(wparam);
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
@@ -423,7 +423,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_keyup_msg(&self, wparam: WPARAM) -> CallbackResult {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         let keystroke = self.parse_key_msg_keystroke(wparam);
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
@@ -438,7 +438,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_char_msg(&self, wparam: WPARAM) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let modifiers = self.current_modifiers();
             let msg_char = wparam.0 as u8 as char;
@@ -468,7 +468,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = Pixels::from(lparam.signed_loword() as f32);
             let y = Pixels::from(lparam.signed_hiword() as f32);
@@ -486,7 +486,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_up_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = Pixels::from(lparam.signed_loword() as f32);
             let y = Pixels::from(lparam.signed_hiword() as f32);
@@ -504,7 +504,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = Pixels::from(lparam.signed_loword() as f32);
             let y = Pixels::from(lparam.signed_hiword() as f32);
@@ -530,7 +530,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_horizontal_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
+        let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = Pixels::from(lparam.signed_loword() as f32);
             let y = Pixels::from(lparam.signed_hiword() as f32);
