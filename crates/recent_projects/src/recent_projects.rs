@@ -10,7 +10,7 @@ use picker::{
 };
 use serde::Deserialize;
 use std::{path::Path, sync::Arc};
-use ui::{prelude::*, tooltip_container, Divider, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
 
@@ -100,7 +100,7 @@ impl RecentProjects {
                 let weak_workspace = cx.view().downgrade();
                 workspace.toggle_modal(cx, |cx| {
                     let delegate =
-                        RecentProjectsDelegate::new(weak_workspace, create_new_window, true, false);
+                        RecentProjectsDelegate::new(weak_workspace, create_new_window, true);
 
                     let modal = Self::new(delegate, 34., cx);
                     modal
@@ -113,7 +113,7 @@ impl RecentProjects {
     pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
         cx.new_view(|cx| {
             Self::new(
-                RecentProjectsDelegate::new(workspace, false, false, true),
+                RecentProjectsDelegate::new(workspace, false, false),
                 20.,
                 cx,
             )
@@ -149,19 +149,13 @@ pub struct RecentProjectsDelegate {
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
-    popover: bool,
     create_new_window: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
 }
 
 impl RecentProjectsDelegate {
-    fn new(
-        workspace: WeakView<Workspace>,
-        create_new_window: bool,
-        render_paths: bool,
-        popover: bool,
-    ) -> Self {
+    fn new(workspace: WeakView<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
         Self {
             workspace,
             workspaces: vec![],
@@ -170,11 +164,14 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             reset_selected_match_index: true,
-            popover,
         }
     }
+}
+impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
+impl PickerDelegate for RecentProjectsDelegate {
+    type ListItem = ListItem;
 
-    fn help_text(&self, cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {
             (
                 cx.keystroke_text_for(&menu::Confirm),
@@ -189,18 +186,6 @@ impl RecentProjectsDelegate {
         Arc::from(format!(
             "{reuse_window} reuses the window, {create_window} opens a new one",
         ))
-    }
-}
-impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
-impl PickerDelegate for RecentProjectsDelegate {
-    type ListItem = ListItem;
-
-    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
-        if !self.popover {
-            return Arc::from("Search recent project...");
-        }
-
-        self.help_text(cx)
     }
 
     fn match_count(&self) -> usize {
@@ -378,23 +363,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .into()
                 }),
         )
-    }
-
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        if self.popover {
-            return None;
-        }
-
-        let text = self.help_text(cx).to_string();
-        let view = v_flex().child(Divider::horizontal()).child(
-            div()
-                .py_1()
-                .px_4()
-                .text_color(cx.theme().colors().text_muted)
-                .child(text),
-        );
-
-        Some(view.into_any_element())
     }
 }
 
