@@ -54,9 +54,9 @@ use crate::{
     parse_mouse_hwheel, parse_mouse_movement_wparam, parse_mouse_vwheel, parse_system_key,
     platform::cross_platform::BladeRenderer, set_windowdata, Bounds, DisplayId, ForegroundExecutor,
     Modifiers, Pixels, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    Size, WindowKind, WindowOptions, WindowsWindowBase, WindowsWinodwDataWrapper,
-    DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH, MENU_ACTIONS, WINDOW_CLOSE, WINDOW_REFRESH_TIMER,
-    WINODW_EXTRA_EXSTYLE, WINODW_REFRESH_INTERVAL, WINODW_STYLE,
+    Size, WindowKind, WindowOptions, WindowsWindowBase, WindowsWindowDataWrapper,
+    BASIC_WINDOW_STYLE, DRAGDROP_GET_COUNT, FILENAME_MAXLENGTH, MENU_ACTIONS, WINDOW_CLOSE,
+    WINDOW_EXTRA_EXSTYLE, WINDOW_REFRESH_INTERVAL, WINDOW_REFRESH_TIMER,
 };
 
 use super::{display::WindowsDisplay, WINDOW_CLASS};
@@ -159,12 +159,12 @@ impl WindowsWindow {
             SetTimer(
                 raw_window_handle,
                 WINDOW_REFRESH_TIMER,
-                WINODW_REFRESH_INTERVAL,
+                WINDOW_REFRESH_INTERVAL,
                 TIMERPROC::None,
             );
         }
         let windows_dragdrop = unsafe {
-            set_windowdata(raw_window_handle, WindowsWinodwDataWrapper(inner.clone()));
+            set_windowdata(raw_window_handle, WindowsWindowDataWrapper(inner.clone()));
             let drop_target = WindowsDragDropTarget(inner.clone());
             let windows_dragdrop: IDropTarget = drop_target.into();
             RegisterDragDrop(raw_window_handle, &windows_dragdrop)
@@ -410,7 +410,7 @@ impl WindowsWindowBase for WindowsWindowinner {
                     });
                     self.handle_input(input);
                 }
-                // let Windows to hanle the left things, so we still have the system-wide
+                // let Windows to handle the left things, so we still have the system-wide
                 // Alt+Tab, Alt+F4 ... working
                 DefWindowProcW(handle, message, wparam, lparam)
             }
@@ -887,7 +887,7 @@ impl RawWindow {
     pub fn show(&self) {
         unsafe {
             // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
-            let _ = ShowWindow(self.hwnd(), SW_SHOW); // succes reports as error
+            let _ = ShowWindow(self.hwnd(), SW_SHOW); // success reports as error
         }
     }
 
@@ -978,9 +978,9 @@ unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
 fn parse_window_options(
     options: &WindowOptions,
 ) -> (WINDOW_STYLE, WINDOW_EX_STYLE, Option<i32>, Option<i32>) {
-    let mut style = WINODW_STYLE;
+    let mut style = BASIC_WINDOW_STYLE;
     // https://learn.microsoft.com/en-us/windows/win32/winmsg/extended-window-styles
-    let exstyle = WINDOW_EX_STYLE::default() | WINODW_EXTRA_EXSTYLE;
+    let exstyle = WINDOW_EX_STYLE::default() | WINDOW_EXTRA_EXSTYLE;
     let mut width = None;
     let mut height = None;
     if options.show {

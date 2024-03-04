@@ -66,7 +66,7 @@ use windows::{
 use crate::{
     encode_wide, log_windows_error, log_windows_error_with_message,
     platform::cross_platform::CosmicTextSystem, set_windowdata, Keystroke, WindowsWindow,
-    WindowsWindowBase, WindowsWinodwDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
+    WindowsWindowBase, WindowsWindowDataWrapper, ACCEL_FALT, ACCEL_FCONTROL, ACCEL_FSHIFT,
     ACCEL_FVIRTKEY, CF_UNICODETEXT, CLIPBOARD_METADATA, CLIPBOARD_TEXT_HASH, DISPATCH_WINDOW_CLASS,
     DISPATCH_WINDOW_EXSTYLE, DISPATCH_WINDOW_STYLE, MAIN_DISPATCH, MENU_ACTIONS, WINDOW_CLOSE,
 };
@@ -121,7 +121,7 @@ impl WindowsPlatform {
         unsafe {
             set_windowdata(
                 dispatch_window_handle,
-                WindowsWinodwDataWrapper(inner.clone()),
+                WindowsWindowDataWrapper(inner.clone()),
             );
         }
         let dispatcher = Arc::new(WindowsDispatcher::new(sender, dispatch_window_handle));

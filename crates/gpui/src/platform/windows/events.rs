@@ -30,7 +30,7 @@ use crate::{
     MOUSE_MOVE_MBUTTON, MOUSE_MOVE_RBUTTON, MOUSE_MOVE_XBUTTON1, MOUSE_MOVE_XBUTTON2,
 };
 
-pub struct WindowsWinodwDataWrapper<T: WindowsWindowBase + Sized>(pub Rc<T>);
+pub struct WindowsWindowDataWrapper<T: WindowsWindowBase + Sized>(pub Rc<T>);
 
 pub trait WindowsWindowBase
 where
@@ -51,7 +51,7 @@ where
         lparam: LPARAM,
     ) -> LRESULT {
         unsafe {
-            let ptr = get_windowdata(handle) as *const WindowsWinodwDataWrapper<Self>;
+            let ptr = get_windowdata(handle) as *const WindowsWindowDataWrapper<Self>;
             if ptr.is_null() {
                 return DefWindowProcW(handle, message, wparam, lparam);
             }
