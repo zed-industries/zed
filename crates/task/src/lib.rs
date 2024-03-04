@@ -39,11 +39,11 @@ pub struct SpawnInTerminal {
 }
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
+#[derive(Clone)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,
     /// Additional environment variables associated with a given task.
-    // todo: po: key should be an enum
     pub env: HashMap<String, String>,
 }
 

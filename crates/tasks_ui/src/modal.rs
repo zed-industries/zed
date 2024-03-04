@@ -11,7 +11,7 @@ use picker::{
     Picker, PickerDelegate,
 };
 use project::{Inventory, ProjectPath, TaskSourceKind};
-use task::{oneshot_source::OneshotSource, Task};
+use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
 use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
@@ -28,10 +28,15 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakView<Workspace>,
     prompt: String,
+    task_context: TaskContext,
 }
 
 impl TasksModalDelegate {
-    fn new(inventory: Model<Inventory>, workspace: WeakView<Workspace>) -> Self {
+    fn new(
+        inventory: Model<Inventory>,
+        task_context: TaskContext,
+        workspace: WeakView<Workspace>,
+    ) -> Self {
         Self {
             inventory,
             workspace,
@@ -39,6 +44,7 @@ impl TasksModalDelegate {
             matches: Vec::new(),
             selected_index: 0,
             prompt: String::default(),
+            task_context,
         }
     }
 
@@ -79,11 +85,16 @@ pub(crate) struct TasksModal {
 impl TasksModal {
     pub(crate) fn new(
         inventory: Model<Inventory>,
+        task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let picker = cx
-            .new_view(|cx| Picker::uniform_list(TasksModalDelegate::new(inventory, workspace), cx));
+        let picker = cx.new_view(|cx| {
+            Picker::uniform_list(
+                TasksModalDelegate::new(inventory, task_context, workspace),
+                cx,
+            )
+        });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
         });
@@ -223,7 +234,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(workspace, task.as_ref(), cx);
+                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
             })
             .ok();
         cx.emit(DismissEvent);

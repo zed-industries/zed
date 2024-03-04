@@ -17,8 +17,11 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(|workspace, _: &modal::Spawn, cx| {
                     let inventory = workspace.project().read(cx).task_inventory().clone();
                     let workspace_handle = workspace.weak_handle();
-                    workspace
-                        .toggle_modal(cx, |cx| TasksModal::new(inventory, workspace_handle, cx))
+                    let cwd = task_cwd(workspace, cx).log_err().flatten();
+                    let task_context = task_context(workspace, cwd, cx);
+                    workspace.toggle_modal(cx, |cx| {
+                        TasksModal::new(inventory, task_context, workspace_handle, cx)
+                    })
                 })
                 .register_action(move |workspace, _: &modal::Rerun, cx| {
                     if let Some(task) = workspace.project().update(cx, |project, cx| {
@@ -26,7 +29,9 @@ pub fn init(cx: &mut AppContext) {
                             .task_inventory()
                             .update(cx, |inventory, cx| inventory.last_scheduled_task(cx))
                     }) {
-                        schedule_task(workspace, task.as_ref(), cx)
+                        let cwd = task_cwd(workspace, cx).log_err().flatten();
+                        let task_context = task_context(workspace, cwd, cx);
+                        schedule_task(workspace, task.as_ref(), task_context, cx)
                     };
                 });
         },
@@ -34,16 +39,16 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_, Workspace>) {
-    let cwd = match task.cwd() {
-        Some(cwd) => Some(cwd.to_path_buf()),
-        None => task_cwd(workspace, cx).log_err().flatten(),
-    };
+fn task_context(
+    workspace: &Workspace,
+    cwd: Option<PathBuf>,
+    cx: &mut WindowContext<'_>,
+) -> TaskContext {
     let current_editor = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
         .clone();
-    let task_cx = if let Some(current_editor) = current_editor {
+    if let Some(current_editor) = current_editor {
         (|| {
             let editor = current_editor.read(cx);
             let cursor_offset = editor.selections.newest::<usize>(cx);
@@ -97,7 +102,15 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
             cwd,
             env: Default::default(),
         }
-    };
+    }
+}
+
+fn schedule_task(
+    workspace: &Workspace,
+    task: &dyn Task,
+    task_cx: TaskContext,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
     let spawn_in_terminal = task.exec(task_cx);
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         workspace.project().update(cx, |project, cx| {
