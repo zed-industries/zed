@@ -15,6 +15,7 @@ use crate::{
     state::{Mode, Operator},
     utils::coerce_punctuation,
     visual::visual_motion,
+    replace::replace_motion,
     Vim,
 };
 
@@ -80,6 +81,7 @@ pub enum Motion {
     WindowTop,
     WindowMiddle,
     WindowBottom,
+    UndoReplace,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -182,6 +184,7 @@ actions!(
         WindowTop,
         WindowMiddle,
         WindowBottom,
+        UndoReplace,
     ]
 );
 
@@ -309,6 +312,8 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             motion(Motion::PreviousWordEnd { ignore_punctuation }, cx)
         },
     );
+    workspace
+    .register_action(|_: &mut Workspace, _: &UndoReplace, cx: _| motion(Motion::UndoReplace, cx));
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
@@ -322,8 +327,9 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, count, cx),
+        Mode::Replace => replace_motion(motion, operator, count, cx),
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
-        Mode::Insert | Mode::Replace => {
+        Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
@@ -354,6 +360,7 @@ impl Motion {
             | FindForward { .. }
             | Left
             | Backspace
+            | UndoReplace
             | Right
             | Space
             | StartOfLine { .. }
@@ -382,6 +389,7 @@ impl Motion {
             | RepeatFind { .. }
             | Left
             | Backspace
+            | UndoReplace
             | Right
             | Space
             | StartOfLine { .. }
@@ -408,6 +416,7 @@ impl Motion {
         match self {
             Down { .. }
             | Up { .. }
+            | UndoReplace
             | StartOfDocument
             | EndOfDocument
             | CurrentLine
@@ -466,6 +475,7 @@ impl Motion {
             Up {
                 display_lines: true,
             } => up_display(map, point, goal, times, &text_layout_details),
+            UndoReplace => (backspace(map, point, times), SelectionGoal::None),
             Right => (right(map, point, times), SelectionGoal::None),
             Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (

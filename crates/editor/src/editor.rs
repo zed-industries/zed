@@ -420,6 +420,7 @@ pub struct Editor {
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_width: Pixels,
+    pub last_snapshot: Option<MultiBufferSnapshot>,
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
@@ -1535,6 +1536,7 @@ impl Editor {
             workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
+            last_snapshot: None,
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
@@ -1806,6 +1808,10 @@ impl Editor {
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
         self.input_enabled = input_enabled;
+    }
+
+    pub fn set_last_snapshot(&mut self, last_snapshot: Option<MultiBufferSnapshot>) {
+        self.last_snapshot = last_snapshot;
     }
 
     pub fn set_autoindent(&mut self, autoindent: bool) {

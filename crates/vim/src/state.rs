@@ -1,12 +1,12 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
+use crate::motion::Motion;
 use collections::HashMap;
+use editor::MultiBufferSnapshot;
 use gpui::{Action, KeyContext};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
-
-use crate::motion::Motion;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
@@ -68,6 +68,7 @@ pub struct EditorState {
     pub post_count: Option<usize>,
 
     pub operator_stack: Vec<Operator>,
+    pub original_snapshot: MultiBufferSnapshot,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -163,13 +164,14 @@ impl EditorState {
     }
 
     pub fn vim_controlled(&self) -> bool {
-        let result = (!matches!(self.mode, Mode::Insert) && !matches!(self.mode, Mode::Replace))
-            || matches!(
-                self.operator_stack.last(),
-                Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
-            );
-        println!("result is {:?}", result);
-        result
+        let is_insert_mode = matches!(self.mode, Mode::Insert);
+        if !is_insert_mode {
+            return true;
+        }
+        matches!(
+            self.operator_stack.last(),
+            Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
+        )
     }
 
     pub fn should_autoindent(&self) -> bool {
@@ -224,6 +226,9 @@ impl EditorState {
             active_operator.map(|op| op.id()).unwrap_or_else(|| "none"),
         );
 
+        if self.mode == Mode::Replace {
+            context.add("VimWaiting");
+        }
         context
     }
 }
