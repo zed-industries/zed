@@ -5265,7 +5265,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
@@ -5303,7 +5303,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         unreachable!()
     });
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
     cx.executor().start_waiting();
@@ -5326,7 +5326,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     });
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
@@ -5379,7 +5379,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
@@ -5418,7 +5418,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         },
     );
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
     cx.executor().start_waiting();
@@ -5441,7 +5441,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     });
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {

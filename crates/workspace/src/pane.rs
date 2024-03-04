@@ -44,6 +44,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but without auto formatting
+    SaveWithoutFormat,
     /// write any files that have local changes
     /// prompt before overwriting on-disk changes
     SaveAll,
@@ -1122,7 +1124,7 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save {
+        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
             is_dirty = true;
         }
 
@@ -1136,6 +1138,8 @@ impl Pane {
             has_conflict = false;
         }
 
+        let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+
         if has_conflict && can_save {
             let answer = pane.update(cx, |pane, cx| {
                 pane.activate_item(item_ix, true, true, cx);
@@ -1147,7 +1151,10 @@ impl Pane {
                 )
             })?;
             match answer.await {
-                Ok(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Ok(0) => {
+                    pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                        .await?
+                }
                 Ok(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
                 _ => return Ok(false),
             }
@@ -1179,7 +1186,8 @@ impl Pane {
             }
 
             if can_save {
-                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
+                pane.update(cx, |_, cx| item.save(should_format, project, cx))?
+                    .await?;
             } else if can_save_as {
                 let start_abs_path = project
                     .update(cx, |project, cx| {
@@ -1211,7 +1219,7 @@ impl Pane {
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
-            item.save(project, cx)
+            item.save(true, project, cx)
         } else {
             Task::ready(Ok(()))
         }
