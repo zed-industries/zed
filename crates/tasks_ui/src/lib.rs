@@ -39,16 +39,23 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
         Some(cwd) => Some(cwd.to_path_buf()),
         None => task_cwd(workspace, cx).log_err().flatten(),
     };
-    let current_editor = workspace.active_item_as::<Editor>(cx).clone();
+    let current_editor = workspace
+        .active_item(cx)
+        .map(|item| item.act_as::<Editor>(cx))
+        .flatten()
+        .clone();
     let task_cx = if let Some(current_editor) = current_editor {
         (|| {
-            // todo: handle multibuffers
             let editor = current_editor.read(cx);
-            let buffer = editor.buffer().read(cx).as_singleton()?;
+            let cursor_offset = editor.selections.newest::<usize>(cx);
+            let (buffer, _, _) = editor
+                .buffer()
+                .read(cx)
+                .point_to_buffer_offset(cursor_offset.start, cx)?;
             let context_provider = buffer.read(cx).language()?.context_provider()?;
 
             let workspace_root = workspace.visible_worktrees(cx).next()?.read(cx).abs_path();
-            let cursor_offset = editor.selections.newest::<usize>(cx);
+
             current_editor.update(cx, |editor, cx| {
                 let start = editor
                     .snapshot(cx)
