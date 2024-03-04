@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use gpui::AppContext;
 pub use language::*;
 use node_runtime::NodeRuntime;
