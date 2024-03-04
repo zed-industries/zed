@@ -210,7 +210,7 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        'a: loop {
+        loop {
             match self.wait_message() {
                 WindowsMessageWaitResult::ForegroundExecution => {
                     for runnable in self.inner.main_receiver.drain() {
@@ -219,7 +219,7 @@ impl Platform for WindowsPlatform {
                 }
                 WindowsMessageWaitResult::WindowsMessage(msg) => {
                     if msg.message == WM_QUIT {
-                        break 'a;
+                        break;
                     }
 
                     if !self.run_immediate_msg_handlers(&msg) {
