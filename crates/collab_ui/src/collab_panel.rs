@@ -2023,7 +2023,7 @@ impl CollabPanel {
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
         };
-        let item = ClipboardItem::new(channel.link());
+        let item = ClipboardItem::new(channel.link(cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2206,7 +2206,7 @@ impl CollabPanel {
 
                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
 
-                    channel_link = Some(channel.link());
+                    channel_link = Some(channel.link(cx));
                     (channel_icon, channel_tooltip_text) = match channel.visibility {
                         proto::ChannelVisibility::Public => {
                             (Some("icons/public.svg"), Some("Copy public channel link."))

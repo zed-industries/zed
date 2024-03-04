@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use client::telemetry::Telemetry;
+use client::{parse_zed_link, telemetry::Telemetry};
 use collections::HashMap;
 use command_palette_hooks::{
     CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
@@ -17,7 +17,6 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 
 use postage::{sink::Sink, stream::Stream};
-use release_channel::parse_zed_link;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -192,7 +191,7 @@ impl CommandPaletteDelegate {
                 None
             };
 
-        if parse_zed_link(&query).is_some() {
+        if parse_zed_link(&query, cx).is_some() {
             intercept_result = Some(CommandInterceptResult {
                 action: OpenZedUrl { url: query.clone() }.boxed_clone(),
                 string: query.clone(),
