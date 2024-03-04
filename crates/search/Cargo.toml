@@ -11,7 +11,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-bitflags = "1"
+bitflags.workspace = true
 collections.workspace = true
 editor.workspace = true
 futures.workspace = true

@@ -18,7 +18,7 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<proto::JoinChannelBufferResponse> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?;
 
@@ -134,10 +134,10 @@ impl Database {
             let mut results = Vec::new();
             for client_buffer in buffers {
                 let channel = self
-                    .get_channel_internal(ChannelId::from_proto(client_buffer.channel_id), &*tx)
+                    .get_channel_internal(ChannelId::from_proto(client_buffer.channel_id), &tx)
                     .await?;
                 if self
-                    .check_user_is_channel_participant(&channel, user_id, &*tx)
+                    .check_user_is_channel_participant(&channel, user_id, &tx)
                     .await
                     .is_err()
                 {
@@ -145,7 +145,7 @@ impl Database {
                     continue;
                 }
 
-                let buffer = self.get_channel_buffer(channel.id, &*tx).await?;
+                let buffer = self.get_channel_buffer(channel.id, &tx).await?;
                 let mut collaborators = channel_buffer_collaborator::Entity::find()
                     .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel.id))
                     .all(&*tx)
@@ -180,7 +180,7 @@ impl Database {
 
                 let client_version = version_from_wire(&client_buffer.version);
                 let serialization_version = self
-                    .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &*tx)
+                    .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &tx)
                     .await?;
 
                 let mut rows = buffer_operation::Entity::find()
@@ -283,7 +283,7 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<LeftChannelBuffer> {
         self.transaction(|tx| async move {
-            self.leave_channel_buffer_internal(channel_id, connection, &*tx)
+            self.leave_channel_buffer_internal(channel_id, connection, &tx)
                 .await
         })
         .await
@@ -337,7 +337,7 @@ impl Database {
             let mut result = Vec::new();
             for channel_id in channel_ids {
                 let left_channel_buffer = self
-                    .leave_channel_buffer_internal(channel_id, connection, &*tx)
+                    .leave_channel_buffer_internal(channel_id, connection, &tx)
                     .await?;
                 result.push(left_channel_buffer);
             }
@@ -406,7 +406,7 @@ impl Database {
         channel_id: ChannelId,
     ) -> Result<Vec<UserId>> {
         self.transaction(|tx| async move {
-            self.get_channel_buffer_collaborators_internal(channel_id, &*tx)
+            self.get_channel_buffer_collaborators_internal(channel_id, &tx)
                 .await
         })
         .await
@@ -447,7 +447,7 @@ impl Database {
         Vec<proto::VectorClockEntry>,
     )> {
         self.transaction(move |tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
 
             let mut requires_write_permission = false;
             for op in operations.iter() {
@@ -457,10 +457,10 @@ impl Database {
                 }
             }
             if requires_write_permission {
-                self.check_user_is_channel_member(&channel, user, &*tx)
+                self.check_user_is_channel_member(&channel, user, &tx)
                     .await?;
             } else {
-                self.check_user_is_channel_participant(&channel, user, &*tx)
+                self.check_user_is_channel_participant(&channel, user, &tx)
                     .await?;
             }
 
@@ -471,7 +471,7 @@ impl Database {
                 .ok_or_else(|| anyhow!("no such buffer"))?;
 
             let serialization_version = self
-                .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &*tx)
+                .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &tx)
                 .await?;
 
             let operations = operations
@@ -500,13 +500,13 @@ impl Database {
                     buffer.epoch,
                     *max_operation.replica_id.as_ref(),
                     *max_operation.lamport_timestamp.as_ref(),
-                    &*tx,
+                    &tx,
                 )
                 .await?;
 
-                channel_members = self.get_channel_participants(&channel, &*tx).await?;
+                channel_members = self.get_channel_participants(&channel, &tx).await?;
                 let collaborators = self
-                    .get_channel_buffer_collaborators_internal(channel_id, &*tx)
+                    .get_channel_buffer_collaborators_internal(channel_id, &tx)
                     .await?;
                 channel_members.retain(|member| !collaborators.contains(member));
 
@@ -737,7 +737,7 @@ impl Database {
                 epoch,
                 component.replica_id as i32,
                 component.timestamp as i32,
-                &*tx,
+                &tx,
             )
             .await?;
             Ok(())

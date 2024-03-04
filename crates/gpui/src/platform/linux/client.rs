@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::platform::PlatformWindow;
-use crate::{AnyWindowHandle, DisplayId, PlatformDisplay, WindowOptions};
+use crate::{AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, WindowOptions};
 
 pub trait Client {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
@@ -11,4 +11,5 @@ pub trait Client {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
+    fn set_cursor_style(&self, style: CursorStyle);
 }

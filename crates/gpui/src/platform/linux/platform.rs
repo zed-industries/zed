@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
@@ -107,6 +108,8 @@ impl LinuxPlatform {
     }
 }
 
+const KEYRING_LABEL: &str = "zed-github-account";
+
 impl Platform for LinuxPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.inner.background_executor.clone()
@@ -122,18 +125,15 @@ impl Platform for LinuxPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
+
         self.inner
             .event_loop
             .borrow_mut()
-            .run(None, &mut (), |data| {})
+            .run(None, &mut (), |&mut ()| {})
             .expect("Run loop failed");
 
-        let mut lock = self.inner.callbacks.borrow_mut();
-        if let Some(mut fun) = lock.quit.take() {
-            drop(lock);
+        if let Some(mut fun) = self.inner.callbacks.borrow_mut().quit.take() {
             fun();
-            let mut lock = self.inner.callbacks.borrow_mut();
-            lock.quit = Some(fun);
         }
     }
 
@@ -324,8 +324,11 @@ impl Platform for LinuxPlatform {
         })
     }
 
+    //todo!(linux)
     fn app_path(&self) -> Result<PathBuf> {
-        unimplemented!()
+        Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::app_path is not implemented yet",
+        ))
     }
 
     // todo(linux)
@@ -335,12 +338,16 @@ impl Platform for LinuxPlatform {
         UtcOffset::UTC
     }
 
+    //todo!(linux)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        unimplemented!()
+        Err(anyhow::Error::msg(
+            "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
+        ))
     }
 
-    // todo(linux)
-    fn set_cursor_style(&self, style: CursorStyle) {}
+    fn set_cursor_style(&self, style: CursorStyle) {
+        self.client.set_cursor_style(style)
+    }
 
     // todo(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -355,16 +362,72 @@ impl Platform for LinuxPlatform {
         None
     }
 
+    //todo!(linux)
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        unimplemented!()
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+            keyring
+                .create_item(
+                    KEYRING_LABEL,
+                    &vec![("url", &url), ("username", &username)],
+                    password,
+                    true,
+                )
+                .await?;
+            Ok(())
+        })
     }
 
+    //todo!(linux)
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        unimplemented!()
+        let url = url.to_string();
+        self.background_executor().spawn(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+
+            let items = keyring.search_items(&vec![("url", &url)]).await?;
+
+            for item in items.into_iter() {
+                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    let attributes = item.attributes().await?;
+                    let username = attributes
+                        .get("username")
+                        .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
+                    let secret = item.secret().await?;
+
+                    // we lose the zeroizing capabilities at this boundary,
+                    // a current limitation GPUI's credentials api
+                    return Ok(Some((username.to_string(), secret.to_vec())));
+                } else {
+                    continue;
+                }
+            }
+            Ok(None)
+        })
     }
 
+    //todo!(linux)
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        unimplemented!()
+        let url = url.to_string();
+        self.background_executor().spawn(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.unlock().await?;
+
+            let items = keyring.search_items(&vec![("url", &url)]).await?;
+
+            for item in items.into_iter() {
+                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    item.delete().await?;
+                    return Ok(());
+                }
+            }
+
+            Ok(())
+        })
     }
 
     fn window_appearance(&self) -> crate::WindowAppearance {

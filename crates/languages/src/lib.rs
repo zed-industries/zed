@@ -164,29 +164,36 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                vec![],
                 Some(Arc::new(DefaultContextProvider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
         ($name:literal, $adapters:expr) => {
             let config = load_config($name);
+            // typeck helper
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in adapters {
+                languages.register_lsp_adapter(config.name.clone(), adapter);
+            }
             languages.register_language(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                $adapters,
                 Some(Arc::new(DefaultContextProvider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
             let config = load_config($name);
+            // typeck helper
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in $adapters {
+                languages.register_lsp_adapter(config.name.clone(), adapter);
+            }
             languages.register_language(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                $adapters,
                 Some(Arc::new($context_provider)),
                 move || Ok((config.clone(), load_queries($name))),
             );
@@ -392,15 +399,9 @@ pub fn init(
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub async fn language(
-    name: &str,
-    grammar: tree_sitter::Language,
-    lsp_adapter: Option<Arc<dyn LspAdapter>>,
-) -> Arc<Language> {
+pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     Arc::new(
         Language::new(load_config(name), Some(grammar))
-            .with_lsp_adapters(lsp_adapter.into_iter().collect())
-            .await
             .with_queries(load_queries(name))
             .unwrap(),
     )

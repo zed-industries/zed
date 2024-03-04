@@ -1,7 +1,9 @@
 use gpui::Hsla;
 use serde_derive::Deserialize;
 
-use crate::{amber, blue, jade, lime, orange, pink, purple, red};
+use crate::{
+    amber, blue, jade, lime, orange, pink, purple, red, try_parse_color, PlayerColorContent,
+};
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub struct PlayerColor {
@@ -141,5 +143,41 @@ impl PlayerColors {
     pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
         let len = self.0.len() - 1;
         self.0[(participant_index as usize % len) + 1]
+    }
+
+    /// Merges the given player colors into this [`PlayerColors`] instance.
+    pub fn merge(&mut self, user_player_colors: &[PlayerColorContent]) {
+        if user_player_colors.is_empty() {
+            return;
+        }
+
+        for (idx, player) in user_player_colors.iter().enumerate() {
+            let cursor = player
+                .cursor
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok());
+            let background = player
+                .background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok());
+            let selection = player
+                .selection
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok());
+
+            if let Some(player_color) = self.0.get_mut(idx) {
+                *player_color = PlayerColor {
+                    cursor: cursor.unwrap_or(player_color.cursor),
+                    background: background.unwrap_or(player_color.background),
+                    selection: selection.unwrap_or(player_color.selection),
+                };
+            } else {
+                self.0.push(PlayerColor {
+                    cursor: cursor.unwrap_or_default(),
+                    background: background.unwrap_or_default(),
+                    selection: selection.unwrap_or_default(),
+                });
+            }
+        }
     }
 }

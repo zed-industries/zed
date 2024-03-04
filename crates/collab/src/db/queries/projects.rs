@@ -1061,7 +1061,7 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            let room = self.get_room(room_id, &*tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             Ok(room)
         })
         .await
@@ -1095,7 +1095,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            let room = self.get_room(room_id, &*tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             Ok(room)
         })
         .await

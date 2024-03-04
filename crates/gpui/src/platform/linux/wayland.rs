@@ -4,5 +4,6 @@
 pub(crate) use client::*;
 
 mod client;
+mod cursor;
 mod display;
 mod window;

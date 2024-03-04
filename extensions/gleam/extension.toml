@@ -1,0 +1,13 @@
+id = "gleam"
+name = "Gleam"
+description = "Gleam support for Zed"
+version = "0.0.1"
+authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
+
+[language_servers.gleam]
+name = "Gleam LSP"
+language = "Gleam"
+
+[grammars.gleam]
+repository = "https://github.com/gleam-lang/tree-sitter-gleam"
+commit = "58b7cac8fc14c92b0677c542610d8738c373fa81"
