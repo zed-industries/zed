@@ -237,6 +237,7 @@ impl X11WindowState {
                     gpu::ContextDesc {
                         validation: false,
                         capture: false,
+                        overlay: false,
                     },
                 )
             }
