@@ -106,6 +106,7 @@ actions!(
         AddFolderToProject,
         Unfollow,
         SaveAs,
+        SaveWithoutFormat,
         ReloadActiveItem,
         ActivatePreviousPane,
         ActivateNextPane,
@@ -3530,6 +3531,11 @@ impl Workspace {
             .on_action(cx.listener(|workspace, action: &Save, cx| {
                 workspace
                     .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+                    .detach_and_log_err(cx);
+            }))
+            .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, cx| {
+                workspace
+                    .save_active_item(SaveIntent::SaveWithoutFormat, cx)
                     .detach_and_log_err(cx);
             }))
             .on_action(cx.listener(|workspace, _: &SaveAs, cx| {
