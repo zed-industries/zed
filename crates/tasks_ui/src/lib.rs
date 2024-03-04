@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
+use language::Point;
 use modal::TasksModal;
 use project::Location;
 use task::{Task, TaskContext};
@@ -71,6 +72,12 @@ fn task_context(
                     .buffer_snapshot
                     .anchor_after(cursor_offset.tail())
                     .text_anchor;
+                let Point { row, column } = snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .offset_to_point(cursor_offset.range().start);
+                let row = row + 1;
+                let column = column + 1;
                 let location = Location {
                     buffer: buffer.clone(),
                     range: start..end,
@@ -86,10 +93,14 @@ fn task_context(
                     .and_then(|language| language.context_provider())
                     .and_then(|provider| provider.build_context(location, cx).ok());
 
-                let mut env = HashMap::from_iter([(
-                    "ZED_WORKTREE_ROOT".into(),
-                    workspace_root.to_string_lossy().to_string(),
-                )]);
+                let mut env = HashMap::from_iter([
+                    (
+                        "ZED_WORKTREE_ROOT".into(),
+                        workspace_root.to_string_lossy().to_string(),
+                    ),
+                    ("ZED_ROW".into(), row.to_string()),
+                    ("ZED_COLUMN".into(), column.to_string()),
+                ]);
                 if let Some(path) = current_file {
                     env.insert("ZED_CURRENT_FILE".into(), path);
                 }
@@ -287,7 +298,9 @@ mod tests {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
                         ("ZED_CURRENT_FILE".into(), "rust/b.rs".into()),
-                        ("ZED_WORKTREE_ROOT".into(), "/dir".into())
+                        ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
+                        ("ZED_ROW".into(), "1".into()),
+                        ("ZED_COLUMN".into(), "1".into()),
                     ])
                 }
             );
@@ -302,7 +315,9 @@ mod tests {
                     env: HashMap::from_iter([
                         ("ZED_CURRENT_FILE".into(), "rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_rust_file".into())
+                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_rust_file".into()),
+                        ("ZED_ROW".into(), "1".into()),
+                        ("ZED_COLUMN".into(), "15".into()),
                     ])
                 }
             );
@@ -316,7 +331,9 @@ mod tests {
                     env: HashMap::from_iter([
                         ("ZED_CURRENT_FILE".into(), "a.ts".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_test".into())
+                        ("ZED_CURRENT_SYMBOL".into(), "this_is_a_test".into()),
+                        ("ZED_ROW".into(), "1".into()),
+                        ("ZED_COLUMN".into(), "1".into()),
                     ])
                 }
             );
