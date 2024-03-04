@@ -416,11 +416,18 @@ impl ExtensionStore {
                 }
             });
 
-            builder
-                .compile_extension(
-                    &extension_source_path,
-                    CompileExtensionOptions { release: true },
-                )
+            cx.background_executor()
+                .spawn({
+                    let extension_source_path = extension_source_path.clone();
+                    async move {
+                        builder
+                            .compile_extension(
+                                &extension_source_path,
+                                CompileExtensionOptions { release: true },
+                            )
+                            .await
+                    }
+                })
                 .await?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
