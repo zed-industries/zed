@@ -291,8 +291,8 @@ impl WindowTextSystem {
         }
     }
 
-    pub(crate) fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
-        self.line_layout_cache.with_view(view_id, f)
+    pub(crate) fn set_parent_view_id(&self, view_id: Option<EntityId>) {
+        self.line_layout_cache.set_parent_view_id(view_id);
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.

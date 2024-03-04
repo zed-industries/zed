@@ -94,12 +94,10 @@ impl<V: Render> Element for View<V> {
     type AfterLayout = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        cx.with_view_id(self.entity_id(), |cx| {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
-                let layout_id = element.before_layout(cx);
-                (layout_id, element)
-            })
+        cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+            let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
+            let layout_id = element.before_layout(cx);
+            (layout_id, element)
         })
     }
 
@@ -109,11 +107,10 @@ impl<V: Render> Element for View<V> {
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
-        cx.with_view_id(self.entity_id(), |cx| {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                element.after_layout(cx)
-            })
-        });
+        cx.set_view_id(self.entity_id());
+        cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+            element.after_layout(cx)
+        })
     }
 
     fn paint(
@@ -123,11 +120,9 @@ impl<V: Render> Element for View<V> {
         _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        cx.paint_view(self.entity_id(), |cx| {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                element.paint(cx)
-            })
-        });
+        cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+            element.paint(cx)
+        })
     }
 }
 
@@ -285,45 +280,41 @@ impl Element for AnyView {
     type AfterLayout = Option<AnyElement>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        cx.with_view_id(self.entity_id(), |cx| {
-            if self.cache {
-                cx.with_element_state::<AnyViewState, _>(
-                    Some(ElementId::View(self.entity_id())),
-                    |element_state, cx| {
-                        let mut element_state = element_state.unwrap();
+        if self.cache {
+            cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let mut element_state = element_state.unwrap();
 
-                        if !cx.window.dirty_views.contains(&self.entity_id())
-                            && !cx.window.refreshing
+                    if !cx.window.dirty_views.contains(&self.entity_id()) && !cx.window.refreshing {
+                        if let Some(root_style) = element_state
+                            .as_ref()
+                            .map(|element_state| &element_state.root_style)
                         {
-                            if let Some(root_style) = element_state
-                                .as_ref()
-                                .map(|element_state| &element_state.root_style)
-                            {
-                                let layout_id = cx.request_layout(root_style, None);
-                                return ((layout_id, None), element_state);
-                            }
+                            let layout_id = cx.request_layout(root_style, None);
+                            return ((layout_id, None), element_state);
                         }
+                    }
 
-                        let mut element = (self.render)(self, cx);
-                        let layout_id = element.before_layout(cx);
-                        let element_state = Some(AnyViewState {
-                            root_style: cx.layout_style(layout_id).unwrap().clone(),
-                            cache_key: ViewCacheKey::default(),
-                            after_layout_range: AfterLayoutIndex::default()
-                                ..AfterLayoutIndex::default(),
-                            paint_range: PaintIndex::default()..PaintIndex::default(),
-                        });
-                        ((layout_id, Some(element)), element_state)
-                    },
-                )
-            } else {
-                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
                     let mut element = (self.render)(self, cx);
                     let layout_id = element.before_layout(cx);
-                    (layout_id, Some(element))
-                })
-            }
-        })
+                    let element_state = Some(AnyViewState {
+                        root_style: cx.layout_style(layout_id).unwrap().clone(),
+                        cache_key: ViewCacheKey::default(),
+                        after_layout_range: AfterLayoutIndex::default()
+                            ..AfterLayoutIndex::default(),
+                        paint_range: PaintIndex::default()..PaintIndex::default(),
+                    });
+                    ((layout_id, Some(element)), element_state)
+                },
+            )
+        } else {
+            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                let mut element = (self.render)(self, cx);
+                let layout_id = element.before_layout(cx);
+                (layout_id, Some(element))
+            })
+        }
     }
 
     fn after_layout(
@@ -332,55 +323,54 @@ impl Element for AnyView {
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
-        cx.with_view_id(self.entity_id(), |cx| {
-            if self.cache {
-                cx.with_element_state::<AnyViewState, _>(
-                    Some(ElementId::View(self.entity_id())),
-                    |element_state, cx| {
-                        let mut element_state = element_state.unwrap().unwrap();
+        cx.set_view_id(self.entity_id());
+        if self.cache {
+            cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let mut element_state = element_state.unwrap().unwrap();
 
-                        let after_layout_start = cx.window.next_frame.after_layout_index();
-                        let content_mask = cx.content_mask();
-                        let text_style = cx.text_style();
+                    let after_layout_start = cx.window.next_frame.after_layout_index();
+                    let content_mask = cx.content_mask();
+                    let text_style = cx.text_style();
 
-                        let element = if let Some(mut element) = element.take() {
-                            element.after_layout(cx);
-                            Some(element)
-                        } else if element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                        {
-                            cx.reuse_after_layout(element_state.after_layout_range.clone());
-                            None
-                        } else {
-                            let mut element = (self.render)(self, cx);
-                            let layout_id = element.before_layout(cx);
-                            cx.compute_layout(layout_id, bounds.size.into());
-                            element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
-                            cx.with_absolute_element_offset(bounds.origin, |cx| {
-                                element.after_layout(cx)
-                            });
+                    let element = if let Some(mut element) = element.take() {
+                        element.after_layout(cx);
+                        Some(element)
+                    } else if element_state.cache_key.bounds == bounds
+                        && element_state.cache_key.content_mask == content_mask
+                        && element_state.cache_key.text_style == text_style
+                    {
+                        cx.reuse_after_layout(element_state.after_layout_range.clone());
+                        None
+                    } else {
+                        let mut element = (self.render)(self, cx);
+                        let layout_id = element.before_layout(cx);
+                        cx.compute_layout(layout_id, bounds.size.into());
+                        element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
+                        cx.with_absolute_element_offset(bounds.origin, |cx| {
+                            element.after_layout(cx)
+                        });
 
-                            Some(element)
-                        };
+                        Some(element)
+                    };
 
-                        let after_layout_end = cx.window.next_frame.after_layout_index();
-                        element_state.after_layout_range = after_layout_start..after_layout_end;
-                        element_state.cache_key.bounds = bounds;
-                        element_state.cache_key.content_mask = content_mask;
-                        element_state.cache_key.text_style = text_style;
+                    let after_layout_end = cx.window.next_frame.after_layout_index();
+                    element_state.after_layout_range = after_layout_start..after_layout_end;
+                    element_state.cache_key.bounds = bounds;
+                    element_state.cache_key.content_mask = content_mask;
+                    element_state.cache_key.text_style = text_style;
 
-                        (element, Some(element_state))
-                    },
-                )
-            } else {
-                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                    let mut element = element.take().unwrap();
-                    element.after_layout(cx);
-                    Some(element)
-                })
-            }
-        })
+                    (element, Some(element_state))
+                },
+            )
+        } else {
+            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                let mut element = element.take().unwrap();
+                element.after_layout(cx);
+                Some(element)
+            })
+        }
     }
 
     fn paint(
@@ -390,33 +380,31 @@ impl Element for AnyView {
         element: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        cx.paint_view(self.entity_id(), |cx| {
-            if self.cache {
-                cx.with_element_state::<AnyViewState, _>(
-                    Some(ElementId::View(self.entity_id())),
-                    |element_state, cx| {
-                        let mut element_state = element_state.unwrap().unwrap();
+        if self.cache {
+            cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let mut element_state = element_state.unwrap().unwrap();
 
-                        let paint_start = cx.window.next_frame.paint_index();
+                    let paint_start = cx.window.next_frame.paint_index();
 
-                        if let Some(element) = element {
-                            element.paint(cx);
-                        } else {
-                            cx.reuse_paint(element_state.paint_range.clone());
-                        }
+                    if let Some(element) = element {
+                        element.paint(cx);
+                    } else {
+                        cx.reuse_paint(element_state.paint_range.clone());
+                    }
 
-                        let paint_end = cx.window.next_frame.paint_index();
-                        element_state.paint_range = paint_start..paint_end;
+                    let paint_end = cx.window.next_frame.paint_index();
+                    element_state.paint_range = paint_start..paint_end;
 
-                        ((), Some(element_state))
-                    },
-                )
-            } else {
-                cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                    element.as_mut().unwrap().paint(cx);
-                })
-            }
-        })
+                    ((), Some(element_state))
+                },
+            )
+        } else {
+            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                element.as_mut().unwrap().paint(cx);
+            })
+        }
     }
 }
 

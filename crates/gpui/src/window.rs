@@ -1509,12 +1509,11 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn parent_view_id(&self) -> EntityId {
-        *self
-            .window
+        self.window
             .next_frame
-            .view_stack
-            .last()
-            .expect("a view should always be on the stack while drawing")
+            .dispatch_tree
+            .parent_view_id()
+            .unwrap()
     }
 
     /// Register an action listener on the window for the next frame. The type of action

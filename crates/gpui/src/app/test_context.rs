@@ -674,19 +674,10 @@ impl<'a> VisualTestContext {
         f: impl FnOnce(&mut WindowContext) -> AnyElement,
     ) {
         self.update(|cx| {
-            let entity_id = cx
-                .window
-                .root_view
-                .as_ref()
-                .expect("Can't draw to this window without a root view")
-                .entity_id();
-
             cx.with_element_context(|cx| {
-                cx.with_view_id(entity_id, |cx| {
-                    let mut element = f(cx);
-                    element.layout(origin, space, cx);
-                    element.paint(cx);
-                })
+                let mut element = f(cx);
+                element.layout(origin, space, cx);
+                element.paint(cx);
             });
 
             cx.refresh();

@@ -397,29 +397,15 @@ impl<'a> ElementContext<'a> {
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
 
         // Now actually paint the elements.
-        self.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
-            // We need to use cx.cx here so we can utilize borrow splitting
-            for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
-                for action_listener in action_listeners.iter().cloned() {
-                    cx.cx.window.next_frame.dispatch_tree.on_action(
-                        *action_type,
-                        Rc::new(move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                            action_listener(action, phase, cx)
-                        }),
-                    )
-                }
-            }
+        root_element.paint(self);
 
-            root_element.paint(cx);
+        if let Some(mut drag_element) = active_drag_element {
+            drag_element.paint(self);
+        } else if let Some(mut tooltip_element) = tooltip_element {
+            tooltip_element.paint(self);
+        }
 
-            if let Some(mut drag_element) = active_drag_element {
-                drag_element.paint(cx);
-            } else if let Some(mut tooltip_element) = tooltip_element {
-                tooltip_element.paint(cx);
-            }
-
-            cx.paint_deferred_draws(&sorted_deferred_draws);
-        });
+        self.paint_deferred_draws(&sorted_deferred_draws);
     }
 
     fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
@@ -1163,63 +1149,52 @@ impl<'a> ElementContext<'a> {
         hitbox
     }
 
-    /// Invoke the given function with the given focus handle present on the key dispatch stack.
-    /// If you want an element to participate in key dispatch, use this method to push its key context and focus handle into the stack during paint.
-    pub fn with_key_dispatch<R>(
-        &mut self,
-        context: Option<KeyContext>,
-        focus_handle: Option<FocusHandle>,
-        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
-    ) -> R {
-        let window = &mut self.window;
-        let focus_id = focus_handle.as_ref().map(|handle| handle.id);
-        window
+    /// Sets the key context for the current element. This context will be used to translate
+    /// keybindings into actions.
+    pub fn set_key_context(&mut self, context: KeyContext) {
+        self.window
             .next_frame
             .dispatch_tree
-            .push_node(context.clone(), focus_id, None);
+            .set_key_context(context);
+    }
 
-        let result = f(focus_handle, self);
+    /// Sets the focus handle for the current element. This handle will be used to manage focus state
+    /// and keyboard event dispatch for the element.
+    pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .set_focus_id(focus_handle.id);
+    }
 
+    /// Sets the view id for the current element, which will be used to manage view caching.
+    pub fn set_view_id(&mut self, view_id: EntityId) {
+        self.window.next_frame.dispatch_tree.set_view_id(view_id);
+        self.window.text_system.set_parent_view_id(Some(view_id));
+    }
+
+    pub(crate) fn layout_element<R>(
+        &mut self,
+        f: impl FnOnce(DispatchNodeId, &mut Self) -> R,
+    ) -> R {
+        let node_id = self.window.next_frame.dispatch_tree.push_node();
+        let result = f(node_id, self);
         self.window.next_frame.dispatch_tree.pop_node();
-
+        let parent_view_id = self.window.next_frame.dispatch_tree.parent_view_id();
+        self.window.text_system.set_parent_view_id(parent_view_id);
         result
     }
 
-    /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to implement views as elements.
-    pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                f(self)
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                let result = f(self);
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
-    }
-
-    /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to paint views.
-    pub fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                f(self)
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                self.window
-                    .next_frame
-                    .dispatch_tree
-                    .push_node(None, None, Some(view_id));
-                let result = f(self);
-                self.window.next_frame.dispatch_tree.pop_node();
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
+    pub(crate) fn paint_element<R>(
+        &mut self,
+        node_to_paint: DispatchNodeId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let current_node_id = self.window.next_frame.dispatch_tree.move_to_next_node();
+        assert_eq!(current_node_id, node_to_paint);
+        let parent_view_id = self.window.next_frame.dispatch_tree.parent_view_id();
+        self.window.text_system.set_parent_view_id(parent_view_id);
+        f(self)
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

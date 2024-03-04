@@ -2484,51 +2484,49 @@ impl Element for EditorElement {
         &mut self,
         cx: &mut gpui::ElementContext,
     ) -> (gpui::LayoutId, Self::BeforeLayout) {
-        cx.with_view_id(self.editor.entity_id(), |cx| {
-            self.editor.update(cx, |editor, cx| {
-                editor.set_style(self.style.clone(), cx);
+        self.editor.update(cx, |editor, cx| {
+            editor.set_style(self.style.clone(), cx);
 
-                let layout_id = match editor.mode {
-                    EditorMode::SingleLine => {
-                        let rem_size = cx.rem_size();
-                        let mut style = Style::default();
-                        style.size.width = relative(1.).into();
-                        style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                        cx.with_element_context(|cx| cx.request_layout(&style, None))
-                    }
-                    EditorMode::AutoHeight { max_lines } => {
-                        let editor_handle = cx.view().clone();
-                        let max_line_number_width =
-                            self.max_line_number_width(&editor.snapshot(cx), cx);
-                        cx.with_element_context(|cx| {
-                            cx.request_measured_layout(
-                                Style::default(),
-                                move |known_dimensions, _, cx| {
-                                    editor_handle
-                                        .update(cx, |editor, cx| {
-                                            compute_auto_height_layout(
-                                                editor,
-                                                max_lines,
-                                                max_line_number_width,
-                                                known_dimensions,
-                                                cx,
-                                            )
-                                        })
-                                        .unwrap_or_default()
-                                },
-                            )
-                        })
-                    }
-                    EditorMode::Full => {
-                        let mut style = Style::default();
-                        style.size.width = relative(1.).into();
-                        style.size.height = relative(1.).into();
-                        cx.with_element_context(|cx| cx.request_layout(&style, None))
-                    }
-                };
+            let layout_id = match editor.mode {
+                EditorMode::SingleLine => {
+                    let rem_size = cx.rem_size();
+                    let mut style = Style::default();
+                    style.size.width = relative(1.).into();
+                    style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
+                    cx.with_element_context(|cx| cx.request_layout(&style, None))
+                }
+                EditorMode::AutoHeight { max_lines } => {
+                    let editor_handle = cx.view().clone();
+                    let max_line_number_width =
+                        self.max_line_number_width(&editor.snapshot(cx), cx);
+                    cx.with_element_context(|cx| {
+                        cx.request_measured_layout(
+                            Style::default(),
+                            move |known_dimensions, _, cx| {
+                                editor_handle
+                                    .update(cx, |editor, cx| {
+                                        compute_auto_height_layout(
+                                            editor,
+                                            max_lines,
+                                            max_line_number_width,
+                                            known_dimensions,
+                                            cx,
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            },
+                        )
+                    })
+                }
+                EditorMode::Full => {
+                    let mut style = Style::default();
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    cx.with_element_context(|cx| cx.request_layout(&style, None))
+                }
+            };
 
-                (layout_id, ())
-            })
+            (layout_id, ())
         })
     }
 
@@ -2538,6 +2536,7 @@ impl Element for EditorElement {
         _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> AfterEditorLayout {
+        cx.set_view_id(self.editor.entity_id());
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let style = self.style.clone();
@@ -3146,60 +3145,51 @@ impl Element for EditorElement {
         cx: &mut gpui::ElementContext,
     ) {
         let editor = self.editor.clone();
+        cx.with_text_style(
+            Some(gpui::TextStyleRefinement {
+                font_size: Some(self.style.text.font_size),
+                line_height: Some(self.style.text.line_height),
+                ..Default::default()
+            }),
+            |cx| {
+                let gutter_bounds = Bounds {
+                    origin: bounds.origin,
+                    size: layout.gutter_size,
+                };
+                let text_bounds = Bounds {
+                    origin: gutter_bounds.upper_right(),
+                    size: layout.text_size,
+                };
 
-        cx.paint_view(self.editor.entity_id(), |cx| {
-            cx.with_text_style(
-                Some(gpui::TextStyleRefinement {
-                    font_size: Some(self.style.text.font_size),
-                    line_height: Some(self.style.text.line_height),
-                    ..Default::default()
-                }),
-                |cx| {
-                    let gutter_bounds = Bounds {
-                        origin: bounds.origin,
-                        size: layout.gutter_size,
-                    };
-                    let text_bounds = Bounds {
-                        origin: gutter_bounds.upper_right(),
-                        size: layout.text_size,
-                    };
+                let focus_handle = editor.focus_handle(cx);
+                let key_context = self.editor.read(cx).key_context(cx);
+                cx.set_key_context(key_context);
+                cx.set_focus_handle(&focus_handle);
+                self.register_actions(cx);
 
-                    let focus_handle = editor.focus_handle(cx);
-                    let key_context = self.editor.read(cx).key_context(cx);
-                    cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
-                        self.register_actions(cx);
+                cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                    self.register_key_listeners(cx, text_bounds, layout);
+                    cx.handle_input(
+                        &focus_handle,
+                        ElementInputHandler::new(bounds, self.editor.clone()),
+                    );
 
-                        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                            self.register_key_listeners(cx, text_bounds, layout);
-                            cx.handle_input(
-                                &focus_handle,
-                                ElementInputHandler::new(bounds, self.editor.clone()),
-                            );
-
-                            self.paint_background(gutter_bounds, text_bounds, layout, cx);
-                            if layout.gutter_size.width > Pixels::ZERO {
-                                self.paint_gutter(gutter_bounds, layout, cx);
-                            }
-                            self.paint_text(text_bounds, layout, cx);
-                            self.paint_mouse_listeners(
-                                bounds,
-                                gutter_bounds,
-                                text_bounds,
-                                &layout,
-                                cx,
-                            );
-                            if !layout.blocks.is_empty() {
-                                cx.with_element_id(Some("editor_blocks"), |cx| {
-                                    self.paint_blocks(bounds, layout, cx);
-                                });
-                            }
-                            self.paint_overlays(text_bounds, layout, cx);
-                            self.paint_scrollbar(bounds, layout, cx);
+                    self.paint_background(gutter_bounds, text_bounds, layout, cx);
+                    if layout.gutter_size.width > Pixels::ZERO {
+                        self.paint_gutter(gutter_bounds, layout, cx);
+                    }
+                    self.paint_text(text_bounds, layout, cx);
+                    self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                    if !layout.blocks.is_empty() {
+                        cx.with_element_id(Some("editor_blocks"), |cx| {
+                            self.paint_blocks(bounds, layout, cx);
                         });
-                    })
-                },
-            )
-        })
+                    }
+                    self.paint_overlays(text_bounds, layout, cx);
+                    self.paint_scrollbar(bounds, layout, cx);
+                });
+            },
+        )
     }
 }
 
@@ -3698,16 +3688,14 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view_id(view.entity_id(), |cx| {
-                        element.after_layout(
-                            Bounds {
-                                origin: point(px(500.), px(500.)),
-                                size: size(px(500.), px(500.)),
-                            },
-                            &mut (),
-                            cx,
-                        )
-                    })
+                    element.after_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        &mut (),
+                        cx,
+                    )
                 })
             })
             .unwrap();
@@ -3795,16 +3783,14 @@ mod tests {
         let state = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view_id(view.entity_id(), |cx| {
-                        element.after_layout(
-                            Bounds {
-                                origin: point(px(500.), px(500.)),
-                                size: size(px(500.), px(500.)),
-                            },
-                            &mut (),
-                            cx,
-                        )
-                    })
+                    element.after_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        &mut (),
+                        cx,
+                    )
                 })
             })
             .unwrap();
@@ -3862,16 +3848,14 @@ mod tests {
         let mut after_layout = cx
             .update_window(window.into(), |view, cx| {
                 cx.with_element_context(|cx| {
-                    cx.with_view_id(view.entity_id(), |cx| {
-                        element.after_layout(
-                            Bounds {
-                                origin: point(px(500.), px(500.)),
-                                size: size(px(500.), px(500.)),
-                            },
-                            &mut (),
-                            cx,
-                        )
-                    })
+                    element.after_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        &mut (),
+                        cx,
+                    )
                 })
             })
             .unwrap();

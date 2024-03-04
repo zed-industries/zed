@@ -1399,7 +1399,8 @@ impl Interactivity {
                                 self.paint_scroll_listener(hitbox, &style, cx);
                             }
 
-                            self.paint_keyboard_listeners(&style, cx, f);
+                            self.paint_keyboard_listeners(cx);
+                            f(&style, cx);
 
                             if hitbox.is_some() {
                                 if let Some(group) = self.group.as_ref() {
@@ -1846,38 +1847,32 @@ impl Interactivity {
         }
     }
 
-    fn paint_keyboard_listeners(
-        &mut self,
-        style: &Style,
-        cx: &mut ElementContext,
-        f: impl FnOnce(&Style, &mut ElementContext),
-    ) {
+    fn paint_keyboard_listeners(&mut self, cx: &mut ElementContext) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
         let action_listeners = mem::take(&mut self.action_listeners);
-        cx.with_key_dispatch(
-            self.key_context.clone(),
-            self.tracked_focus_handle.clone(),
-            |_, cx| {
-                for listener in key_down_listeners {
-                    cx.on_key_event(move |event: &KeyDownEvent, phase, cx| {
-                        listener(event, phase, cx);
-                    })
-                }
+        if let Some(context) = self.key_context.clone() {
+            cx.set_key_context(context);
+        }
+        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+            cx.set_focus_handle(focus_handle);
+        }
 
-                for listener in key_up_listeners {
-                    cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
-                        listener(event, phase, cx);
-                    })
-                }
+        for listener in key_down_listeners {
+            cx.on_key_event(move |event: &KeyDownEvent, phase, cx| {
+                listener(event, phase, cx);
+            })
+        }
 
-                for (action_type, listener) in action_listeners {
-                    cx.on_action(action_type, listener)
-                }
+        for listener in key_up_listeners {
+            cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
+                listener(event, phase, cx);
+            })
+        }
 
-                f(style, cx)
-            },
-        );
+        for (action_type, listener) in action_listeners {
+            cx.on_action(action_type, listener)
+        }
     }
 
     fn paint_hover_group_handler(&self, cx: &mut ElementContext) {

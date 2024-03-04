@@ -32,8 +32,8 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, ElementContext, ElementId, LayoutId,
-    Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
+    util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementContext,
+    ElementId, LayoutId, Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -244,6 +244,7 @@ enum ElementDrawPhase<BeforeLayout, AfterLayout> {
         before_layout: BeforeLayout,
     },
     AfterLayout {
+        node_id: DispatchNodeId,
         bounds: Bounds<Pixels>,
         before_layout: BeforeLayout,
         after_layout: AfterLayout,
@@ -286,12 +287,15 @@ impl<E: Element> Drawable<E> {
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-                let after_layout = self.element.after_layout(bounds, &mut before_layout, cx);
-                self.phase = ElementDrawPhase::AfterLayout {
-                    bounds,
-                    before_layout,
-                    after_layout,
-                };
+                cx.layout_element(|node_id, cx| {
+                    let after_layout = self.element.after_layout(bounds, &mut before_layout, cx);
+                    self.phase = ElementDrawPhase::AfterLayout {
+                        node_id,
+                        bounds,
+                        before_layout,
+                        after_layout,
+                    };
+                });
             }
             _ => panic!("must call before_layout before after_layout"),
         }
@@ -300,13 +304,16 @@ impl<E: Element> Drawable<E> {
     fn paint(&mut self, cx: &mut ElementContext) -> E::BeforeLayout {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::AfterLayout {
+                node_id,
                 bounds,
                 mut before_layout,
                 mut after_layout,
                 ..
             } => {
-                self.element
-                    .paint(bounds, &mut before_layout, &mut after_layout, cx);
+                cx.paint_element(node_id, |cx| {
+                    self.element
+                        .paint(bounds, &mut before_layout, &mut after_layout, cx);
+                });
                 self.phase = ElementDrawPhase::Painted;
                 before_layout
             }

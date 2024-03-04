@@ -69,6 +69,7 @@ pub(crate) struct DispatchNodeId(usize);
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
+    view_stack: Vec<EntityId>,
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
@@ -100,6 +101,7 @@ impl DispatchTree {
         Self {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
+            view_stack: Vec::new(),
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
@@ -112,6 +114,7 @@ impl DispatchTree {
     pub fn clear(&mut self) {
         self.node_stack.clear();
         self.context_stack.clear();
+        self.view_stack.clear();
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
@@ -122,35 +125,59 @@ impl DispatchTree {
         self.nodes.len()
     }
 
-    pub fn push_node(
-        &mut self,
-        context: Option<KeyContext>,
-        focus_id: Option<FocusId>,
-        view_id: Option<EntityId>,
-    ) {
+    pub fn push_node(&mut self) -> DispatchNodeId {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
 
         self.nodes.push(DispatchNode {
             parent,
-            focus_id,
-            view_id,
             ..Default::default()
         });
         self.node_stack.push(node_id);
+        node_id
+    }
 
-        if let Some(context) = context {
-            self.active_node().context = Some(context.clone());
+    pub fn move_to_next_node(&mut self) -> DispatchNodeId {
+        let next_node_id = DispatchNodeId(self.active_node_id().0 + 1);
+        let next_node_parent = self.nodes[next_node_id.0].parent;
+        while self.node_stack.last().copied() != next_node_parent {
+            self.pop_node();
+        }
+
+        self.node_stack.push(next_node_id);
+        let active_node = &self.nodes[next_node_id.0];
+        if let Some(view_id) = active_node.view_id {
+            self.view_stack.push(view_id)
+        }
+        if let Some(context) = active_node.context.clone() {
             self.context_stack.push(context);
         }
 
-        if let Some(focus_id) = focus_id {
-            self.focusable_node_ids.insert(focus_id, node_id);
-        }
+        next_node_id
+    }
 
-        if let Some(view_id) = view_id {
+    pub fn set_key_context(&mut self, context: KeyContext) {
+        self.active_node().context = Some(context.clone());
+        self.context_stack.push(context);
+    }
+
+    pub fn set_focus_id(&mut self, focus_id: FocusId) {
+        let node_id = *self.node_stack.last().unwrap();
+        self.nodes[node_id.0].focus_id = Some(focus_id);
+        self.focusable_node_ids.insert(focus_id, node_id);
+    }
+
+    pub fn set_view_id(&mut self, view_id: EntityId) {
+        if self.parent_view_id() != Some(view_id) {
+            let node_id = *self.node_stack.last().unwrap();
+            self.nodes[node_id.0].view_id = Some(view_id);
             self.view_node_ids.insert(view_id, node_id);
+            self.view_stack.push(view_id);
         }
+    }
+
+    pub fn parent_view_id(&self) -> Option<EntityId> {
+        self.view_stack.last().copied()
     }
 
     pub fn pop_node(&mut self) {
@@ -158,11 +185,24 @@ impl DispatchTree {
         if node.context.is_some() {
             self.context_stack.pop();
         }
+        if node.view_id.is_some() {
+            self.view_stack.pop();
+        }
         self.node_stack.pop();
     }
 
     fn move_node(&mut self, source: &mut DispatchNode) {
-        self.push_node(source.context.take(), source.focus_id, source.view_id);
+        self.push_node();
+        if let Some(context) = source.context.take() {
+            self.set_key_context(context);
+        }
+        if let Some(focus_id) = source.focus_id.take() {
+            self.set_focus_id(focus_id);
+        }
+        if let Some(view_id) = source.view_id.take() {
+            self.set_view_id(view_id);
+        }
+
         let target = self.active_node();
         target.key_listeners = mem::take(&mut source.key_listeners);
         target.action_listeners = mem::take(&mut source.action_listeners);

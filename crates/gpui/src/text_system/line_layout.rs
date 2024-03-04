@@ -4,6 +4,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
+    cell::Cell,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -276,7 +277,7 @@ impl WrappedLineLayout {
 }
 
 pub(crate) struct LineLayoutCache {
-    view_stack: Mutex<Vec<EntityId>>,
+    parent_view_id: Cell<Option<EntityId>>,
     previous_frame: Mutex<FxHashMap<CacheKey, Arc<LineLayout>>>,
     current_frame: RwLock<FxHashMap<CacheKey, Arc<LineLayout>>>,
     previous_frame_wrapped: Mutex<FxHashMap<CacheKey, Arc<WrappedLineLayout>>>,
@@ -287,7 +288,7 @@ pub(crate) struct LineLayoutCache {
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
-            view_stack: Mutex::default(),
+            parent_view_id: Cell::default(),
             previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
             previous_frame_wrapped: Mutex::default(),
@@ -297,8 +298,6 @@ impl LineLayoutCache {
     }
 
     pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
-        debug_assert_eq!(self.view_stack.lock().len(), 0);
-
         let mut prev_frame = self.previous_frame.lock();
         let mut curr_frame = self.current_frame.write();
         for (key, layout) in prev_frame.drain() {
@@ -324,15 +323,8 @@ impl LineLayoutCache {
         std::mem::swap(&mut *prev_frame_wrapped, &mut *curr_frame_wrapped);
     }
 
-    pub fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
-        self.view_stack.lock().push(view_id);
-        let result = f();
-        self.view_stack.lock().pop();
-        result
-    }
-
-    fn parent_view_id(&self) -> Option<EntityId> {
-        self.view_stack.lock().last().copied()
+    pub fn set_parent_view_id(&self, view_id: Option<EntityId>) {
+        self.parent_view_id.replace(view_id);
     }
 
     pub fn layout_wrapped_line(
@@ -347,7 +339,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
-            parent_view_id: self.parent_view_id(),
+            parent_view_id: self.parent_view_id.get(),
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame_wrapped.upgradable_read();
@@ -376,7 +368,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
-                parent_view_id: self.parent_view_id(),
+                parent_view_id: self.parent_view_id.get(),
             };
             current_frame.insert(key, layout.clone());
             layout
@@ -389,7 +381,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width: None,
-            parent_view_id: self.parent_view_id(),
+            parent_view_id: self.parent_view_id.get(),
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -408,7 +400,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
-                parent_view_id: self.parent_view_id(),
+                parent_view_id: self.parent_view_id.get(),
             };
             current_frame.insert(key, layout.clone());
             layout
