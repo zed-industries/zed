@@ -916,7 +916,7 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let completion = completions_guard[candidate_id].clone();
+                        let mut completion = completions_guard[candidate_id].clone();
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -933,7 +933,7 @@ impl CompletionsMenu {
                             &style,
                             cx,
                             mat,
-                            &mut completion.clone(),
+                            &mut completion,
                             documentation,
                         );
 
@@ -982,7 +982,7 @@ impl CompletionsMenu {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
         mat: &StringMatch,
-        completion: &mut Completion,
+        mut completion: &mut Completion,
         documentation: &Option<Documentation>,
     ) -> (bool, Pixels, StyledText, StyledText) {
         let highlights = gpui::combine_highlights(
