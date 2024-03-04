@@ -395,6 +395,7 @@ impl WindowsWindowInner {
         let keystroke = self.parse_key_msg_keystroke(wparam);
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
+                let ime_key = keystroke.ime_key.clone();
                 let event = KeyDownEvent {
                     keystroke,
                     is_held: true,
@@ -406,8 +407,8 @@ impl WindowsWindowInner {
                     }
                     CallbackResult::Handled { by_callback: true }
                 } else if let Some(mut input_handler) = self.input_handler.take() {
-                    if let Some(ime_key) = &event.keystroke.ime_key {
-                        input_handler.replace_text_in_range(None, ime_key);
+                    if let Some(ime_key) = ime_key {
+                        input_handler.replace_text_in_range(None, &ime_key);
                     }
                     self.input_handler.set(Some(input_handler));
                     if let Some(request_frame) = callbacks.request_frame.as_mut() {
