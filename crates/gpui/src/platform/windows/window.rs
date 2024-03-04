@@ -214,8 +214,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_move_msg(&self, lparam: LPARAM) -> LRESULT {
-        let x = lparam.loword() as f64;
-        let y = lparam.hiword() as f64;
+        let x = lparam.signed_loword() as f64;
+        let y = lparam.signed_hiword() as f64;
         self.origin.set(Point::new(x.into(), y.into()));
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.moved.as_mut() {
@@ -284,8 +284,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_move_msg(&self, lparam: LPARAM, wparam: WPARAM) -> LRESULT {
-        let x = Pixels::from(lparam.loword() as f32);
-        let y = Pixels::from(lparam.hiword() as f32);
+        let x = Pixels::from(lparam.signed_loword() as f32);
+        let y = Pixels::from(lparam.signed_hiword() as f32);
         self.mouse_position.set(Point { x, y });
         let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
@@ -470,8 +470,8 @@ impl WindowsWindowInner {
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
         let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
-            let x = Pixels::from(lparam.loword() as f32);
-            let y = Pixels::from(lparam.hiword() as f32);
+            let x = Pixels::from(lparam.signed_loword() as f32);
+            let y = Pixels::from(lparam.signed_hiword() as f32);
             let event = MouseDownEvent {
                 button,
                 position: Point { x, y },
@@ -488,8 +488,8 @@ impl WindowsWindowInner {
     fn handle_mouse_up_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
         let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
-            let x = Pixels::from(lparam.loword() as f32);
-            let y = Pixels::from(lparam.hiword() as f32);
+            let x = Pixels::from(lparam.signed_loword() as f32);
+            let y = Pixels::from(lparam.signed_hiword() as f32);
             let event = MouseUpEvent {
                 button,
                 position: Point { x, y },
@@ -506,8 +506,8 @@ impl WindowsWindowInner {
     fn handle_mouse_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
-            let x = Pixels::from(lparam.loword() as f32);
-            let y = Pixels::from(lparam.hiword() as f32);
+            let x = Pixels::from(lparam.signed_loword() as f32);
+            let y = Pixels::from(lparam.signed_hiword() as f32);
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
             let event = crate::ScrollWheelEvent {
@@ -520,6 +520,9 @@ impl WindowsWindowInner {
                 touch_phase: TouchPhase::Moved,
             };
             if callback(PlatformInput::ScrollWheel(event)) {
+                if let Some(request_frame) = callbacks.request_frame.as_mut() {
+                    request_frame();
+                }
                 return LRESULT(0);
             }
         }
@@ -529,8 +532,8 @@ impl WindowsWindowInner {
     fn handle_mouse_horizontal_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let mut callbacks: std::cell::RefMut<'_, Callbacks> = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
-            let x = Pixels::from(lparam.loword() as f32);
-            let y = Pixels::from(lparam.hiword() as f32);
+            let x = Pixels::from(lparam.signed_loword() as f32);
+            let y = Pixels::from(lparam.signed_hiword() as f32);
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
             let event = crate::ScrollWheelEvent {
@@ -543,6 +546,9 @@ impl WindowsWindowInner {
                 touch_phase: TouchPhase::Moved,
             };
             if callback(PlatformInput::ScrollWheel(event)) {
+                if let Some(request_frame) = callbacks.request_frame.as_mut() {
+                    request_frame();
+                }
                 return LRESULT(0);
             }
         }
