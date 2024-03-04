@@ -41,8 +41,7 @@ fn schedule_task(workspace: &Workspace, task: &dyn Task, cx: &mut ViewContext<'_
     };
     let current_editor = workspace
         .active_item(cx)
-        .map(|item| item.act_as::<Editor>(cx))
-        .flatten()
+        .and_then(|item| item.act_as::<Editor>(cx))
         .clone();
     let task_cx = if let Some(current_editor) = current_editor {
         (|| {
