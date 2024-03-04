@@ -304,7 +304,12 @@
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "alt-shift-up": ["workspace::SendKeystrokes", "alt-shift-down up"],
+      "alt-shift-up": [
+        "editor::DuplicateLine",
+        {
+          "move_upwards": true
+        }
+      ],
       "alt-shift-down": "editor::DuplicateLine",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
