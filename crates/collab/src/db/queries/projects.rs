@@ -517,14 +517,14 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<(Project, ReplicaId)> {
         self.transaction(|tx| async move {
-            let (hosted_project, role) = self.get_hosted_project(id, user_id, &*tx).await?;
+            let (hosted_project, role) = self.get_hosted_project(id, user_id, &tx).await?;
             let project = project::Entity::find()
                 .filter(project::Column::HostedProjectId.eq(hosted_project.id))
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("hosted project is no longer shared"))?;
 
-            self.join_project_internal(project, user_id, connection, role, &*tx)
+            self.join_project_internal(project, user_id, connection, role, &tx)
                 .await
         })
         .await
@@ -567,7 +567,7 @@ impl Database {
                 participant.user_id,
                 connection,
                 participant.role.unwrap_or(ChannelRole::Member),
-                &*tx,
+                &tx,
             )
             .await
         })
