@@ -453,18 +453,19 @@ impl WindowsWindowInner {
                 key: msg_char.to_string(),
                 ime_key: Some(msg_char.to_string()),
             };
+            let ime_key = keystroke.ime_key.clone();
             let event = KeyDownEvent {
                 keystroke,
                 is_held: false,
             };
 
-            if callback(PlatformInput::KeyDown(event.clone())) {
+            if callback(PlatformInput::KeyDown(event)) {
                 return LRESULT(0);
             }
 
             if let Some(mut input_handler) = self.input_handler.take() {
-                if let Some(ime_key) = &event.keystroke.ime_key {
-                    input_handler.replace_text_in_range(None, ime_key);
+                if let Some(ime_key) = ime_key {
+                    input_handler.replace_text_in_range(None, &ime_key);
                 }
                 self.input_handler.set(Some(input_handler));
                 return LRESULT(0);
