@@ -558,11 +558,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                                         return TimeoutAction::Drop;
                                     }
 
-                                    state_
-                                        .keyboard_focused_window
-                                        .as_ref()
-                                        .unwrap()
-                                        .handle_input(input.clone());
+                                    let focused_window =
+                                        state_.keyboard_focused_window.as_ref().unwrap().clone();
+
+                                    drop(state_);
+
+                                    focused_window.handle_input(input.clone());
 
                                     TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                                 })
