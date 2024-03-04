@@ -382,7 +382,6 @@ impl Database {
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
                 warning_count: ActiveValue::set(summary.warning_count as i32),
-                ..Default::default()
             })
             .on_conflict(
                 OnConflict::columns([
@@ -434,7 +433,6 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
-                ..Default::default()
             })
             .on_conflict(
                 OnConflict::columns([
