@@ -242,7 +242,7 @@ impl ExtensionStore {
         self.reload(cx)
     }
 
-    pub fn extensions_dir(&self) -> PathBuf {
+    fn extensions_dir(&self) -> PathBuf {
         self.extensions_dir.clone()
     }
 

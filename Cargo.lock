@@ -3393,6 +3393,7 @@ dependencies = [
  "client",
  "editor",
  "extension",
+ "fuzzy",
  "gpui",
  "settings",
  "theme",

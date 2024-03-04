@@ -1,6 +1,7 @@
 use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::{ExtensionApiResponse, ExtensionStatus, ExtensionStore};
+use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
+use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
     FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
@@ -66,7 +67,8 @@ pub struct ExtensionsPage {
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
     filter: ExtensionFilter,
-    extension_entries: Vec<ExtensionApiResponse>,
+    local_extension_entries: Vec<Arc<ExtensionManifest>>,
+    remote_extension_entries: Vec<ExtensionApiResponse>,
     query_editor: View<Editor>,
     query_contains_error: bool,
     _subscription: gpui::Subscription,
@@ -91,7 +93,8 @@ impl ExtensionsPage {
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
-                extension_entries: Vec::new(),
+                local_extension_entries: Vec::new(),
+                remote_extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
                 _subscription: subscription,
@@ -105,7 +108,7 @@ impl ExtensionsPage {
     fn filtered_extension_entries(&self, cx: &mut ViewContext<Self>) -> Vec<ExtensionApiResponse> {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
-        self.extension_entries
+        self.remote_extension_entries
             .iter()
             .filter(|extension| match self.filter {
                 ExtensionFilter::All => true,
@@ -146,14 +149,19 @@ impl ExtensionsPage {
         self.is_fetching_extensions = true;
         cx.notify();
 
-        let extensions =
-            ExtensionStore::global(cx).update(cx, |store, cx| store.fetch_extensions(search, cx));
+        let extension_store = ExtensionStore::global(cx);
+
+        let local_extension_candidates =
+            extension_store.update(cx, |store, cx| store.installed_extensions());
+        // let local_extensions =
+        let remote_extensions =
+            extension_store.update(cx, |store, cx| store.fetch_extensions(search, cx));
 
         cx.spawn(move |this, mut cx| async move {
-            let fetch_result = extensions.await;
+            let fetch_result = remote_extensions.await;
             match fetch_result {
                 Ok(extensions) => this.update(&mut cx, |this, cx| {
-                    this.extension_entries = extensions;
+                    this.remote_extension_entries = extensions;
                     this.is_fetching_extensions = false;
                     cx.notify();
                 }),
