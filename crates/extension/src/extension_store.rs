@@ -266,6 +266,10 @@ impl ExtensionStore {
         }
     }
 
+    pub fn installed_extensions(&self) {
+        // TODO: Implement me.
+    }
+
     pub fn fetch_extensions(
         &self,
         search: Option<&str>,

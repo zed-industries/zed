@@ -1,3 +1,5 @@
+mod components;
+
 use client::telemetry::Telemetry;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
@@ -20,6 +22,8 @@ use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
 };
+
+use crate::components::ExtensionCard;
 
 actions!(zed, [Extensions, InstallLocalExtension]);
 
@@ -179,14 +183,22 @@ impl ExtensionsPage {
         .detach_and_log_err(cx);
     }
 
-    fn render_extensions(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) -> Vec<Div> {
+    fn render_extensions(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<ExtensionCard> {
         self.filtered_extension_entries(cx)[range]
             .iter()
             .map(|extension| self.render_entry(extension, cx))
             .collect()
     }
 
-    fn render_entry(&self, extension: &ExtensionApiResponse, cx: &mut ViewContext<Self>) -> Div {
+    fn render_entry(
+        &self,
+        extension: &ExtensionApiResponse,
+        cx: &mut ViewContext<Self>,
+    ) -> ExtensionCard {
         let status = ExtensionStore::global(cx)
             .read(cx)
             .extension_status(&extension.id);
@@ -276,84 +288,70 @@ impl ExtensionsPage {
         let repository_url = extension.repository.clone();
         let tooltip_text = Tooltip::text(repository_url.clone(), cx);
 
-        div().w_full().child(
-            v_flex()
-                .w_full()
-                .h(rems(7.))
-                .p_3()
-                .mt_4()
-                .gap_2()
-                .bg(cx.theme().colors().elevated_surface_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_md()
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .items_end()
-                                .child(
-                                    Headline::new(extension.name.clone())
-                                        .size(HeadlineSize::Medium),
-                                )
-                                .child(
-                                    Headline::new(format!("v{}", extension.version))
-                                        .size(HeadlineSize::XSmall),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .justify_between()
-                                .children(upgrade_button)
-                                .child(install_or_uninstall_button),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(
-                            Label::new(format!(
-                                "{}: {}",
-                                if extension.authors.len() > 1 {
-                                    "Authors"
-                                } else {
-                                    "Author"
-                                },
-                                extension.authors.join(", ")
-                            ))
+        ExtensionCard::new()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_end()
+                            .child(Headline::new(extension.name.clone()).size(HeadlineSize::Medium))
+                            .child(
+                                Headline::new(format!("v{}", extension.version))
+                                    .size(HeadlineSize::XSmall),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .children(upgrade_button)
+                            .child(install_or_uninstall_button),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        Label::new(format!(
+                            "{}: {}",
+                            if extension.authors.len() > 1 {
+                                "Authors"
+                            } else {
+                                "Author"
+                            },
+                            extension.authors.join(", ")
+                        ))
+                        .size(LabelSize::Small),
+                    )
+                    .child(
+                        Label::new(format!("Downloads: {}", extension.download_count))
                             .size(LabelSize::Small),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .children(extension.description.as_ref().map(|description| {
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                    }))
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("repository-{}", extension.id)),
+                            IconName::Github,
                         )
-                        .child(
-                            Label::new(format!("Downloads: {}", extension.download_count))
-                                .size(LabelSize::Small),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .children(extension.description.as_ref().map(|description| {
-                            Label::new(description.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Default)
+                        .icon_color(Color::Accent)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Filled)
+                        .on_click(cx.listener(move |_, _, cx| {
+                            cx.open_url(&repository_url);
                         }))
-                        .child(
-                            IconButton::new(
-                                SharedString::from(format!("repository-{}", extension.id)),
-                                IconName::Github,
-                            )
-                            .icon_color(Color::Accent)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(move |_, _, cx| {
-                                cx.open_url(&repository_url);
-                            }))
-                            .tooltip(move |_| tooltip_text.clone()),
-                        ),
-                ),
-        )
+                        .tooltip(move |_| tooltip_text.clone()),
+                    ),
+            )
     }
 
     fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
@@ -575,7 +573,7 @@ impl Render for ExtensionsPage {
                         let scroll_handle = self.list.clone();
                         let item_count = entries.len();
                         move |bounds, cx| {
-                            uniform_list::<_, Div, _>(
+                            uniform_list::<_, ExtensionCard, _>(
                                 view,
                                 "entries",
                                 item_count,
