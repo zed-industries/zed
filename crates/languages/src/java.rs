@@ -4,10 +4,8 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 pub use language::*;
-use lazy_static::lazy_static;
 use log::warn;
 use lsp::{CodeActionKind, LanguageServerBinary};
-use regex::Regex;
 use smol::fs::{self};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
@@ -125,10 +123,6 @@ impl LspAdapter for JavaLspAdapter {
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         vec!["java".into()]
-    }
-
-    // TODO: filter diagnostics to get rid of annoying messages while typing
-    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
     }
 
     async fn label_for_completion(
