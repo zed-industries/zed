@@ -381,7 +381,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
         div()
             .key_context("Picker")
             .size_full()
-            .cursor_pointer()
             .when_some(self.width, |el, width| el.w(width))
             .overflow_hidden()
             // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
