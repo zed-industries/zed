@@ -324,7 +324,7 @@ impl WindowsWindowInner {
                 return None;
             }
 
-            let digit_char = ('0' as u8 + ((vk_code - 0x30) as u8)) as char;
+            let digit_char = (b'0' + ((vk_code - 0x30) as u8)) as char;
             return Some(Keystroke {
                 modifiers,
                 key: digit_char.to_string(),
@@ -335,8 +335,8 @@ impl WindowsWindowInner {
         // A-Z https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
         if vk_code >= 0x41 && vk_code <= 0x5A {
             let offset = (vk_code - 0x41) as u8;
-            let alpha_char = ('a' as u8 + offset) as char;
-            let alpha_char_upper = ('A' as u8 + offset) as char;
+            let alpha_char = (b'a' + offset) as char;
+            let alpha_char_upper = (b'A' + offset) as char;
             let modifiers = self.current_modifiers();
             return Some(Keystroke {
                 modifiers,
