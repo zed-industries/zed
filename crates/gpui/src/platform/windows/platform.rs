@@ -178,14 +178,8 @@ impl WindowsPlatform {
             WAIT_EVENT(0) => WindowsMessageWaitResult::ForegroundExecution,
             WAIT_EVENT(1) => {
                 let mut msg = MSG::default();
-                let get_msg_result = unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) };
-                // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmessage
-                if get_msg_result.0 == -1 {
-                    unsafe { GetLastError() }.log_err();
-                    WindowsMessageWaitResult::Error
-                } else {
-                    WindowsMessageWaitResult::WindowsMessage(msg)
-                }
+                unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) };
+                WindowsMessageWaitResult::WindowsMessage(msg)
             }
             _ => {
                 log::error!("unhandled windows wait message: {}", wait_result.0);
