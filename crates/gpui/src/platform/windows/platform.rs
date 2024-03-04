@@ -89,7 +89,6 @@ impl WindowsPlatformSystemSettings {
     fn new() -> Self {
         let mut settings = Self::default();
         settings.update_all();
-        dbg!(&settings);
         settings
     }
 
