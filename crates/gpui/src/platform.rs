@@ -21,9 +21,6 @@ mod cross_platform;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
-#[cfg(target_os = "windows")]
-mod windows;
-
 use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
@@ -71,7 +68,7 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
 }
-// todo("windows")
+
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
