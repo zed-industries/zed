@@ -34,8 +34,6 @@ pub struct SpawnInTerminal {
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     pub allow_concurrent_runs: bool,
-    /// Whether the command should be spawned in a separate shell instance.
-    pub separate_shell: bool,
 }
 
 /// Represents a short lived recipe of a task, whose main purpose

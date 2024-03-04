@@ -47,7 +47,6 @@ impl Task for OneshotTask {
             env: Default::default(),
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
-            separate_shell: true,
         })
     }
 }
