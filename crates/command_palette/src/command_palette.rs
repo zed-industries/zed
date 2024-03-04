@@ -25,6 +25,7 @@ use zed_actions::OpenZedUrl;
 actions!(command_palette, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
+    client::init_settings(cx);
     cx.set_global(HitCounts::default());
     cx.set_global(CommandPaletteFilter::default());
     cx.observe_new_views(CommandPalette::register).detach();
