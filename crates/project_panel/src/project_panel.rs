@@ -166,13 +166,7 @@ impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
-            cx.observe(&project, |this, _, cx| {
-                this.update_visible_entries(None, cx);
-                cx.notify();
-            })
-            .detach();
             let focus_handle = cx.focus_handle();
-
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
             cx.subscribe(&project, |this, project, event, cx| match event {
@@ -190,6 +184,10 @@ impl ProjectPanel {
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                project::Event::WorktreeUpdatedEntries(_, _) | project::Event::WorktreeAdded => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
