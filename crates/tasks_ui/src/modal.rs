@@ -296,7 +296,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_spawn_tasks_modal_query_reuse(cx: &mut TestAppContext) {
-        init_test(cx);
+        crate::tests::init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
@@ -440,18 +440,6 @@ mod tests {
                 .iter()
                 .map(|hit| hit.string.clone())
                 .collect::<Vec<_>>()
-        })
-    }
-
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.update(|cx| {
-            let state = AppState::test(cx);
-            language::init(cx);
-            crate::init(cx);
-            editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
-            state
         })
     }
 }

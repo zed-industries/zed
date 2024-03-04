@@ -121,7 +121,6 @@ pub struct Location {
 }
 
 pub struct LanguageContext {
-    pub file: String,
     pub package: Option<String>,
     pub symbol: Option<String>,
 }

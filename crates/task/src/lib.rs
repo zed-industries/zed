@@ -39,7 +39,7 @@ pub struct SpawnInTerminal {
 }
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,

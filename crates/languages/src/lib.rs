@@ -67,9 +67,6 @@ impl LanguageContextProvider for DefaultContextProvider {
         location: Location,
         cx: &mut AppContext,
     ) -> gpui::Result<LanguageContext> {
-        let Some(file) = location.buffer.read(cx).file() else {
-            Err(anyhow!("Cannot build a language context for unnamed file"))?
-        };
         let symbols = location
             .buffer
             .read(cx)
@@ -86,7 +83,6 @@ impl LanguageContextProvider for DefaultContextProvider {
             })
         });
         Ok(LanguageContext {
-            file: file.path().to_string_lossy().to_string(),
             package: None,
             symbol,
         })
