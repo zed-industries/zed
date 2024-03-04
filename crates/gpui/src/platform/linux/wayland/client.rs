@@ -10,6 +10,7 @@ use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_callback::WlCallback;
+use wayland_client::protocol::wl_output;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
 use wayland_client::{
     delegate_noop,
@@ -294,7 +295,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 }
 
 delegate_noop!(WaylandClientState: ignore wl_compositor::WlCompositor);
-delegate_noop!(WaylandClientState: ignore wl_surface::WlSurface);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
@@ -321,6 +321,57 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
                     window.1.surface.commit();
                 }
             }
+        }
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        surface: &wl_surface::WlSurface,
+        event: <wl_surface::WlSurface as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+        dbg!(&event);
+        match event {
+            wl_surface::Event::Enter { output } => {
+                todo!()
+            },
+            wl_surface::Event::Leave { output } => {
+                todo!()
+            },
+            wl_surface::Event::PreferredBufferScale { factor } => {
+                for window in &state.windows {
+                    if &*window.1.surface == surface {
+                        window.1.rescale(factor as f32 / 120.0);
+                        surface.set_buffer_scale(factor);
+                        return;
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_output::WlOutput,
+        event: <wl_output::WlOutput as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+        dbg!(&event);
+        match event {
+            wl_output::Event::Scale { factor } => todo!(),
+            wl_output::Event::Done => todo!(),
+            _ => {},
         }
     }
 }
