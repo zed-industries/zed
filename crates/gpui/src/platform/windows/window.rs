@@ -76,7 +76,7 @@ pub struct Callbacks {
 
 pub struct WindowsWindow {
     foreground_executor: ForegroundExecutor,
-    inner: Rc<WindowsWindowinner>,
+    inner: Rc<WindowsWindowInner>,
     display: Rc<dyn PlatformDisplay>,
     windows_dragdrop: IDropTarget,
 }
@@ -113,7 +113,7 @@ impl WindowsWindow {
             }
         }
         let (style, exstyle, width, height) = parse_window_options(options);
-        let raw_window_handle = <WindowsWindowinner as WindowsWindowBase>::create(
+        let raw_window_handle = <WindowsWindowInner as WindowsWindowBase>::create(
             WINDOW_CLASS,
             style,
             exstyle,
@@ -148,7 +148,7 @@ impl WindowsWindow {
             depth: 1,
         };
         let renderer = BladeRenderer::new(gpu, gpu_extent);
-        let inner = WindowsWindowinner::new(
+        let inner = WindowsWindowInner::new(
             dispatch_window_handle,
             scale_factor,
             window_handle,
@@ -182,7 +182,7 @@ impl WindowsWindow {
     }
 }
 
-pub struct WindowsWindowinner {
+pub struct WindowsWindowInner {
     pub dispatch_window_handle: HWND,
     window_handle: RawWindow,
     bounds: RefCell<Bounds<i32>>,
@@ -194,13 +194,13 @@ pub struct WindowsWindowinner {
 }
 
 #[implement(IDropTarget)]
-struct WindowsDragDropTarget(pub Rc<WindowsWindowinner>);
+struct WindowsDragDropTarget(pub Rc<WindowsWindowInner>);
 
 struct RawWindow {
     handle: HWND,
 }
 
-impl WindowsWindowinner {
+impl WindowsWindowInner {
     fn new(
         dispatch_window_handle: HWND,
         scale_factor: f32,
@@ -210,7 +210,7 @@ impl WindowsWindowinner {
     ) -> Rc<Self> {
         window_handle.show();
 
-        Rc::new(WindowsWindowinner {
+        Rc::new(WindowsWindowInner {
             dispatch_window_handle,
             window_handle,
             callbacks: RefCell::new(Callbacks::default()),
@@ -327,7 +327,7 @@ impl WindowsWindowinner {
     }
 }
 
-impl WindowsWindowBase for WindowsWindowinner {
+impl WindowsWindowBase for WindowsWindowInner {
     unsafe fn handle_message(
         &self,
         handle: HWND,
@@ -880,7 +880,7 @@ impl RawWindow {
         }
     }
 
-    pub fn set_data(&self, data: Rc<WindowsWindowinner>) {
+    pub fn set_data(&self, data: Rc<WindowsWindowInner>) {
         unsafe {
             set_windowdata(self.hwnd(), data);
         }
