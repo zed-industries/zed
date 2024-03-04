@@ -30,7 +30,7 @@ impl Task for OneshotTask {
         &self.id.0
     }
 
-    fn cwd(&self) -> Option<&std::path::Path> {
+    fn cwd(&self) -> Option<&str> {
         None
     }
 

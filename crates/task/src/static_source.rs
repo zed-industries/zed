@@ -1,10 +1,6 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use collections::HashMap;
 use futures::StreamExt;
@@ -26,7 +22,12 @@ struct StaticTask {
 impl Task for StaticTask {
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         let TaskContext { cwd, env } = cx;
-        let cwd = self.definition.cwd.clone().or(cwd);
+        let cwd = self
+            .definition
+            .cwd
+            .clone()
+            .and_then(|path| subst::substitute(&path, &env).map(Into::into).ok())
+            .or(cwd);
         let mut definition_env = self.definition.env.clone();
         definition_env.extend(env);
         Some(SpawnInTerminal {
@@ -49,7 +50,7 @@ impl Task for StaticTask {
         &self.id
     }
 
-    fn cwd(&self) -> Option<&Path> {
+    fn cwd(&self) -> Option<&str> {
         self.definition.cwd.as_deref()
     }
 }
@@ -76,7 +77,7 @@ pub(crate) struct Definition {
     pub env: HashMap<String, String>,
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,

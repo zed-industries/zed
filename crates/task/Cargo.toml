@@ -13,6 +13,7 @@ gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json_lenient.workspace = true
+subst = "0.3.0"
 util.workspace = true
 
 [dev-dependencies]

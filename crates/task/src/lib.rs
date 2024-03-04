@@ -53,7 +53,7 @@ pub trait Task {
     /// Human readable name of the task to display in the UI.
     fn name(&self) -> &str;
     /// Task's current working directory. If `None`, current project's root will be used.
-    fn cwd(&self) -> Option<&Path>;
+    fn cwd(&self) -> Option<&str>;
     /// Sets up everything needed to spawn the task in the given directory (`cwd`).
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
