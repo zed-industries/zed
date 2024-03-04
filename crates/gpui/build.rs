@@ -22,8 +22,7 @@ fn main() {
     #[cfg(not(feature = "runtime_shaders"))]
     compile_metal_shaders(&header_path);
 
-    // We are using Windows Visita+, right..?
-    // if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
+    // We are using Windows Vista+, right..?
     #[cfg(target_os = "windows")]
     {
         println!("cargo:rustc-link-arg=/stack:{}", 4 * 1024 * 1024);
