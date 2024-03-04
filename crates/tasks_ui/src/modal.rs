@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, impl_actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusableView,
+    actions, impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView,
     InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
     ViewContext, VisualContext, WeakView,
 };
@@ -20,9 +20,14 @@ use crate::schedule_task;
 use serde::Deserialize;
 actions!(task, [Spawn]);
 
+/// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
     #[serde(default)]
+    /// Controls whether the task context is reevaluated prior to execution of a task.
+    /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task
+    /// If it is, these variables will be updated to reflect current state of editor at the time task::Rerun is executed.
+    /// default: false
     pub reevaluate_context: bool,
 }
 

@@ -73,17 +73,17 @@ fn task_context(
                 let start = snapshot
                     .display_snapshot
                     .buffer_snapshot
-                    .anchor_after(selection.range().start)
+                    .anchor_after(selection_range.start)
                     .text_anchor;
                 let end = snapshot
                     .display_snapshot
                     .buffer_snapshot
-                    .anchor_after(selection.tail())
+                    .anchor_after(selection_range.end)
                     .text_anchor;
                 let Point { row, column } = snapshot
                     .display_snapshot
                     .buffer_snapshot
-                    .offset_to_point(selection.range().start);
+                    .offset_to_point(selection_range.start);
                 let row = row + 1;
                 let column = column + 1;
                 let location = Location {

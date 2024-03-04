@@ -330,7 +330,7 @@ pub mod test_inventory {
                 .into_iter()
                 .find(|(_, task)| task.name() == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
-            inventory.task_scheduled(task.1.id().clone());
+            inventory.task_scheduled(task.1.id().clone(), TaskContext::default());
         });
     }
 
