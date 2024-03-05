@@ -43,4 +43,9 @@ fn main() {
             }
         }
     }
+
+    // todo!("windows"): This is to avoid stack overflow. Remove it when solved.
+    if std::env::var("CARGO_CFG_TARGET_ENV").ok() == Some("msvc".to_string()) {
+        println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
+    }
 }

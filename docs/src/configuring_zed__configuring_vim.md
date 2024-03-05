@@ -144,6 +144,23 @@ Currently supported vim-specific commands (as of Zed 0.106):
     to sort the current selection (with i, case-insensitively)
 ```
 
+## Vim settings
+
+Some vim settings are available to modify the default vim behavior:
+
+```json
+{
+  "vim": {
+    // "always": use system clipboard
+    // "never": don't use system clipboard
+    // "on_yank": use system clipboard for yank operations
+    "use_system_clipboard": "always",
+    // Enable multi-line find for `f` and `t` motions
+    "use_multiline_find": false
+  }
+}
+```
+
 ## Related settings
 
 There are a few Zed settings that you may also enjoy if you use vim mode:

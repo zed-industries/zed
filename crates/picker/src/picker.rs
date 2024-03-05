@@ -1,12 +1,14 @@
 use editor::Editor;
 use gpui::{
-    div, list, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Length, ListState, MouseButton, MouseDownEvent, Render, Task,
+    div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
+    EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
     UniformListScrollHandle, View, ViewContext, WindowContext,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
+
+pub mod highlighted_match_with_paths;
 
 enum ElementContainer {
     List(ListState),
@@ -30,6 +32,7 @@ pub struct Picker<D: PickerDelegate> {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
+
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -37,11 +40,27 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
-    fn placeholder_text(&self) -> Arc<str>;
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
+
+    // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
+    // work for up to `duration` to try and get a result synchronously.
+    // This avoids a flash of an empty command-palette on cmd-shift-p, and lets workspace::SendKeystrokes
+    // mostly work when dismissing a palette.
+    fn finalize_update_matches(
+        &mut self,
+        _query: String,
+        _duration: Duration,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> bool {
+        false
+    }
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn selected_as_query(&self) -> Option<String> {
+        None
+    }
 
     fn render_match(
         &self,
@@ -85,12 +104,12 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool) -> Self {
-        let editor = create_editor(delegate.placeholder_text(), cx);
+        let editor = create_editor(delegate.placeholder_text(cx), cx);
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
         let mut this = Self {
             delegate,
             editor,
-            element_container: Self::crate_element_container(is_uniform, cx),
+            element_container: Self::create_element_container(is_uniform, cx),
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
@@ -98,10 +117,13 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
         };
         this.update_matches("".to_string(), cx);
+        // give the delegate 4ms to renderthe first set of suggestions.
+        this.delegate
+            .finalize_update_matches("".to_string(), Duration::from_millis(4), cx);
         this
     }
 
-    fn crate_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
+    fn create_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
         if is_uniform {
             ElementContainer::UniformList(UniformListScrollHandle::new())
         } else {
@@ -197,18 +219,34 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if self.pending_update_matches.is_some() {
+        if self.pending_update_matches.is_some()
+            && !self
+                .delegate
+                .finalize_update_matches(self.query(cx), Duration::from_millis(16), cx)
+        {
             self.confirm_on_update = Some(false)
         } else {
+            self.pending_update_matches.take();
             self.delegate.confirm(false, cx);
         }
     }
 
     fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        if self.pending_update_matches.is_some() {
+        if self.pending_update_matches.is_some()
+            && !self
+                .delegate
+                .finalize_update_matches(self.query(cx), Duration::from_millis(16), cx)
+        {
             self.confirm_on_update = Some(true)
         } else {
             self.delegate.confirm(true, cx);
+        }
+    }
+
+    fn use_selected_query(&mut self, _: &menu::UseSelectedQuery, cx: &mut ViewContext<Self>) {
+        if let Some(new_query) = self.delegate.selected_as_query() {
+            self.set_query(new_query, cx);
+            cx.stop_propagation();
         }
     }
 
@@ -286,12 +324,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
         div()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, cx| {
-                    this.handle_click(ix, event.modifiers.command, cx)
-                }),
-            )
+            .id(("item", ix))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                this.handle_click(ix, event.down.modifiers.command, cx)
+            }))
             .children(
                 self.delegate
                     .render_match(ix, ix == self.delegate.selected_index(), cx),
@@ -359,6 +396,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
+            .on_action(cx.listener(Self::use_selected_query))
             .child(picker_editor)
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {

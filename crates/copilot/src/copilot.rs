@@ -3,6 +3,7 @@ use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::{HashMap, HashSet};
+use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
@@ -32,17 +33,6 @@ use util::{
     ResultExt,
 };
 
-// HACK: This type is only defined in `copilot` since it is the earliest ancestor
-// of the crates that use it.
-//
-// This is not great. Let's find a better place for it to live.
-#[derive(Default)]
-pub struct CommandPaletteFilter {
-    pub hidden_namespaces: HashSet<&'static str>,
-    pub hidden_action_types: HashSet<TypeId>,
-}
-
-impl Global for CommandPaletteFilter {}
 actions!(
     copilot,
     [
@@ -393,8 +383,16 @@ impl Copilot {
         use lsp::FakeLanguageServer;
         use node_runtime::FakeNodeRuntime;
 
-        let (server, fake_server) =
-            FakeLanguageServer::new("copilot".into(), Default::default(), cx.to_async());
+        let (server, fake_server) = FakeLanguageServer::new(
+            LanguageServerBinary {
+                path: "path/to/copilot".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "copilot".into(),
+            Default::default(),
+            cx.to_async(),
+        );
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.new_model(|cx| Self {
@@ -428,6 +426,8 @@ impl Copilot {
                 let binary = LanguageServerBinary {
                     path: node_path,
                     arguments,
+                    // TODO: We could set HTTP_PROXY etc here and fix the copilot issue.
+                    env: None,
                 };
 
                 let server = LanguageServer::new(
@@ -512,7 +512,7 @@ impl Copilot {
                                     .await?;
                                 match sign_in {
                                     request::SignInInitiateResult::AlreadySignedIn { user } => {
-                                        Ok(request::SignInStatus::Ok { user })
+                                        Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
                                     request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
                                         this.update(&mut cx, |this, cx| {
@@ -920,7 +920,7 @@ impl Copilot {
 
         if let Ok(server) = self.server.as_running() {
             match lsp_status {
-                request::SignInStatus::Ok { .. }
+                request::SignInStatus::Ok { user: Some(_) }
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
@@ -936,7 +936,7 @@ impl Copilot {
                         self.unregister_buffer(&buffer);
                     }
                 }
-                request::SignInStatus::NotSignedIn => {
+                request::SignInStatus::Ok { user: None } | request::SignInStatus::NotSignedIn => {
                     server.sign_in_status = SignInStatus::SignedOut;
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
@@ -971,7 +971,7 @@ async fn clear_copilot_dir() {
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &'static str = "dist/agent.js";
+    const SERVER_PATH: &str = "dist/agent.js";
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {

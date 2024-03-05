@@ -8,7 +8,6 @@ A selection of base keymaps is available in the welcome screen under the "Choose
 
 Additionally, you can change the base keymap from the command palette - `⌘-Shift-P` - by selecting the "welcome: toggle base keymap selector" command.
 
-
 ## Custom key bindings
 
 ### Accessing custom key bindings
@@ -39,23 +38,24 @@ You can see more examples in Zed's [`default.json`](https://zed.dev/ref/default.
 _There are some key bindings that can't be overridden; we are working on an issue surrounding this._
 
 ## Special Keyboard Layouts
+
 Some people have unique and custom keyboard layouts.
 
 For example, [@TomPlanche](https://github.com/TomPlanche) having a [French keyboard](https%3A%2F%2Fcdn.shopify.com%2Fs%2Ffiles%2F1%2F0810%2F3669%2Ffiles%2Ffrench-azerty-mac-keyboard-layout-2021-keyshorts.png&f=1&nofb=1&ipt=f53a06c5e60a20b621082410aa699c8cceff269a11ff90b3b5a35c6124dbf827&ipo=images), had to type `Shift-Alt-(` in order to have a simple `[` so he made a simple layout with those 'rules':
 `ù -> [`, `backtick -> ]`, `Alt-[ (where [ is the old ù) -> {`, `Alt-] -> }`.
 But, it was impossible to take into account the `{` and `}` when he was typing so now, in order to ignore a binding, he can add `null` to the binding:
+
 ```json
 [
-    {
-        "context": "Editor",
-        "bindings": {
-          "alt-[": null,
-          "alt-]": null
-        }
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-[": null,
+      "alt-]": null
     }
+  }
 ]
 ```
-
 
 ## All key bindings
 

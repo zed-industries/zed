@@ -7,15 +7,16 @@ use crate::{
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 use ai::prompts::repository_context::PromptCodeSnippet;
-use ai::providers::open_ai::OPEN_AI_API_URL;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
-    providers::open_ai::{OpenAiCompletionProvider, OpenAiRequest, RequestMessage},
+    providers::open_ai::{
+        OpenAiCompletionProvider, OpenAiCompletionProviderKind, OpenAiRequest, RequestMessage,
+        OPEN_AI_API_URL,
+    },
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -52,6 +53,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
     prelude::*,
@@ -122,18 +124,18 @@ impl AssistantPanel {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let (api_url, model_name) = cx
-                .update(|cx| {
-                    let settings = AssistantSettings::get_global(cx);
-                    (
-                        settings.openai_api_url.clone(),
-                        settings.default_open_ai_model.full_name().to_string(),
-                    )
-                })
-                .log_err()
-                .unwrap();
+            let (provider_kind, api_url, model_name) = cx.update(|cx| {
+                let settings = AssistantSettings::get_global(cx);
+                anyhow::Ok((
+                    settings.provider_kind()?,
+                    settings.provider_api_url()?,
+                    settings.provider_model_name()?,
+                ))
+            })??;
+
             let completion_provider = OpenAiCompletionProvider::new(
                 api_url,
+                provider_kind,
                 model_name,
                 cx.background_executor().clone(),
             )
@@ -365,7 +367,7 @@ impl AssistantPanel {
                         move |cx: &mut BlockContext| {
                             measurements.set(BlockMeasurements {
                                 anchor_x: cx.anchor_x,
-                                gutter_width: cx.gutter_width,
+                                gutter_width: cx.gutter_dimensions.width,
                             });
                             inline_assistant.clone().into_any_element()
                         }
@@ -693,24 +695,29 @@ impl AssistantPanel {
             Task::ready(Ok(Vec::new()))
         };
 
-        let mut model = AssistantSettings::get_global(cx)
-            .default_open_ai_model
-            .clone();
-        let model_name = model.full_name();
+        let Some(mut model_name) = AssistantSettings::get_global(cx)
+            .provider_model_name()
+            .log_err()
+        else {
+            return;
+        };
 
-        let prompt = cx.background_executor().spawn(async move {
-            let snippets = snippets.await?;
+        let prompt = cx.background_executor().spawn({
+            let model_name = model_name.clone();
+            async move {
+                let snippets = snippets.await?;
 
-            let language_name = language_name.as_deref();
-            generate_content_prompt(
-                user_prompt,
-                language_name,
-                buffer,
-                range,
-                snippets,
-                model_name,
-                project_name,
-            )
+                let language_name = language_name.as_deref();
+                generate_content_prompt(
+                    user_prompt,
+                    language_name,
+                    buffer,
+                    range,
+                    snippets,
+                    &model_name,
+                    project_name,
+                )
+            }
         });
 
         let mut messages = Vec::new();
@@ -722,7 +729,7 @@ impl AssistantPanel {
                     .messages(cx)
                     .map(|message| message.to_open_ai_message(buffer)),
             );
-            model = conversation.model.clone();
+            model_name = conversation.model.full_name().to_string();
         }
 
         cx.spawn(|_, mut cx| async move {
@@ -735,7 +742,7 @@ impl AssistantPanel {
             });
 
             let request = Box::new(OpenAiRequest {
-                model: model.full_name().into(),
+                model: model_name,
                 messages,
                 stream: true,
                 stop: vec!["|END|>".to_string()],
@@ -774,7 +781,7 @@ impl AssistantPanel {
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
                     background_ranges,
-                    |theme| theme.editor_active_line_background, // todo!("use the appropriate color")
+                    |theme| theme.editor_active_line_background, // todo("use the appropriate color")
                     cx,
                 );
             }
@@ -972,7 +979,7 @@ impl AssistantPanel {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -1454,8 +1461,14 @@ impl Conversation {
         });
 
         let settings = AssistantSettings::get_global(cx);
-        let model = settings.default_open_ai_model.clone();
-        let api_url = settings.openai_api_url.clone();
+        let model = settings
+            .provider_model()
+            .log_err()
+            .unwrap_or(OpenAiModel::FourTurbo);
+        let api_url = settings
+            .provider_api_url()
+            .log_err()
+            .unwrap_or_else(|| OPEN_AI_API_URL.to_string());
 
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
@@ -1470,7 +1483,7 @@ impl Conversation {
             max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
             api_url: Some(api_url),
-            model: model.clone(),
+            model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -1514,7 +1527,7 @@ impl Conversation {
                 .as_ref()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
-            model: self.model.clone(),
+            model: self.model,
             api_url: self.api_url.clone(),
         }
     }
@@ -1536,6 +1549,7 @@ impl Conversation {
                 api_url
                     .clone()
                     .unwrap_or_else(|| OPEN_AI_API_URL.to_string()),
+                OpenAiCompletionProviderKind::OpenAi,
                 model.full_name().into(),
                 cx.background_executor().clone(),
             )
@@ -1619,26 +1633,23 @@ impl Conversation {
     fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let messages = self
             .messages(cx)
-            .into_iter()
-            .filter_map(|message| {
-                Some(tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(
-                        self.buffer
-                            .read(cx)
-                            .text_for_range(message.offset_range)
-                            .collect(),
-                    ),
-                    name: None,
-                    function_call: None,
-                })
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(
+                    self.buffer
+                        .read(cx)
+                        .text_for_range(message.offset_range)
+                        .collect(),
+                ),
+                name: None,
+                function_call: None,
             })
             .collect::<Vec<_>>();
-        let model = self.model.clone();
+        let model = self.model;
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
@@ -2821,6 +2832,7 @@ impl FocusableView for InlineAssistant {
 }
 
 impl InlineAssistant {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: usize,
         measurements: Rc<Cell<BlockMeasurements>>,
@@ -3186,7 +3198,7 @@ impl InlineAssistant {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -3654,9 +3666,9 @@ fn report_assistant_event(
     let client = workspace.read(cx).project().read(cx).client();
     let telemetry = client.telemetry();
 
-    let model = AssistantSettings::get_global(cx)
-        .default_open_ai_model
-        .clone();
+    let Ok(model_name) = AssistantSettings::get_global(cx).provider_model_name() else {
+        return;
+    };
 
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name())
+    telemetry.report_assistant_event(conversation_id, assistant_kind, &model_name)
 }

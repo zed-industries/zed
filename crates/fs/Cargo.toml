@@ -17,13 +17,13 @@ util.workspace = true
 sum_tree.workspace = true
 
 anyhow.workspace = true
+async-tar.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tempfile.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
-regex.workspace = true
 git2.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -32,10 +32,16 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
-gpui = { workspace = true, optional = true}
+gpui = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

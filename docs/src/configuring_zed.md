@@ -245,8 +245,8 @@ To override settings for a language, add an entry for that language server's nam
 "lsp": {
   "rust-analyzer": {
     "initialization_options": {
-      "checkOnSave": {
-        "command": "clippy" // rust-analyzer.checkOnSave.command
+      "check": {
+        "command": "clippy" // rust-analyzer.check.command (default: "check")
       }
     }
   }
@@ -306,7 +306,72 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
+## Code Actions On Format
+
+- Description: The code actions to perform with the primary language server when formatting the buffer.
+- Setting: `code_actions_on_format`
+- Default: `{}`, except for Go it's `{ "source.organizeImports": true }`
+
+**Examples**
+
+1. Organize imports on format in TypeScript and TSX buffers:
+
+```json
+{
+  "languages": {
+    "TypeScript": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    },
+    "TSX": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    }
+  }
+}
+```
+
+2. Run ESLint `fixAll` code action when formatting (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  }
+}
+```
+
+3. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  },
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "codeActionOnSave": {
+          "rules": ["import/order"]
+        }
+      }
+    }
+  }
+}
+```
+
 ## Auto close
+
 - Description: Whether or not to automatically type closing characters for you.
 - Setting: `use_autoclose`
 - Default: `true`
@@ -382,7 +447,9 @@ To override settings for a language, add an entry for that language server's nam
   "enabled": false,
   "show_type_hints": true,
   "show_parameter_hints": true,
-  "show_other_hints": true
+  "show_other_hints": true,
+  "edit_debounce_ms": 700,
+  "scroll_debounce_ms": 50
 }
 ```
 
@@ -392,93 +459,17 @@ Inlay hints querying consists of two parts: editor (client) and LSP server.
 With the inlay settings above are changed to enable the hints, editor will start to query certain types of hints and react on LSP hint refresh request from the server.
 At this point, the server may or may not return hints depending on its implementation, further configuration might be needed, refer to the corresponding LSP server documentation.
 
-Use `lsp` section for the server configuration, below are some examples for well known servers:
+The following languages have inlay hints preconfigured by Zed:
 
-### Rust
+- [Go](https://docs.zed.dev/languages/go)
+- [Rust](https://docs.zed.dev/languages/rust)
+- [Svelte](https://docs.zed.dev/languages/svelte)
+- [Typescript](https://docs.zed.dev/languages/typescript)
 
-```json
-"lsp": {
-  "rust-analyzer": {
-    "initialization_options": {
-      "inlayHints": {
-        "maxLength": null,
-        "lifetimeElisionHints": {
-          "useParameterNames": true,
-          "enable": "skip_trivial"
-        },
-        "closureReturnTypeHints": {
-          "enable": "always"
-        }
-      }
-    }
-  }
-}
-```
+Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
-### Typescript
-
-```json
-"lsp": {
-  "typescript-language-server": {
-    "initialization_options": {
-      "preferences": {
-        "includeInlayParameterNameHints": "all",
-        "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-        "includeInlayFunctionParameterTypeHints": true,
-        "includeInlayVariableTypeHints": true,
-        "includeInlayVariableTypeHintsWhenTypeMatchesName": false,
-        "includeInlayPropertyDeclarationTypeHints": true,
-        "includeInlayFunctionLikeReturnTypeHints": true,
-        "includeInlayEnumMemberValueHints": true
-      }
-    }
-  }
-}
-```
-
-### Go
-
-```json
-"lsp": {
-  "gopls": {
-    "initialization_options": {
-      "hints": {
-        "assignVariableTypes": true,
-        "compositeLiteralFields": true,
-        "compositeLiteralTypes": true,
-        "constantValues": true,
-        "functionTypeParameters": true,
-        "parameterNames": true,
-        "rangeVariableTypes": true
-      }
-    }
-  }
-}
-```
-
-### Svelte
-
-```json
-{
-  "lsp": {
-    "typescript-language-server": {
-      "initialization_options": {
-        "preferences": {
-          "includeInlayParameterNameHints": "all",
-          "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-          "includeInlayFunctionParameterTypeHints": true,
-          "includeInlayVariableTypeHints": true,
-          "includeInlayVariableTypeHintsWhenTypeMatchesName": false,
-          "includeInlayPropertyDeclarationTypeHints": true,
-          "includeInlayFunctionLikeReturnTypeHints": true,
-          "includeInlayEnumMemberValueHints": true,
-          "includeInlayEnumMemberDeclarationTypes": true
-        }
-      }
-    }
-  }
-}
-```
+Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
+Settings-related hint updates are not debounced.
 
 ## Journal
 
@@ -754,6 +745,9 @@ These values take in the same options as the root-level settings with the same n
   "font_size": null,
   "option_as_meta": false,
   "shell": {},
+  "toolbar": {
+    "title": true
+  },
   "working_directory": "current_project_directory"
 }
 ```
@@ -912,6 +906,22 @@ See Buffer Font Features
 }
 ```
 
+## Terminal Toolbar
+
+- Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
+- Setting: `toolbar`
+- Default:
+
+```json
+"toolbar": {
+  "title": true,
+},
+```
+
+**Options**
+
+At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
+
 ### Working Directory
 
 - Description: What working directory to use when launching the terminal.
@@ -956,9 +966,71 @@ See Buffer Font Features
 
 ## Theme
 
-- Description: The name of the Zed theme to use for the UI.
+- Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
 - Setting: `theme`
 - Default: `One Dark`
+
+### Theme Object
+
+- Description: Specify the theme using an object that includes the `mode`, `dark`, and `light` themes.
+- Setting: `theme`
+- Default:
+
+```json
+"theme": {
+  "mode": "dark",
+  "dark": "One Dark",
+  "light": "One Light"
+},
+```
+
+### Mode
+
+- Description: Specify theme mode.
+- Setting: `mode`
+- Default: `dark`
+
+**Options**
+
+1. Set the theme to dark mode
+
+```json
+{
+  "mode": "dark"
+}
+```
+
+2. Set the theme to light mode
+
+```json
+{
+  "mode": "light"
+}
+```
+
+3. Set the theme to system mode
+
+```json
+{
+  "mode": "system"
+}
+```
+
+### Dark
+
+- Description: The name of the dark Zed theme to use for the UI.
+- Setting: `dark`
+- Default: `One Dark`
+
+**Options**
+
+Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+
+### Light
+
+- Description: The name of the light Zed theme to use for the UI.
+- Setting: `light`
+- Default: `One Light`
 
 **Options**
 

@@ -1,0 +1,583 @@
+[
+  {
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "pageup": "menu::SelectFirst",
+      "shift-pageup": "menu::SelectFirst",
+      "ctrl-p": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "pagedown": "menu::SelectLast",
+      "shift-pagedown": "menu::SelectFirst",
+      "ctrl-n": "menu::SelectNext",
+      "ctrl-up": "menu::SelectFirst",
+      "ctrl-down": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "shift-f10": "menu::ShowContextMenu",
+      "ctrl-enter": "menu::SecondaryConfirm",
+      "escape": "menu::Cancel",
+      "ctrl-c": "menu::Cancel",
+      "shift-enter": "menu::UseSelectedQuery",
+      "ctrl-shift-w": "workspace::CloseWindow",
+      "shift-escape": "workspace::ToggleZoom",
+      "ctrl-o": "workspace::Open",
+      "ctrl-=": "zed::IncreaseBufferFontSize",
+      "ctrl-+": "zed::IncreaseBufferFontSize",
+      "ctrl--": "zed::DecreaseBufferFontSize",
+      "ctrl-0": "zed::ResetBufferFontSize",
+      "ctrl-,": "zed::OpenSettings",
+      "ctrl-q": "zed::Quit",
+      "ctrl-h": "zed::Hide",
+      "alt-ctrl-h": "zed::HideOthers",
+      "ctrl-m": "zed::Minimize",
+      "f11": "zed::ToggleFullScreen"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "backspace": "editor::Backspace",
+      "shift-backspace": "editor::Backspace",
+      "ctrl-h": "editor::Backspace",
+      "delete": "editor::Delete",
+      "ctrl-d": "editor::Delete",
+      "tab": "editor::Tab",
+      "shift-tab": "editor::TabPrev",
+      "ctrl-k": "editor::CutToEndOfLine",
+      "ctrl-t": "editor::Transpose",
+      "ctrl-backspace": "editor::DeleteToBeginningOfLine",
+      "ctrl-delete": "editor::DeleteToEndOfLine",
+      "alt-backspace": "editor::DeleteToPreviousWordStart",
+      "alt-delete": "editor::DeleteToNextWordEnd",
+      "alt-h": "editor::DeleteToPreviousWordStart",
+      "alt-d": "editor::DeleteToNextWordEnd",
+      "ctrl-x": "editor::Cut",
+      "ctrl-c": "editor::Copy",
+      "ctrl-v": "editor::Paste",
+      "ctrl-z": "editor::Undo",
+      "ctrl-shift-z": "editor::Redo",
+      "ctrl-y": "editor::Redo",
+      "up": "editor::MoveUp",
+      "ctrl-up": "editor::MoveToStartOfParagraph",
+      "pageup": "editor::PageUp",
+      "shift-pageup": "editor::MovePageUp",
+      "home": "editor::MoveToBeginningOfLine",
+      "down": "editor::MoveDown",
+      "ctrl-down": "editor::MoveToEndOfParagraph",
+      "pagedown": "editor::PageDown",
+      "shift-pagedown": "editor::MovePageDown",
+      "end": "editor::MoveToEndOfLine",
+      "left": "editor::MoveLeft",
+      "right": "editor::MoveRight",
+      "ctrl-p": "editor::MoveUp",
+      "ctrl-n": "editor::MoveDown",
+      "ctrl-b": "editor::MoveLeft",
+      "ctrl-f": "editor::MoveRight",
+      "ctrl-shift-l": "editor::NextScreen", // todo(linux): What is this
+      "alt-left": "editor::MoveToPreviousWordStart",
+      "alt-b": "editor::MoveToPreviousWordStart",
+      "alt-right": "editor::MoveToNextWordEnd",
+      "alt-f": "editor::MoveToNextWordEnd",
+      "ctrl-e": "editor::MoveToEndOfLine",
+      "ctrl-home": "editor::MoveToBeginning",
+      "ctrl-=end": "editor::MoveToEnd",
+      "shift-up": "editor::SelectUp",
+      "ctrl-shift-p": "editor::SelectUp",
+      "shift-down": "editor::SelectDown",
+      "ctrl-shift-n": "editor::SelectDown",
+      "shift-left": "editor::SelectLeft",
+      "ctrl-shift-b": "editor::SelectLeft",
+      "shift-right": "editor::SelectRight",
+      "ctrl-shift-f": "editor::SelectRight",
+      "alt-shift-left": "editor::SelectToPreviousWordStart",
+      "alt-shift-b": "editor::SelectToPreviousWordStart",
+      "alt-shift-right": "editor::SelectToNextWordEnd",
+      "alt-shift-f": "editor::SelectToNextWordEnd",
+      "ctrl-shift-up": "editor::SelectToStartOfParagraph",
+      "ctrl-shift-down": "editor::SelectToEndOfParagraph",
+      "ctrl-shift-home": "editor::SelectToBeginning",
+      "ctrl-shift-end": "editor::SelectToEnd",
+      "ctrl-a": "editor::SelectAll",
+      "ctrl-l": "editor::SelectLine",
+      "ctrl-shift-i": "editor::Format",
+      "shift-home": [
+        "editor::SelectToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "shift-end": [
+        "editor::SelectToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "ctrl-shift-e": [
+        "editor::SelectToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "ctrl-;": "editor::ToggleLineNumbers"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "enter": "editor::Newline",
+      "shift-enter": "editor::Newline",
+      "ctrl-shift-enter": "editor::NewlineAbove",
+      "ctrl-enter": "editor::NewlineBelow",
+      "alt-z": "editor::ToggleSoftWrap",
+      "ctrl-f": [
+        "buffer_search::Deploy",
+        {
+          "focus": true
+        }
+      ],
+      "ctrl->": "assistant::QuoteSelection"
+    }
+  },
+  {
+    "context": "Editor && mode == full && copilot_suggestion",
+    "bindings": {
+      "alt-]": "copilot::NextSuggestion",
+      "alt-[": "copilot::PreviousSuggestion",
+      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
+  {
+    "context": "Editor && !copilot_suggestion",
+    "bindings": {
+      "alt-\\": "copilot::Suggest"
+    }
+  },
+  {
+    "context": "Editor && mode == auto_height",
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
+      "shift-enter": "editor::Newline",
+      "ctrl-shift-enter": "editor::NewlineBelow"
+    }
+  },
+  {
+    "context": "AssistantPanel",
+    "bindings": {
+      "f3": "search::SelectNextMatch",
+      "shift-f3": "search::SelectPrevMatch"
+    }
+  },
+  {
+    "context": "ConversationEditor > Editor",
+    "bindings": {
+      "ctrl-enter": "assistant::Assist",
+      "ctrl-s": "workspace::Save",
+      "ctrl->": "assistant::QuoteSelection",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole"
+    }
+  },
+  {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "escape": "buffer_search::Dismiss",
+      "tab": "buffer_search::FocusEditor",
+      "enter": "search::SelectNextMatch",
+      "shift-enter": "search::SelectPrevMatch",
+      "alt-enter": "search::SelectAllMatches",
+      "alt-tab": "search::CycleMode"
+    }
+  },
+  {
+    "context": "BufferSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "ctrl-enter": "search::ReplaceAll"
+    }
+  },
+  {
+    "context": "BufferSearchBar && !in_replace > Editor",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
+    }
+  },
+  {
+    "context": "ProjectSearchBar",
+    "bindings": {
+      "escape": "project_search::ToggleFocus",
+      "alt-tab": "search::CycleMode",
+      "ctrl-shift-h": "search::ToggleReplace",
+      "ctrl-alt-g": "search::ActivateRegexMode",
+      "ctrl-alt-s": "search::ActivateSemanticMode",
+      "ctrl-alt-x": "search::ActivateTextMode"
+    }
+  },
+  {
+    "context": "ProjectSearchBar > Editor",
+    "bindings": {
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
+    }
+  },
+  {
+    "context": "ProjectSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "ctrl-enter": "search::ReplaceAll"
+    }
+  },
+  {
+    "context": "ProjectSearchView",
+    "bindings": {
+      "escape": "project_search::ToggleFocus",
+      "alt-tab": "search::CycleMode",
+      "ctrl-shift-h": "search::ToggleReplace",
+      "ctrl-alt-g": "search::ActivateRegexMode",
+      "ctrl-alt-s": "search::ActivateSemanticMode",
+      "ctrl-alt-x": "search::ActivateTextMode"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "ctrl-{": "pane::ActivatePrevItem",
+      "ctrl-}": "pane::ActivateNextItem",
+      "ctrl-alt-left": "pane::ActivatePrevItem",
+      "ctrl-alt-right": "pane::ActivateNextItem",
+      "ctrl-w": "pane::CloseActiveItem",
+      "ctrl-alt-t": "pane::CloseInactiveItems",
+      "ctrl-alt-shift-w": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-k u": "pane::CloseCleanItems",
+      "ctrl-k ctrl-w": "pane::CloseAllItems",
+      "ctrl-f": "project_search::ToggleFocus",
+      "f3": "search::SelectNextMatch",
+      "shift-f3": "search::SelectPrevMatch",
+      "ctrl-shift-h": "search::ToggleReplace",
+      "alt-enter": "search::SelectAllMatches",
+      "ctrl-alt-c": "search::ToggleCaseSensitive",
+      "ctrl-alt-w": "search::ToggleWholeWord",
+      "alt-tab": "search::CycleMode",
+      "ctrl-alt-f": "project_search::ToggleFilters",
+      "ctrl-alt-g": "search::ActivateRegexMode",
+      "ctrl-alt-s": "search::ActivateSemanticMode",
+      "ctrl-alt-x": "search::ActivateTextMode"
+    }
+  },
+  // Bindings from VS Code
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-[": "editor::Outdent",
+      "ctrl-]": "editor::Indent",
+      "ctrl-alt-up": "editor::AddSelectionAbove",
+      "ctrl-alt-down": "editor::AddSelectionBelow",
+      "ctrl-d": [
+        "editor::SelectNext",
+        {
+          "replace_newest": false
+        }
+      ],
+      "ctrl-shift-l": "editor::SelectAllMatches",
+      "ctrl-shift-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ],
+      "ctrl-k ctrl-d": [
+        "editor::SelectNext",
+        {
+          "replace_newest": true
+        }
+      ],
+      "ctrl-k ctrl-shift-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": true
+        }
+      ],
+      "ctrl-k ctrl-i": "editor::Hover",
+      "ctrl-/": [
+        "editor::ToggleComments",
+        {
+          "advance_downwards": false
+        }
+      ],
+      "alt-up": "editor::SelectLargerSyntaxNode",
+      "alt-down": "editor::SelectSmallerSyntaxNode",
+      "ctrl-u": "editor::UndoSelection",
+      "ctrl-shift-u": "editor::RedoSelection",
+      "f8": "editor::GoToDiagnostic",
+      "shift-f8": "editor::GoToPrevDiagnostic",
+      "f2": "editor::Rename",
+      "f12": "editor::GoToDefinition",
+      "alt-f12": "editor::GoToDefinitionSplit",
+      "ctrl-f12": "editor::GoToTypeDefinition",
+      "ctrl-alt-f12": "editor::GoToTypeDefinitionSplit",
+      "alt-shift-f12": "editor::FindAllReferences",
+      "ctrl-m": "editor::MoveToEnclosingBracket",
+      "ctrl-alt-[": "editor::Fold",
+      "ctrl-alt-]": "editor::UnfoldLines",
+      "ctrl-space": "editor::ShowCompletions",
+      "ctrl-.": "editor::ToggleCodeActions",
+      "ctrl-alt-r": "editor::RevealInFinder",
+      "ctrl-alt-c": "editor::DisplayCursorNames"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "ctrl-shift-o": "outline::Toggle",
+      "ctrl-g": "go_to_line::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "ctrl-1": ["pane::ActivateItem", 0],
+      "ctrl-2": ["pane::ActivateItem", 1],
+      "ctrl-3": ["pane::ActivateItem", 2],
+      "ctrl-4": ["pane::ActivateItem", 3],
+      "ctrl-5": ["pane::ActivateItem", 4],
+      "ctrl-6": ["pane::ActivateItem", 5],
+      "ctrl-7": ["pane::ActivateItem", 6],
+      "ctrl-8": ["pane::ActivateItem", 7],
+      "ctrl-9": ["pane::ActivateItem", 8],
+      "ctrl-0": "pane::ActivateLastItem",
+      "ctrl--": "pane::GoBack",
+      "ctrl-_": "pane::GoForward",
+      "ctrl-shift-t": "pane::ReopenClosedItem",
+      "ctrl-shift-f": "project_search::ToggleFocus"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      // Change the default action on `menu::Confirm` by setting the parameter
+      // "alt-cmd-o": [
+      //     "projects::OpenRecent",
+      //     {
+      //         "create_new_window": true
+      //     }
+      // ]
+      "ctrl-alt-o": "projects::OpenRecent",
+      "ctrl-alt-b": "branches::OpenRecent",
+      "ctrl-~": "workspace::NewTerminal",
+      "ctrl-s": "workspace::Save",
+      "ctrl-k s": "workspace::SaveWithoutFormat",
+      "ctrl-shift-s": "workspace::SaveAs",
+      "ctrl-n": "workspace::NewFile",
+      "ctrl-shift-n": "workspace::NewWindow",
+      "ctrl-`": "terminal_panel::ToggleFocus",
+      "ctrl-1": ["workspace::ActivatePane", 0],
+      "ctrl-2": ["workspace::ActivatePane", 1],
+      "ctrl-3": ["workspace::ActivatePane", 2],
+      "ctrl-4": ["workspace::ActivatePane", 3],
+      "ctrl-5": ["workspace::ActivatePane", 4],
+      "ctrl-6": ["workspace::ActivatePane", 5],
+      "ctrl-7": ["workspace::ActivatePane", 6],
+      "ctrl-8": ["workspace::ActivatePane", 7],
+      "ctrl-9": ["workspace::ActivatePane", 8],
+      "ctrl-b": "workspace::ToggleLeftDock",
+      "ctrl-r": "workspace::ToggleRightDock",
+      "ctrl-j": "workspace::ToggleBottomDock",
+      "ctrl-alt-y": "workspace::CloseAllDocks",
+      "ctrl-shift-f": "pane::DeploySearch",
+      "ctrl-k ctrl-t": "theme_selector::Toggle",
+      "ctrl-k ctrl-s": "zed::OpenKeymap",
+      "ctrl-t": "project_symbols::Toggle",
+      "ctrl-p": "file_finder::Toggle",
+      "ctrl-shift-p": "command_palette::Toggle",
+      "ctrl-shift-m": "diagnostics::Deploy",
+      "ctrl-shift-e": "project_panel::ToggleFocus",
+      "ctrl-?": "assistant::ToggleFocus",
+      "ctrl-alt-s": "workspace::SaveAll",
+      "ctrl-k m": "language_selector::Toggle",
+      "escape": "workspace::Unfollow",
+      "ctrl-k ctrl-left": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-k ctrl-right": ["workspace::ActivatePaneInDirection", "Right"],
+      "ctrl-k ctrl-up": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-k ctrl-down": ["workspace::ActivatePaneInDirection", "Down"],
+      "ctrl-k shift-left": ["workspace::SwapPaneInDirection", "Left"],
+      "ctrl-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
+      "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
+      "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "alt-t": "task::Rerun",
+      "alt-shift-t": "task::Spawn"
+    }
+  },
+  // Bindings from Sublime Text
+  // todo(linux) make sure these match linux bindings or remove above comment?
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-shift-k": "editor::DeleteLine",
+      "ctrl-shift-d": "editor::DuplicateLine",
+      "ctrl-j": "editor::JoinLines",
+      "ctrl-alt-up": "editor::MoveLineUp",
+      "ctrl-alt-down": "editor::MoveLineDown",
+      "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
+      "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
+      "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
+      "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
+      "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
+      "ctrl-alt-b": "editor::MoveToPreviousSubwordStart",
+      "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
+      "ctrl-alt-f": "editor::MoveToNextSubwordEnd",
+      "ctrl-alt-shift-left": "editor::SelectToPreviousSubwordStart",
+      "ctrl-alt-shift-b": "editor::SelectToPreviousSubwordStart",
+      "ctrl-alt-shift-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-alt-shift-f": "editor::SelectToNextSubwordEnd"
+    }
+  },
+  // Bindings from Atom
+  // todo(linux) make sure these match linux bindings or remove above comment?
+  {
+    "context": "Pane",
+    "bindings": {
+      "ctrl-k up": "pane::SplitUp",
+      "ctrl-k down": "pane::SplitDown",
+      "ctrl-k left": "pane::SplitLeft",
+      "ctrl-k right": "pane::SplitRight"
+    }
+  },
+  // Bindings that should be unified with bindings for more general actions
+  {
+    "context": "Editor && renaming",
+    "bindings": {
+      "enter": "editor::ConfirmRename"
+    }
+  },
+  {
+    "context": "Editor && showing_completions",
+    "bindings": {
+      "enter": "editor::ConfirmCompletion",
+      "tab": "editor::ConfirmCompletion"
+    }
+  },
+  {
+    "context": "Editor && showing_code_actions",
+    "bindings": {
+      "enter": "editor::ConfirmCodeAction"
+    }
+  },
+  {
+    "context": "Editor && (showing_code_actions || showing_completions)",
+    "bindings": {
+      "up": "editor::ContextMenuPrev",
+      "ctrl-p": "editor::ContextMenuPrev",
+      "down": "editor::ContextMenuNext",
+      "ctrl-n": "editor::ContextMenuNext",
+      "pageup": "editor::ContextMenuFirst",
+      "pagedown": "editor::ContextMenuLast"
+    }
+  },
+  // Custom bindings
+  {
+    "bindings": {
+      "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
+      // TODO: Move this to a dock open action
+      "ctrl-alt-c": "collab_panel::ToggleFocus",
+      "ctrl-alt-i": "zed::DebugElements",
+      "ctrl-:": "editor::ToggleInlayHints"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "alt-enter": "editor::OpenExcerpts",
+      "ctrl-k enter": "editor::OpenExcerptsSplit",
+      "ctrl-f8": "editor::GoToHunk",
+      "ctrl-shift-f8": "editor::GoToPrevHunk",
+      "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "ProjectSearchBar && !in_replace",
+    "bindings": {
+      "ctrl-enter": "project_search::SearchInNew"
+    }
+  },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "left": "project_panel::CollapseSelectedEntry",
+      "right": "project_panel::ExpandSelectedEntry",
+      "ctrl-n": "project_panel::NewFile",
+      "ctrl-alt-n": "project_panel::NewDirectory",
+      "ctrl-x": "project_panel::Cut",
+      "ctrl-c": "project_panel::Copy",
+      "ctrl-v": "project_panel::Paste",
+      "ctrl-alt-c": "project_panel::CopyPath",
+      "ctrl-alt-shift-c": "project_panel::CopyRelativePath",
+      "f2": "project_panel::Rename",
+      "enter": "project_panel::Rename",
+      "backspace": "project_panel::Delete",
+      "ctrl-alt-r": "project_panel::RevealInFinder",
+      "alt-shift-f": "project_panel::NewSearchInDirectory"
+    }
+  },
+  {
+    "context": "ProjectPanel && not_editing",
+    "bindings": {
+      "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "CollabPanel && not_editing",
+    "bindings": {
+      "ctrl-backspace": "collab_panel::Remove",
+      "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "(CollabPanel && editing) > Editor",
+    "bindings": {
+      "space": "collab_panel::InsertSpace"
+    }
+  },
+  {
+    "context": "ChannelModal",
+    "bindings": {
+      "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ChannelModal > Picker > Editor",
+    "bindings": {
+      "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "ChatPanel > MessageEditor",
+    "bindings": {
+      "escape": "chat_panel::CloseReplyPreview"
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-alt-space": "terminal::ShowCharacterPalette",
+      "ctrl-shift-c": "terminal::Copy",
+      "ctrl-shift-v": "terminal::Paste",
+      "ctrl-k": "terminal::Clear",
+      // Some nice conveniences
+      "ctrl-backspace": ["terminal::SendText", "\u0015"],
+      "ctrl-right": ["terminal::SendText", "\u0005"],
+      "ctrl-left": ["terminal::SendText", "\u0001"],
+      // Terminal.app compatibility
+      "alt-left": ["terminal::SendText", "\u001bb"],
+      "alt-right": ["terminal::SendText", "\u001bf"],
+      // There are conflicting bindings for these keys in the global context.
+      // these bindings override them, remove at your own risk:
+      "up": ["terminal::SendKeystroke", "up"],
+      "pageup": ["terminal::SendKeystroke", "pageup"],
+      "down": ["terminal::SendKeystroke", "down"],
+      "pagedown": ["terminal::SendKeystroke", "pagedown"],
+      "escape": ["terminal::SendKeystroke", "escape"],
+      "enter": ["terminal::SendKeystroke", "enter"],
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
+    }
+  }
+]

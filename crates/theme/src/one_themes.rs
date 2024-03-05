@@ -72,7 +72,7 @@ pub(crate) fn one_dark() -> Theme {
                 icon_muted: hsla(220.0 / 360., 12.1 / 100., 66.1 / 100., 1.0),
                 icon_disabled: hsla(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
                 icon_placeholder: hsla(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
-                icon_accent: blue.into(),
+                icon_accent: blue,
                 status_bar_background: bg,
                 title_bar_background: bg,
                 toolbar_background: editor,
@@ -100,7 +100,7 @@ pub(crate) fn one_dark() -> Theme {
                 editor_document_highlight_write_background: gpui::red(),
 
                 terminal_background: bg,
-                // todo!("Use one colors for terminal")
+                // todo("Use one colors for terminal")
                 terminal_foreground: crate::white().dark().step_12(),
                 terminal_bright_foreground: crate::white().dark().step_11(),
                 terminal_dim_foreground: crate::white().dark().step_10(),
@@ -218,7 +218,7 @@ pub(crate) fn one_dark() -> Theme {
                     (
                         "link_uri".into(),
                         HighlightStyle {
-                            color: Some(teal.into()),
+                            color: Some(teal),
                             font_style: Some(FontStyle::Italic),
                             ..HighlightStyle::default()
                         },

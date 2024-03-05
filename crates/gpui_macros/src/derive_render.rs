@@ -12,7 +12,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
         #where_clause
         {
             fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> impl gpui::Element {
-                ()
+                gpui::Empty
             }
         }
     };

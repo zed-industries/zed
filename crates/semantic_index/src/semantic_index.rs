@@ -329,7 +329,7 @@ impl SemanticIndex {
                 SemanticIndexStatus::Indexed
             } else {
                 SemanticIndexStatus::Indexing {
-                    remaining_files: project_state.pending_file_count_rx.borrow().clone(),
+                    remaining_files: *project_state.pending_file_count_rx.borrow(),
                     rate_limit_expiry: self.embedding_provider.rate_limit_expiration(),
                 }
             }
@@ -497,7 +497,7 @@ impl SemanticIndex {
         changes: Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>,
         cx: &mut ModelContext<Self>,
     ) {
-        let Some(worktree) = project.read(cx).worktree_for_id(worktree_id.clone(), cx) else {
+        let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) else {
             return;
         };
         let project = project.downgrade();
@@ -657,9 +657,9 @@ impl SemanticIndex {
                 if register.await.log_err().is_none() {
                     // Stop tracking this worktree if the registration failed.
                     this.update(&mut cx, |this, _| {
-                        this.projects.get_mut(&project).map(|project_state| {
+                        if let Some(project_state) = this.projects.get_mut(&project) {
                             project_state.worktrees.remove(&worktree_id);
-                        });
+                        }
                     })
                     .ok();
                 }
@@ -840,7 +840,6 @@ impl SemanticIndex {
             let mut batch_results = Vec::new();
             for batch in file_ids.chunks(batch_size) {
                 let batch = batch.into_iter().map(|v| *v).collect::<Vec<i64>>();
-                let limit = limit.clone();
                 let fs = fs.clone();
                 let db_path = db_path.clone();
                 let query = query.clone();

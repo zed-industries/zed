@@ -119,6 +119,7 @@ impl_actions!(
 gpui::actions!(
     editor,
     [
+        AcceptPartialCopilotSuggestion,
         AddSelectionAbove,
         AddSelectionBelow,
         Backspace,
@@ -165,6 +166,8 @@ gpui::actions!(
         GoToPrevHunk,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
+        GoToImplementation,
+        GoToImplementationSplit,
         OpenUrl,
         HalfPageDown,
         HalfPageUp,
@@ -195,6 +198,7 @@ gpui::actions!(
         NewlineBelow,
         NextScreen,
         OpenExcerpts,
+        OpenExcerptsSplit,
         OpenPermalinkToLine,
         Outdent,
         PageDown,
@@ -236,6 +240,7 @@ gpui::actions!(
         TabPrev,
         ToggleInlayHints,
         ToggleSoftWrap,
+        ToggleLineNumbers,
         Transpose,
         Undo,
         UndoSelection,

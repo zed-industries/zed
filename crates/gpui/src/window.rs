@@ -280,7 +280,6 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    graphics_profiler_enabled: bool,
 }
 
 #[derive(Default, Debug)]
@@ -474,7 +473,6 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
-            graphics_profiler_enabled: false,
         }
     }
     fn new_focus_listener(
@@ -950,7 +948,8 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
-    pub(crate) fn draw(&mut self) {
+    #[profiling::function]
+    pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
@@ -1022,13 +1021,10 @@ impl<'a> WindowContext<'a> {
         self.window.root_view = Some(root_view);
 
         // Set the cursor only if we're the active window.
-        let cursor_style = self
-            .window
-            .next_frame
-            .requested_cursor_style
-            .take()
-            .unwrap_or(CursorStyle::Arrow);
+        let cursor_style_request = self.window.next_frame.requested_cursor_style.take();
         if self.is_window_active() {
+            let cursor_style =
+                cursor_style_request.map_or(CursorStyle::Arrow, |request| request.style);
             self.platform.set_cursor_style(cursor_style);
         }
 
@@ -1092,14 +1088,55 @@ impl<'a> WindowContext<'a> {
         self.window.needs_present.set(true);
     }
 
+    #[profiling::function]
     fn present(&self) {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
         self.window.needs_present.set(false);
+        profiling::finish_frame!();
+    }
+
+    /// Dispatch a given keystroke as though the user had typed it.
+    /// You can create a keystroke with Keystroke::parse("").
+    pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
+        let keystroke = keystroke.with_simulated_ime();
+        if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+        })) {
+            return true;
+        }
+
+        if let Some(input) = keystroke.ime_key {
+            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                input_handler.dispatch_input(&input, self);
+                self.window.platform_window.set_input_handler(input_handler);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Represent this action as a key binding string, to display in the UI.
+    pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
+        self.bindings_for_action(action)
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| action.name().to_string())
     }
 
     /// Dispatch a mouse or keyboard event on the window.
+    #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
         self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
@@ -1423,7 +1460,7 @@ impl<'a> WindowContext<'a> {
 
         if !input.is_empty() {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.flush_pending_input(&input, self);
+                input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler)
             }
         }
@@ -1478,14 +1515,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-    }
-
-    /// Toggle the graphics profiler to debug your application's rendering performance.
-    pub fn toggle_graphics_profiler(&mut self) {
-        self.window.graphics_profiler_enabled = !self.window.graphics_profiler_enabled;
-        self.window
-            .platform_window
-            .set_graphics_profiler_enabled(self.window.graphics_profiler_enabled);
     }
 
     /// Register the given handler to be invoked whenever the global of the given type
@@ -2528,11 +2557,11 @@ impl<V: 'static + Render> WindowHandle<V> {
 
     /// Check if this window is 'active'.
     ///
-    /// Will return `None` if the window is closed.
-    pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
-        cx.windows
-            .get(self.id)
-            .and_then(|window| window.as_ref().map(|window| window.active.get()))
+    /// Will return `None` if the window is closed or currently
+    /// borrowed.
+    pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
+        cx.update_window(self.any_handle, |_, cx| cx.is_window_active())
+            .ok()
     }
 }
 

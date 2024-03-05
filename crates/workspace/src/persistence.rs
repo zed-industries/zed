@@ -367,7 +367,7 @@ impl WorkspaceDb {
 
                 conn.exec_bound(sql!(
                     DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
-                ))?((&workspace.location, workspace.id.clone()))
+                ))?((&workspace.location, workspace.id))
                 .context("clearing out old locations")?;
 
                 // Upsert
@@ -430,7 +430,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        async fn delete_stale_workspace(id: WorkspaceId) -> Result<()> {
+        pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
             DELETE FROM workspaces
             WHERE workspace_id IS ?
         }
@@ -447,7 +447,7 @@ impl WorkspaceDb {
             {
                 result.push((id, location));
             } else {
-                delete_tasks.push(self.delete_stale_workspace(id));
+                delete_tasks.push(self.delete_workspace_by_id(id));
             }
         }
 
@@ -622,11 +622,11 @@ impl WorkspaceDb {
     }
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
-        Ok(self.select_bound(sql!(
+        self.select_bound(sql!(
             SELECT kind, item_id, active FROM items
             WHERE pane_id = ?
                 ORDER BY position
-        ))?(pane_id)?)
+        ))?(pane_id)
     }
 
     fn save_items(

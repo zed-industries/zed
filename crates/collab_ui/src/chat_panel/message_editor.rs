@@ -1,6 +1,6 @@
 use anyhow::Result;
-use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
-use client::UserId;
+use channel::{ChannelMembership, ChannelStore, MessageParams};
+use client::{ChannelId, UserId};
 use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::StringMatchCandidate;
@@ -131,15 +131,15 @@ impl MessageEditor {
 
     pub fn set_channel(
         &mut self,
-        channel_id: u64,
+        channel_id: ChannelId,
         channel_name: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             if let Some(channel_name) = channel_name {
-                editor.set_placeholder_text(format!("Message #{}", channel_name), cx);
+                editor.set_placeholder_text(format!("Message #{channel_name}"), cx);
             } else {
-                editor.set_placeholder_text(format!("Message Channel"), cx);
+                editor.set_placeholder_text("Message Channel", cx);
             }
         });
         self.channel_id = Some(channel_id);
@@ -310,7 +310,7 @@ impl MessageEditor {
                 for range in ranges {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
-                    if let Some(username) = text.strip_prefix("@") {
+                    if let Some(username) = text.strip_prefix('@') {
                         if let Some(user_id) = this.channel_members.get(username) {
                             let start = multi_buffer.anchor_after(range.start);
                             let end = multi_buffer.anchor_after(range.end);
@@ -357,7 +357,7 @@ impl Render for MessageEditor {
             font_size: UiTextSize::Small.rems().into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -385,6 +385,7 @@ impl Render for MessageEditor {
 mod tests {
     use super::*;
     use client::{Client, User, UserStore};
+    use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use rpc::proto;
@@ -455,8 +456,9 @@ mod tests {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
 
+            let clock = Arc::new(FakeSystemClock::default());
             let http = FakeHttpClient::with_404_response();
-            let client = Client::new(http.clone(), cx);
+            let client = Client::new(clock, http.clone(), cx);
             let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);

@@ -1,0 +1,23 @@
+[
+  // Standard macOS bindings
+  {
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "pageup": "menu::SelectFirst",
+      "shift-pageup": "menu::SelectFirst",
+      "ctrl-p": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "pagedown": "menu::SelectLast",
+      "shift-pagedown": "menu::SelectFirst",
+      "ctrl-n": "menu::SelectNext",
+      "cmd-up": "menu::SelectFirst",
+      "cmd-down": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "ctrl-enter": "menu::ShowContextMenu",
+      "cmd-enter": "menu::SecondaryConfirm",
+      "escape": "menu::Cancel",
+      "ctrl-c": "menu::Cancel",
+      "cmd-q": "storybook::Quit"
+    }
+  }
+]

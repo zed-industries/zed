@@ -2,8 +2,8 @@ use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
     Highlights,
 };
-use crate::MultiBufferSnapshot;
 use language::{Chunk, Point};
+use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -296,7 +296,7 @@ impl TabSnapshot {
         let (collapsed, expanded_char_column, to_next_stop) =
             self.collapse_tabs(chars, expanded, bias);
         (
-            FoldPoint::new(output.row(), collapsed as u32),
+            FoldPoint::new(output.row(), collapsed),
             expanded_char_column,
             to_next_stop,
         )
@@ -513,7 +513,7 @@ impl<'a> Iterator for TabChunks<'a> {
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
                         let tab_size = if self.input_column < self.max_expansion_column {
-                            self.tab_size.get() as u32
+                            self.tab_size.get()
                         } else {
                             1
                         };

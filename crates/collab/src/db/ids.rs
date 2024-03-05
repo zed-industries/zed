@@ -88,6 +88,7 @@ id_type!(FlagId);
 id_type!(ExtensionId);
 id_type!(NotificationId);
 id_type!(NotificationKindId);
+id_type!(HostedProjectId);
 
 /// ChannelRole gives you permissions for both channels and calls.
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
@@ -100,8 +101,12 @@ pub enum ChannelRole {
     #[sea_orm(string_value = "member")]
     #[default]
     Member,
+    /// Talker can read, but not write.
+    /// They can use microphones and the channel chat
+    #[sea_orm(string_value = "talker")]
+    Talker,
     /// Guest can read, but not write.
-    /// (thought they can use the channel chat)
+    /// They can not use microphones but can use the chat.
     #[sea_orm(string_value = "guest")]
     Guest,
     /// Banned may not read.
@@ -114,8 +119,9 @@ impl ChannelRole {
     pub fn should_override(&self, other: Self) -> bool {
         use ChannelRole::*;
         match self {
-            Admin => matches!(other, Member | Banned | Guest),
-            Member => matches!(other, Banned | Guest),
+            Admin => matches!(other, Member | Banned | Talker | Guest),
+            Member => matches!(other, Banned | Talker | Guest),
+            Talker => matches!(other, Guest),
             Banned => matches!(other, Guest),
             Guest => false,
         }
@@ -134,7 +140,7 @@ impl ChannelRole {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
-            Guest => visibility == ChannelVisibility::Public,
+            Guest | Talker => visibility == ChannelVisibility::Public,
             Banned => false,
         }
     }
@@ -144,7 +150,7 @@ impl ChannelRole {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
-            Guest | Banned => false,
+            Guest | Talker | Banned => false,
         }
     }
 
@@ -152,16 +158,16 @@ impl ChannelRole {
     pub fn can_only_see_public_descendants(&self) -> bool {
         use ChannelRole::*;
         match self {
-            Guest => true,
+            Guest | Talker => true,
             Admin | Member | Banned => false,
         }
     }
 
     /// True if the role can share screen/microphone/projects into rooms.
-    pub fn can_publish_to_rooms(&self) -> bool {
+    pub fn can_use_microphone(&self) -> bool {
         use ChannelRole::*;
         match self {
-            Admin | Member => true,
+            Admin | Member | Talker => true,
             Guest | Banned => false,
         }
     }
@@ -171,7 +177,7 @@ impl ChannelRole {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
-            Guest | Banned => false,
+            Talker | Guest | Banned => false,
         }
     }
 
@@ -179,7 +185,7 @@ impl ChannelRole {
     pub fn can_read_projects(&self) -> bool {
         use ChannelRole::*;
         match self {
-            Admin | Member | Guest => true,
+            Admin | Member | Guest | Talker => true,
             Banned => false,
         }
     }
@@ -188,7 +194,7 @@ impl ChannelRole {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
-            Banned | Guest => false,
+            Banned | Guest | Talker => false,
         }
     }
 }
@@ -198,6 +204,7 @@ impl From<proto::ChannelRole> for ChannelRole {
         match value {
             proto::ChannelRole::Admin => ChannelRole::Admin,
             proto::ChannelRole::Member => ChannelRole::Member,
+            proto::ChannelRole::Talker => ChannelRole::Talker,
             proto::ChannelRole::Guest => ChannelRole::Guest,
             proto::ChannelRole::Banned => ChannelRole::Banned,
         }
@@ -209,6 +216,7 @@ impl Into<proto::ChannelRole> for ChannelRole {
         match self {
             ChannelRole::Admin => proto::ChannelRole::Admin,
             ChannelRole::Member => proto::ChannelRole::Member,
+            ChannelRole::Talker => proto::ChannelRole::Talker,
             ChannelRole::Guest => proto::ChannelRole::Guest,
             ChannelRole::Banned => proto::ChannelRole::Banned,
         }

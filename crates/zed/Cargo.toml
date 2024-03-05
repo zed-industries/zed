@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.124.0"
+version = "0.126.0"
 publish = false
 license = "GPL-3.0-or-later"
 
@@ -17,36 +17,30 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
-ai.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
-async-compression.workspace = true
-async-recursion = "0.3"
-async-tar.workspace = true
-async-trait.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 backtrace = "0.3"
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
-chrono = "0.4"
+chrono.workspace = true
 cli.workspace = true
 client.workspace = true
+clock.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
-ctor.workspace = true
 db.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extensions_ui.workspace = true
-feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true
@@ -54,109 +48,42 @@ fsevent.workspace = true
 futures.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
-ignore = "0.4"
-image = "0.23"
-indexmap = "1.6.2"
 install_cli.workspace = true
 isahc.workspace = true
-itertools = "0.11"
+itertools.workspace = true
 journal.workspace = true
 language.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
-lazy_static.workspace = true
-libc = "0.2"
+languages.workspace = true
 log.workspace = true
-lsp.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = "0.1"
 node_runtime.workspace = true
 notifications.workspace = true
-num_cpus = "1.13.0"
 outline.workspace = true
 parking_lot.workspace = true
-postage.workspace = true
+profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
 quick_action_bar.workspace = true
-rand.workspace = true
 recent_projects.workspace = true
-regex.workspace = true
 release_channel.workspace = true
 rope.workspace = true
-rpc.workspace = true
-rsa = "0.4"
-runnable.workspace = true
-runnables_ui.workspace = true
-rust-embed.workspace = true
-schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-shellexpand = "2.1.0"
 simplelog = "0.9"
-smallvec.workspace = true
 smol.workspace = true
-sum_tree.workspace = true
-tempfile.workspace = true
+task.workspace = true
+tasks_ui.workspace = true
 terminal_view.workspace = true
-text.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
-thiserror.workspace = true
-tiny_http = "0.8"
-toml.workspace = true
-tree-sitter-astro.workspace = true
-tree-sitter-bash.workspace = true
-tree-sitter-c-sharp.workspace = true
-tree-sitter-c.workspace = true
-tree-sitter-clojure.workspace = true
-tree-sitter-cpp.workspace = true
-tree-sitter-css.workspace = true
-tree-sitter-dockerfile.workspace = true
-tree-sitter-elixir.workspace = true
-tree-sitter-elm.workspace = true
-tree-sitter-embedded-template.workspace = true
-tree-sitter-erlang.workspace = true
-tree-sitter-gitcommit.workspace = true
-tree-sitter-gleam.workspace = true
-tree-sitter-glsl.workspace = true
-tree-sitter-go.workspace = true
-tree-sitter-gomod.workspace = true
-tree-sitter-gowork.workspace = true
-tree-sitter-haskell.workspace = true
-tree-sitter-hcl.workspace = true
-tree-sitter-heex.workspace = true
-tree-sitter-html.workspace = true
-tree-sitter-json.workspace = true
-tree-sitter-lua.workspace = true
-tree-sitter-markdown.workspace = true
-tree-sitter-nix.workspace = true
-tree-sitter-nu.workspace = true
-tree-sitter-ocaml.workspace = true
-tree-sitter-php.workspace = true
-tree-sitter-prisma-io.workspace = true
-tree-sitter-proto.workspace = true
-tree-sitter-purescript.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-racket.workspace = true
-tree-sitter-ruby.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-scheme.workspace = true
-tree-sitter-svelte.workspace = true
-tree-sitter-toml.workspace = true
-tree-sitter-typescript.workspace = true
-tree-sitter-uiua.workspace = true
-tree-sitter-vue.workspace = true
-tree-sitter-yaml.workspace = true
-tree-sitter-zig.workspace = true
-tree-sitter.workspace = true
-url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
 uuid.workspace = true
@@ -171,8 +98,7 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
-text = { workspace = true, features = ["test-support"] }
-unindent.workspace = true
+tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
@@ -181,7 +107,7 @@ identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-dev"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-nightly]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
@@ -189,7 +115,7 @@ identifier = "dev.zed.Zed-Nightly"
 name = "Zed Nightly"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-nightly"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
@@ -197,7 +123,7 @@ identifier = "dev.zed.Zed-Preview"
 name = "Zed Preview"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-preview"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
@@ -206,3 +132,6 @@ name = "Zed"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
+
+[package.metadata.cargo-machete]
+ignored = ["profiling"]

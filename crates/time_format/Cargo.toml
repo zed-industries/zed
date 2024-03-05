@@ -1,0 +1,19 @@
+[package]
+name = "time_format"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/time_format.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+sys-locale.workspace = true
+time.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation.workspace = true
+core-foundation-sys.workspace = true

@@ -470,7 +470,7 @@ impl Editor {
                 .buffer()
                 .read(cx)
                 .snapshot(cx)
-                .anchor_at(Point::new(top_row as u32, 0), Bias::Left);
+                .anchor_at(Point::new(top_row, 0), Bias::Left);
             let scroll_anchor = ScrollAnchor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,

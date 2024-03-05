@@ -31,6 +31,11 @@ impl VimTestContext {
         Self::new_with_lsp(lsp, enabled)
     }
 
+    pub async fn new_html(cx: &mut gpui::TestAppContext) -> VimTestContext {
+        Self::init(cx);
+        Self::new_with_lsp(EditorLspTestContext::new_html(cx).await, true)
+    }
+
     pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(
@@ -54,7 +59,7 @@ impl VimTestContext {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
-            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
+            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
             if enabled {
                 settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
             }
@@ -62,7 +67,6 @@ impl VimTestContext {
 
         // Setup search toolbars and keypress hook
         cx.update_workspace(|workspace, cx| {
-            observe_keystrokes(cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
                     let buffer_search_bar = cx.new_view(BufferSearchBar::new);
@@ -86,7 +90,7 @@ impl VimTestContext {
         T: 'static,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
     {
-        let window = self.window.clone();
+        let window = self.window;
         self.update_window(window, move |_, cx| view.update(cx, update))
             .unwrap()
     }

@@ -1,0 +1,11 @@
+name = "OCaml Interface"
+grammar = "ocaml_interface"
+path_suffixes = ["mli"]
+block_comment = ["(* ", "*)"]
+autoclose_before = ";,=)}"
+brackets = [
+  { start = "{", end = "}", close = true, newline = true },
+  { start = "<", end = ">", close = true, newline = true },
+  { start = "[", end = "]", close = true, newline = true },
+  { start = "(", end = ")", close = true, newline = true }
+]
