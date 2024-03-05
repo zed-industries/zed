@@ -591,18 +591,26 @@ impl<'a> WindowContext<'a> {
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();
 
-        self.defer(move |cx| {
-            let node_id = focus_handle
-                .and_then(|handle| {
-                    cx.window
-                        .rendered_frame
-                        .dispatch_tree
-                        .focusable_node_id(handle.id)
-                })
-                .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
-
+        let window = self.window.handle;
+        self.app.defer(move |cx| {
             cx.propagate_event = true;
-            cx.dispatch_action_on_node(node_id, action);
+            window
+                .update(cx, |_, cx| {
+                    let node_id = focus_handle
+                        .and_then(|handle| {
+                            cx.window
+                                .rendered_frame
+                                .dispatch_tree
+                                .focusable_node_id(handle.id)
+                        })
+                        .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
+
+                    cx.dispatch_action_on_node(node_id, action.as_ref());
+                })
+                .log_err();
+            if cx.propagate_event {
+                cx.dispatch_global_action(action.as_ref());
+            }
         })
     }
 
@@ -1219,7 +1227,7 @@ impl<'a> WindowContext<'a> {
 
             self.propagate_event = true;
             for binding in bindings {
-                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+                self.dispatch_action_on_node(node_id, binding.action.as_ref());
                 if !self.propagate_event {
                     self.dispatch_keystroke_observers(event, Some(binding.action));
                     return;
@@ -1297,7 +1305,7 @@ impl<'a> WindowContext<'a> {
 
         self.propagate_event = true;
         for binding in currently_pending.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+            self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
                 return;
             }
@@ -1329,7 +1337,7 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
+    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: &dyn Action) {
         let dispatch_path = self
             .window
             .rendered_frame

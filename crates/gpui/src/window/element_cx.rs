@@ -89,6 +89,7 @@ pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 pub(crate) struct DeferredDraw {
     priority: usize,
     parent_element_node: DispatchNodeId,
+    element_id_stack: GlobalElementId,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     layout_range: Range<AfterLayoutIndex>,
@@ -110,7 +111,6 @@ pub(crate) struct Frame {
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) tooltip_requests: Vec<Option<AnyTooltip>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -150,7 +150,6 @@ impl Frame {
             requested_input_handler: None,
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
-            view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -170,7 +169,6 @@ impl Frame {
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.deferred_draws.clear();
-        debug_assert_eq!(self.view_stack.len(), 0);
     }
 
     pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
@@ -417,39 +415,49 @@ impl<'a> ElementContext<'a> {
     }
 
     fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+        assert_eq!(self.window.element_id_stack.len(), 0);
+
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
             self.with_parent_element(deferred_draw.parent_element_node, |cx| {
+                let layout_start = cx.window.next_frame.after_layout_index();
                 if let Some(element) = deferred_draw.element.as_mut() {
-                    deferred_draw.layout_range.start = cx.window.next_frame.after_layout_index();
                     cx.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
                         element.after_layout(cx)
                     });
-                    deferred_draw.layout_range.end = cx.window.next_frame.after_layout_index();
                 } else {
                     cx.reuse_after_layout(deferred_draw.layout_range.clone());
                 }
-            })
+                let layout_end = cx.window.next_frame.after_layout_index();
+                deferred_draw.layout_range = layout_start..layout_end;
+            });
         }
         self.window.next_frame.deferred_draws = deferred_draws;
+        self.window.element_id_stack.clear();
     }
 
     fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+        assert_eq!(self.window.element_id_stack.len(), 0);
+
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
             self.with_parent_element(deferred_draw.parent_element_node, |cx| {
+                let paint_start = cx.window.next_frame.paint_index();
                 if let Some(element) = deferred_draw.element.as_mut() {
-                    deferred_draw.paint_range.start = cx.window.next_frame.paint_index();
                     element.paint(cx);
-                    deferred_draw.paint_range.end = cx.window.next_frame.paint_index();
                 } else {
                     cx.reuse_paint(deferred_draw.paint_range.clone());
                 }
+                let paint_end = cx.window.next_frame.paint_index();
+                deferred_draw.paint_range = paint_start..paint_end;
             })
         }
         self.window.next_frame.deferred_draws = deferred_draws;
+        self.window.element_id_stack.clear();
     }
 
     pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
@@ -484,6 +492,7 @@ impl<'a> ElementContext<'a> {
                 .map(|deferred_draw| DeferredDraw {
                     parent_element_node: reused_subtree
                         .refresh_node_id(deferred_draw.parent_element_node),
+                    element_id_stack: deferred_draw.element_id_stack.clone(),
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -777,14 +786,11 @@ impl<'a> ElementContext<'a> {
         absolute_offset: Point<Pixels>,
         priority: usize,
     ) {
-        let parent_element_node = self
-            .window
-            .next_frame
-            .dispatch_tree
-            .active_node_id()
-            .unwrap();
-        self.window.next_frame.deferred_draws.push(DeferredDraw {
+        let window = &mut self.window;
+        let parent_element_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
+        window.next_frame.deferred_draws.push(DeferredDraw {
             parent_element_node,
+            element_id_stack: window.element_id_stack.clone(),
             priority,
             element: Some(element),
             absolute_offset,
