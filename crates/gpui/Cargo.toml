@@ -7,6 +7,9 @@ description = "Zed's GPU-accelerated UI framework"
 publish = false
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [features]
 test-support = [
     "backtrace",

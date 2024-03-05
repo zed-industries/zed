@@ -6,6 +6,9 @@ version = "0.126.0"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 name = "zed"
 path = "src/zed.rs"

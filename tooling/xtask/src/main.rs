@@ -63,57 +63,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
     #[cfg(not(target_os = "windows"))]
     clippy_command.args(["--deny", "warnings"]);
 
-    /// These are all of the rules that currently have violations in the Zed
-    /// codebase.
-    ///
-    /// We'll want to drive this list down by either:
-    /// 1. fixing violations of the rule and begin enforcing it
-    /// 2. deciding we want to allow the rule permanently, at which point
-    ///    we should codify that separately in this task.
-    ///
-    /// This list shouldn't be added to; it should only get shorter.
-    const MIGRATORY_RULES_TO_ALLOW: &[&str] = &[
-        // There are a bunch of rules currently failing in the `style` group, so
-        // allow all of those, for now.
-        "clippy::style",
-        // Individual rules that have violations in the codebase:
-        "clippy::almost_complete_range",
-        "clippy::arc_with_non_send_sync",
-        "clippy::await_holding_lock",
-        "clippy::borrow_deref_ref",
-        "clippy::borrowed_box",
-        "clippy::cast_abs_to_unsigned",
-        "clippy::cmp_owned",
-        "clippy::derive_ord_xor_partial_ord",
-        "clippy::eq_op",
-        "clippy::implied_bounds_in_impls",
-        "clippy::let_underscore_future",
-        "clippy::map_entry",
-        "clippy::never_loop",
-        "clippy::non_canonical_clone_impl",
-        "clippy::non_canonical_partial_ord_impl",
-        "clippy::reversed_empty_ranges",
-        "clippy::single_range_in_vec_init",
-        "clippy::suspicious_to_owned",
-        "clippy::type_complexity",
-        "clippy::unnecessary_to_owned",
-    ];
-
-    // When fixing violations automatically for a single package we don't care
-    // about the rules we're already violating, since it may be possible to
-    // have them fixed automatically.
-    let ignore_suppressed_rules = args.fix && args.package.is_some();
-    if !ignore_suppressed_rules {
-        for rule in MIGRATORY_RULES_TO_ALLOW {
-            clippy_command.args(["--allow", rule]);
-        }
-    }
-
-    // Deny `dbg!` and `todo!`s.
-    clippy_command
-        .args(["--deny", "clippy::dbg_macro"])
-        .args(["--deny", "clippy::todo"]);
-
     eprintln!(
         "running: {cargo} {}",
         clippy_command

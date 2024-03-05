@@ -7,6 +7,9 @@ version = "0.44.0"
 publish = false
 license = "AGPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "collab"
 
