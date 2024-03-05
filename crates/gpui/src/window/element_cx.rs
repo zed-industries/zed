@@ -42,11 +42,6 @@ use crate::{
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
 
-pub(crate) struct RequestedInputHandler {
-    pub(crate) view_id: EntityId,
-    pub(crate) handler: Option<PlatformInputHandler>,
-}
-
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
     pub(crate) hitbox_id: HitboxId,
@@ -108,7 +103,7 @@ pub(crate) struct Frame {
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    pub(crate) requested_input_handler: Option<RequestedInputHandler>,
+    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<AnyTooltip>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     pub(crate) reused_views: FxHashSet<EntityId>,
@@ -129,6 +124,7 @@ pub(crate) struct AfterLayoutIndex {
 pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
+    input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
 }
@@ -147,7 +143,7 @@ impl Frame {
             deferred_draws: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
-            requested_input_handler: None,
+            input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
             reused_views: FxHashSet::default(),
@@ -164,7 +160,7 @@ impl Frame {
         self.dispatch_tree.clear();
         self.reused_views.clear();
         self.scene.clear();
-        self.requested_input_handler.take();
+        self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
@@ -185,6 +181,7 @@ impl Frame {
         PaintIndex {
             scene_index: self.scene.len(),
             mouse_listeners_index: self.mouse_listeners.len(),
+            input_handlers_index: self.input_handlers.len(),
             cursor_styles_index: self.cursor_styles.len(),
             accessed_element_states_index: self.accessed_element_states.len(),
         }
@@ -500,21 +497,10 @@ impl<'a> ElementContext<'a> {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
-
-        for view_id in [parent_view_id].into_iter().chain(reused_subtree.view_ids) {
-            window.next_frame.reused_views.insert(view_id);
-
-            // Reuse the previous input handler.
-            if window
-                .rendered_frame
-                .requested_input_handler
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                window.next_frame.requested_input_handler =
-                    window.rendered_frame.requested_input_handler.take();
-            }
-        }
+        window
+            .next_frame
+            .reused_views
+            .extend([parent_view_id].into_iter().chain(reused_subtree.view_ids));
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
@@ -525,6 +511,12 @@ impl<'a> ElementContext<'a> {
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]
                 .iter()
                 .cloned(),
+        );
+        window.next_frame.input_handlers.extend(
+            window.rendered_frame.input_handlers
+                [range.start.input_handlers_index..range.end.input_handlers_index]
+                .iter_mut()
+                .map(|handler| handler.take()),
         );
         window.next_frame.mouse_listeners.extend(
             window.rendered_frame.mouse_listeners
@@ -1241,14 +1233,11 @@ impl<'a> ElementContext<'a> {
     /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
         if focus_handle.is_focused(self) {
-            let view_id = self.parent_view_id();
-            self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
-                view_id,
-                handler: Some(PlatformInputHandler::new(
-                    self.to_async(),
-                    Box::new(input_handler),
-                )),
-            })
+            let cx = self.to_async();
+            self.window
+                .next_frame
+                .input_handlers
+                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
         }
     }
 

@@ -872,10 +872,12 @@ impl<'a> WindowContext<'a> {
         self.window.dirty.set(false);
         self.window.drawing = true;
 
-        if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
-        {
-            let input_handler = self.window.platform_window.take_input_handler();
-            requested_handler.handler = input_handler;
+        // Restore the previously-used input handler.
+        if let Some(input_handler) = self.window.platform_window.take_input_handler() {
+            self.window
+                .rendered_frame
+                .input_handlers
+                .push(Some(input_handler));
         }
 
         self.with_element_context(|cx| cx.draw_roots());
@@ -898,10 +900,10 @@ impl<'a> WindowContext<'a> {
         }
 
         // Register requested input handler with the platform window.
-        if let Some(requested_input) = self.window.next_frame.requested_input_handler.as_mut() {
-            if let Some(handler) = requested_input.handler.take() {
-                self.window.platform_window.set_input_handler(handler);
-            }
+        if let Some(input_handler) = self.window.next_frame.input_handlers.pop() {
+            self.window
+                .platform_window
+                .set_input_handler(input_handler.unwrap());
         }
 
         self.window.layout_engine.as_mut().unwrap().clear();
