@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
+use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,6 +48,21 @@ use crate::{
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
 
+#[derive(Debug, Default)]
+struct DoubleBuffered<T>
+where
+    T: Clone,
+{
+    current: T,
+    next: T,
+}
+
+impl<T: Clone> DoubleBuffered<T> {
+    fn done(&mut self) {
+        self.current = self.next.clone();
+    }
+}
+
 pub(crate) struct WaylandClientStateInner {
     compositor: wl_compositor::WlCompositor,
     wm_base: xdg_wm_base::XdgWmBase,
@@ -54,6 +71,10 @@ pub(crate) struct WaylandClientStateInner {
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
+    outputs: Vec<(
+        wl_output::WlOutput,
+        Rc<RefCell<DoubleBuffered<OutputState>>>,
+    )>,
     platform_inner: Rc<LinuxPlatformInner>,
     keymap_state: Option<xkb::State>,
     repeat: KeyRepeat,
@@ -91,6 +112,7 @@ pub(crate) struct WaylandClient {
 }
 
 const WL_SEAT_VERSION: u32 = 4;
+const WL_OUTPUT_VERSION: u32 = 4;
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
@@ -98,27 +120,40 @@ impl WaylandClient {
 
         let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
         let qh = event_queue.handle();
+        let mut outputs = Vec::new();
 
         globals.contents().with_list(|list| {
             for global in list {
-                if global.interface == "wl_seat" {
-                    globals.registry().bind::<wl_seat::WlSeat, _, _>(
-                        global.name,
-                        WL_SEAT_VERSION,
-                        &qh,
-                        (),
-                    );
+                match &global.interface[..] {
+                    "wl_seat" => {
+                        globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                            global.name,
+                            WL_SEAT_VERSION,
+                            &qh,
+                            (),
+                        );
+                    }
+                    "wl_output" => outputs.push((
+                        globals.registry().bind::<wl_output::WlOutput, _, _>(
+                            global.name,
+                            WL_OUTPUT_VERSION,
+                            &qh,
+                            (),
+                        ),
+                        Rc::new(RefCell::new(DoubleBuffered::default())),
+                    )),
+                    _ => {}
                 }
             }
         });
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
+            compositor: globals.bind(&qh, 3..=3, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
+            outputs,
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
-            // fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
-            fractional_scale_manager: None,
+            fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
@@ -234,9 +269,9 @@ impl Client for WaylandClient {
             options,
         ));
 
-        // if let Some(fractional_scale_manager) = state.fractional_scale_manager.as_ref() {
-        //     fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, xdg_surface.id());
-        // }
+        if let Some(fractional_scale_manager) = state.fractional_scale_manager.as_ref() {
+            fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, xdg_surface.id());
+        }
 
         state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
@@ -278,16 +313,24 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut state = state.client_state_inner.borrow_mut();
         match event {
             wl_registry::Event::Global {
                 name,
                 interface,
                 version: _,
-            } => {
-                if interface.as_str() == "wl_seat" {
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
+            } => match &interface[..] {
+                "wl_seat" => {
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, WL_SEAT_VERSION, qh, ());
                 }
-            }
+                "wl_output" => {
+                    state.outputs.push((
+                        registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ()),
+                        Rc::new(RefCell::new(DoubleBuffered::default())),
+                    ));
+                }
+                _ => {}
+            },
             wl_registry::Event::GlobalRemove { name: _ } => {}
             _ => {}
         }
@@ -298,7 +341,7 @@ delegate_noop!(WaylandClientState: ignore wl_compositor::WlCompositor);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
-// delegate_noop!(WaylandClientState: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+delegate_noop!(WaylandClientState: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientState: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientState: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientState: ignore wp_viewport::WpViewport);
@@ -335,24 +378,83 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
         _: &QueueHandle<Self>,
     ) {
         let mut state = state.client_state_inner.borrow_mut();
-        dbg!(&event);
+
+        // We use `WpFractionalScale` instead to set the scale if it's available
+        if state.fractional_scale_manager.is_some() {
+            return;
+        }
+
+        let Some(window) = state
+            .windows
+            .iter()
+            .map(|(_, state)| state)
+            .find(|state| &*state.surface == surface)
+        else {
+            return;
+        };
+
+        let mut outputs = window.outputs.borrow_mut();
+
         match event {
             wl_surface::Event::Enter { output } => {
-                todo!()
-            },
-            wl_surface::Event::Leave { output } => {
-                todo!()
-            },
-            wl_surface::Event::PreferredBufferScale { factor } => {
-                for window in &state.windows {
-                    if &*window.1.surface == surface {
-                        window.1.rescale(factor as f32 / 120.0);
-                        surface.set_buffer_scale(factor);
-                        return;
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if surface.version() >= 6 {
+                    for global_output in &state.outputs {
+                        if output == global_output.0 {
+                            outputs.insert(output.id());
+                        }
+                    }
+                    return;
+                }
+                let mut scale = 1;
+                for global_output in &state.outputs {
+                    if output == global_output.0 {
+                        outputs.insert(output.id());
+                        scale = scale.max(global_output.1.borrow().next.scale.get());
+                    } else if outputs.contains(&global_output.0.id()) {
+                        scale = scale.max(global_output.1.borrow().next.scale.get());
                     }
                 }
-            },
-            _ => {},
+                window.rescale(scale as f32);
+                window.surface.set_buffer_scale(scale as i32);
+            }
+            wl_surface::Event::Leave { output } => {
+                outputs.remove(&output.id());
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if surface.version() >= 6 {
+                    return;
+                }
+                let mut scale = 1;
+                for global_output in &state.outputs {
+                    if outputs.contains(&global_output.0.id()) {
+                        scale = scale.max(global_output.1.borrow().next.scale.get());
+                    }
+                }
+                window.rescale(scale as f32);
+                window.surface.set_buffer_scale(scale as i32);
+            }
+            wl_surface::Event::PreferredBufferScale { factor } => {
+                window.rescale(factor as f32);
+                surface.set_buffer_scale(factor);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OutputState {
+    name: Option<Cow<'static, str>>,
+    description: Option<Cow<'static, str>>,
+    scale: NonZeroU32,
+}
+
+impl Default for OutputState {
+    fn default() -> Self {
+        Self {
+            name: None,
+            description: None,
+            scale: NonZeroU32::new(1).unwrap(),
         }
     }
 }
@@ -360,18 +462,36 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
 impl Dispatch<wl_output::WlOutput, ()> for WaylandClientState {
     fn event(
         state: &mut Self,
-        proxy: &wl_output::WlOutput,
+        output: &wl_output::WlOutput,
         event: <wl_output::WlOutput as Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         let mut state = state.client_state_inner.borrow_mut();
-        dbg!(&event);
+        let mut output_state = state
+            .outputs
+            .iter_mut()
+            .find(|(o, _)| o == output)
+            .map(|(_, state)| state)
+            .unwrap()
+            .borrow_mut();
         match event {
-            wl_output::Event::Scale { factor } => todo!(),
-            wl_output::Event::Done => todo!(),
-            _ => {},
+            wl_output::Event::Name { name } => {
+                output_state.next.description = Some(Cow::Owned(name));
+            }
+            wl_output::Event::Description { description } => {
+                output_state.next.description = Some(Cow::Owned(description));
+            }
+            wl_output::Event::Scale { factor } => {
+                if factor > 0 {
+                    output_state.next.scale = NonZeroU32::new(factor as u32).unwrap();
+                }
+            }
+            wl_output::Event::Done => {
+                output_state.done();
+            }
+            _ => {}
         }
     }
 }
@@ -817,26 +937,26 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
     }
 }
 
-// impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientState {
-//     fn event(
-//         state: &mut Self,
-//         _: &wp_fractional_scale_v1::WpFractionalScaleV1,
-//         event: <wp_fractional_scale_v1::WpFractionalScaleV1 as Proxy>::Event,
-//         id: &ObjectId,
-//         _: &Connection,
-//         _: &QueueHandle<Self>,
-//     ) {
-//         let mut state = state.client_state_inner.borrow_mut();
-//         if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
-//             for window in &state.windows {
-//                 if window.0.id() == *id {
-//                     window.1.rescale(scale as f32 / 120.0);
-//                     return;
-//                 }
-//             }
-//         }
-//     }
-// }
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: <wp_fractional_scale_v1::WpFractionalScaleV1 as Proxy>::Event,
+        id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
+            for window in &state.windows {
+                if window.0.id() == *id {
+                    window.1.rescale(scale as f32 / 120.0);
+                    return;
+                }
+            }
+        }
+    }
+}
 
 impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
     for WaylandClientState
