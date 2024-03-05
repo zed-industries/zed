@@ -323,6 +323,7 @@ mod tests {
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "1".into()),
+                        ("ZED_SELECTED_TEXT".into(), "".into())
                     ])
                 }
             );
@@ -340,6 +341,7 @@ mod tests {
                         ("ZED_SYMBOL".into(), "this_is_a_rust_file".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "15".into()),
+                        ("ZED_SELECTED_TEXT".into(), "is_i".into()),
                     ])
                 }
             );
@@ -356,6 +358,7 @@ mod tests {
                         ("ZED_SYMBOL".into(), "this_is_a_test".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "1".into()),
+                        ("ZED_SELECTED_TEXT".into(), "".into()),
                     ])
                 }
             );
