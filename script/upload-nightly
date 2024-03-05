@@ -33,5 +33,6 @@ function uploadToSpaces
 sha=$(git rev-parse HEAD)
 echo ${sha} > target/latest-sha
 
+# TODO kb upload the binary too
 uploadToSpaces "target/release/Zed.dmg" "Zed.dmg"
 uploadToSpaces "target/latest-sha" "latest-sha"
