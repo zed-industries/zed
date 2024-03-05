@@ -363,14 +363,17 @@ impl LineLayoutCache {
             return layout.clone();
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        if let Some((key, layout)) = self.previous_frame.lock().wrapped_lines.remove_entry(key) {
+        let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
+        if let Some((key, layout)) = previous_frame_entry {
+            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
             current_frame.used_wrapped_lines.push(key);
             layout
         } else {
+            drop(current_frame);
+
             let unwrapped_layout = self.layout_line(text, font_size, runs);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width)
@@ -388,6 +391,8 @@ impl LineLayoutCache {
                 runs: SmallVec::from(runs),
                 wrap_width,
             });
+
+            let mut current_frame = self.current_frame.write();
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
