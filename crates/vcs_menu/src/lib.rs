@@ -67,7 +67,6 @@ impl Render for BranchList {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
-            .cursor_pointer()
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 this.picker.update(cx, |this, cx| {
