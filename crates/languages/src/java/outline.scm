@@ -15,6 +15,16 @@
     interfaces: (_)? @name
     permits: (_)? @name) @item
 
+(constructor_declaration
+    (modifiers)? @context
+    name: (_) @name
+    parameters: (formal_parameters) @context) @item
+
+(method_declaration
+    type: (type_identifier)? @type
+    name: (_) @name
+    parameters: (formal_parameters) @context) @item
+
 (record_declaration
     (modifiers)? @context
     "record" @context
