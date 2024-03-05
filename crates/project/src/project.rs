@@ -11,7 +11,10 @@ mod project_tests;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
-use client::{proto, Client, Collaborator, HostedProjectId, TypedEnvelope, UserStore};
+use client::{
+    proto, Client, Collaborator, HostedProjectId, PendingEntitySubscription, TypedEnvelope,
+    UserStore,
+};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
@@ -622,17 +625,26 @@ impl Project {
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
+        let subscription = client.subscribe_to_entity(remote_id)?;
         let response = client
             .request_envelope(proto::JoinProject {
                 project_id: remote_id,
             })
             .await?;
-        Self::from_join_project_response(response, None, client, user_store, languages, fs, cx)
-            .await
+        Self::from_join_project_response(
+            response,
+            subscription,
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
     }
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        hosted_project_id: Option<HostedProjectId>,
+        subscription: PendingEntitySubscription<Project>,
         client: Arc<Client>,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
@@ -641,7 +653,6 @@ impl Project {
     ) -> Result<Model<Self>> {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
-        let subscription = client.subscribe_to_entity(remote_id)?;
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
@@ -730,7 +741,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
-                hosted_project_id,
+                hosted_project_id: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -760,28 +771,29 @@ impl Project {
     }
 
     pub async fn hosted(
-        hosted_project_id: HostedProjectId,
-        user_store: Model<UserStore>,
-        client: Arc<Client>,
-        languages: Arc<LanguageRegistry>,
-        fs: Arc<dyn Fs>,
-        cx: AsyncAppContext,
+        _hosted_project_id: HostedProjectId,
+        _user_store: Model<UserStore>,
+        _client: Arc<Client>,
+        _languages: Arc<LanguageRegistry>,
+        _fs: Arc<dyn Fs>,
+        _cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
-        let response = client
-            .request_envelope(proto::JoinHostedProject {
-                id: hosted_project_id.0,
-            })
-            .await?;
-        Self::from_join_project_response(
-            response,
-            Some(hosted_project_id),
-            client,
-            user_store,
-            languages,
-            fs,
-            cx,
-        )
-        .await
+        // let response = client
+        //     .request_envelope(proto::JoinHostedProject {
+        //         id: hosted_project_id.0,
+        //     })
+        //     .await?;
+        // Self::from_join_project_response(
+        //     response,
+        //     Some(hosted_project_id),
+        //     client,
+        //     user_store,
+        //     languages,
+        //     fs,
+        //     cx,
+        // )
+        // .await
+        Err(anyhow!("disabled"))
     }
 
     fn release(&mut self, cx: &mut AppContext) {
