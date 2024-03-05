@@ -8720,7 +8720,7 @@ impl Editor {
 
         match permalink {
             Ok(permalink) => {
-                cx.open_url(&permalink.to_string());
+                cx.open_url(permalink.as_ref());
             }
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");
