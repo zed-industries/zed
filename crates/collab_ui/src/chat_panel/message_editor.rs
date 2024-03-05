@@ -20,6 +20,8 @@ use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, UiTextSize};
 
+use crate::panel_settings::MessageEditorSettings;
+
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
 lazy_static! {
@@ -86,7 +88,11 @@ impl MessageEditor {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
             editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
-            editor.set_auto_replace_emoji_shortcode(true);
+            editor.set_auto_replace_emoji_shortcode(
+                MessageEditorSettings::get_global(cx)
+                    .auto_replace_emoji_shortcode
+                    .unwrap_or_default(),
+            );
         });
 
         let buffer = editor
