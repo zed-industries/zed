@@ -844,7 +844,7 @@ impl Header for AppVersionHeader {
     }
 }
 
-pub fn routes(server: Arc<Server>) -> Router<Body> {
+pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(

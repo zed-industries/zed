@@ -22,8 +22,8 @@ anyhow.workspace = true
 async-tungstenite = "0.16"
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
-axum = { version = "0.5", features = ["json", "headers", "ws"] }
-axum-extra = { version = "0.3", features = ["erased-json"] }
+axum = { version = "0.6", features = ["json", "headers", "ws"] }
+axum-extra = { version = "0.4", features = ["erased-json"] }
 chrono.workspace = true
 clock.workspace = true
 clickhouse.workspace = true
@@ -32,7 +32,6 @@ dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true
 hex.workspace = true
-hyper = "0.14"
 live_kit_server.workspace = true
 log.workspace = true
 nanoid = "0.4"

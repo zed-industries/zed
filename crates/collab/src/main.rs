@@ -1,11 +1,10 @@
 use anyhow::anyhow;
-use axum::{extract::MatchedPath, routing::get, Extension, Router};
+use axum::{extract::MatchedPath, http::Request, routing::get, Extension, Router};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
     Config, MigrateConfig, Result,
 };
 use db::Database;
-use hyper::Request;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
@@ -111,7 +110,8 @@ async fn main() -> Result<()> {
                 );
 
             #[cfg(unix)]
-            axum::Server::from_tcp(listener)?
+            axum::Server::from_tcp(listener)
+                .map_err(|e| anyhow!(e))?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
                     let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
@@ -128,7 +128,8 @@ async fn main() -> Result<()> {
                         rpc_server.teardown();
                     }
                 })
-                .await?;
+                .await
+                .map_err(|e| anyhow!(e))?;
 
             // todo("windows")
             #[cfg(windows)]
