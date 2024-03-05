@@ -2502,7 +2502,7 @@ impl Editor {
 
             if self.auto_replace_emoji_shortcode
                 && selection.is_empty()
-                && text.as_ref().ends_with(":")
+                && text.as_ref().ends_with(':')
             {
                 if let Some(possible_emoji_short_code) =
                     Self::find_possible_emoji_shortcode(&snapshot, selection.start)
