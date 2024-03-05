@@ -2116,6 +2116,11 @@ impl LocalSnapshot {
         Some((path, self.git_repositories.get(&repo.work_directory_id())?))
     }
 
+    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        self.local_repo_for_path(path)
+            .map(|(_, entry)| entry.repo_ptr.clone())
+    }
+
     fn build_update(
         &self,
         project_id: u64,
