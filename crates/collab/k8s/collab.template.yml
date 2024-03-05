@@ -76,6 +76,10 @@ spec:
               port: 8080
             initialDelaySeconds: 1
             periodSeconds: 1
+          resources:
+            requests:
+              cpu: "46"
+              memory: "90Gi"
           env:
             - name: HTTP_PORT
               value: "8080"
