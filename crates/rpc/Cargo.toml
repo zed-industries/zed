@@ -6,6 +6,9 @@ version = "0.1.0"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/rpc.rs"
 doctest = false

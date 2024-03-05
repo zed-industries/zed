@@ -322,8 +322,6 @@ features = [
     "Win32_System_Ole",
 ]
 
-
-
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
@@ -349,6 +347,47 @@ wasmtime-cranelift = { opt-level = 3 }
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+# These are all of the rules that currently have violations in the Zed
+# codebase.
+#
+# We'll want to drive this list down by either:
+# 1. fixing violations of the rule and begin enforcing it
+# 2. deciding we want to allow the rule permanently, at which point
+#    we should codify that separately above.
+#
+# This list shouldn't be added to; it should only get shorter.
+# =============================================================================
+
+# There are a bunch of rules currently failing in the `style` group, so
+# allow all of those, for now.
+style = "allow"
+
+# Individual rules that have violations in the codebase:
+almost_complete_range = "allow"
+arc_with_non_send_sync = "allow"
+await_holding_lock = "allow"
+borrow_deref_ref = "allow"
+borrowed_box = "allow"
+cast_abs_to_unsigned = "allow"
+cmp_owned = "allow"
+derive_ord_xor_partial_ord = "allow"
+eq_op = "allow"
+implied_bounds_in_impls = "allow"
+let_underscore_future = "allow"
+map_entry = "allow"
+never_loop = "allow"
+non_canonical_clone_impl = "allow"
+non_canonical_partial_ord_impl = "allow"
+reversed_empty_ranges = "allow"
+single_range_in_vec_init = "allow"
+suspicious_to_owned = "allow"
+type_complexity = "allow"
+unnecessary_to_owned = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
