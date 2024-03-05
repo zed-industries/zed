@@ -346,6 +346,17 @@ codegen-units = 1
 dbg_macro = "deny"
 todo = "deny"
 
+# These are all of the rules that currently have violations in the Zed
+# codebase.
+#
+# We'll want to drive this list down by either:
+# 1. fixing violations of the rule and begin enforcing it
+# 2. deciding we want to allow the rule permanently, at which point
+#    we should codify that separately above.
+#
+# This list shouldn't be added to; it should only get shorter.
+# =============================================================================
+
 # There are a bunch of rules currently failing in the `style` group, so
 # allow all of those, for now.
 style = "allow"
