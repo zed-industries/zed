@@ -2282,7 +2282,6 @@ dependencies = [
  "tower",
  "tower-http 0.4.4",
  "tracing",
- "tracing-log",
  "tracing-subscriber",
  "unindent",
  "util",

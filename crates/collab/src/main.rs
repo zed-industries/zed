@@ -15,8 +15,9 @@ use std::{
 use tokio::signal::unix::SignalKind;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
-use tracing_log::LogTracer;
-use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
+use tracing_subscriber::{
+    filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
+};
 use util::ResultExt;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -179,11 +180,10 @@ async fn handle_liveness_probe(Extension(state): Extension<Arc<AppState>>) -> Re
 pub fn init_tracing(config: &Config) -> Option<()> {
     use std::str::FromStr;
     use tracing_subscriber::layer::SubscriberExt;
-    let rust_log = config.rust_log.clone()?;
 
-    LogTracer::init().log_err()?;
+    let filter = EnvFilter::from_str(config.rust_log.as_deref()?).log_err()?;
 
-    let subscriber = tracing_subscriber::Registry::default()
+    tracing_subscriber::registry()
         .with(console_subscriber::spawn())
         .with(if config.log_json.unwrap_or(false) {
             Box::new(
@@ -194,17 +194,17 @@ pub fn init_tracing(config: &Config) -> Option<()> {
                             .json()
                             .flatten_event(true)
                             .with_span_list(true),
-                    ),
+                    )
+                    .with_filter(filter),
             ) as Box<dyn Layer<_> + Send + Sync>
         } else {
             Box::new(
                 tracing_subscriber::fmt::layer()
-                    .event_format(tracing_subscriber::fmt::format().pretty()),
+                    .event_format(tracing_subscriber::fmt::format().pretty())
+                    .with_filter(filter),
             )
         })
-        .with(EnvFilter::from_str(rust_log.as_str()).log_err()?);
-
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+        .init();
 
     None
 }

@@ -58,8 +58,7 @@ toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
 tracing = "0.1.34"
-tracing-log = "0.1.3"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json", "registry", "tracing-log"] }
 util.workspace = true
 uuid.workspace = true
 
