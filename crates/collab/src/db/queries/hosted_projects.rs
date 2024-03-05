@@ -1,4 +1,4 @@
-use rpc::proto;
+use rpc::{proto, ErrorCode};
 
 use super::*;
 
@@ -38,5 +38,45 @@ impl Database {
                 })
             })
             .collect())
+    }
+
+    pub async fn get_hosted_project(
+        &self,
+        hosted_project_id: HostedProjectId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<(hosted_project::Model, ChannelRole)> {
+        let project = hosted_project::Entity::find_by_id(hosted_project_id)
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!(ErrorCode::NoSuchProject))?;
+        let channel = channel::Entity::find_by_id(project.channel_id)
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!(ErrorCode::NoSuchChannel))?;
+
+        let role = match project.visibility {
+            ChannelVisibility::Public => {
+                self.check_user_is_channel_participant(&channel, user_id, tx)
+                    .await?
+            }
+            ChannelVisibility::Members => {
+                self.check_user_is_channel_member(&channel, user_id, tx)
+                    .await?
+            }
+        };
+
+        Ok((project, role))
+    }
+
+    pub async fn is_hosted_project(&self, project_id: ProjectId) -> Result<bool> {
+        self.transaction(|tx| async move {
+            Ok(project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .map(|project| project.hosted_project_id.is_some())
+                .ok_or_else(|| anyhow!(ErrorCode::NoSuchProject))?)
+        })
+        .await
     }
 }

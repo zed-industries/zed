@@ -3,7 +3,9 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
-use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
+use client::{
+    ChannelId, Client, ClientSettings, HostedProjectId, Subscription, User, UserId, UserStore,
+};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
@@ -26,9 +28,6 @@ pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppCont
         cx.new_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
     cx.set_global(GlobalChannelStore(channel_store));
 }
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct HostedProjectId(pub u64);
 
 #[derive(Debug, Clone, Default)]
 struct NotesVersion {

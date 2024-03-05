@@ -268,7 +268,7 @@ impl Member {
                                         this.cursor_pointer().on_mouse_down(
                                             MouseButton::Left,
                                             cx.listener(move |this, _, cx| {
-                                                crate::join_remote_project(
+                                                crate::join_in_room_project(
                                                     leader_project_id,
                                                     leader_user_id,
                                                     this.app_state().clone(),

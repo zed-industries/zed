@@ -491,7 +491,7 @@ impl Database {
                     .one(&*tx)
                     .await?
                     .ok_or_else(|| anyhow!("project does not exist"))?;
-                if project.host_user_id != user_id {
+                if project.host_user_id != Some(user_id) {
                     return Err(anyhow!("no such project"))?;
                 }
 
@@ -851,7 +851,7 @@ impl Database {
                     }
 
                     if collaborator.is_host {
-                        left_project.host_user_id = collaborator.user_id;
+                        left_project.host_user_id = Some(collaborator.user_id);
                         left_project.host_connection_id = Some(collaborator_connection_id);
                     }
                 }

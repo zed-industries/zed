@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, HostedProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -2635,7 +2635,7 @@ impl Workspace {
         // if they are active in another project, follow there.
         if let Some(project_id) = other_project_id {
             let app_state = self.app_state.clone();
-            crate::join_remote_project(project_id, remote_participant.user.id, app_state, cx)
+            crate::join_in_room_project(project_id, remote_participant.user.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
 
@@ -4158,7 +4158,7 @@ async fn join_channel_internal(
     if let Some(room) = open_room {
         let task = room.update(cx, |room, cx| {
             if let Some((project, host)) = room.most_active_project(cx) {
-                return Some(join_remote_project(project, host, app_state.clone(), cx));
+                return Some(join_in_room_project(project, host, app_state.clone(), cx));
             }
 
             None
@@ -4229,7 +4229,7 @@ async fn join_channel_internal(
 
     let task = room.update(cx, |room, cx| {
         if let Some((project, host)) = room.most_active_project(cx) {
-            return Some(join_remote_project(project, host, app_state.clone(), cx));
+            return Some(join_in_room_project(project, host, app_state.clone(), cx));
         }
 
         // if you are the first to join a channel, share your project
@@ -4464,7 +4464,56 @@ pub fn create_and_open_local_file(
     })
 }
 
-pub fn join_remote_project(
+pub fn join_hosted_project(
+    hosted_project_id: HostedProjectId,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|mut cx| async move {
+        let existing_window = cx.update(|cx| {
+            cx.windows().into_iter().find_map(|window| {
+                let workspace = window.downcast::<Workspace>()?;
+                workspace
+                    .read(cx)
+                    .is_ok_and(|workspace| {
+                        workspace.project().read(cx).hosted_project_id() == Some(hosted_project_id)
+                    })
+                    .then(|| workspace)
+            })
+        })?;
+
+        let workspace = if let Some(existing_window) = existing_window {
+            existing_window
+        } else {
+            let project = Project::hosted(
+                hosted_project_id,
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx.clone(),
+            )
+            .await?;
+
+            let window_bounds_override = window_bounds_env_override(&cx);
+            cx.update(|cx| {
+                let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+                cx.open_window(options, |cx| {
+                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                })
+            })?
+        };
+
+        workspace.update(&mut cx, |_, cx| {
+            cx.activate(true);
+            cx.activate_window();
+        })?;
+
+        Ok(())
+    })
+}
+
+pub fn join_in_room_project(
     project_id: u64,
     follow_user_id: u64,
     app_state: Arc<AppState>,
