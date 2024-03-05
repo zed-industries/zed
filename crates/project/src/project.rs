@@ -7915,7 +7915,7 @@ impl Project {
         })?;
         this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
-        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
