@@ -325,6 +325,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
         div()
             .id(("item", ix))
+            .cursor_pointer()
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                 this.handle_click(ix, event.down.modifiers.command, cx)
             }))
