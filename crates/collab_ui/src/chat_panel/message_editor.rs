@@ -86,6 +86,7 @@ impl MessageEditor {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
             editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
+            editor.set_auto_replace_emoji_shortcode(true);
         });
 
         let buffer = editor

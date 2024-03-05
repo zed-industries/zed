@@ -5126,10 +5126,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
-        LanguageConfig {
-            auto_replace_emoji_shortcode: true,
-            ..Default::default()
-        },
+        LanguageConfig::default(),
         Some(tree_sitter_rust::language()),
     ));
 
@@ -5144,6 +5141,8 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
         .await;
 
     _ = editor.update(cx, |editor, cx| {
+        editor.set_auto_replace_emoji_shortcode(true);
+
         editor.handle_input("Hello ", cx);
         editor.handle_input(":wave", cx);
         assert_eq!(editor.text(cx), "Hello :wave".unindent());
@@ -5159,6 +5158,11 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
 
         editor.handle_input(":1:", cx);
         assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+
+        editor.set_auto_replace_emoji_shortcode(false);
+
+        editor.handle_input(" :wave:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1: :wave:".unindent());
     });
 }
 

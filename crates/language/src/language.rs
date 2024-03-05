@@ -446,9 +446,6 @@ pub struct LanguageConfig {
     /// The name of a Prettier parser that should be used for this language.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
-    /// If the language should support automatically replacing emoji shortcodes, e.g. :wave: would be transformed into 👋.
-    #[serde(default)]
-    pub auto_replace_emoji_shortcode: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -531,7 +528,6 @@ impl Default for LanguageConfig {
             word_characters: Default::default(),
             prettier_parser_name: None,
             collapsed_placeholder: Default::default(),
-            auto_replace_emoji_shortcode: false,
         }
     }
 }
@@ -1279,10 +1275,6 @@ impl LanguageScope {
         } else {
             true
         }
-    }
-
-    pub fn should_auto_replace_emoji_shortcode(&self) -> bool {
-        self.language.config.auto_replace_emoji_shortcode
     }
 
     fn config_override(&self) -> Option<&LanguageConfigOverride> {

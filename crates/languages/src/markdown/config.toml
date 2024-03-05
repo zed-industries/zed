@@ -12,4 +12,3 @@ brackets = [
     { start = "`", end = "`", close = false, newline = false },
 ]
 prettier_parser_name = "markdown"
-auto_replace_emoji_shortcode = true
