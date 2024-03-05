@@ -1,28 +1,22 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
-use aws_sdk_s3::primitives::ByteStream;
 use axum::{
     body::Bytes, headers::Header, http::HeaderName, routing::post, Extension, Router, TypedHeader,
 };
 use hyper::StatusCode;
-use hyper::{HeaderMap, StatusCode};
+use lazy_static::lazy_static;
 use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CopilotEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, MemoryEvent, SettingEvent,
 };
-use util::SemanticVersion;
 
-use crate::{api::slack, AppState, Error, Result};
-
-use super::ips_file::IpsFile;
+use crate::{AppState, Error, Result};
 
 pub fn router() -> Router {
-    Router::new()
-        .route("/telemetry/events", post(post_events))
-        .route("/telemetry/crashes", post(post_crash))
+    Router::new().route("/telemetry/events", post(post_events))
 }
 
 lazy_static! {
@@ -83,140 +77,6 @@ impl Header for CloudflareIpCountryHeader {
     }
 }
 
-pub async fn post_crash(
-    Extension(app): Extension<Arc<AppState>>,
-    body: Bytes,
-    headers: HeaderMap,
-) -> Result<()> {
-    static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
-
-    let report = IpsFile::parse(&body)?;
-    let version_threshold = SemanticVersion::new(0, 123, 0);
-
-    let bundle_id = &report.header.bundle_id;
-    let app_version = &report.app_version();
-
-    if bundle_id == "dev.zed.Zed-Dev" {
-        log::error!("Crash uploads from {} are ignored.", bundle_id);
-        return Ok(());
-    }
-
-    if app_version.is_none() || app_version.unwrap() < version_threshold {
-        log::error!(
-            "Crash uploads from {} are ignored.",
-            report.header.app_version
-        );
-        return Ok(());
-    }
-    let app_version = app_version.unwrap();
-
-    if let Some(blob_store_client) = app.blob_store_client.as_ref() {
-        let response = blob_store_client
-            .head_object()
-            .bucket(CRASH_REPORTS_BUCKET)
-            .key(report.header.incident_id.clone() + ".ips")
-            .send()
-            .await;
-
-        if response.is_ok() {
-            log::info!("We've already uploaded this crash");
-            return Ok(());
-        }
-
-        blob_store_client
-            .put_object()
-            .bucket(CRASH_REPORTS_BUCKET)
-            .key(report.header.incident_id.clone() + ".ips")
-            .acl(aws_sdk_s3::types::ObjectCannedAcl::PublicRead)
-            .body(ByteStream::from(body.to_vec()))
-            .send()
-            .await
-            .map_err(|e| log::error!("Failed to upload crash: {}", e))
-            .ok();
-    }
-
-    let recent_panic_on: Option<i64> = headers
-        .get("x-zed-panicked-on")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse().ok());
-    let mut recent_panic = None;
-
-    if let Some(recent_panic_on) = recent_panic_on {
-        let crashed_at = match report.timestamp() {
-            Ok(t) => Some(t),
-            Err(e) => {
-                log::error!("Can't parse {}: {}", report.header.timestamp, e);
-                None
-            }
-        };
-        if crashed_at.is_some_and(|t| (t.timestamp_millis() - recent_panic_on).abs() <= 30000) {
-            recent_panic = headers.get("x-zed-panic").and_then(|h| h.to_str().ok());
-        }
-    }
-
-    let description = report.description(recent_panic);
-    let summary = report.backtrace_summary();
-
-    tracing::error!(
-        service = "client",
-        version = %report.header.app_version,
-        os_version = %report.header.os_version,
-        bundle_id = %report.header.bundle_id,
-        incident_id = %report.header.incident_id,
-        description = %description,
-        backtrace = %summary,
-        "crash report");
-
-    if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
-        let payload = slack::WebhookBody::new(|w| {
-            w.add_section(|s| s.text(slack::Text::markdown(description)))
-                .add_section(|s| {
-                    s.add_field(slack::Text::markdown(format!(
-                        "*Version:*\n{} ({})",
-                        bundle_id, app_version
-                    )))
-                    .add_field({
-                        let hostname = app.config.blob_store_url.clone().unwrap_or_default();
-                        let hostname = hostname.strip_prefix("https://").unwrap_or_else(|| {
-                            hostname.strip_prefix("http://").unwrap_or_default()
-                        });
-
-                        slack::Text::markdown(format!(
-                            "*Incident:*\n<https://{}.{}/{}.ips|{}…>",
-                            CRASH_REPORTS_BUCKET,
-                            hostname,
-                            report.header.incident_id,
-                            report
-                                .header
-                                .incident_id
-                                .chars()
-                                .take(8)
-                                .collect::<String>(),
-                        ))
-                    })
-                })
-                .add_rich_text(|r| r.add_preformatted(|p| p.add_text(summary)))
-        });
-        let payload_json = serde_json::to_string(&payload).map_err(|err| {
-            log::error!("Failed to serialize payload to JSON: {err}");
-            Error::Internal(anyhow!(err))
-        })?;
-
-        reqwest::Client::new()
-            .post(slack_panics_webhook)
-            .header("Content-Type", "application/json")
-            .body(payload_json)
-            .send()
-            .await
-            .map_err(|err| {
-                log::error!("Failed to send payload to Slack: {err}");
-                Error::Internal(anyhow!(err))
-            })?;
-    }
-
-    Ok(())
-}
-
 pub async fn post_events(
     Extension(app): Extension<Arc<AppState>>,
     TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
@@ -242,7 +102,7 @@ pub async fn post_events(
     summer.update(&body);
     summer.update(checksum_seed);
 
-    if &checksum != &summer.finalize()[..] {
+    if &checksum[..] != &summer.finalize()[..] {
         return Err(Error::Http(
             StatusCode::BAD_REQUEST,
             "invalid checksum".into(),

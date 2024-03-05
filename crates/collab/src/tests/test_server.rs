@@ -507,7 +507,6 @@ impl TestServer {
                 clickhouse_password: None,
                 clickhouse_database: None,
                 zed_client_checksum_seed: None,
-                slack_panics_webhook: None,
             },
         })
     }

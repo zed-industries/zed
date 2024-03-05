@@ -7,11 +7,15 @@ version = "0.44.0"
 publish = false
 license = "AGPL-3.0-or-later"
 
+[features]
+seed-support = ["reqwest"]
+
 [[bin]]
 name = "collab"
 
 [[bin]]
 name = "seed"
+required-features = ["seed-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -37,7 +41,7 @@ parking_lot.workspace = true
 prometheus = "0.13"
 prost.workspace = true
 rand.workspace = true
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json"], optional = true }
 rpc.workspace = true
 scrypt = "0.7"
 sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
@@ -47,7 +51,6 @@ serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
-rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true

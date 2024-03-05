@@ -2039,7 +2039,6 @@ dependencies = [
  "release_channel",
  "reqwest",
  "rpc",
- "rustc-demangle",
  "scrypt",
  "sea-orm",
  "semver",

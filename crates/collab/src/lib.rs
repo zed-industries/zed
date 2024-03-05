@@ -127,7 +127,6 @@ pub struct Config {
     pub blob_store_bucket: Option<String>,
     pub zed_environment: Arc<str>,
     pub zed_client_checksum_seed: Option<String>,
-    pub slack_panics_webhook: Option<String>,
 }
 
 impl Config {
