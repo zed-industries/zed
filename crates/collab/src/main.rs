@@ -25,6 +25,7 @@ const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    console_subscriber::init();
     if let Err(error) = env::load_dotenv() {
         eprintln!(
             "error loading .env.toml (this is expected in production): {}",
