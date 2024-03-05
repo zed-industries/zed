@@ -10,9 +10,9 @@ use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat]);
 
-fn should_replay(action: &Box<dyn Action>) -> bool {
+fn should_replay(action: &dyn Action) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::actions::ShowCharacterPalette.partial_eq(&**action) {
+    if editor::actions::ShowCharacterPalette.partial_eq(action) {
         return false;
     }
     true
@@ -174,7 +174,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
         for action in actions {
             match action {
                 ReplayableAction::Action(action) => {
-                    if should_replay(&action) {
+                    if should_replay(&*action) {
                         window.update(&mut cx, |_, cx| cx.dispatch_action(action))
                     } else {
                         Ok(())

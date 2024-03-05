@@ -1292,7 +1292,7 @@ impl Pane {
     fn render_tab(
         &self,
         ix: usize,
-        item: &Box<dyn ItemHandle>,
+        item: &dyn ItemHandle,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
@@ -1521,7 +1521,7 @@ impl Pane {
                     .iter()
                     .enumerate()
                     .zip(self.tab_details(cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                    .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx)),
             )
             .child(
                 div()
