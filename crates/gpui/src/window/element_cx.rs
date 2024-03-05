@@ -88,6 +88,7 @@ pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
 pub(crate) struct DeferredDraw {
     priority: usize,
+    parent_element_node: DispatchNodeId,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     layout_range: Range<AfterLayoutIndex>,
@@ -98,6 +99,7 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
+    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -119,6 +121,8 @@ pub(crate) struct AfterLayoutIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
     deferred_draws_index: usize,
+    dispatch_tree_index: usize,
+    accessed_element_states_index: usize,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -126,7 +130,7 @@ pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
     cursor_styles_index: usize,
-    dispatch_tree_index: usize,
+    accessed_element_states_index: usize,
 }
 
 impl Frame {
@@ -135,6 +139,7 @@ impl Frame {
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
+            accessed_element_states: Vec::new(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -155,6 +160,7 @@ impl Frame {
 
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
+        self.accessed_element_states.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.reused_views.clear();
@@ -172,6 +178,8 @@ impl Frame {
             hitboxes_index: self.hitboxes.len(),
             tooltips_index: self.tooltip_requests.len(),
             deferred_draws_index: self.deferred_draws.len(),
+            dispatch_tree_index: self.dispatch_tree.len(),
+            accessed_element_states_index: self.accessed_element_states.len(),
         }
     }
 
@@ -180,7 +188,7 @@ impl Frame {
             scene_index: self.scene.len(),
             mouse_listeners_index: self.mouse_listeners.len(),
             cursor_styles_index: self.cursor_styles.len(),
-            dispatch_tree_index: self.dispatch_tree.len(),
+            accessed_element_states_index: self.accessed_element_states.len(),
         }
     }
 
@@ -204,10 +212,10 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        // Retain element states for views that didn't change since the last frame.
-        for (element_id, state) in prev_frame.element_states.drain() {
-            if self.reused_views.contains(&state.parent_view_id) {
-                self.element_states.entry(element_id).or_insert(state);
+        for element_state_key in &self.accessed_element_states {
+            if let Some(element_state) = prev_frame.element_states.remove(element_state_key) {
+                self.element_states
+                    .insert(element_state_key.clone(), element_state);
             }
         }
 
@@ -412,15 +420,17 @@ impl<'a> ElementContext<'a> {
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            if let Some(element) = deferred_draw.element.as_mut() {
-                deferred_draw.layout_range.start = self.window.next_frame.after_layout_index();
-                self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
-                    element.after_layout(cx)
-                });
-                deferred_draw.layout_range.end = self.window.next_frame.after_layout_index();
-            } else {
-                self.reuse_after_layout(deferred_draw.layout_range.clone());
-            }
+            self.with_parent_element(deferred_draw.parent_element_node, |cx| {
+                if let Some(element) = deferred_draw.element.as_mut() {
+                    deferred_draw.layout_range.start = cx.window.next_frame.after_layout_index();
+                    cx.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
+                        element.after_layout(cx)
+                    });
+                    deferred_draw.layout_range.end = cx.window.next_frame.after_layout_index();
+                } else {
+                    cx.reuse_after_layout(deferred_draw.layout_range.clone());
+                }
+            })
         }
         self.window.next_frame.deferred_draws = deferred_draws;
     }
@@ -429,18 +439,21 @@ impl<'a> ElementContext<'a> {
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            if let Some(element) = deferred_draw.element.as_mut() {
-                deferred_draw.paint_range.start = self.window.next_frame.paint_index();
-                element.paint(self);
-                deferred_draw.paint_range.end = self.window.next_frame.paint_index();
-            } else {
-                self.reuse_paint(deferred_draw.paint_range.clone());
-            }
+            self.with_parent_element(deferred_draw.parent_element_node, |cx| {
+                if let Some(element) = deferred_draw.element.as_mut() {
+                    deferred_draw.paint_range.start = cx.window.next_frame.paint_index();
+                    element.paint(cx);
+                    deferred_draw.paint_range.end = cx.window.next_frame.paint_index();
+                } else {
+                    cx.reuse_paint(deferred_draw.paint_range.clone());
+                }
+            })
         }
         self.window.next_frame.deferred_draws = deferred_draws;
     }
 
     pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
+        let parent_view_id = self.parent_view_id();
         let window = &mut self.window;
         window.next_frame.hitboxes.extend(
             window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
@@ -453,11 +466,24 @@ impl<'a> ElementContext<'a> {
                 .iter_mut()
                 .map(|request| request.take()),
         );
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .cloned(),
+        );
+
+        let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
+            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+            &mut window.rendered_frame.dispatch_tree,
+        );
         window.next_frame.deferred_draws.extend(
             window.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
+                    parent_element_node: reused_subtree
+                        .refresh_node_id(deferred_draw.parent_element_node),
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -465,10 +491,24 @@ impl<'a> ElementContext<'a> {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
+
+        for view_id in [parent_view_id].into_iter().chain(reused_subtree.view_ids) {
+            window.next_frame.reused_views.insert(view_id);
+
+            // Reuse the previous input handler.
+            if window
+                .rendered_frame
+                .requested_input_handler
+                .as_ref()
+                .map_or(false, |requested| requested.view_id == view_id)
+            {
+                window.next_frame.requested_input_handler =
+                    window.rendered_frame.requested_input_handler.take();
+            }
+        }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
-        let parent_view_id = self.parent_view_id();
         let window = &mut self.cx.window;
 
         window.next_frame.cursor_styles.extend(
@@ -483,30 +523,17 @@ impl<'a> ElementContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .cloned(),
+        );
+
         for primitive in
             &window.rendered_frame.scene.primitives[range.start.scene_index..range.end.scene_index]
         {
             window.next_frame.scene.push(primitive.clone());
-        }
-
-        let grafted_view_ids = window.next_frame.dispatch_tree.reuse_subtree(
-            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
-            &mut window.rendered_frame.dispatch_tree,
-        );
-        for view_id in [parent_view_id].into_iter().chain(grafted_view_ids) {
-            assert!(self.window.next_frame.reused_views.insert(view_id));
-
-            // Reuse the previous input handler requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .requested_input_handler
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.requested_input_handler =
-                    self.window.rendered_frame.requested_input_handler.take();
-            }
         }
     }
 
@@ -664,6 +691,7 @@ impl<'a> ElementContext<'a> {
             } else {
                 let global_id = cx.window().element_id_stack.clone();
                 let key = (global_id, TypeId::of::<S>());
+                cx.window.next_frame.accessed_element_states.push(key.clone());
 
                 if let Some(any) = cx
                     .window_mut()
@@ -679,7 +707,6 @@ impl<'a> ElementContext<'a> {
                 {
                     let ElementStateBox {
                         inner,
-                        parent_view_id,
                         #[cfg(debug_assertions)]
                         type_name
                     } = any;
@@ -718,21 +745,18 @@ impl<'a> ElementContext<'a> {
                         .element_states
                         .insert(key, ElementStateBox {
                             inner: state_box,
-                            parent_view_id,
                             #[cfg(debug_assertions)]
                             type_name
                         });
                     result
                 } else {
                     let (result, state) = f(Some(None), cx);
-                    let parent_view_id = cx.parent_view_id();
                     cx.window_mut()
                         .next_frame
                         .element_states
                         .insert(key,
                             ElementStateBox {
                                 inner: Box::new(Some(state.expect("you must return Some<State> when you pass some element id"))),
-                                parent_view_id,
                                 #[cfg(debug_assertions)]
                                 type_name: std::any::type_name::<S>()
                             }
@@ -753,7 +777,14 @@ impl<'a> ElementContext<'a> {
         absolute_offset: Point<Pixels>,
         priority: usize,
     ) {
+        let parent_element_node = self
+            .window
+            .next_frame
+            .dispatch_tree
+            .active_node_id()
+            .unwrap();
         self.window.next_frame.deferred_draws.push(DeferredDraw {
+            parent_element_node,
             priority,
             element: Some(element),
             absolute_offset,
@@ -1185,13 +1216,12 @@ impl<'a> ElementContext<'a> {
         result
     }
 
-    pub(crate) fn paint_element<R>(
+    pub(crate) fn with_parent_element<R>(
         &mut self,
-        node_to_paint: DispatchNodeId,
+        node_id: DispatchNodeId,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let current_node_id = self.window.next_frame.dispatch_tree.move_to_next_node();
-        assert_eq!(current_node_id, node_to_paint);
+        self.window.next_frame.dispatch_tree.move_to_node(node_id);
         let parent_view_id = self.window.next_frame.dispatch_tree.parent_view_id();
         self.window.text_system.set_parent_view_id(parent_view_id);
         f(self)

@@ -88,6 +88,24 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
+pub(crate) struct ReusedSubtree {
+    pub view_ids: SmallVec<[EntityId; 8]>,
+    old_range: Range<usize>,
+    new_range: Range<usize>,
+}
+
+impl ReusedSubtree {
+    pub fn refresh_node_id(&self, node_id: DispatchNodeId) -> DispatchNodeId {
+        debug_assert!(
+            self.old_range.contains(&node_id.0),
+            "node {} was not part of the reused subtree {:?}",
+            node_id.0,
+            self.old_range
+        );
+        DispatchNodeId((node_id.0 - self.old_range.start) + self.new_range.start)
+    }
+}
+
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut ElementContext)>;
 
 #[derive(Clone)]
@@ -137,23 +155,43 @@ impl DispatchTree {
         node_id
     }
 
-    pub fn move_to_next_node(&mut self) -> DispatchNodeId {
-        let next_node_id = DispatchNodeId(self.active_node_id().0 + 1);
-        let next_node_parent = self.nodes[next_node_id.0].parent;
-        while self.node_stack.last().copied() != next_node_parent {
-            self.pop_node();
-        }
+    pub fn move_to_node(&mut self, node_id: DispatchNodeId) {
+        if Some(node_id) == self.active_node_id().map(|node| DispatchNodeId(node.0 + 1)) {
+            let next_node_parent = self.nodes[node_id.0].parent;
+            while self.node_stack.last().copied() != next_node_parent {
+                self.pop_node();
+            }
 
-        self.node_stack.push(next_node_id);
-        let active_node = &self.nodes[next_node_id.0];
-        if let Some(view_id) = active_node.view_id {
-            self.view_stack.push(view_id)
-        }
-        if let Some(context) = active_node.context.clone() {
-            self.context_stack.push(context);
-        }
+            self.node_stack.push(node_id);
+            let active_node = &self.nodes[node_id.0];
+            if let Some(view_id) = active_node.view_id {
+                self.view_stack.push(view_id)
+            }
+            if let Some(context) = active_node.context.clone() {
+                self.context_stack.push(context);
+            }
+        } else {
+            self.node_stack.clear();
+            self.context_stack.clear();
+            self.view_stack.clear();
 
-        next_node_id
+            let mut current_node_id = Some(node_id);
+            while let Some(node_id) = current_node_id {
+                let node = &self.nodes[node_id.0];
+                if let Some(context) = node.context.clone() {
+                    self.context_stack.push(context);
+                }
+                if node.view_id.is_some() {
+                    self.view_stack.push(node.view_id.unwrap());
+                }
+                self.node_stack.push(node_id);
+                current_node_id = node.parent;
+            }
+
+            self.context_stack.reverse();
+            self.view_stack.reverse();
+            self.node_stack.reverse();
+        }
     }
 
     pub fn set_key_context(&mut self, context: KeyContext) {
@@ -181,7 +219,7 @@ impl DispatchTree {
     }
 
     pub fn pop_node(&mut self) {
-        let node = &self.nodes[self.active_node_id().0];
+        let node = &self.nodes[self.active_node_id().unwrap().0];
         if node.context.is_some() {
             self.context_stack.pop();
         }
@@ -208,19 +246,17 @@ impl DispatchTree {
         target.action_listeners = mem::take(&mut source.action_listeners);
     }
 
-    pub fn reuse_subtree(
-        &mut self,
-        range: Range<usize>,
-        source: &mut Self,
-    ) -> SmallVec<[EntityId; 8]> {
-        let mut grafted_view_ids = SmallVec::new();
+    pub fn reuse_subtree(&mut self, old_range: Range<usize>, source: &mut Self) -> ReusedSubtree {
+        let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
+        let mut view_ids = SmallVec::new();
+
         let mut source_stack = vec![];
         for (source_node_id, source_node) in source
             .nodes
             .iter_mut()
             .enumerate()
-            .skip(range.start)
-            .take(range.len())
+            .skip(old_range.start)
+            .take(old_range.len())
         {
             let source_node_id = DispatchNodeId(source_node_id);
             while let Some(source_ancestor) = source_stack.last() {
@@ -235,7 +271,7 @@ impl DispatchTree {
             source_stack.push(source_node_id);
             self.move_node(source_node);
             if let Some(view_id) = source_node.view_id {
-                grafted_view_ids.push(view_id);
+                view_ids.push(view_id);
             }
         }
 
@@ -244,7 +280,11 @@ impl DispatchTree {
             self.pop_node();
         }
 
-        grafted_view_ids
+        ReusedSubtree {
+            view_ids,
+            old_range,
+            new_range,
+        }
     }
 
     pub fn clear_pending_keystrokes(&mut self) {
@@ -464,7 +504,7 @@ impl DispatchTree {
     }
 
     fn active_node(&mut self) -> &mut DispatchNode {
-        let active_node_id = self.active_node_id();
+        let active_node_id = self.active_node_id().unwrap();
         &mut self.nodes[active_node_id.0]
     }
 
@@ -477,8 +517,8 @@ impl DispatchTree {
         DispatchNodeId(0)
     }
 
-    fn active_node_id(&self) -> DispatchNodeId {
-        *self.node_stack.last().unwrap()
+    pub fn active_node_id(&self) -> Option<DispatchNodeId> {
+        self.node_stack.last().copied()
     }
 }
 

@@ -314,7 +314,6 @@ impl PendingInput {
 
 pub(crate) struct ElementStateBox {
     pub(crate) inner: Box<dyn Any>,
-    pub(crate) parent_view_id: EntityId,
     #[cfg(debug_assertions)]
     pub(crate) type_name: &'static str,
 }

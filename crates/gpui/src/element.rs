@@ -310,7 +310,7 @@ impl<E: Element> Drawable<E> {
                 mut after_layout,
                 ..
             } => {
-                cx.paint_element(node_id, |cx| {
+                cx.with_parent_element(node_id, |cx| {
                     self.element
                         .paint(bounds, &mut before_layout, &mut after_layout, cx);
                 });
