@@ -390,7 +390,14 @@ impl MessageEditor {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == ':' {
-                    return Some(query.chars().rev().collect::<String>());
+                    let next_char = buffer
+                        .reversed_chars_at(end_offset - query.len() - 1)
+                        .next();
+                    // Ensure we are at the start of the message or that the previous character is a whitespace
+                    if next_char.is_none() || next_char.unwrap().is_whitespace() {
+                        return Some(query.chars().rev().collect::<String>());
+                    }
+                    break;
                 }
                 if ch.is_whitespace() || !ch.is_ascii() {
                     break;

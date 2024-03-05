@@ -2504,47 +2504,39 @@ impl Editor {
                 && selection.is_empty()
                 && text.as_ref().ends_with(":")
             {
-                let mut chars = Vec::new();
-                for char in snapshot.reversed_chars_at(selection.start).take(100) {
-                    if char.is_whitespace() || !char.is_ascii() {
-                        break;
-                    }
-                    if char == ':' {
-                        break;
-                    }
-                    chars.push(char);
-                }
-                chars.reverse();
-                let possible_emoji_shortcode: String = chars.iter().collect();
-                if !chars.is_empty() {
-                    if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_shortcode) {
-                        let emoji_shortcode_start = Point::new(
-                            selection.start.row,
-                            selection.start.column - chars.len() as u32 - 1,
-                        );
+                if let Some(possible_emoji_short_code) =
+                    Self::find_possible_emoji_shortcode(&snapshot, selection.start)
+                {
+                    if !possible_emoji_short_code.is_empty() {
+                        if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_short_code) {
+                            let emoji_shortcode_start = Point::new(
+                                selection.start.row,
+                                selection.start.column - possible_emoji_short_code.len() as u32 - 1,
+                            );
 
-                        // Remove shortcode from buffer
-                        edits.push((
-                            emoji_shortcode_start..selection.start,
-                            "".to_string().into(),
-                        ));
-                        new_selections.push((
-                            Selection {
-                                id: selection.id,
-                                start: snapshot.anchor_after(emoji_shortcode_start),
-                                end: snapshot.anchor_before(selection.start),
-                                reversed: selection.reversed,
-                                goal: selection.goal,
-                            },
-                            0,
-                        ));
+                            // Remove shortcode from buffer
+                            edits.push((
+                                emoji_shortcode_start..selection.start,
+                                "".to_string().into(),
+                            ));
+                            new_selections.push((
+                                Selection {
+                                    id: selection.id,
+                                    start: snapshot.anchor_after(emoji_shortcode_start),
+                                    end: snapshot.anchor_before(selection.start),
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                                0,
+                            ));
 
-                        // Insert emoji
-                        let selection_start_anchor = snapshot.anchor_after(selection.start);
-                        new_selections.push((selection.map(|_| selection_start_anchor), 0));
-                        edits.push((selection.start..selection.end, emoji.to_string().into()));
+                            // Insert emoji
+                            let selection_start_anchor = snapshot.anchor_after(selection.start);
+                            new_selections.push((selection.map(|_| selection_start_anchor), 0));
+                            edits.push((selection.start..selection.end, emoji.to_string().into()));
 
-                        continue;
+                            continue;
+                        }
                     }
                 }
             }
@@ -2630,6 +2622,32 @@ impl Editor {
                 this.refresh_copilot_suggestions(true, cx);
             }
         });
+    }
+
+    fn find_possible_emoji_shortcode(
+        snapshot: &MultiBufferSnapshot,
+        anchor: Point,
+    ) -> Option<String> {
+        let mut chars = Vec::new();
+        let mut found_colon = false;
+        for char in snapshot.reversed_chars_at(anchor).take(100) {
+            // Found a possible emoji shortcode in the middle of the buffer
+            if found_colon && char.is_whitespace() {
+                chars.reverse();
+                return Some(chars.iter().collect());
+            }
+            if char.is_whitespace() || !char.is_ascii() {
+                return None;
+            }
+            if char == ':' {
+                found_colon = true;
+            } else {
+                chars.push(char);
+            }
+        }
+        // Found a possible emoji shortcode at the beginning of the buffer
+        chars.reverse();
+        Some(chars.iter().collect())
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
