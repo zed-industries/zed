@@ -78,8 +78,8 @@ spec:
             periodSeconds: 1
           resources:
             requests:
-              cpu: "46"
-              memory: "90Gi"
+              cpu: "20"
+              memory: "20Gi"
           env:
             - name: HTTP_PORT
               value: "8080"
