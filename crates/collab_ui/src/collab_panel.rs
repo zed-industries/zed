@@ -2685,6 +2685,7 @@ impl CollabPanel {
                         channel_store: channel_store.clone(),
                         channel_id,
                         has_notes_notification,
+                        has_messages_notification,
                     })
                     .into()
                 }
@@ -2976,6 +2977,7 @@ struct JoinChannelTooltip {
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
     has_notes_notification: bool,
+    has_messages_notification: bool,
 }
 
 impl Render for JoinChannelTooltip {
@@ -2988,12 +2990,27 @@ impl Render for JoinChannelTooltip {
 
             container
                 .child(Label::new("Join channel"))
-                .children(self.has_notes_notification.then(|| {
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Info))
-                        .child(Label::new("Unread notes"))
-                }))
+                .when(
+                    self.has_notes_notification || self.has_messages_notification,
+                    |div| {
+                        div.child(
+                            h_flex()
+                                .gap_2()
+                                .child(Indicator::dot().color(Color::Info))
+                                .child(
+                                    v_flex()
+                                        .children(
+                                            self.has_notes_notification
+                                                .then(|| Label::new("Unread notes")),
+                                        )
+                                        .children(
+                                            self.has_messages_notification
+                                                .then(|| Label::new("Unread messages")),
+                                        ),
+                                ),
+                        )
+                    },
+                )
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()
