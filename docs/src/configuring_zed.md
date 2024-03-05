@@ -347,7 +347,7 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
-2. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
+3. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
 
 ```json
 {
