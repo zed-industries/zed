@@ -396,6 +396,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .child(
                     h_flex()
                         .w_full()
+                        .py_px()
                         .justify_between()
                         .child(HighlightedLabel::new(
                             command.name.clone(),
