@@ -195,7 +195,7 @@ struct Excerpt {
 ///
 /// Contains methods for getting the [`Buffer`] of the excerpt,
 /// as well as mapping offsets to/from buffer and multibuffer coordinates.
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct MultiBufferExcerpt<'a> {
     excerpt: &'a Excerpt,
     excerpt_offset: usize,
@@ -2967,7 +2967,16 @@ impl MultiBufferSnapshot {
             excerpt
                 .buffer()
                 .enclosing_bracket_ranges(excerpt.map_range_to_buffer(range))
-                .filter(move |(open, close)| excerpt.contains_buffer_range(open.start..close.end)),
+                .filter_map(move |(open, close)| {
+                    if excerpt.contains_buffer_range(open.start..close.end) {
+                        Some((
+                            excerpt.map_range_from_buffer(open),
+                            excerpt.map_range_from_buffer(close),
+                        ))
+                    } else {
+                        None
+                    }
+                }),
         )
     }
 
