@@ -183,7 +183,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             )
         };
         Arc::from(format!(
-            "{reuse_window} reuses the window, {create_window} opens a new one",
+            "{reuse_window} reuses this window, {create_window} opens a new one",
         ))
     }
 
