@@ -464,6 +464,7 @@ impl Server {
             TypeId::of::<M>(),
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                let received_at = envelope.received_at;
                 let span = info_span!(
                     "handle message",
                     payload_type = envelope.payload_type_name()
@@ -478,12 +479,14 @@ impl Server {
                 let future = (handler)(*envelope, session);
                 async move {
                     let result = future.await;
-                    let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
+                    let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let queue_duration_ms = processing_duration_ms - total_duration_ms;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, ?duration_ms, "error handling message")
+                            tracing::error!(%error, ?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "error handling message")
                         }
-                        Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "finished handling message"),
                     }
                 }
                 .instrument(span)
