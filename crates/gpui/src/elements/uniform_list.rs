@@ -221,10 +221,10 @@ impl Element for UniformList {
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
-                        if item_top < scroll_top {
-                            updated_scroll_offset.y = -item_top;
-                        } else if item_bottom > scroll_top + list_height {
-                            updated_scroll_offset.y = -(item_bottom - list_height);
+                        if item_top < scroll_top + padding.top {
+                            updated_scroll_offset.y = -(item_top) + padding.top;
+                        } else if item_bottom > scroll_top + list_height - padding.bottom {
+                            updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
                         scroll_offset = *updated_scroll_offset;
                     }
