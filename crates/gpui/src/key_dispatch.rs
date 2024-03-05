@@ -51,7 +51,8 @@
 ///
 use crate::{
     Action, ActionRegistry, DispatchPhase, ElementContext, EntityId, FocusId, KeyBinding,
-    KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
+    KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, ModifiersChangedEvent,
+    WindowContext,
 };
 use collections::FxHashMap;
 use smallvec::{smallvec, SmallVec};
@@ -80,6 +81,7 @@ pub(crate) struct DispatchTree {
 pub(crate) struct DispatchNode {
     pub key_listeners: Vec<KeyListener>,
     pub action_listeners: Vec<DispatchActionListener>,
+    pub modifiers_changed_listeners: Vec<ModifiersChangedListener>,
     pub context: Option<KeyContext>,
     focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
@@ -87,6 +89,7 @@ pub(crate) struct DispatchNode {
 }
 
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut ElementContext)>;
+type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut ElementContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
@@ -160,6 +163,7 @@ impl DispatchTree {
         let target = self.active_node();
         target.key_listeners = mem::take(&mut source.key_listeners);
         target.action_listeners = mem::take(&mut source.action_listeners);
+        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
     }
 
     pub fn reuse_view(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
@@ -236,6 +240,12 @@ impl DispatchTree {
 
     pub fn on_key_event(&mut self, listener: KeyListener) {
         self.active_node().key_listeners.push(listener);
+    }
+
+    pub fn on_modifiers_changed(&mut self, listener: ModifiersChangedListener) {
+        self.active_node()
+            .modifiers_changed_listeners
+            .push(listener);
     }
 
     pub fn on_action(
