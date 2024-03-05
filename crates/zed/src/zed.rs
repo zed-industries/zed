@@ -5,11 +5,12 @@ mod open_listener;
 pub use app_menus::*;
 use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
+use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions, View,
-    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
+    TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -38,11 +39,11 @@ use util::{
 use uuid::Uuid;
 use vim::VimModeSetting;
 use welcome::BaseKeymap;
-use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
+    open_new, AppState, NewFile, NewWindow, Toast, Workspace, WorkspaceSettings,
 };
+use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
@@ -232,7 +233,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.toggle_full_screen();
             })
             .register_action(|_, action: &OpenZedUrl, cx| {
-                OpenListener::global(cx).open_urls(&[action.url.clone()])
+                OpenListener::global(cx).open_urls(&[action.url.clone()], cx)
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
             .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
@@ -243,12 +244,50 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
             .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
             .register_action(|_, _: &install_cli::Install, cx| {
-                cx.spawn(|_, cx| async move {
-                    install_cli::install_cli(cx.deref())
+                cx.spawn(|workspace, mut cx| async move {
+                    let path = install_cli::install_cli(cx.deref())
                         .await
-                        .context("error creating CLI symlink")
+                        .context("error creating CLI symlink")?;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_toast(
+                            Toast::new(
+                                0,
+                                format!(
+                                    "Installed `zed` to {}. You can launch {} from your terminal.",
+                                    path.to_string_lossy(),
+                                    ReleaseChannel::global(cx).display_name()
+                                ),
+                            ),
+                            cx,
+                        )
+                    })?;
+                    register_zed_scheme(&cx).await.log_err();
+                    Ok(())
                 })
-                .detach_and_log_err(cx);
+                .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
+            })
+            .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
+                cx.spawn(|workspace, mut cx| async move {
+                    register_zed_scheme(&cx).await?;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_toast(
+                            Toast::new(
+                                0,
+                                format!(
+                                    "zed:// links will now open in {}.",
+                                    ReleaseChannel::global(cx).display_name()
+                                ),
+                            ),
+                            cx,
+                        )
+                    })?;
+                    Ok(())
+                })
+                .detach_and_prompt_err(
+                    "Error registering zed:// scheme",
+                    cx,
+                    |_, _| None,
+                );
             })
             .register_action(|workspace, _: &OpenLog, cx| {
                 open_log_file(workspace, cx);
@@ -2880,4 +2919,9 @@ mod tests {
             );
         }
     }
+}
+
+async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
+    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
+        .await
 }

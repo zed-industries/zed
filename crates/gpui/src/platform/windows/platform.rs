@@ -314,4 +314,8 @@ impl Platform for WindowsPlatform {
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         Task::Ready(Some(Err(anyhow!("not implemented yet."))))
     }
+
+    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
 }
