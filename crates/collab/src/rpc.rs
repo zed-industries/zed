@@ -1742,11 +1742,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
         return Ok(());
     }
 
-    let (room, project) = &*session
-        .db()
-        .await
-        .leave_project(project_id, sender_id)
-        .await?;
+    let (room, project) = &*db.leave_project(project_id, sender_id).await?;
     tracing::info!(
         %project_id,
         host_user_id = ?project.host_user_id,
