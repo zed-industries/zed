@@ -1270,7 +1270,6 @@ mod tests {
             &self,
             _: BufferId,
             _: &clock::Global,
-            _: language::RopeFingerprint,
             _: language::LineEnding,
             _: std::time::SystemTime,
             _: &mut AppContext,

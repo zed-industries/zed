@@ -578,7 +578,6 @@ impl Buffer {
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
             .into();
-        dbg!(&message.saved_undo_top);
         this.saved_undo_top = if let Some(saved_undo_top) = message.saved_undo_top {
             Some(proto::deserialize_transaction(saved_undo_top)?)
         } else {

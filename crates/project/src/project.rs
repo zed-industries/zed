@@ -7741,7 +7741,6 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
             let buffer_id = BufferId::new(payload.buffer_id)?;
-            dbg!(payload.is_dirty);
             let ops = payload
                 .operations
                 .into_iter()
@@ -7922,12 +7921,12 @@ impl Project {
 
         this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
-        Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: Some(buffer.saved_mtime().into()),
-        })?)
+        })
     }
 
     async fn handle_reload_buffers(
