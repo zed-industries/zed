@@ -77,9 +77,6 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
-
       - name: Set release channel to nightly
         run: |
           set -eu
@@ -90,8 +87,8 @@ jobs:
       - name: Generate license file
         run: script/generate-licenses
 
-      - name: Create app bundle
-        run: script/bundle
+      - name: Create macOS app bundle
+        run: script/bundle-mac
 
       - name: Upload Zed Nightly
         run: script/upload-nightly

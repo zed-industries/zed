@@ -208,7 +208,7 @@ else
     echo "====== WARNING ======"
 
     # NOTE: if you need to test universal links you have a few paths forward:
-    # - create a PR and tag it with the `run-build-dmg` label, and download the .dmg file from there.
+    # - create a PR and tag it with the `run-bundling` label, and download the .dmg file from there.
     # - get a signing key for the MQ55VZLNZQ team from Nathan.
     # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
     # then comment out this line.
