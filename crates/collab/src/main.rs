@@ -1,11 +1,10 @@
 use anyhow::anyhow;
-use axum::{extract::MatchedPath, routing::get, Extension, Router};
+use axum::{extract::MatchedPath, http::Request, routing::get, Extension, Router};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
     Config, MigrateConfig, Result,
 };
 use db::Database;
-use hyper::Request;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
@@ -16,8 +15,9 @@ use std::{
 use tokio::signal::unix::SignalKind;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
-use tracing_log::LogTracer;
-use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
+use tracing_subscriber::{
+    filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
+};
 use util::ResultExt;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -25,7 +25,6 @@ const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    console_subscriber::init();
     if let Err(error) = env::load_dotenv() {
         eprintln!(
             "error loading .env.toml (this is expected in production): {}",
@@ -112,7 +111,8 @@ async fn main() -> Result<()> {
                 );
 
             #[cfg(unix)]
-            axum::Server::from_tcp(listener)?
+            axum::Server::from_tcp(listener)
+                .map_err(|e| anyhow!(e))?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
                     let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
@@ -129,7 +129,8 @@ async fn main() -> Result<()> {
                         rpc_server.teardown();
                     }
                 })
-                .await?;
+                .await
+                .map_err(|e| anyhow!(e))?;
 
             // todo("windows")
             #[cfg(windows)]
@@ -179,11 +180,11 @@ async fn handle_liveness_probe(Extension(state): Extension<Arc<AppState>>) -> Re
 pub fn init_tracing(config: &Config) -> Option<()> {
     use std::str::FromStr;
     use tracing_subscriber::layer::SubscriberExt;
-    let rust_log = config.rust_log.clone()?;
 
-    LogTracer::init().log_err()?;
+    let filter = EnvFilter::from_str(config.rust_log.as_deref()?).log_err()?;
 
-    let subscriber = tracing_subscriber::Registry::default()
+    tracing_subscriber::registry()
+        .with(console_subscriber::spawn())
         .with(if config.log_json.unwrap_or(false) {
             Box::new(
                 tracing_subscriber::fmt::layer()
@@ -193,17 +194,17 @@ pub fn init_tracing(config: &Config) -> Option<()> {
                             .json()
                             .flatten_event(true)
                             .with_span_list(true),
-                    ),
+                    )
+                    .with_filter(filter),
             ) as Box<dyn Layer<_> + Send + Sync>
         } else {
             Box::new(
                 tracing_subscriber::fmt::layer()
-                    .event_format(tracing_subscriber::fmt::format().pretty()),
+                    .event_format(tracing_subscriber::fmt::format().pretty())
+                    .with_filter(filter),
             )
         })
-        .with(EnvFilter::from_str(rust_log.as_str()).log_err()?);
-
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+        .init();
 
     None
 }
