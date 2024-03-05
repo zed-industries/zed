@@ -1316,6 +1316,11 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
+        if let Some(modifiers_changed_event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            self.dispatch_modifiers_changed_event(modifiers_changed_event, &dispatch_path);
+            return;
+        }
+
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             let KeymatchResult { bindings, pending } = self
                 .window
@@ -1410,6 +1415,24 @@ impl<'a> WindowContext<'a> {
             for key_listener in node.key_listeners.clone() {
                 self.with_element_context(|cx| {
                     key_listener(event, DispatchPhase::Bubble, cx);
+                });
+                if !self.propagate_event {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn dispatch_modifiers_changed_event(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            for listener in node.modifiers_changed_listeners.clone() {
+                self.with_element_context(|cx| {
+                    listener(event, cx);
                 });
                 if !self.propagate_event {
                     return;

@@ -5,8 +5,9 @@ use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -30,6 +31,7 @@ impl ModalView for FileFinder {}
 
 pub struct FileFinder {
     picker: View<Picker<FileFinderDelegate>>,
+    init_modifiers: Option<Modifiers>,
 }
 
 pub fn init(cx: &mut AppContext) {
@@ -94,6 +96,21 @@ impl FileFinder {
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
             picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
+            init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
+        }
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(init_modifiers) = self.init_modifiers else {
+            return;
+        };
+        if !event.modified() || !event.is_subset_of(&init_modifiers) {
+            self.init_modifiers = None;
+            cx.dispatch_action(menu::Confirm.boxed_clone());
         }
     }
 }
@@ -107,8 +124,11 @@ impl FocusableView for FileFinder {
 }
 
 impl Render for FileFinder {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .w(rems(34.))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .child(self.picker.clone())
     }
 }
 
