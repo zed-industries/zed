@@ -348,7 +348,7 @@ todo = "deny"
 
 # There are a bunch of rules currently failing in the `style` group, so
 # allow all of those, for now.
-"style" = "allow"
+style = "allow"
 
 # Individual rules that have violations in the codebase:
 almost_complete_range = "allow"
