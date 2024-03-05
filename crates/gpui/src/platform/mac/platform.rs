@@ -137,8 +137,32 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+        decl.add_method(
+            sel!(applicationDockMenu:),
+            application_dock_menu as extern "C" fn(&Object, Sel, *mut Object) -> *mut Object,
+        );
         decl.register()
     }
+}
+extern "C" fn application_dock_menu(
+    _self: &Object,
+    _cmd: Sel,
+    _sender: *mut Object,
+) -> *mut Object {
+    let menu = unsafe { NSMenu::new(nil).autorelease() };
+    let item = unsafe {
+        let item = NSMenuItem::alloc(nil)
+            .initWithTitle_action_keyEquivalent_(
+                NSString::alloc(nil).init_str("hello"),
+                sel!(menu_item_action:),
+                NSString::alloc(nil).init_str("q"),
+            )
+            .autorelease();
+        item.setTarget_(nil);
+        item
+    };
+    unsafe { menu.addItem_(item) };
+    menu
 }
 
 pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
