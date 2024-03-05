@@ -35,11 +35,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
-    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    LocalFile, LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -4235,7 +4235,10 @@ impl Project {
                                 })?
                                 .await?;
 
-                            for action in actions {
+                            for mut action in actions {
+                                Self::try_resolve_code_action(&language_server, &mut action)
+                                    .await
+                                    .context("resolving a formatting code action")?;
                                 if let Some(edit) = action.lsp_action.edit {
                                     if edit.changes.is_none() && edit.document_changes.is_none() {
                                         continue;
@@ -4255,6 +4258,7 @@ impl Project {
                                     project_transaction.0.extend(new.0);
                                 }
 
+                                // TODO kb here too:
                                 if let Some(command) = action.lsp_action.command {
                                     project.update(&mut cx, |this, _| {
                                         this.last_workspace_edits_by_language_server
@@ -5296,33 +5300,10 @@ impl Project {
             } else {
                 return Task::ready(Ok(Default::default()));
             };
-            let range = action.range.to_point_utf16(buffer);
-
             cx.spawn(move |this, mut cx| async move {
-                if let Some(lsp_range) = action
-                    .lsp_action
-                    .data
-                    .as_mut()
-                    .and_then(|d| d.get_mut("codeActionParams"))
-                    .and_then(|d| d.get_mut("range"))
-                {
-                    *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
-                    action.lsp_action = lang_server
-                        .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                        .await?;
-                } else {
-                    let actions = this
-                        .update(&mut cx, |this, cx| {
-                            this.code_actions(&buffer_handle, action.range, cx)
-                        })?
-                        .await?;
-                    action.lsp_action = actions
-                        .into_iter()
-                        .find(|a| a.lsp_action.title == action.lsp_action.title)
-                        .ok_or_else(|| anyhow!("code action is outdated"))?
-                        .lsp_action;
-                }
-
+                Self::try_resolve_code_action(&lang_server, &mut action)
+                    .await
+                    .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
                         return Self::deserialize_workspace_edit(
@@ -8141,6 +8122,23 @@ impl Project {
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
         })
+    }
+
+    async fn try_resolve_code_action(
+        lang_server: &LanguageServer,
+        action: &mut CodeAction,
+    ) -> anyhow::Result<()> {
+        if GetCodeActions::can_resolve_actions(&lang_server.capabilities()) {
+            if action.lsp_action.data.is_some()
+                && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
+            {
+                action.lsp_action = lang_server
+                    .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
+                    .await?;
+            }
+        }
+
+        anyhow::Ok(())
     }
 
     async fn handle_refresh_inlay_hints(

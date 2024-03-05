@@ -541,7 +541,14 @@ impl LanguageServer {
                         }),
                         data_support: Some(true),
                         resolve_support: Some(CodeActionCapabilityResolveSupport {
-                            properties: vec!["edit".to_string(), "command".to_string()],
+                            properties: vec![
+                                "kind".to_string(),
+                                "diagnostics".to_string(),
+                                "isPreferred".to_string(),
+                                "disabled".to_string(),
+                                "edit".to_string(),
+                                "command".to_string(),
+                            ],
                         }),
                         ..Default::default()
                     }),

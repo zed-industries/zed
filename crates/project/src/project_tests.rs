@@ -2564,7 +2564,20 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         },
         None,
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Options(
+                    lsp::CodeActionOptions {
+                        resolve_provider: Some(true),
+                        ..lsp::CodeActionOptions::default()
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        }))
+        .await;
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -2591,16 +2604,14 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "The code action".into(),
-                    command: Some(lsp::Command {
-                        title: "The command".into(),
-                        command: "_the/command".into(),
-                        arguments: Some(vec![json!("the-argument")]),
-                    }),
-                    ..Default::default()
+                    data: Some(serde_json::json!({
+                        "command": "_the/command",
+                    })),
+                    ..lsp::CodeAction::default()
                 }),
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "two".into(),
-                    ..Default::default()
+                    ..lsp::CodeAction::default()
                 }),
             ]))
         })
@@ -2615,7 +2626,16 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
     fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
-        |action, _| async move { Ok(action) },
+        |mut action, _| async move {
+            if action.data.is_some() {
+                action.command = Some(lsp::Command {
+                    title: "The command".into(),
+                    command: "_the/command".into(),
+                    arguments: Some(vec![json!("the-argument")]),
+                });
+            }
+            Ok(action)
+        },
     );
 
     // While executing the command, the language server sends the editor

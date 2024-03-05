@@ -1818,6 +1818,19 @@ impl LspCommand for GetCodeActions {
     }
 }
 
+impl GetCodeActions {
+    pub fn can_resolve_actions(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_action_provider
+            .as_ref()
+            .and_then(|options| match options {
+                lsp::CodeActionProviderCapability::Simple(_is_supported) => None,
+                lsp::CodeActionProviderCapability::Options(options) => options.resolve_provider,
+            })
+            .unwrap_or(false)
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
