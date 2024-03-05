@@ -25,7 +25,6 @@ const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    console_subscriber::init();
     if let Err(error) = env::load_dotenv() {
         eprintln!(
             "error loading .env.toml (this is expected in production): {}",
@@ -184,6 +183,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
     LogTracer::init().log_err()?;
 
     let subscriber = tracing_subscriber::Registry::default()
+        .with(console_subscriber::spawn())
         .with(if config.log_json.unwrap_or(false) {
             Box::new(
                 tracing_subscriber::fmt::layer()
