@@ -1283,8 +1283,8 @@ impl Interactivity {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         let hitbox = if self.occlude_mouse
                             || style.mouse_cursor.is_some()
-                            || self.hover_style.is_some()
-                            || self.group_hover_style.is_some()
+                            || self.has_hover_styles()
+                            || self.has_mouse_listeners()
                         {
                             Some(cx.insert_hitbox(bounds, self.occlude_mouse))
                         } else {
@@ -1297,6 +1297,19 @@ impl Interactivity {
                 })
             },
         )
+    }
+
+    fn has_hover_styles(&self) -> bool {
+        self.hover_style.is_some() || self.group_hover_style.is_some()
+    }
+
+    fn has_mouse_listeners(&self) -> bool {
+        !self.mouse_up_listeners.is_empty()
+            || !self.mouse_down_listeners.is_empty()
+            || !self.mouse_move_listeners.is_empty()
+            || !self.scroll_wheel_listeners.is_empty()
+            || self.drag_listener.is_some()
+            || !self.drop_listeners.is_empty()
     }
 
     fn clamp_scroll_position(
@@ -1417,8 +1430,6 @@ impl Interactivity {
     }
 
     fn paint_debug_info(&mut self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
-        // todo!("ensure that an hitbox is present when painting debug info").
-
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
