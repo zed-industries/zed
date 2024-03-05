@@ -907,8 +907,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.layout_engine.as_mut().unwrap().clear();
-        self.text_system()
-            .finish_frame(&self.window.next_frame.reused_views);
+        self.text_system().finish_frame();
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
@@ -1515,14 +1514,6 @@ impl<'a> WindowContext<'a> {
         self.window
             .platform_window
             .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
-    }
-
-    pub(crate) fn parent_view_id(&self) -> EntityId {
-        self.window
-            .next_frame
-            .dispatch_tree
-            .parent_view_id()
-            .unwrap()
     }
 
     /// Register an action listener on the window for the next frame. The type of action

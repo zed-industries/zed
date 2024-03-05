@@ -22,7 +22,7 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{FxHashMap, FxHashSet};
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
@@ -32,11 +32,11 @@ use crate::{
     prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
     ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
     ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId,
-    Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite,
-    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle, Window,
-    WindowContext, SUBPIXEL_VARIANTS,
+    Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, LineLayoutIndex,
+    MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point,
+    PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
+    Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -106,7 +106,6 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<AnyTooltip>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    pub(crate) reused_views: FxHashSet<EntityId>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
@@ -118,15 +117,17 @@ pub(crate) struct AfterLayoutIndex {
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
+    line_layout_index: LineLayoutIndex,
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
+    line_layout_index: LineLayoutIndex,
 }
 
 impl Frame {
@@ -146,7 +147,6 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
-            reused_views: FxHashSet::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -158,33 +158,12 @@ impl Frame {
         self.accessed_element_states.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
-        self.reused_views.clear();
         self.scene.clear();
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
         self.deferred_draws.clear();
-    }
-
-    pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
-        AfterLayoutIndex {
-            hitboxes_index: self.hitboxes.len(),
-            tooltips_index: self.tooltip_requests.len(),
-            deferred_draws_index: self.deferred_draws.len(),
-            dispatch_tree_index: self.dispatch_tree.len(),
-            accessed_element_states_index: self.accessed_element_states.len(),
-        }
-    }
-
-    pub(crate) fn paint_index(&self) -> PaintIndex {
-        PaintIndex {
-            scene_index: self.scene.len(),
-            mouse_listeners_index: self.mouse_listeners.len(),
-            input_handlers_index: self.input_handlers.len(),
-            cursor_styles_index: self.cursor_styles.len(),
-            accessed_element_states_index: self.accessed_element_states.len(),
-        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -368,7 +347,7 @@ impl<'a> VisualContext for ElementContext<'a> {
 
 impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
-        // Measure and layout all root elements.
+        // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
         let available_space = self.window.viewport_size.map(Into::into);
         root_element.layout(Point::default(), available_space, self);
@@ -419,7 +398,7 @@ impl<'a> ElementContext<'a> {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
             self.window.element_id_stack = deferred_draw.element_id_stack.clone();
             self.with_parent_element(deferred_draw.parent_element_node, |cx| {
-                let layout_start = cx.window.next_frame.after_layout_index();
+                let layout_start = cx.after_layout_index();
                 if let Some(element) = deferred_draw.element.as_mut() {
                     cx.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
                         element.after_layout(cx)
@@ -427,7 +406,7 @@ impl<'a> ElementContext<'a> {
                 } else {
                     cx.reuse_after_layout(deferred_draw.layout_range.clone());
                 }
-                let layout_end = cx.window.next_frame.after_layout_index();
+                let layout_end = cx.after_layout_index();
                 deferred_draw.layout_range = layout_start..layout_end;
             });
         }
@@ -443,13 +422,13 @@ impl<'a> ElementContext<'a> {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
             self.window.element_id_stack = deferred_draw.element_id_stack.clone();
             self.with_parent_element(deferred_draw.parent_element_node, |cx| {
-                let paint_start = cx.window.next_frame.paint_index();
+                let paint_start = cx.paint_index();
                 if let Some(element) = deferred_draw.element.as_mut() {
                     element.paint(cx);
                 } else {
                     cx.reuse_paint(deferred_draw.paint_range.clone());
                 }
-                let paint_end = cx.window.next_frame.paint_index();
+                let paint_end = cx.paint_index();
                 deferred_draw.paint_range = paint_start..paint_end;
             })
         }
@@ -457,8 +436,18 @@ impl<'a> ElementContext<'a> {
         self.window.element_id_stack.clear();
     }
 
+    pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
+        AfterLayoutIndex {
+            hitboxes_index: self.window.next_frame.hitboxes.len(),
+            tooltips_index: self.window.next_frame.tooltip_requests.len(),
+            deferred_draws_index: self.window.next_frame.deferred_draws.len(),
+            dispatch_tree_index: self.window.next_frame.dispatch_tree.len(),
+            accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+            line_layout_index: self.window.text_system.layout_index(),
+        }
+    }
+
     pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
-        let parent_view_id = self.parent_view_id();
         let window = &mut self.window;
         window.next_frame.hitboxes.extend(
             window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
@@ -477,6 +466,9 @@ impl<'a> ElementContext<'a> {
                 .iter()
                 .cloned(),
         );
+        window
+            .text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
 
         let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
@@ -497,10 +489,17 @@ impl<'a> ElementContext<'a> {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
-        window
-            .next_frame
-            .reused_views
-            .extend([parent_view_id].into_iter().chain(reused_subtree.view_ids));
+    }
+
+    pub(crate) fn paint_index(&self) -> PaintIndex {
+        PaintIndex {
+            scene_index: self.window.next_frame.scene.len(),
+            mouse_listeners_index: self.window.next_frame.mouse_listeners.len(),
+            input_handlers_index: self.window.next_frame.input_handlers.len(),
+            cursor_styles_index: self.window.next_frame.cursor_styles.len(),
+            accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+            line_layout_index: self.window.text_system.layout_index(),
+        }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
@@ -530,6 +529,9 @@ impl<'a> ElementContext<'a> {
                 .iter()
                 .cloned(),
         );
+        window
+            .text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
 
         for primitive in
             &window.rendered_frame.scene.primitives[range.start.scene_index..range.end.scene_index]
@@ -1199,7 +1201,6 @@ impl<'a> ElementContext<'a> {
     /// Sets the view id for the current element, which will be used to manage view caching.
     pub fn set_view_id(&mut self, view_id: EntityId) {
         self.window.next_frame.dispatch_tree.set_view_id(view_id);
-        self.window.text_system.set_parent_view_id(Some(view_id));
     }
 
     pub(crate) fn layout_element<R>(
@@ -1209,8 +1210,6 @@ impl<'a> ElementContext<'a> {
         let node_id = self.window.next_frame.dispatch_tree.push_node();
         let result = f(node_id, self);
         self.window.next_frame.dispatch_tree.pop_node();
-        let parent_view_id = self.window.next_frame.dispatch_tree.parent_view_id();
-        self.window.text_system.set_parent_view_id(parent_view_id);
         result
     }
 
@@ -1220,8 +1219,6 @@ impl<'a> ElementContext<'a> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.window.next_frame.dispatch_tree.move_to_node(node_id);
-        let parent_view_id = self.window.next_frame.dispatch_tree.parent_view_id();
-        self.window.text_system.set_parent_view_id(parent_view_id);
         f(self)
     }
 

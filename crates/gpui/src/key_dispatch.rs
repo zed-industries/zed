@@ -89,7 +89,6 @@ pub(crate) struct DispatchNode {
 }
 
 pub(crate) struct ReusedSubtree {
-    pub view_ids: SmallVec<[EntityId; 8]>,
     old_range: Range<usize>,
     new_range: Range<usize>,
 }
@@ -206,16 +205,12 @@ impl DispatchTree {
     }
 
     pub fn set_view_id(&mut self, view_id: EntityId) {
-        if self.parent_view_id() != Some(view_id) {
+        if self.view_stack.last().copied() != Some(view_id) {
             let node_id = *self.node_stack.last().unwrap();
             self.nodes[node_id.0].view_id = Some(view_id);
             self.view_node_ids.insert(view_id, node_id);
             self.view_stack.push(view_id);
         }
-    }
-
-    pub fn parent_view_id(&self) -> Option<EntityId> {
-        self.view_stack.last().copied()
     }
 
     pub fn pop_node(&mut self) {
@@ -248,7 +243,6 @@ impl DispatchTree {
 
     pub fn reuse_subtree(&mut self, old_range: Range<usize>, source: &mut Self) -> ReusedSubtree {
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
-        let mut view_ids = SmallVec::new();
 
         let mut source_stack = vec![];
         for (source_node_id, source_node) in source
@@ -270,9 +264,6 @@ impl DispatchTree {
 
             source_stack.push(source_node_id);
             self.move_node(source_node);
-            if let Some(view_id) = source_node.view_id {
-                view_ids.push(view_id);
-            }
         }
 
         while !source_stack.is_empty() {
@@ -281,7 +272,6 @@ impl DispatchTree {
         }
 
         ReusedSubtree {
-            view_ids,
             old_range,
             new_range,
         }

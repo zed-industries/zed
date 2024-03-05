@@ -330,7 +330,7 @@ impl Element for AnyView {
                 |element_state, cx| {
                     let mut element_state = element_state.unwrap().unwrap();
 
-                    let after_layout_start = cx.window.next_frame.after_layout_index();
+                    let after_layout_start = cx.after_layout_index();
                     let content_mask = cx.content_mask();
                     let text_style = cx.text_style();
 
@@ -355,7 +355,7 @@ impl Element for AnyView {
                         Some(element)
                     };
 
-                    let after_layout_end = cx.window.next_frame.after_layout_index();
+                    let after_layout_end = cx.after_layout_index();
                     element_state.after_layout_range = after_layout_start..after_layout_end;
                     element_state.cache_key.bounds = bounds;
                     element_state.cache_key.content_mask = content_mask;
@@ -386,7 +386,7 @@ impl Element for AnyView {
                 |element_state, cx| {
                     let mut element_state = element_state.unwrap().unwrap();
 
-                    let paint_start = cx.window.next_frame.paint_index();
+                    let paint_start = cx.paint_index();
 
                     if let Some(element) = element {
                         element.paint(cx);
@@ -394,7 +394,7 @@ impl Element for AnyView {
                         cx.reuse_paint(element_state.paint_range.clone());
                     }
 
-                    let paint_end = cx.window.next_frame.paint_index();
+                    let paint_end = cx.paint_index();
                     element_state.paint_range = paint_start..paint_end;
 
                     ((), Some(element_state))
