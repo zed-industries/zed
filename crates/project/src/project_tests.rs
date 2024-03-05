@@ -3125,16 +3125,13 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         events.lock().clear();
 
         // After restoring the buffer to its previously-saved state,
-        // the buffer is not considered dirty anymore.
+        // the buffer is still considered dirty
         buffer.edit([(1..3, "")], None, cx);
         assert!(buffer.text() == "ac");
-        assert!(!buffer.is_dirty());
+        assert!(buffer.is_dirty());
     });
 
-    assert_eq!(
-        *events.lock(),
-        &[language::Event::Edited, language::Event::DirtyChanged]
-    );
+    assert_eq!(*events.lock(), &[language::Event::Edited]);
 
     // When a file is deleted, the buffer is considered dirty.
     let events = Arc::new(Mutex::new(Vec::new()));

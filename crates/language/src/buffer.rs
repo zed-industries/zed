@@ -854,6 +854,9 @@ impl Buffer {
         self.saved_version = version;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
+        self.peer_has_changes
+            .values_mut()
+            .for_each(|has_changed| *has_changed = false);
         self.saved_undo_top = self
             .peek_undo_stack()
             .map(|entry| entry.transaction())
