@@ -47,21 +47,6 @@ use crate::{
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
 
-#[derive(Debug, Default)]
-struct DoubleBuffered<T>
-where
-    T: Clone,
-{
-    current: T,
-    next: T,
-}
-
-impl<T: Clone> DoubleBuffered<T> {
-    fn done(&mut self) {
-        self.current = self.next.clone();
-    }
-}
-
 pub(crate) struct WaylandClientStateInner {
     compositor: wl_compositor::WlCompositor,
     wm_base: xdg_wm_base::XdgWmBase,
@@ -72,7 +57,7 @@ pub(crate) struct WaylandClientStateInner {
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
     outputs: Vec<(
         wl_output::WlOutput,
-        Rc<RefCell<DoubleBuffered<OutputState>>>,
+        Rc<RefCell<OutputState>>,
     )>,
     platform_inner: Rc<LinuxPlatformInner>,
     keymap_state: Option<xkb::State>,
@@ -139,7 +124,7 @@ impl WaylandClient {
                             &qh,
                             (),
                         ),
-                        Rc::new(RefCell::new(DoubleBuffered::default())),
+                        Rc::new(RefCell::new(OutputState::default())),
                     )),
                     _ => {}
                 }
@@ -147,7 +132,7 @@ impl WaylandClient {
         });
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: globals.bind(&qh, 1..=3, ()).unwrap(),
+            compositor: globals.bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             outputs,
@@ -325,7 +310,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 "wl_output" => {
                     state.outputs.push((
                         registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ()),
-                        Rc::new(RefCell::new(DoubleBuffered::default())),
+                        Rc::new(RefCell::new(OutputState::default())),
                     ));
                 }
                 _ => {}
@@ -379,8 +364,8 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
         let mut state = state.client_state_inner.borrow_mut();
 
         // We use `WpFractionalScale` instead to set the scale if it's available
-        // If the compositor version is less than 3 `WlSurface::set_buffer_scale` isn't available
-        if state.fractional_scale_manager.is_some() || state.compositor.version() < 3 {
+        // or give up on scaling if `WlSurface::set_buffer_scale` isn't available
+        if state.fractional_scale_manager.is_some() || state.compositor.version() < wl_surface::REQ_SET_BUFFER_SCALE_SINCE {
             return;
         }
 
@@ -398,20 +383,21 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
         match event {
             wl_surface::Event::Enter { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
-                if surface.version() >= 6 {
+                if surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
                     return;
                 }
                 let mut scale = 1;
                 for global_output in &state.outputs {
                     if output == global_output.0 {
                         outputs.insert(output.id());
-                        scale = scale.max(global_output.1.borrow().next.scale.get());
+                        scale = scale.max(global_output.1.borrow().scale.get());
                     } else if outputs.contains(&global_output.0.id()) {
-                        scale = scale.max(global_output.1.borrow().next.scale.get());
+                        scale = scale.max(global_output.1.borrow().scale.get());
                     }
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
+                window.surface.commit();
             }
             wl_surface::Event::Leave { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -424,15 +410,17 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 let mut scale = 1;
                 for global_output in &state.outputs {
                     if outputs.contains(&global_output.0.id()) {
-                        scale = scale.max(global_output.1.borrow().next.scale.get());
+                        scale = scale.max(global_output.1.borrow().scale.get());
                     }
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
+                window.surface.commit();
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
                 window.rescale(factor as f32);
                 surface.set_buffer_scale(factor);
+                window.surface.commit();
             }
             _ => {}
         }
@@ -472,11 +460,8 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientState {
         match event {
             wl_output::Event::Scale { factor } => {
                 if factor > 0 {
-                    output_state.next.scale = NonZeroU32::new(factor as u32).unwrap();
+                    output_state.scale = NonZeroU32::new(factor as u32).unwrap();
                 }
-            }
-            wl_output::Event::Done => {
-                output_state.done();
             }
             _ => {}
         }
