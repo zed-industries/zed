@@ -55,10 +55,7 @@ pub(crate) struct WaylandClientStateInner {
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
-    outputs: Vec<(
-        wl_output::WlOutput,
-        Rc<RefCell<OutputState>>,
-    )>,
+    outputs: Vec<(wl_output::WlOutput, Rc<RefCell<OutputState>>)>,
     platform_inner: Rc<LinuxPlatformInner>,
     keymap_state: Option<xkb::State>,
     repeat: KeyRepeat,
@@ -132,7 +129,9 @@ impl WaylandClient {
         });
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: globals.bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ()).unwrap(),
+            compositor: globals
+                .bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ())
+                .unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             outputs,
@@ -365,7 +364,9 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
 
         // We use `WpFractionalScale` instead to set the scale if it's available
         // or give up on scaling if `WlSurface::set_buffer_scale` isn't available
-        if state.fractional_scale_manager.is_some() || state.compositor.version() < wl_surface::REQ_SET_BUFFER_SCALE_SINCE {
+        if state.fractional_scale_manager.is_some()
+            || state.compositor.version() < wl_surface::REQ_SET_BUFFER_SCALE_SINCE
+        {
             return;
         }
 
