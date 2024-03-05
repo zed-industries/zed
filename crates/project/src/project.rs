@@ -16,6 +16,7 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
+use fs::repository::GitRepository;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
@@ -7300,6 +7301,18 @@ impl Project {
         } else {
             workspace_root.join(project_path)
         })
+    }
+
+    pub fn get_repo(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        self.worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .as_local()?
+            .snapshot()
+            .local_git_repo(&project_path.path)
     }
 
     // RPC message handlers
