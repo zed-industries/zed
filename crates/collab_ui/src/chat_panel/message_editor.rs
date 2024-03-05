@@ -593,6 +593,8 @@ mod tests {
             editor::init(cx);
             client::init(&client, cx);
             channel::init(&client, user_store, cx);
+
+            MessageEditorSettings::register(cx);
         });
 
         let language_registry = Arc::new(LanguageRegistry::test());
