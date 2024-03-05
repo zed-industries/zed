@@ -314,8 +314,12 @@ version = "0.53.0"
 features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_SystemServices",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_System_DataExchange",
+    "Win32_System_Ole",
 ]
 
 

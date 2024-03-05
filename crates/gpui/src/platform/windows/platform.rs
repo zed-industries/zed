@@ -4,6 +4,7 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
+    ffi::{c_uint, c_void},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -15,25 +16,37 @@ use async_task::Runnable;
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
-use util::SemanticVersion;
+use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE, HWND},
+    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
     System::Threading::{CreateEventW, INFINITE},
     UI::WindowsAndMessaging::{
-        DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage,
-        TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT,
+        DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
+        SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
+        SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
     },
 };
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher, WindowsDisplay,
-    WindowsTextSystem, WindowsWindow,
+    try_get_window_inner, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
+    ForegroundExecutor, Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
+    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher,
+    WindowsDisplay, WindowsTextSystem, WindowsWindow,
 };
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
+}
+
+/// Windows settings pulled from SystemParametersInfo
+/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
+#[derive(Default, Debug)]
+pub(crate) struct WindowsPlatformSystemSettings {
+    /// SEE: SPI_GETWHEELSCROLLCHARS
+    pub(crate) wheel_scroll_chars: u32,
+
+    /// SEE: SPI_GETWHEELSCROLLLINES
+    pub(crate) wheel_scroll_lines: u32,
 }
 
 pub(crate) struct WindowsPlatformInner {
@@ -44,6 +57,7 @@ pub(crate) struct WindowsPlatformInner {
     callbacks: Mutex<Callbacks>,
     pub(crate) window_handles: RefCell<HashSet<AnyWindowHandle>>,
     pub(crate) event: HANDLE,
+    pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
 
 impl Drop for WindowsPlatformInner {
@@ -65,6 +79,57 @@ struct Callbacks {
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
+enum WindowsMessageWaitResult {
+    ForegroundExecution,
+    WindowsMessage(MSG),
+    Error,
+}
+
+impl WindowsPlatformSystemSettings {
+    fn new() -> Self {
+        let mut settings = Self::default();
+        settings.update_all();
+        settings
+    }
+
+    pub(crate) fn update_all(&mut self) {
+        self.update_wheel_scroll_lines();
+        self.update_wheel_scroll_chars();
+    }
+
+    pub(crate) fn update_wheel_scroll_lines(&mut self) {
+        let mut value = c_uint::default();
+        let result = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWHEELSCROLLLINES,
+                0,
+                Some((&mut value) as *mut c_uint as *mut c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+            )
+        };
+
+        if result.log_err() != None {
+            self.wheel_scroll_lines = value;
+        }
+    }
+
+    pub(crate) fn update_wheel_scroll_chars(&mut self) {
+        let mut value = c_uint::default();
+        let result = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWHEELSCROLLCHARS,
+                0,
+                Some((&mut value) as *mut c_uint as *mut c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+            )
+        };
+
+        if result.log_err() != None {
+            self.wheel_scroll_chars = value;
+        }
+    }
+}
+
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
@@ -75,6 +140,7 @@ impl WindowsPlatform {
         let text_system = Arc::new(WindowsTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let window_handles = RefCell::new(HashSet::new());
+        let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -83,8 +149,43 @@ impl WindowsPlatform {
             callbacks,
             window_handles,
             event,
+            settings,
         });
         Self { inner }
+    }
+
+    /// runs message handlers that should be processed before dispatching to prevent translating unnecessary messages
+    /// returns true if message is handled and should not dispatch
+    fn run_immediate_msg_handlers(&self, msg: &MSG) -> bool {
+        if msg.message == WM_SETTINGCHANGE {
+            self.inner.settings.borrow_mut().update_all();
+            return true;
+        }
+
+        if let Some(inner) = try_get_window_inner(msg.hwnd) {
+            inner.handle_immediate_msg(msg.message, msg.wParam, msg.lParam)
+        } else {
+            false
+        }
+    }
+
+    fn wait_message(&self) -> WindowsMessageWaitResult {
+        let wait_result = unsafe {
+            MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
+        };
+
+        match wait_result {
+            WAIT_EVENT(0) => WindowsMessageWaitResult::ForegroundExecution,
+            WAIT_EVENT(1) => {
+                let mut msg = MSG::default();
+                unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) };
+                WindowsMessageWaitResult::WindowsMessage(msg)
+            }
+            _ => {
+                log::error!("unhandled windows wait message: {}", wait_result.0);
+                WindowsMessageWaitResult::Error
+            }
+        }
     }
 }
 
@@ -103,22 +204,27 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        'a: loop {
-            unsafe {
-                MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
-            };
-            let mut msg = MSG::default();
-            while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool() {
-                if msg.message == WM_QUIT {
-                    break 'a;
+        loop {
+            match self.wait_message() {
+                WindowsMessageWaitResult::ForegroundExecution => {
+                    for runnable in self.inner.main_receiver.drain() {
+                        runnable.run();
+                    }
                 }
-                unsafe { TranslateMessage(&msg) };
-                unsafe { DispatchMessageW(&msg) };
-            }
-            while let Ok(runnable) = self.inner.main_receiver.try_recv() {
-                runnable.run();
+                WindowsMessageWaitResult::WindowsMessage(msg) => {
+                    if msg.message == WM_QUIT {
+                        break;
+                    }
+
+                    if !self.run_immediate_msg_handlers(&msg) {
+                        unsafe { TranslateMessage(&msg) };
+                        unsafe { DispatchMessageW(&msg) };
+                    }
+                }
+                WindowsMessageWaitResult::Error => {}
             }
         }
+
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {
             callback()
