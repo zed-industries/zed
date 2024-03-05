@@ -74,10 +74,11 @@ if [[ -n $xbps ]]; then
   deps=(
     alsa-lib-devel
     fontconfig-devel
-    wayland-devel
+    libxcb-devel
     libxkbcommon-devel
-    openssl-devel
     libzstd-devel
+    openssl-devel
+    wayland-devel
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
