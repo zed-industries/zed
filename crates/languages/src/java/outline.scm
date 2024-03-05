@@ -15,13 +15,18 @@
     interfaces: (_)? @name
     permits: (_)? @name) @item
 
+(field_declaration
+    (modifiers)? @context
+    type: (_) @context
+    declarator: (_) @context) @item
+
 (constructor_declaration
     (modifiers)? @context
     name: (_) @name
     parameters: (formal_parameters) @context) @item
 
 (method_declaration
-    type: (type_identifier)? @type
+    type: (type_identifier)? @context
     name: (_) @name
     parameters: (formal_parameters) @context) @item
 
