@@ -103,6 +103,16 @@ impl MessageEditor {
             .expect("message editor must be singleton");
 
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
+        cx.observe_global::<settings::SettingsStore>(|view, cx| {
+            view.editor.update(cx, |editor, cx| {
+                editor.set_auto_replace_emoji_shortcode(
+                    MessageEditorSettings::get_global(cx)
+                        .auto_replace_emoji_shortcode
+                        .unwrap_or_default(),
+                )
+            })
+        })
+        .detach();
 
         let markdown = language_registry.language_for_name("Markdown");
         cx.spawn(|_, mut cx| async move {
