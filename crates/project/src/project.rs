@@ -5423,6 +5423,10 @@ impl Project {
                     action.lsp_action = lang_server
                         .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
                         .await?;
+                } else if action.lsp_action.data.is_some() {
+                    action.lsp_action = lang_server
+                        .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
+                        .await?;
                 } else {
                     let actions = this
                         .update(&mut cx, |this, cx| {
