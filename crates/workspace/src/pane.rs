@@ -630,7 +630,7 @@ impl Pane {
         self.items.len()
     }
 
-    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
+    pub fn items(&self) -> impl DoubleEndedIterator<Item = &Box<dyn ItemHandle>> {
         self.items.iter()
     }
 
