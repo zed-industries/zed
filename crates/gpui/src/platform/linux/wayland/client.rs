@@ -112,7 +112,7 @@ pub(crate) struct WaylandClient {
 }
 
 const WL_SEAT_VERSION: u32 = 4;
-const WL_OUTPUT_VERSION: u32 = 4;
+const WL_OUTPUT_VERSION: u32 = 2;
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
@@ -148,7 +148,7 @@ impl WaylandClient {
         });
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: globals.bind(&qh, 3..=3, ()).unwrap(),
+            compositor: globals.bind(&qh, 1..=3, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             outputs,
@@ -380,7 +380,8 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
         let mut state = state.client_state_inner.borrow_mut();
 
         // We use `WpFractionalScale` instead to set the scale if it's available
-        if state.fractional_scale_manager.is_some() {
+        // If the compositor version is less than 3 `WlSurface::set_buffer_scale` isn't available
+        if state.fractional_scale_manager.is_some() || state.compositor.version() < 3 {
             return;
         }
 
@@ -399,11 +400,6 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
             wl_surface::Event::Enter { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if surface.version() >= 6 {
-                    for global_output in &state.outputs {
-                        if output == global_output.0 {
-                            outputs.insert(output.id());
-                        }
-                    }
                     return;
                 }
                 let mut scale = 1;
@@ -419,11 +415,13 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 window.surface.set_buffer_scale(scale as i32);
             }
             wl_surface::Event::Leave { output } => {
-                outputs.remove(&output.id());
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if surface.version() >= 6 {
                     return;
                 }
+
+                outputs.remove(&output.id());
+
                 let mut scale = 1;
                 for global_output in &state.outputs {
                     if outputs.contains(&global_output.0.id()) {
@@ -444,16 +442,12 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
 
 #[derive(Debug, Clone)]
 struct OutputState {
-    name: Option<Cow<'static, str>>,
-    description: Option<Cow<'static, str>>,
     scale: NonZeroU32,
 }
 
 impl Default for OutputState {
     fn default() -> Self {
         Self {
-            name: None,
-            description: None,
             scale: NonZeroU32::new(1).unwrap(),
         }
     }
@@ -477,12 +471,6 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientState {
             .unwrap()
             .borrow_mut();
         match event {
-            wl_output::Event::Name { name } => {
-                output_state.next.description = Some(Cow::Owned(name));
-            }
-            wl_output::Event::Description { description } => {
-                output_state.next.description = Some(Cow::Owned(description));
-            }
             wl_output::Event::Scale { factor } => {
                 if factor > 0 {
                     output_state.next.scale = NonZeroU32::new(factor as u32).unwrap();
