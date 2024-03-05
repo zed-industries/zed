@@ -53,7 +53,7 @@ pub use text::{
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, ResultExt};
+use util::RangeExt;
 
 use self::proto::serialize_transaction;
 
@@ -405,7 +405,6 @@ pub trait LocalFile: File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
-        undo_top: Option<&Transaction>,
         line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut AppContext,
@@ -864,7 +863,6 @@ impl Buffer {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.saved_undo_top.as_ref(),
                 self.line_ending(),
                 self.saved_mtime,
                 cx,

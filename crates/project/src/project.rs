@@ -34,7 +34,7 @@ use language::{
     markdown, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
-        serialize_transaction, serialize_version, split_operations,
+        serialize_version, split_operations,
     },
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
     CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
@@ -7920,11 +7920,6 @@ impl Project {
             .await?;
         let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
 
-        let saved_undo_top = buffer.update(&mut cx, |buffer, _| {
-            buffer
-                .peek_undo_stack()
-                .map(|entry| serialize_transaction(entry.transaction()))
-        })?;
         this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
         Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
@@ -7998,9 +7993,6 @@ impl Project {
                         version: language::proto::serialize_version(&buffer.version),
                     });
 
-                    let saved_undo_top = buffer
-                        .peek_undo_stack()
-                        .map(|entry| serialize_transaction(entry.transaction()));
                     let operations = buffer.serialize_ops(Some(remote_version), cx);
                     let client = this.client.clone();
                     if let Some(file) = buffer.file() {
