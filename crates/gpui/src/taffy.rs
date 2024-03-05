@@ -47,10 +47,6 @@ impl TaffyLayoutEngine {
         self.styles.clear();
     }
 
-    pub fn requested_style(&self, layout_id: LayoutId) -> Option<&Style> {
-        self.styles.get(&layout_id)
-    }
-
     pub fn before_layout(
         &mut self,
         style: &Style,

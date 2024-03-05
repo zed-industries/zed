@@ -1,10 +1,11 @@
 use crate::{
     seal::Sealed, AfterLayoutIndex, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds,
     ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, IntoElement, LayoutId, Model, PaintIndex, Pixels, Render, Style, TextStyle,
-    ViewContext, VisualContext, WeakModel,
+    FocusableView, IntoElement, LayoutId, Model, PaintIndex, Pixels, Render, Style,
+    StyleRefinement, TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
+use refineable::Refineable;
 use std::{
     any::{type_name, TypeId},
     fmt,
@@ -22,7 +23,6 @@ pub struct View<V> {
 impl<V> Sealed for View<V> {}
 
 struct AnyViewState {
-    root_style: Style,
     after_layout_range: Range<AfterLayoutIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewCacheKey,
@@ -221,15 +221,15 @@ impl<V> Eq for WeakView<V> {}
 pub struct AnyView {
     model: AnyModel,
     render: fn(&AnyView, &mut ElementContext) -> AnyElement,
-    cache: bool,
+    cached_style: Option<StyleRefinement>,
 }
 
 impl AnyView {
     /// Indicate that this view should be cached when using it as an element.
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
     /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
-    pub fn cached(mut self) -> Self {
-        self.cache = true;
+    pub fn cached(mut self, style: StyleRefinement) -> Self {
+        self.cached_style = Some(style);
         self
     }
 
@@ -249,7 +249,7 @@ impl AnyView {
             Err(model) => Err(Self {
                 model,
                 render: self.render,
-                cache: self.cache,
+                cached_style: self.cached_style,
             }),
         }
     }
@@ -270,7 +270,7 @@ impl<V: Render> From<View<V>> for AnyView {
         AnyView {
             model: value.model.into_any(),
             render: any_view::render::<V>,
-            cache: false,
+            cached_style: None,
         }
     }
 }
@@ -280,34 +280,11 @@ impl Element for AnyView {
     type AfterLayout = Option<AnyElement>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        if self.cache {
-            cx.with_element_state::<AnyViewState, _>(
-                Some(ElementId::View(self.entity_id())),
-                |element_state, cx| {
-                    let mut element_state = element_state.unwrap();
-
-                    if !cx.window.dirty_views.contains(&self.entity_id()) && !cx.window.refreshing {
-                        if let Some(root_style) = element_state
-                            .as_ref()
-                            .map(|element_state| &element_state.root_style)
-                        {
-                            let layout_id = cx.request_layout(root_style, None);
-                            return ((layout_id, None), element_state);
-                        }
-                    }
-
-                    let mut element = (self.render)(self, cx);
-                    let layout_id = element.before_layout(cx);
-                    let element_state = Some(AnyViewState {
-                        root_style: cx.layout_style(layout_id).unwrap().clone(),
-                        cache_key: ViewCacheKey::default(),
-                        after_layout_range: AfterLayoutIndex::default()
-                            ..AfterLayoutIndex::default(),
-                        paint_range: PaintIndex::default()..PaintIndex::default(),
-                    });
-                    ((layout_id, Some(element)), element_state)
-                },
-            )
+        if let Some(style) = self.cached_style.as_ref() {
+            let mut root_style = Style::default();
+            root_style.refine(style);
+            let layout_id = cx.request_layout(&root_style, None);
+            (layout_id, None)
         } else {
             cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
                 let mut element = (self.render)(self, cx);
@@ -324,44 +301,47 @@ impl Element for AnyView {
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
         cx.set_view_id(self.entity_id());
-        if self.cache {
+        if self.cached_style.is_some() {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
-                    let mut element_state = element_state.unwrap().unwrap();
+                    let mut element_state = element_state.unwrap();
 
-                    let after_layout_start = cx.after_layout_index();
                     let content_mask = cx.content_mask();
                     let text_style = cx.text_style();
 
-                    let element = if let Some(mut element) = element.take() {
-                        element.after_layout(cx);
-                        Some(element)
-                    } else if element_state.cache_key.bounds == bounds
-                        && element_state.cache_key.content_mask == content_mask
-                        && element_state.cache_key.text_style == text_style
-                    {
-                        cx.reuse_after_layout(element_state.after_layout_range.clone());
-                        None
-                    } else {
-                        let mut element = (self.render)(self, cx);
-                        let layout_id = element.before_layout(cx);
-                        cx.compute_layout(layout_id, bounds.size.into());
-                        element_state.root_style = cx.layout_style(layout_id).unwrap().clone();
-                        cx.with_absolute_element_offset(bounds.origin, |cx| {
-                            element.after_layout(cx)
-                        });
+                    if let Some(mut element_state) = element_state {
+                        if element_state.cache_key.bounds == bounds
+                            && element_state.cache_key.content_mask == content_mask
+                            && element_state.cache_key.text_style == text_style
+                            && !cx.window.dirty_views.contains(&self.entity_id())
+                            && !cx.window.refreshing
+                        {
+                            let after_layout_start = cx.after_layout_index();
+                            cx.reuse_after_layout(element_state.after_layout_range.clone());
+                            let after_layout_end = cx.after_layout_index();
+                            element_state.after_layout_range = after_layout_start..after_layout_end;
+                            return (None, Some(element_state));
+                        }
+                    }
 
-                        Some(element)
-                    };
-
+                    let after_layout_start = cx.after_layout_index();
+                    let mut element = (self.render)(self, cx);
+                    element.layout(bounds.origin, bounds.size.into(), cx);
                     let after_layout_end = cx.after_layout_index();
-                    element_state.after_layout_range = after_layout_start..after_layout_end;
-                    element_state.cache_key.bounds = bounds;
-                    element_state.cache_key.content_mask = content_mask;
-                    element_state.cache_key.text_style = text_style;
 
-                    (element, Some(element_state))
+                    (
+                        Some(element),
+                        Some(AnyViewState {
+                            after_layout_range: after_layout_start..after_layout_end,
+                            paint_range: PaintIndex::default()..PaintIndex::default(),
+                            cache_key: ViewCacheKey {
+                                bounds,
+                                content_mask,
+                                text_style,
+                            },
+                        }),
+                    )
                 },
             )
         } else {
@@ -380,7 +360,7 @@ impl Element for AnyView {
         element: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        if self.cache {
+        if self.cached_style.is_some() {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
@@ -437,7 +417,7 @@ impl AnyWeakView {
         Some(AnyView {
             model,
             render: self.render,
-            cache: false,
+            cached_style: None,
         })
     }
 }

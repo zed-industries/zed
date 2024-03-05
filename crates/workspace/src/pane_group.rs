@@ -4,7 +4,7 @@ use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
     point, size, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton, Pixels,
-    Point, View, ViewContext,
+    Point, StyleRefinement, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -237,7 +237,10 @@ impl Member {
                     .relative()
                     .flex_1()
                     .size_full()
-                    .child(AnyView::from(pane.clone()).cached())
+                    .child(
+                        AnyView::from(pane.clone())
+                            .cached(StyleRefinement::default().v_flex().size_full()),
+                    )
                     .when_some(leader_border, |this, color| {
                         this.child(
                             div()

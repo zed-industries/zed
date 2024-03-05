@@ -1155,14 +1155,6 @@ impl<'a> ElementContext<'a> {
         bounds
     }
 
-    pub(crate) fn layout_style(&self, layout_id: LayoutId) -> Option<&Style> {
-        self.window
-            .layout_engine
-            .as_ref()
-            .unwrap()
-            .requested_style(layout_id)
-    }
-
     /// This method should be called during `after_layout`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
