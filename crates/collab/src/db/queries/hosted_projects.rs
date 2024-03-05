@@ -11,7 +11,7 @@ impl Database {
     ) -> Result<Vec<proto::HostedProject>> {
         Ok(hosted_project::Entity::find()
             .filter(hosted_project::Column::ChannelId.is_in(channel_ids.iter().map(|id| id.0)))
-            .all(&*tx)
+            .all(tx)
             .await?
             .into_iter()
             .flat_map(|project| {
@@ -47,11 +47,11 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<(hosted_project::Model, ChannelRole)> {
         let project = hosted_project::Entity::find_by_id(hosted_project_id)
-            .one(&*tx)
+            .one(tx)
             .await?
             .ok_or_else(|| anyhow!(ErrorCode::NoSuchProject))?;
         let channel = channel::Entity::find_by_id(project.channel_id)
-            .one(&*tx)
+            .one(tx)
             .await?
             .ok_or_else(|| anyhow!(ErrorCode::NoSuchChannel))?;
 
