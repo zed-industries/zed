@@ -205,6 +205,7 @@ impl ChannelBuffer {
 
     pub fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<'_, ChannelBuffer>) {
         let buffer = self.buffer.read(cx);
+        let is_dirty = buffer.has_local_changes();
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();
         let client = self.client.clone();
@@ -219,6 +220,7 @@ impl ChannelBuffer {
                     buffer_id,
                     epoch,
                     version: serialize_version(&version),
+                    is_dirty,
                 })
                 .ok();
             Ok(())

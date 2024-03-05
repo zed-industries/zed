@@ -640,6 +640,7 @@ message UpdateBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated Operation operations = 3;
+    bool is_dirty = 4;
 }
 
 message UpdateChannelBuffer {
@@ -665,7 +666,6 @@ message BufferSaved {
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
     reserved 5;
-    optional Transaction saved_undo_top = 6;
 }
 
 message BufferReloaded {
@@ -675,7 +675,6 @@ message BufferReloaded {
     Timestamp mtime = 4;
     reserved 5;
     LineEnding line_ending = 6;
-    optional Transaction saved_undo_top = 7;
 }
 
 message ReloadBuffers {
@@ -1241,6 +1240,7 @@ message AckBufferOperation {
     uint64 buffer_id = 1;
     uint64 epoch = 2;
     repeated VectorClockEntry version = 3;
+    bool is_dirty = 4;
 }
 
 message JoinChannelBufferResponse {

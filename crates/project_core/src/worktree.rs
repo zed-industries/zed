@@ -1171,7 +1171,6 @@ impl LocalWorktree {
                     buffer_id,
                     version: serialize_version(&version),
                     mtime: Some(mtime.into()),
-                    saved_undo_top,
                 })?;
             }
 
@@ -2958,7 +2957,6 @@ impl language::LocalFile for File {
                     mtime: Some(mtime.into()),
 
                     line_ending: serialize_line_ending(line_ending) as i32,
-                    saved_undo_top: saved_undo_top.map(serialize_transaction),
                 })
                 .log_err();
         }

@@ -22,6 +22,7 @@ use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLab
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use rpc::ConnectionId;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -90,6 +91,8 @@ pub struct Buffer {
     /// or saved to disk.
     saved_version: clock::Global,
     saved_undo_top: Option<Transaction>,
+    /// True if a peer with given id has any local changes to the buffer.
+    peer_has_changes: BTreeMap<ConnectionId, bool>,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -703,6 +706,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             saved_undo_top: None,
+            peer_has_changes: Default::default(),
         }
     }
 
@@ -792,6 +796,9 @@ impl Buffer {
             .peek_undo_stack()
             .map(|entry| entry.transaction())
             .cloned();
+        self.peer_has_changes
+            .values_mut()
+            .for_each(|has_changed| *has_changed = false);
         cx.emit(Event::Saved);
         cx.notify();
     }
@@ -1515,8 +1522,15 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
-    fn content_differs(&self) -> bool {
+    pub fn has_local_changes(&self) -> bool {
         self.peek_undo_stack().map(|entry| entry.transaction()) != self.saved_undo_top.as_ref()
+    }
+    pub fn content_differs(&self) -> bool {
+        self.has_local_changes()
+            || self
+                .peer_has_changes
+                .values()
+                .any(|has_changes| *has_changes)
     }
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
@@ -1829,6 +1843,10 @@ impl Buffer {
         cx.notify();
     }
 
+    pub fn mark_dirty(&mut self, peer_id: ConnectionId, dirty: bool) {
+        *self.peer_has_changes.entry(peer_id).or_default() = dirty;
+    }
+
     /// Applies the given remote operations to the buffer.
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
@@ -1980,6 +1998,7 @@ impl Buffer {
     /// Removes the selections for a given peer.
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
         self.remote_selections.remove(&replica_id);
+        //self.peer_has_changes.remove(&replica_id);
         cx.notify();
     }
 

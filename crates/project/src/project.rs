@@ -185,6 +185,8 @@ enum BufferOrderedMessage {
     Operation {
         buffer_id: BufferId,
         operation: proto::Operation,
+        is_dirty: bool,
+        is_local_dirty: bool,
     },
     LanguageServerUpdate {
         language_server_id: LanguageServerId,
@@ -2210,18 +2212,19 @@ impl Project {
         let mut operations_by_buffer_id = HashMap::default();
         async fn flush_operations(
             this: &WeakModel<Project>,
-            operations_by_buffer_id: &mut HashMap<BufferId, Vec<proto::Operation>>,
+            operations_by_buffer_id: &mut HashMap<BufferId, (Vec<proto::Operation>, bool)>,
             needs_resync_with_host: &mut bool,
             is_local: bool,
             cx: &mut AsyncAppContext,
         ) -> Result<()> {
-            for (buffer_id, operations) in operations_by_buffer_id.drain() {
+            for (buffer_id, (operations, is_dirty)) in operations_by_buffer_id.drain() {
                 let request = this.update(cx, |this, _| {
                     let project_id = this.remote_id()?;
                     Some(this.client.request(proto::UpdateBuffer {
                         buffer_id: buffer_id.into(),
                         project_id,
                         operations,
+                        is_dirty,
                     }))
                 })?;
                 if let Some(request) = request {
@@ -2239,20 +2242,22 @@ impl Project {
 
         while let Some(changes) = changes.next().await {
             let is_local = this.update(&mut cx, |this, _| this.is_local())?;
-
             for change in changes {
                 match change {
                     BufferOrderedMessage::Operation {
                         buffer_id,
                         operation,
+                        is_dirty,
+                        is_local_dirty,
                     } => {
                         if needs_resync_with_host {
                             continue;
                         }
-
+                        let is_dirty = if is_local { is_dirty } else { is_local_dirty };
                         operations_by_buffer_id
                             .entry(buffer_id)
-                            .or_insert(Vec::new())
+                            .or_insert((Vec::new(), is_dirty))
+                            .0
                             .push(operation);
                     }
 
@@ -2323,10 +2328,13 @@ impl Project {
 
         match event {
             BufferEvent::Operation(operation) => {
+                let buffer = buffer.read(cx);
                 self.buffer_ordered_messages_tx
                     .unbounded_send(BufferOrderedMessage::Operation {
-                        buffer_id: buffer.read(cx).remote_id(),
+                        buffer_id: buffer.remote_id(),
                         operation: language::proto::serialize_operation(operation),
+                        is_dirty: buffer.is_dirty(),
+                        is_local_dirty: buffer.has_local_changes(),
                     })
                     .ok();
             }
@@ -7733,6 +7741,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
             let buffer_id = BufferId::new(payload.buffer_id)?;
+            dbg!(payload.is_dirty);
             let ops = payload
                 .operations
                 .into_iter()
@@ -7742,7 +7751,10 @@ impl Project {
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
                     OpenBuffer::Strong(buffer) => {
-                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.mark_dirty(envelope.sender_id, payload.is_dirty);
+                            buffer.apply_ops(ops, cx)
+                        })?;
                     }
                     OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
                     OpenBuffer::Weak(_) => {}
@@ -7920,8 +7932,6 @@ impl Project {
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: Some(buffer.saved_mtime().into()),
-
-            saved_undo_top,
         })?)
     }
 
@@ -8020,10 +8030,9 @@ impl Project {
                             line_ending: language::proto::serialize_line_ending(
                                 buffer.line_ending(),
                             ) as i32,
-                            saved_undo_top,
                         })
                         .log_err();
-
+                    let is_dirty = buffer.is_dirty();
                     cx.background_executor()
                         .spawn(
                             async move {
@@ -8034,6 +8043,7 @@ impl Project {
                                             project_id,
                                             buffer_id: buffer_id.into(),
                                             operations: chunk,
+                                            is_dirty,
                                         })
                                         .await?;
                                 }
@@ -8662,9 +8672,10 @@ impl Project {
                     .iter()
                     .filter_map(|(id, buffer)| {
                         let buffer = buffer.upgrade()?;
+                        let buffer = buffer.read(cx);
                         Some(proto::BufferVersion {
                             id: (*id).into(),
-                            version: language::proto::serialize_version(&buffer.read(cx).version),
+                            version: language::proto::serialize_version(&buffer.version),
                         })
                     })
                     .collect();
@@ -8699,6 +8710,7 @@ impl Project {
                         if let Some(buffer) = this.buffer_for_id(buffer_id) {
                             let operations =
                                 buffer.read(cx).serialize_ops(Some(remote_version), cx);
+                            let is_dirty = buffer.read(cx).is_dirty();
                             cx.background_executor().spawn(async move {
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
@@ -8707,6 +8719,7 @@ impl Project {
                                             project_id,
                                             buffer_id: buffer_id.into(),
                                             operations: chunk,
+                                            is_dirty,
                                         })
                                         .await?;
                                 }
