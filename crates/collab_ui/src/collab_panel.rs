@@ -2614,15 +2614,17 @@ impl CollabPanel {
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                             )
-                            .children(has_notes_notification.then(|| {
-                                div()
-                                    .w_1p5()
-                                    .z_index(1)
-                                    .absolute()
-                                    .right(px(-1.))
-                                    .top(px(-1.))
-                                    .child(Indicator::dot().color(Color::Info))
-                            })),
+                            .children((has_notes_notification || has_messages_notification).then(
+                                || {
+                                    div()
+                                        .w_1p5()
+                                        .z_index(1)
+                                        .absolute()
+                                        .right(px(-1.))
+                                        .top(px(-1.))
+                                        .child(Indicator::dot().color(Color::Info))
+                                },
+                            )),
                     )
                     .child(
                         h_flex()
