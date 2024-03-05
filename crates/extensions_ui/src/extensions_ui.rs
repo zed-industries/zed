@@ -43,12 +43,11 @@ pub fn init(cx: &mut AppContext) {
                 cx.deref_mut()
                     .spawn(|mut cx| async move {
                         let extension_path = prompt.await.log_err()??.pop()?;
-                        let task = store
+                        store
                             .update(&mut cx, |store, cx| {
-                                store.install_dev_extension(extension_path, cx)
+                                store.install_dev_extension(extension_path, cx);
                             })
                             .ok()?;
-                        task.await.log_err()?;
                         Some(())
                     })
                     .detach();
@@ -83,7 +82,7 @@ pub struct ExtensionsPage {
     filtered_remote_extension_indices: Vec<usize>,
     query_editor: View<Editor>,
     query_contains_error: bool,
-    _subscription: gpui::Subscription,
+    _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
 }
 
@@ -91,7 +90,14 @@ impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
-            let subscription = cx.observe(&store, |_, _, cx| cx.notify());
+            let subscriptions = [
+                cx.observe(&store, |_, _, cx| cx.notify()),
+                cx.subscribe(&store, |this, _, event, cx| match event {
+                    extension::Event::ExtensionsUpdated => {
+                        this.fetch_extensions_debounced(cx);
+                    }
+                }),
+            ];
 
             let query_editor = cx.new_view(|cx| {
                 let mut input = Editor::single_line(cx);
@@ -110,7 +116,7 @@ impl ExtensionsPage {
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
-                _subscription: subscription,
+                _subscriptions: subscriptions,
                 query_editor,
             };
             this.fetch_extensions(None, cx);
@@ -143,38 +149,11 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn install_extension(
-        &self,
-        extension_id: Arc<str>,
-        version: Arc<str>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        ExtensionStore::global(cx).update(cx, |store, cx| {
-            store.install_extension(extension_id, version, cx)
-        });
-        cx.notify();
-    }
-
-    fn rebuild_dev_extension(&self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
-        ExtensionStore::global(cx).update(cx, |store, cx| {
-            store.rebuild_dev_extension(extension_id, cx)
-        });
-        cx.notify();
-    }
-
-    fn uninstall_extension(&self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
-        ExtensionStore::global(cx)
-            .update(cx, |store, cx| store.uninstall_extension(extension_id, cx));
-        cx.notify();
-    }
-
     fn fetch_extensions(&mut self, search: Option<String>, cx: &mut ViewContext<Self>) {
         self.is_fetching_extensions = true;
         cx.notify();
 
         let extension_store = ExtensionStore::global(cx);
-
-        // let local
 
         let dev_extensions = extension_store.update(cx, |store, _| {
             store.dev_extensions().cloned().collect::<Vec<_>>()
@@ -285,26 +264,27 @@ impl ExtensionsPage {
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
                                 )
-                                .on_click(cx.listener({
+                                .on_click({
                                     let extension_id = extension.id.clone();
-                                    move |this, _, cx| {
-                                        this.rebuild_dev_extension(extension_id.clone(), cx);
+                                    move |_, cx| {
+                                        ExtensionStore::global(cx).update(cx, |store, cx| {
+                                            store.rebuild_dev_extension(extension_id.clone(), cx)
+                                        });
                                     }
-                                }))
+                                })
                                 .color(Color::Accent)
                                 .disabled(matches!(status, ExtensionStatus::Upgrading)),
                             )
                             .child(
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
-                                    .on_click(cx.listener({
+                                    .on_click({
                                         let extension_id = extension.id.clone();
-                                        move |this, _, cx| {
-                                            this.telemetry.report_app_event(
-                                                "extensions: uninstall extension".to_string(),
-                                            );
-                                            this.uninstall_extension(extension_id.clone(), cx);
+                                        move |_, cx| {
+                                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                                store.uninstall_extension(extension_id.clone(), cx)
+                                            });
                                         }
-                                    }))
+                                    })
                                     .color(Color::Accent)
                                     .disabled(matches!(status, ExtensionStatus::Removing)),
                             ),
@@ -442,89 +422,76 @@ impl ExtensionsPage {
         status: &ExtensionStatus,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let upgrade_button = match status.clone() {
-            ExtensionStatus::NotInstalled
-            | ExtensionStatus::Installing
-            | ExtensionStatus::Removing => None,
-            ExtensionStatus::Installed(installed_version) => {
-                if installed_version != extension.version {
-                    Some(
-                        Button::new(
-                            SharedString::from(format!("upgrade-{}", extension.id)),
-                            "Upgrade",
-                        )
-                        .on_click(cx.listener({
-                            let extension_id = extension.id.clone();
-                            let version = extension.version.clone();
-                            move |this, _, cx| {
-                                this.telemetry
-                                    .report_app_event("extensions: install extension".to_string());
-                                this.install_extension(extension_id.clone(), version.clone(), cx);
-                            }
-                        }))
-                        .color(Color::Accent),
-                    )
-                } else {
-                    None
-                }
-            }
-            ExtensionStatus::Upgrading => Some(
-                Button::new(
-                    SharedString::from(format!("upgrade-{}", extension.id)),
-                    "Upgrade",
-                )
-                .color(Color::Accent)
-                .disabled(true),
+        match status.clone() {
+            ExtensionStatus::NotInstalled => (
+                Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
+                    cx.listener({
+                        let extension_id = extension.id.clone();
+                        let version = extension.version.clone();
+                        move |this, _, cx| {
+                            this.telemetry
+                                .report_app_event("extensions: install extension".to_string());
+                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                store.install_extension(extension_id.clone(), version.clone(), cx)
+                            });
+                        }
+                    }),
+                ),
+                None,
             ),
-        };
-
-        let install_or_uninstall_button = match status {
-            ExtensionStatus::NotInstalled | ExtensionStatus::Installing => Button::new(
-                SharedString::from(extension.id.clone()),
-                if status.is_installing() {
-                    "Installing..."
+            ExtensionStatus::Installing => (
+                Button::new(SharedString::from(extension.id.clone()), "Install").disabled(true),
+                None,
+            ),
+            ExtensionStatus::Upgrading => (
+                Button::new(SharedString::from(extension.id.clone()), "Uninstall").disabled(true),
+                Some(
+                    Button::new(SharedString::from(extension.id.clone()), "Upgrade").disabled(true),
+                ),
+            ),
+            ExtensionStatus::Installed(installed_version) => (
+                Button::new(SharedString::from(extension.id.clone()), "Uninstall").on_click(
+                    cx.listener({
+                        let extension_id = extension.id.clone();
+                        move |this, _, cx| {
+                            this.telemetry
+                                .report_app_event("extensions: uninstall extension".to_string());
+                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                store.uninstall_extension(extension_id.clone(), cx)
+                            });
+                        }
+                    }),
+                ),
+                if installed_version == extension.version {
+                    None
                 } else {
-                    "Install"
+                    Some(
+                        Button::new(SharedString::from(extension.id.clone()), "Upgrade").on_click(
+                            cx.listener({
+                                let extension_id = extension.id.clone();
+                                let version = extension.version.clone();
+                                move |this, _, cx| {
+                                    this.telemetry.report_app_event(
+                                        "extensions: install extension".to_string(),
+                                    );
+                                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                                        store.upgrade_extension(
+                                            extension_id.clone(),
+                                            version.clone(),
+                                            cx,
+                                        )
+                                    });
+                                }
+                            }),
+                        ),
+                    )
                 },
-            )
-            .on_click(cx.listener({
-                let extension_id = extension.id.clone();
-                let version = extension.version.clone();
-                move |this, _, cx| {
-                    this.telemetry
-                        .report_app_event("extensions: install extension".to_string());
-                    this.install_extension(extension_id.clone(), version.clone(), cx);
-                }
-            }))
-            .disabled(status.is_installing()),
-            ExtensionStatus::Installed(_)
-            | ExtensionStatus::Upgrading
-            | ExtensionStatus::Removing => Button::new(
-                SharedString::from(extension.id.clone()),
-                if status.is_upgrading() {
-                    "Upgrading..."
-                } else if status.is_removing() {
-                    "Removing..."
-                } else {
-                    "Uninstall"
-                },
-            )
-            .on_click(cx.listener({
-                let extension_id = extension.id.clone();
-                move |this, _, cx| {
-                    this.telemetry
-                        .report_app_event("extensions: uninstall extension".to_string());
-                    this.uninstall_extension(extension_id.clone(), cx);
-                }
-            }))
-            .disabled(matches!(
-                status,
-                ExtensionStatus::Upgrading | ExtensionStatus::Removing
-            )),
+            ),
+            ExtensionStatus::Removing => (
+                Button::new(SharedString::from(extension.id.clone()), "Uninstall").disabled(true),
+                None,
+            ),
         }
-        .color(Color::Accent);
-
-        (install_or_uninstall_button, upgrade_button)
     }
 
     fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
@@ -597,30 +564,34 @@ impl ExtensionsPage {
     ) {
         if let editor::EditorEvent::Edited = event {
             self.query_contains_error = false;
-            self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
-                let search = this
-                    .update(&mut cx, |this, cx| this.search_query(cx))
-                    .ok()
-                    .flatten();
-
-                // Only debounce the fetching of extensions if we have a search
-                // query.
-                //
-                // If the search was just cleared then we can just reload the list
-                // of extensions without a debounce, which allows us to avoid seeing
-                // an intermittent flash of a "no extensions" state.
-                if let Some(_) = search {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(250))
-                        .await;
-                };
-
-                this.update(&mut cx, |this, cx| {
-                    this.fetch_extensions(search, cx);
-                })
-                .ok();
-            }));
+            self.fetch_extensions_debounced(cx);
         }
+    }
+
+    fn fetch_extensions_debounced(&mut self, cx: &mut ViewContext<'_, ExtensionsPage>) {
+        self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
+            let search = this
+                .update(&mut cx, |this, cx| this.search_query(cx))
+                .ok()
+                .flatten();
+
+            // Only debounce the fetching of extensions if we have a search
+            // query.
+            //
+            // If the search was just cleared then we can just reload the list
+            // of extensions without a debounce, which allows us to avoid seeing
+            // an intermittent flash of a "no extensions" state.
+            if let Some(_) = search {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+            };
+
+            this.update(&mut cx, |this, cx| {
+                this.fetch_extensions(search, cx);
+            })
+            .ok();
+        }));
     }
 
     pub fn search_query(&self, cx: &WindowContext) -> Option<String> {
@@ -682,7 +653,17 @@ impl Render for ExtensionsPage {
                     .child(
                         h_flex()
                             .w_full()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge)),
+                            .gap_2()
+                            .justify_between()
+                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
+                            .child(
+                                Button::new("add-dev-extension", "Add Dev Extension")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .on_click(|_event, cx| {
+                                        cx.dispatch_action(Box::new(InstallDevExtension))
+                                    }),
+                            ),
                     )
                     .child(
                         h_flex()
