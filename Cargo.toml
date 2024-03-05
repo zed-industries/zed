@@ -337,6 +337,8 @@ debug = "full"
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
 
 [profile.release]
