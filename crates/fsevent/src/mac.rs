@@ -108,27 +108,29 @@ impl EventStream {
 
     pub fn run<F>(mut self, f: F)
     where
-        F: FnMut(Vec<Event>) -> bool + 'static,
+        F: Fn(Vec<Event>) -> bool + 'static + Send + Sync,
     {
-        self.state.callback = Some(Box::new(f));
-        unsafe {
-            let run_loop = cf::CFRunLoopGetCurrent();
-            {
-                let mut state = self.lifecycle.lock();
-                match *state {
-                    Lifecycle::New => *state = Lifecycle::Running(run_loop),
-                    Lifecycle::Running(_) => unreachable!(),
-                    Lifecycle::Stopped => return,
+        std::thread::spawn(move || {
+            self.state.callback = Some(Box::new(f));
+            unsafe {
+                let run_loop = cf::CFRunLoopGetCurrent();
+                {
+                    let mut state = self.lifecycle.lock();
+                    match *state {
+                        Lifecycle::New => *state = Lifecycle::Running(run_loop),
+                        Lifecycle::Running(_) => unreachable!(),
+                        Lifecycle::Stopped => return,
+                    }
                 }
+                fs::FSEventStreamScheduleWithRunLoop(
+                    self.state.stream,
+                    run_loop,
+                    cf::kCFRunLoopDefaultMode,
+                );
+                fs::FSEventStreamStart(self.state.stream);
+                cf::CFRunLoopRun();
             }
-            fs::FSEventStreamScheduleWithRunLoop(
-                self.state.stream,
-                run_loop,
-                cf::kCFRunLoopDefaultMode,
-            );
-            fs::FSEventStreamStart(self.state.stream);
-            cf::CFRunLoopRun();
-        }
+        });
     }
 
     extern "C" fn trampoline(

@@ -37,9 +37,6 @@ time.workspace = true
 
 gpui = { workspace = true, optional = true }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-notify = "6.1.1"
-
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",

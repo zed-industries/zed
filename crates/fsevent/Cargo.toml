@@ -19,6 +19,9 @@ parking_lot.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent-sys = "3.0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+notify = "6.1.1"
+
 [dev-dependencies]
 tempfile.workspace = true
 

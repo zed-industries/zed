@@ -1,11 +1,19 @@
 #[cfg(target_os = "macos")]
-pub use mac_impl::*;
+mod mac;
+
+#[cfg(target_os = "macos")]
+pub use mac::*;
+
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
+pub use linux::*;
+
+
 
 use bitflags::bitflags;
 use std::path::PathBuf;
-
-#[cfg(target_os = "macos")]
-mod mac_impl;
 
 #[derive(Clone, Debug)]
 pub struct Event {

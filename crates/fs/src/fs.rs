@@ -2,14 +2,7 @@ pub mod repository;
 
 use anyhow::{anyhow, Result};
 pub use fsevent::Event;
-#[cfg(target_os = "macos")]
 use fsevent::EventStream;
-
-#[cfg(not(target_os = "macos"))]
-use fsevent::StreamFlags;
-
-#[cfg(not(target_os = "macos"))]
-use notify::{Config, EventKind, Watcher};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -309,7 +302,6 @@ impl Fs for RealFs {
         Ok(Box::pin(result))
     }
 
-    #[cfg(target_os = "macos")]
     async fn watch(
         &self,
         path: &Path,
@@ -317,62 +309,11 @@ impl Fs for RealFs {
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
-        std::thread::spawn(move || {
             stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
-        });
         Box::pin(rx.chain(futures::stream::once(async move {
             drop(handle);
             vec![]
         })))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    async fn watch(
-        &self,
-        path: &Path,
-        latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
-        let (tx, rx) = smol::channel::unbounded();
-
-        if !path.exists() {
-            log::error!("watch path does not exist: {}", path.display());
-            return Box::pin(rx);
-        }
-
-        let mut watcher =
-            notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
-                Ok(event) => {
-                    let flags = match event.kind {
-                        // ITEM_REMOVED is currently the only flag we care about
-                        EventKind::Remove(_) => StreamFlags::ITEM_REMOVED,
-                        _ => StreamFlags::NONE,
-                    };
-                    let events = event
-                        .paths
-                        .into_iter()
-                        .map(|path| Event {
-                            event_id: 0,
-                            flags,
-                            path,
-                        })
-                        .collect::<Vec<_>>();
-                    let _ = tx.try_send(events);
-                }
-                Err(err) => {
-                    log::error!("watch error: {}", err);
-                }
-            })
-            .unwrap();
-
-        watcher
-            .configure(Config::default().with_poll_interval(latency))
-            .unwrap();
-
-        watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .unwrap();
-
-        Box::pin(rx)
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
