@@ -2505,7 +2505,7 @@ impl Editor {
                 && text.as_ref().ends_with(':')
             {
                 if let Some(possible_emoji_short_code) =
-                    Self::find_possible_emoji_shortcode(&snapshot, selection.start)
+                    Self::find_possible_emoji_shortcode_at_position(&snapshot, selection.start)
                 {
                     if !possible_emoji_short_code.is_empty() {
                         if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_short_code) {
@@ -2624,13 +2624,13 @@ impl Editor {
         });
     }
 
-    fn find_possible_emoji_shortcode(
+    fn find_possible_emoji_shortcode_at_position(
         snapshot: &MultiBufferSnapshot,
-        anchor: Point,
+        position: Point,
     ) -> Option<String> {
         let mut chars = Vec::new();
         let mut found_colon = false;
-        for char in snapshot.reversed_chars_at(anchor).take(100) {
+        for char in snapshot.reversed_chars_at(position).take(100) {
             // Found a possible emoji shortcode in the middle of the buffer
             if found_colon && char.is_whitespace() {
                 chars.reverse();
