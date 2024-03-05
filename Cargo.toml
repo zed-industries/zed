@@ -384,7 +384,6 @@ reversed_empty_ranges = "allow"
 single_range_in_vec_init = "allow"
 suspicious_to_owned = "allow"
 type_complexity = "allow"
-unnecessary_to_owned = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
