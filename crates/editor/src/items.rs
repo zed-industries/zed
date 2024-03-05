@@ -1186,9 +1186,9 @@ pub fn active_match_index(
         None
     } else {
         match ranges.binary_search_by(|probe| {
-            if probe.end.cmp(cursor, &*buffer).is_lt() {
+            if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
-            } else if probe.start.cmp(cursor, &*buffer).is_gt() {
+            } else if probe.start.cmp(cursor, buffer).is_gt() {
                 Ordering::Greater
             } else {
                 Ordering::Equal

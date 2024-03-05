@@ -308,7 +308,7 @@ impl Database {
                 connection_lost: ActiveValue::set(true),
                 ..Default::default()
             })
-            .exec(&*tx)
+            .exec(tx)
             .await?;
         Ok(())
     }
@@ -363,7 +363,7 @@ impl Database {
                             .eq(connection.owner_id as i32),
                     ),
             )
-            .exec(&*tx)
+            .exec(tx)
             .await?;
         if result.rows_affected == 0 {
             Err(anyhow!("not a collaborator on this project"))?;
@@ -375,7 +375,7 @@ impl Database {
             .filter(
                 Condition::all().add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
             )
-            .stream(&*tx)
+            .stream(tx)
             .await?;
         while let Some(row) = rows.next().await {
             let row = row?;
@@ -429,7 +429,7 @@ impl Database {
                 Condition::all().add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
             )
             .into_values::<_, QueryUserIds>()
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         Ok(users)
@@ -602,7 +602,7 @@ impl Database {
             .select_only()
             .column(buffer_snapshot::Column::OperationSerializationVersion)
             .into_values::<_, QueryOperationSerializationVersion>()
-            .one(&*tx)
+            .one(tx)
             .await?
             .ok_or_else(|| anyhow!("missing buffer snapshot"))?)
     }
@@ -617,7 +617,7 @@ impl Database {
             ..Default::default()
         }
         .find_related(buffer::Entity)
-        .one(&*tx)
+        .one(tx)
         .await?
         .ok_or_else(|| anyhow!("no such buffer"))?)
     }
@@ -639,7 +639,7 @@ impl Database {
                         .eq(id)
                         .and(buffer_snapshot::Column::Epoch.eq(buffer.epoch)),
                 )
-                .one(&*tx)
+                .one(tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such snapshot"))?;
 
@@ -657,7 +657,7 @@ impl Database {
             )
             .order_by_asc(buffer_operation::Column::LamportTimestamp)
             .order_by_asc(buffer_operation::Column::ReplicaId)
-            .stream(&*tx)
+            .stream(tx)
             .await?;
 
         let mut operations = Vec::new();
@@ -751,7 +751,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<Vec<proto::ChannelBufferVersion>> {
         let latest_operations = self
-            .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), &*tx)
+            .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), tx)
             .await?;
 
         Ok(latest_operations
@@ -781,7 +781,7 @@ impl Database {
                 observed_buffer_edits::Column::BufferId
                     .is_in(channel_ids_by_buffer_id.keys().copied()),
             )
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         Ok(observed_operations
@@ -844,7 +844,7 @@ impl Database {
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
         Ok(buffer_operation::Entity::find()
             .from_raw_sql(stmt)
-            .all(&*tx)
+            .all(tx)
             .await?)
     }
 }

@@ -374,7 +374,7 @@ impl Database {
             .select_only()
             .column(room_participant::Column::ParticipantIndex)
             .into_values::<_, QueryParticipantIndices>()
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         let mut participant_index = 0;
@@ -407,7 +407,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<JoinRoom> {
         let participant_index = self
-            .get_next_participant_index_internal(room_id, &*tx)
+            .get_next_participant_index_internal(room_id, tx)
             .await?;
 
         room_participant::Entity::insert_many([room_participant::ActiveModel {
@@ -441,12 +441,12 @@ impl Database {
                 ])
                 .to_owned(),
         )
-        .exec(&*tx)
+        .exec(tx)
         .await?;
 
         let (channel, room) = self.get_channel_room(room_id, &tx).await?;
         let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;
-        let channel_members = self.get_channel_participants(&channel, &*tx).await?;
+        let channel_members = self.get_channel_participants(&channel, tx).await?;
         Ok(JoinRoom {
             room,
             channel_id: Some(channel.id),
@@ -1042,11 +1042,11 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         let channel = room::Entity::find_by_id(room_id)
-            .one(&*tx)
+            .one(tx)
             .await?
             .ok_or_else(|| anyhow!("could not find room"))?
             .find_related(channel::Entity)
-            .one(&*tx)
+            .one(tx)
             .await?;
 
         if let Some(channel) = channel {
@@ -1057,13 +1057,13 @@ impl Database {
                             .is_in(channel.ancestors())
                             .and(channel::Column::RequiresZedCla.eq(true)),
                     )
-                    .count(&*tx)
+                    .count(tx)
                     .await?
                     > 0;
             if requires_zed_cla {
                 if contributor::Entity::find()
                     .filter(contributor::Column::UserId.eq(user_id))
-                    .one(&*tx)
+                    .one(tx)
                     .await?
                     .is_none()
                 {
@@ -1098,7 +1098,7 @@ impl Database {
                             .eq(connection.owner_id as i32),
                     ),
             )
-            .one(&*tx)
+            .one(tx)
             .await?;
 
         if let Some(participant) = participant {
@@ -1106,7 +1106,7 @@ impl Database {
                 answering_connection_lost: ActiveValue::set(true),
                 ..participant.into_active_model()
             })
-            .exec(&*tx)
+            .exec(tx)
             .await?;
         }
         Ok(())
@@ -1295,7 +1295,7 @@ impl Database {
         drop(db_followers);
 
         let channel = if let Some(channel_id) = db_room.channel_id {
-            Some(self.get_channel_internal(channel_id, &*tx).await?)
+            Some(self.get_channel_internal(channel_id, tx).await?)
         } else {
             None
         };

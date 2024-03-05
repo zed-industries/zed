@@ -1164,7 +1164,7 @@ impl Pane {
                     matches!(
                         WorkspaceSettings::get_global(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-                    ) && Self::can_autosave_item(&*item, cx)
+                    ) && Self::can_autosave_item(item, cx)
                 })?;
                 if !will_autosave {
                     let answer = pane.update(cx, |pane, cx| {
