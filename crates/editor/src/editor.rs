@@ -5032,7 +5032,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5053,14 +5053,20 @@ impl Editor {
                 }
             }
 
-            // Copy the text from the selected row region and splice it at the start of the region.
+            // Copy the text from the selected row region and splice it either at the start
+            // or end of the region.
             let start = Point::new(rows.start, 0);
             let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
             let text = buffer
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start..start, text));
+            let insert_location = if action.move_upwards {
+                Point::new(rows.end, 0)
+            } else {
+                start
+            };
+            edits.push((insert_location..insert_location, text));
         }
 
         self.transact(cx, |this, cx| {

@@ -324,6 +324,7 @@ version = "0.53.0"
 features = [
     "Wdk_System_SystemServices",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_DirectComposition",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
@@ -386,7 +387,6 @@ almost_complete_range = "allow"
 arc_with_non_send_sync = "allow"
 await_holding_lock = "allow"
 borrowed_box = "allow"
-cast_abs_to_unsigned = "allow"
 derive_ord_xor_partial_ord = "allow"
 eq_op = "allow"
 let_underscore_future = "allow"
