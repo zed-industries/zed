@@ -97,7 +97,8 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action("Move Line Up", editor::actions::MoveLineUp),
                 MenuItem::action("Move Line Down", editor::actions::MoveLineDown),
-                MenuItem::action("Duplicate Selection", editor::actions::DuplicateLine),
+                MenuItem::action("Duplicate Line Up", editor::actions::DuplicateLineUp),
+                MenuItem::action("Duplicate Line Down", editor::actions::DuplicateLine),
             ],
         },
         Menu {
