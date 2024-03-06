@@ -2,13 +2,7 @@
 #![allow(unused_variables)]
 
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashSet,
-    ffi::{c_uint, c_void, OsString},
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-    time::Duration,
+    cell::{Cell, RefCell}, collections::HashSet, ffi::{c_uint, c_void, OsString}, os::windows::ffi::OsStringExt, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Duration
 };
 
 use anyhow::{anyhow, Result};
@@ -17,7 +11,7 @@ use futures::channel::oneshot::{self, Receiver};
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
-use windows::{core::{IUnknown, HRESULT, HSTRING}, Win32::{
+use windows::{core::{IUnknown, HRESULT, HSTRING, PWSTR}, Win32::{
     Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
     System::{
         Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE},
@@ -25,7 +19,7 @@ use windows::{core::{IUnknown, HRESULT, HSTRING}, Win32::{
     },
     UI::{
         Shell::{
-            FileOpenDialog, IFileOpenDialog, IShellItem, FILEOPENDIALOGOPTIONS, SIGDN
+            FileOpenDialog, IFileOpenDialog, IShellItem, FILEOPENDIALOGOPTIONS, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH
         },
         WindowsAndMessaging::{
             DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
@@ -298,7 +292,7 @@ impl Platform for WindowsPlatform {
 
     // todo!("windows")
     fn open_url(&self, url: &str) {
-        unimplemented!()
+        // todo!("windows")
     }
 
     // todo!("windows")
@@ -308,8 +302,6 @@ impl Platform for WindowsPlatform {
 
     #[allow(overflowing_literals)]
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
-        println!("prompt_for_paths {:?}", options);
-
         let (tx, rx) = oneshot::channel();
 
         self.foreground_executor().spawn(async move {
@@ -328,26 +320,24 @@ impl Platform for WindowsPlatform {
                 ).unwrap()
             };
 
-            // dialog options (https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-_fileopendialogoptions)
-            let mut dialog_options: u32 = 0x1000; // FOS_FILEMUSTEXIST
-
+            // dialog options
+            let mut dialog_options: FILEOPENDIALOGOPTIONS = FOS_FILEMUSTEXIST;
             if options.multiple {
-                dialog_options |= 0x200; // FOS_ALLOWMULTISELECT
+                dialog_options |= FOS_ALLOWMULTISELECT;
             }
-
             if options.directories {
-                dialog_options |= 0x20; // FOS_PICKFOLDERS
+                dialog_options |= FOS_PICKFOLDERS;
             }
 
             unsafe {
-                folder_dialog.SetOptions(FILEOPENDIALOGOPTIONS(dialog_options)).unwrap(); // FOS_PICKFOLDERS
+                folder_dialog.SetOptions(dialog_options).unwrap();
                 folder_dialog.SetTitle(&HSTRING::from(OsString::from("Select a folder"))).unwrap();
             }
 
             let hr = unsafe { folder_dialog.Show(None) };
 
             if hr.is_err() {
-                if hr.unwrap_err().code() == HRESULT(0x800704C7) { // user canceled error (we don't want to crash)
+                if hr.unwrap_err().code() == HRESULT(0x800704C7) { // user canceled
                     if let Some(tx) = tx.take() {
                         tx.send(None).unwrap();
                     }
@@ -360,9 +350,10 @@ impl Platform for WindowsPlatform {
             let mut paths: Vec<PathBuf> = Vec::new();
             for i in 0..unsafe { results.GetCount().unwrap() } {
                 let mut item: IShellItem = unsafe { results.GetItemAt(i).unwrap() };
-                let mut path = unsafe { item.GetDisplayName(SIGDN(0x80058000)).unwrap() }; // SIGDN_FILESYSPATH
+                let mut path: PWSTR = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH).unwrap() };
+                let mut path_os_string = OsString::from_wide(unsafe { path.as_wide() });
 
-                paths.push(PathBuf::from(unsafe { path.to_string().unwrap() }));
+                paths.push(PathBuf::from(path_os_string));
             }
 
 
