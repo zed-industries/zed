@@ -33,6 +33,11 @@ metadata:
 
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: ${ZED_SERVICE_NAME}
@@ -78,6 +83,13 @@ spec:
               port: 8080
             initialDelaySeconds: 1
             periodSeconds: 1
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 1
+            failureThreshold: 15
           env:
             - name: HTTP_PORT
               value: "8080"
