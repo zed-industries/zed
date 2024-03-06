@@ -3543,19 +3543,24 @@ dependencies = [
  "wasmparser",
  "wasmtime",
  "wasmtime-wasi",
+ "wit-component 0.20.3",
 ]
 
 [[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "extension",
+ "fuzzy",
  "gpui",
  "settings",
+ "smallvec",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -12426,7 +12431,7 @@ dependencies = [
  "heck 0.4.1",
  "wasm-metadata",
  "wit-bindgen-core",
- "wit-component",
+ "wit-component 0.21.0",
 ]
 
 [[package]]
@@ -12441,6 +12446,25 @@ dependencies = [
  "syn 2.0.48",
  "wit-bindgen-core",
  "wit-bindgen-rust",
+]
+
+[[package]]
+name = "wit-component"
+version = "0.20.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4436190e87b4e539807bcdcf5b817e79d2e29e16bc5ddb6445413fe3d1f5716"
+dependencies = [
+ "anyhow",
+ "bitflags 2.4.2",
+ "indexmap 2.0.0",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "wasm-encoder 0.41.2",
+ "wasm-metadata",
+ "wasmparser",
+ "wit-parser 0.13.2",
 ]
 
 [[package]]

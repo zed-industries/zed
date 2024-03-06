@@ -317,6 +317,7 @@ wasmparser = "0.121"
 wasmtime = "18.0"
 wasmtime-wasi = "18.0"
 which = "6.0.0"
+wit-component = "0.20"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
