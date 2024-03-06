@@ -18,9 +18,15 @@
     name: (_) @name) @item
 
 (field_declaration
-    (modifiers)? @context
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     type: (_) @context
-    declarator: (_) @context) @item
+    declarator: (variable_declarator
+        name: (_) @name)) @item
 
 (constructor_declaration
     (modifiers
