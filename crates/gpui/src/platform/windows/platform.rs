@@ -212,12 +212,15 @@ impl Platform for WindowsPlatform {
         on_finish_launching();
         'a: loop {
             let mut msg = MSG::default();
+            // will be 0 if woken up by self.inner.event or 1 if the compositor clock ticked
+            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
             let wait_result =
                 unsafe { DCompositionWaitForCompositorClock(Some(&[self.inner.event]), INFINITE) };
 
-            unsafe { invalidate_thread_windows(GetCurrentThreadId()) };
-
+            // compositor clock ticked so we should draw a frame
             if wait_result == 1 {
+                unsafe { invalidate_thread_windows(GetCurrentThreadId()) };
+
                 while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool()
                 {
                     if msg.message == WM_QUIT {
