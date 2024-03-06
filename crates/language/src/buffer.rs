@@ -55,8 +55,6 @@ use theme::SyntaxTheme;
 use util::RandomCharIter;
 use util::RangeExt;
 
-use self::proto::serialize_transaction;
-
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
@@ -90,7 +88,6 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
-    saved_undo_top: Option<Transaction>,
     /// True if a peer with given id has any local changes to the buffer.
     peer_has_changes: BTreeMap<ConnectionId, bool>,
     transaction_depth: usize,
@@ -578,11 +575,6 @@ impl Buffer {
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
             .into();
-        this.saved_undo_top = if let Some(saved_undo_top) = message.saved_undo_top {
-            Some(proto::deserialize_transaction(saved_undo_top)?)
-        } else {
-            None
-        };
         Ok(this)
     }
 
@@ -596,7 +588,6 @@ impl Buffer {
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: Some(self.saved_mtime.into()),
-            saved_undo_top: self.saved_undo_top.as_ref().map(serialize_transaction),
         }
     }
 
@@ -703,7 +694,6 @@ impl Buffer {
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
-            saved_undo_top: None,
             peer_has_changes: Default::default(),
         }
     }
@@ -790,10 +780,6 @@ impl Buffer {
     ) {
         self.saved_version = version;
         self.saved_mtime = mtime;
-        self.saved_undo_top = self
-            .peek_undo_stack()
-            .map(|entry| entry.transaction())
-            .cloned();
         self.peer_has_changes
             .values_mut()
             .for_each(|has_changed| *has_changed = false);
@@ -857,10 +843,6 @@ impl Buffer {
         self.peer_has_changes
             .values_mut()
             .for_each(|has_changed| *has_changed = false);
-        self.saved_undo_top = self
-            .peek_undo_stack()
-            .map(|entry| entry.transaction())
-            .cloned();
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
