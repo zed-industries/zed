@@ -215,7 +215,10 @@ hex = "0.4.3"
 ignore = "0.4.22"
 indoc = "1"
 # We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
+isahc = { version = "1.7.2", default-features = false, features = [
+    "static-curl",
+    "text-decoding",
+] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
 linkify = "0.10.0"
@@ -238,7 +241,10 @@ semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
+serde_json_lenient = { version = "0.1", features = [
+    "preserve_order",
+    "raw_value",
+] }
 serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
@@ -249,7 +255,11 @@ sysinfo = "0.29.10"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
-time = { version = "0.3", features = ["serde", "serde-well-known", "formatting"] }
+time = { version = "0.3", features = [
+    "serde",
+    "serde-well-known",
+    "formatting",
+] }
 toml = "0.8"
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
@@ -312,11 +322,15 @@ sys-locale = "0.3.1"
 [workspace.dependencies.windows]
 version = "0.53.0"
 features = [
+    "Wdk_System_SystemServices",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_DirectComposition",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
+    "Win32_System_Time",
     "Win32_Security",
     "Win32_System_Threading",
     "Win32_System_DataExchange",

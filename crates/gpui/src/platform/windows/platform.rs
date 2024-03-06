@@ -17,14 +17,28 @@ use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
-use windows::Win32::{
-    Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
-    Graphics::DirectComposition::DCompositionWaitForCompositorClock,
-    System::Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
-    UI::WindowsAndMessaging::{
-        DispatchMessageW, EnumThreadWindows, PeekMessageW, PostQuitMessage, SystemParametersInfoW,
-        TranslateMessage, MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+use windows::{
+    core::{HSTRING, PCWSTR},
+    Wdk::System::SystemServices::RtlGetVersion,
+    Win32::{
+        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
+        Graphics::DirectComposition::DCompositionWaitForCompositorClock,
+        System::{
+            Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
+            Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
+        },
+        UI::{
+            Input::KeyboardAndMouse::GetDoubleClickTime,
+            Shell::ShellExecuteW,
+            WindowsAndMessaging::{
+                DispatchMessageW, EnumThreadWindows, LoadImageW, MsgWaitForMultipleObjects,
+                PeekMessageW, PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage,
+                HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
+                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
+                SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+            },
+        },
     },
 };
 
@@ -300,9 +314,16 @@ impl Platform for WindowsPlatform {
         WindowAppearance::Dark
     }
 
-    // todo!("windows")
     fn open_url(&self, url: &str) {
-        // todo!("windows")
+        let url_string = url.to_string();
+        self.background_executor()
+            .spawn(async move {
+                if url_string.is_empty() {
+                    return;
+                }
+                open_target(url_string.as_str());
+            })
+            .detach();
     }
 
     // todo!("windows")
@@ -320,9 +341,22 @@ impl Platform for WindowsPlatform {
         unimplemented!()
     }
 
-    // todo!("windows")
     fn reveal_path(&self, path: &Path) {
-        unimplemented!()
+        let Ok(file_full_path) = path.canonicalize() else {
+            log::error!("unable to parse file path");
+            return;
+        };
+        self.background_executor()
+            .spawn(async move {
+                let Some(path) = file_full_path.to_str() else {
+                    return;
+                };
+                if path.is_empty() {
+                    return;
+                }
+                open_target(path);
+            })
+            .detach();
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
@@ -365,11 +399,20 @@ impl Platform for WindowsPlatform {
     }
 
     fn os_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        })
+        let mut info = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut info) };
+        if status.is_ok() {
+            Ok(SemanticVersion {
+                major: info.dwMajorVersion as _,
+                minor: info.dwMinorVersion as _,
+                patch: info.dwBuildNumber as _,
+            })
+        } else {
+            Err(anyhow::anyhow!(
+                "unable to get Windows version: {}",
+                std::io::Error::last_os_error()
+            ))
+        }
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
@@ -385,14 +428,28 @@ impl Platform for WindowsPlatform {
         Err(anyhow!("not yet implemented"))
     }
 
-    // todo!("windows")
     fn local_timezone(&self) -> UtcOffset {
-        UtcOffset::from_hms(9, 0, 0).unwrap()
+        let mut info = unsafe { std::mem::zeroed() };
+        let ret = unsafe { GetTimeZoneInformation(&mut info) };
+        if ret == TIME_ZONE_ID_INVALID {
+            log::error!(
+                "Unable to get local timezone: {}",
+                std::io::Error::last_os_error()
+            );
+            return UtcOffset::UTC;
+        }
+        // Windows treat offset as:
+        // UTC = localtime + offset
+        // so we add a minus here
+        let hours = -info.Bias / 60;
+        let minutes = -info.Bias % 60;
+
+        UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
     }
 
-    // todo!("windows")
     fn double_click_interval(&self) -> Duration {
-        Duration::from_millis(100)
+        let millis = unsafe { GetDoubleClickTime() };
+        Duration::from_millis(millis as _)
     }
 
     // todo!("windows")
@@ -400,8 +457,31 @@ impl Platform for WindowsPlatform {
         Err(anyhow!("not yet implemented"))
     }
 
-    // todo!("windows")
-    fn set_cursor_style(&self, style: CursorStyle) {}
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let handle = match style {
+            CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => unsafe {
+                load_cursor(IDC_IBEAM)
+            },
+            CursorStyle::Crosshair => unsafe { load_cursor(IDC_CROSS) },
+            CursorStyle::PointingHand | CursorStyle::DragLink => unsafe { load_cursor(IDC_HAND) },
+            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => unsafe {
+                load_cursor(IDC_SIZEWE)
+            },
+            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => unsafe {
+                load_cursor(IDC_SIZENS)
+            },
+            CursorStyle::OperationNotAllowed => unsafe { load_cursor(IDC_NO) },
+            _ => unsafe { load_cursor(IDC_ARROW) },
+        };
+        if handle.is_err() {
+            log::error!(
+                "Error loading cursor image: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let _ = unsafe { SetCursor(HCURSOR(handle.unwrap().0)) };
+    }
 
     // todo!("windows")
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -435,5 +515,25 @@ impl Platform for WindowsPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+}
+
+unsafe fn load_cursor(name: PCWSTR) -> Result<HANDLE> {
+    LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED).map_err(|e| anyhow!(e))
+}
+
+fn open_target(target: &str) {
+    unsafe {
+        let ret = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            &HSTRING::from(target),
+            None,
+            None,
+            SW_SHOWDEFAULT,
+        );
+        if ret.0 <= 32 {
+            log::error!("Unable to open target: {}", std::io::Error::last_os_error());
+        }
     }
 }
