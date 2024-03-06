@@ -11,11 +11,15 @@ mod project_tests;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
-use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
+use client::{
+    proto, Client, Collaborator, HostedProjectId, PendingEntitySubscription, TypedEnvelope,
+    UserStore,
+};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
+use fs::repository::GitRepository;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
@@ -36,11 +40,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
-    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    LocalFile, LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -167,6 +171,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
+    hosted_project_id: Option<HostedProjectId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -605,6 +610,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                hosted_project_id: None,
             }
         })
     }
@@ -615,8 +621,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        role: proto::ChannelRole,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
@@ -626,6 +631,28 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
+        Self::from_join_project_response(
+            response,
+            subscription,
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
+    }
+    async fn from_join_project_response(
+        response: TypedEnvelope<proto::JoinProjectResponse>,
+        subscription: PendingEntitySubscription<Project>,
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        let remote_id = response.payload.project_id;
+        let role = response.payload.role();
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
@@ -714,6 +741,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                hosted_project_id: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -740,6 +768,32 @@ impl Project {
         })??;
 
         Ok(this)
+    }
+
+    pub async fn hosted(
+        _hosted_project_id: HostedProjectId,
+        _user_store: Model<UserStore>,
+        _client: Arc<Client>,
+        _languages: Arc<LanguageRegistry>,
+        _fs: Arc<dyn Fs>,
+        _cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        // let response = client
+        //     .request_envelope(proto::JoinHostedProject {
+        //         id: hosted_project_id.0,
+        //     })
+        //     .await?;
+        // Self::from_join_project_response(
+        //     response,
+        //     Some(hosted_project_id),
+        //     client,
+        //     user_store,
+        //     languages,
+        //     fs,
+        //     cx,
+        // )
+        // .await
+        Err(anyhow!("disabled"))
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -987,6 +1041,10 @@ impl Project {
         }
     }
 
+    pub fn hosted_project_id(&self) -> Option<HostedProjectId> {
+        self.hosted_project_id
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
@@ -1016,7 +1074,7 @@ impl Project {
     }
 
     /// Collect all worktrees, including ones that don't appear in the project panel
-    pub fn worktrees<'a>(&'a self) -> impl 'a + DoubleEndedIterator<Item = Model<Worktree>> {
+    pub fn worktrees(&self) -> impl '_ + DoubleEndedIterator<Item = Model<Worktree>> {
         self.worktrees
             .iter()
             .filter_map(move |worktree| worktree.upgrade())
@@ -2775,7 +2833,7 @@ impl Project {
         let project_settings =
             ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
         let lsp = project_settings.lsp.get(&adapter.name.0);
-        let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
+        let override_options = lsp.and_then(|s| s.initialization_options.clone());
 
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
@@ -2909,6 +2967,7 @@ impl Project {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
         worktree_path: &Path,
@@ -3665,7 +3724,7 @@ impl Project {
                                 proto::LspWorkStart {
                                     token,
                                     message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
+                                    percentage: report.percentage,
                                 },
                             ),
                         })
@@ -3691,7 +3750,7 @@ impl Project {
                                 proto::LspWorkProgress {
                                     token,
                                     message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
+                                    percentage: report.percentage,
                                 },
                             ),
                         })
@@ -4282,6 +4341,7 @@ impl Project {
                             })
                             .collect();
 
+                        #[allow(clippy::nonminimal_bool)]
                         if !code_actions.is_empty()
                             && !(trigger == FormatTrigger::Save
                                 && settings.format_on_save == FormatOnSave::Off)
@@ -4300,7 +4360,10 @@ impl Project {
                                 })?
                                 .await?;
 
-                            for action in actions {
+                            for mut action in actions {
+                                Self::try_resolve_code_action(&language_server, &mut action)
+                                    .await
+                                    .context("resolving a formatting code action")?;
                                 if let Some(edit) = action.lsp_action.edit {
                                     if edit.changes.is_none() && edit.document_changes.is_none() {
                                         continue;
@@ -4320,6 +4383,7 @@ impl Project {
                                     project_transaction.0.extend(new.0);
                                 }
 
+                                // TODO kb here too:
                                 if let Some(command) = action.lsp_action.command {
                                     project.update(&mut cx, |this, _| {
                                         this.last_workspace_edits_by_language_server
@@ -5362,33 +5426,10 @@ impl Project {
             } else {
                 return Task::ready(Ok(Default::default()));
             };
-            let range = action.range.to_point_utf16(buffer);
-
             cx.spawn(move |this, mut cx| async move {
-                if let Some(lsp_range) = action
-                    .lsp_action
-                    .data
-                    .as_mut()
-                    .and_then(|d| d.get_mut("codeActionParams"))
-                    .and_then(|d| d.get_mut("range"))
-                {
-                    *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
-                    action.lsp_action = lang_server
-                        .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                        .await?;
-                } else {
-                    let actions = this
-                        .update(&mut cx, |this, cx| {
-                            this.code_actions(&buffer_handle, action.range, cx)
-                        })?
-                        .await?;
-                    action.lsp_action = actions
-                        .into_iter()
-                        .find(|a| a.lsp_action.title == action.lsp_action.title)
-                        .ok_or_else(|| anyhow!("code action is outdated"))?
-                        .lsp_action;
-                }
-
+                Self::try_resolve_code_action(&lang_server, &mut action)
+                    .await
+                    .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
                         return Self::deserialize_workspace_edit(
@@ -5422,11 +5463,11 @@ impl Project {
                         return Err(err);
                     }
 
-                    return Ok(this.update(&mut cx, |this, _| {
+                    return this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id())
                             .unwrap_or_default()
-                    })?);
+                    });
                 }
 
                 Ok(ProjectTransaction::default())
@@ -6182,6 +6223,7 @@ impl Project {
     }
 
     /// Pick paths that might potentially contain a match of a given search query.
+    #[allow(clippy::too_many_arguments)]
     async fn background_search(
         unnamed_buffers: Vec<Model<Buffer>>,
         opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
@@ -7000,7 +7042,7 @@ impl Project {
                 .spawn(async move {
                     future_buffers
                         .into_iter()
-                        .filter_map(|e| e)
+                        .flatten()
                         .chain(current_buffers)
                         .filter_map(|(buffer, path)| {
                             let (work_directory, repo) =
@@ -7121,7 +7163,7 @@ impl Project {
                             .set_local_settings(
                                 worktree_id.as_u64() as usize,
                                 directory.clone(),
-                                file_content.as_ref().map(String::as_str),
+                                file_content.as_deref(),
                                 cx,
                             )
                             .log_err();
@@ -7252,6 +7294,18 @@ impl Project {
         } else {
             workspace_root.join(project_path)
         })
+    }
+
+    pub fn get_repo(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        self.worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .as_local()?
+            .snapshot()
+            .local_git_repo(&project_path.path)
     }
 
     // RPC message handlers
@@ -7422,7 +7476,7 @@ impl Project {
                         .set_local_settings(
                             worktree.entity_id().as_u64() as usize,
                             PathBuf::from(&envelope.payload.path).into(),
-                            envelope.payload.content.as_ref().map(String::as_str),
+                            envelope.payload.content.as_deref(),
                             cx,
                         )
                         .log_err();
@@ -7862,13 +7916,13 @@ impl Project {
 
         this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
             .await?;
-        Ok(buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: Some(buffer.saved_mtime().into()),
             fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
-        })?)
+        })
     }
 
     async fn handle_reload_buffers(
@@ -8203,7 +8257,7 @@ impl Project {
             .await
             .context("inlay hints fetch")?;
 
-        Ok(this.update(&mut cx, |project, cx| {
+        this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(
                 buffer_hints,
                 project,
@@ -8211,7 +8265,7 @@ impl Project {
                 &buffer.read(cx).version(),
                 cx,
             )
-        })?)
+        })
     }
 
     async fn handle_resolve_inlay_hint(
@@ -8247,6 +8301,23 @@ impl Project {
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
         })
+    }
+
+    async fn try_resolve_code_action(
+        lang_server: &LanguageServer,
+        action: &mut CodeAction,
+    ) -> anyhow::Result<()> {
+        if GetCodeActions::can_resolve_actions(&lang_server.capabilities()) {
+            if action.lsp_action.data.is_some()
+                && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
+            {
+                action.lsp_action = lang_server
+                    .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
+                    .await?;
+            }
+        }
+
+        anyhow::Ok(())
     }
 
     async fn handle_refresh_inlay_hints(
@@ -9152,7 +9223,7 @@ fn subscribe_for_copilot_events(
     )
 }
 
-fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
+fn glob_literal_prefix(glob: &str) -> &str {
     let mut literal_end = 0;
     for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
         if part.contains(&['*', '?', '{', '}']) {
@@ -9376,7 +9447,7 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
             }
             (None, _) => components.push(Component::ParentDir),
             (Some(a), Some(b)) if components.is_empty() && a == b => (),
-            (Some(a), Some(b)) if b == Component::CurDir => components.push(a),
+            (Some(a), Some(Component::CurDir)) => components.push(a),
             (Some(a), Some(_)) => {
                 components.push(Component::ParentDir);
                 for _ in base_components {
@@ -9453,23 +9524,38 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // What we're doing here is to spawn a shell and then `cd` into
+    // the project directory to get the env in there as if the user
+    // `cd`'d into it. We do that because tools like direnv, asdf, ...
+    // hook into `cd` and only set up the env after that.
+    //
+    // In certain shells we need to execute additional_command in order to
+    // trigger the behavior of direnv, etc.
+    //
+    //
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    //
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let additional_command = PathBuf::from(&shell)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .and_then(|shell| match shell {
+            "fish" => Some("emit fish_prompt;"),
+            _ => None,
+        });
+
+    let command = format!(
+        "cd {dir:?};{} echo {marker}; /usr/bin/env -0; exit 0;",
+        additional_command.unwrap_or("")
+    );
+
     let output = smol::process::Command::new(&shell)
-        .args([
-            "-i",
-            "-c",
-            // What we're doing here is to spawn a shell and then `cd` into
-            // the project directory to get the env in there as if the user
-            // `cd`'d into it. We do that because tools like direnv, asdf, ...
-            // hook into `cd` and only set up the env after that.
-            //
-            // The `exit 0` is the result of hours of debugging, trying to find out
-            // why running this command here, without `exit 0`, would mess
-            // up signal process for our process so that `ctrl-c` doesn't work
-            // anymore.
-            // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-            // do that, but it does, and `exit 0` helps.
-            &format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
-        ])
+        .args(["-i", "-c", &command])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

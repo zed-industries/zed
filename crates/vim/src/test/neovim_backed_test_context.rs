@@ -72,7 +72,7 @@ impl NeovimBackedTestContext {
         let test_name = thread
             .name()
             .expect("thread is not named")
-            .split(":")
+            .split(':')
             .last()
             .unwrap()
             .to_string();
@@ -122,7 +122,7 @@ impl NeovimBackedTestContext {
     }
 
     pub async fn set_shared_state(&mut self, marked_text: &str) {
-        let mode = if marked_text.contains("»") {
+        let mode = if marked_text.contains('»') {
             Mode::Visual
         } else {
             Mode::Normal
@@ -188,7 +188,7 @@ impl NeovimBackedTestContext {
 
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
         self.is_dirty = false;
-        let marked_text = marked_text.replace("•", " ");
+        let marked_text = marked_text.replace('•', " ");
         let neovim = self.neovim_state().await;
         let neovim_mode = self.neovim_mode().await;
         let editor = self.editor_state();

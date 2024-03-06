@@ -447,8 +447,7 @@ impl ChatPanel {
 
         let reply_to_message = message
             .reply_to_message_id
-            .map(|id| active_chat.read(cx).find_loaded_message(id))
-            .flatten()
+            .and_then(|id| active_chat.read(cx).find_loaded_message(id))
             .cloned();
 
         let replied_to_you =
@@ -635,14 +634,12 @@ impl ChatPanel {
                     "Copy message text",
                     None,
                     cx.handler_for(&this, move |this, cx| {
-                        this.active_chat().map(|active_chat| {
-                            if let Some(message) =
-                                active_chat.read(cx).find_loaded_message(message_id)
-                            {
-                                let text = message.body.clone();
-                                cx.write_to_clipboard(ClipboardItem::new(text))
-                            }
-                        });
+                        if let Some(message) = this.active_chat().and_then(|active_chat| {
+                            active_chat.read(cx).find_loaded_message(message_id)
+                        }) {
+                            let text = message.body.clone();
+                            cx.write_to_clipboard(ClipboardItem::new(text))
+                        }
                     }),
                 )
                 .when(can_modify_message, |menu| {
@@ -944,16 +941,11 @@ impl Render for ChatPanel {
             .when_some(reply_to_message_id, |el, reply_to_message_id| {
                 let reply_message = self
                     .active_chat()
-                    .map(|active_chat| {
-                        active_chat.read(cx).messages().iter().find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
+                    .and_then(|active_chat| {
+                        active_chat.read(cx).messages().iter().find(|message| {
+                            message.id == ChannelMessageId::Saved(reply_to_message_id)
                         })
                     })
-                    .flatten()
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {

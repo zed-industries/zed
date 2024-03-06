@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 OUTPUT_FILE=$(pwd)/assets/licenses.md
 

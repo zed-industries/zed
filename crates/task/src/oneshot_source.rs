@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{SpawnInTerminal, Task, TaskId, TaskSource};
+use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
 use gpui::{AppContext, Context, Model};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
@@ -30,24 +30,24 @@ impl Task for OneshotTask {
         &self.id.0
     }
 
-    fn cwd(&self) -> Option<&std::path::Path> {
+    fn cwd(&self) -> Option<&str> {
         None
     }
 
-    fn exec(&self, cwd: Option<std::path::PathBuf>) -> Option<SpawnInTerminal> {
+    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         if self.id().0.is_empty() {
             return None;
         }
+        let TaskContext { cwd, env } = cx;
         Some(SpawnInTerminal {
             id: self.id().clone(),
             label: self.name().to_owned(),
             command: self.id().0.clone(),
             args: vec![],
             cwd,
-            env: Default::default(),
+            env,
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
-            separate_shell: true,
         })
     }
 }

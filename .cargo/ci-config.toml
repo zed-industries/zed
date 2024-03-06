@@ -10,3 +10,6 @@
 # in one spot, that's going to trigger a rebuild of all of the artifacts. Using ci-config.toml we can define these overrides for CI in one spot and not worry about it.
 [build]
 rustflags = ["-D", "warnings"]
+
+[alias]
+xtask = "run --package xtask --"

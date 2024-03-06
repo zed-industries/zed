@@ -833,7 +833,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
-            name: "the-language-server".into(),
+            name: "the-language-server",
             ..Default::default()
         },
     );

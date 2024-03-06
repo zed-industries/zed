@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/command_palette_hooks.rs"
 doctest = false

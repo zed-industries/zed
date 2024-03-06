@@ -83,6 +83,7 @@ impl WaylandWindowInner {
                     gpu::ContextDesc {
                         validation: false,
                         capture: false,
+                        overlay: false,
                     },
                 )
             }

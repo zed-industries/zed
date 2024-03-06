@@ -778,7 +778,7 @@ fn format_timestamp(
             "just now".to_string()
         }
     } else if date.next_day() == Some(today) {
-        format!("yesterday")
+        "yesterday".to_string()
     } else {
         format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }

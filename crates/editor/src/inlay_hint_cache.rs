@@ -2197,7 +2197,7 @@ pub mod tests {
             "another change #3",
         ] {
             expected_changes.push(async_later_change);
-            let task_editor = editor.clone();
+            let task_editor = editor;
             edits.push(cx.spawn(|mut cx| async move {
                 task_editor
                     .update(&mut cx, |editor, cx| {

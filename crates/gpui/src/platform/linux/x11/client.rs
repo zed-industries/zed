@@ -6,12 +6,14 @@ use xcb::{x, Xid as _};
 use xkbcommon::xkb;
 
 use collections::HashMap;
+use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
+use copypasta::ClipboardProvider;
 
 use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    AnyWindowHandle, Bounds, DisplayId, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
-    TouchPhase, WindowOptions,
+    AnyWindowHandle, Bounds, CursorStyle, DisplayId, PlatformDisplay, PlatformInput, Point,
+    ScrollDelta, Size, TouchPhase, WindowOptions,
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
@@ -28,6 +30,8 @@ struct WindowRef {
 struct X11ClientState {
     windows: HashMap<x::Window, WindowRef>,
     xkb: xkbcommon::xkb::State,
+    clipboard: Rc<RefCell<X11ClipboardContext<Clipboard>>>,
+    primary: Rc<RefCell<X11ClipboardContext<Primary>>>,
 }
 
 pub(crate) struct X11Client {
@@ -70,6 +74,9 @@ impl X11Client {
             xkb::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
 
+        let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
+        let primary = X11ClipboardContext::<Primary>::new().unwrap();
+
         let client: Rc<X11Client> = Rc::new(Self {
             platform_inner: inner.clone(),
             xcb_connection: Rc::clone(&xcb_connection),
@@ -78,6 +85,8 @@ impl X11Client {
             state: RefCell::new(X11ClientState {
                 windows: HashMap::default(),
                 xkb: xkb_state,
+                clipboard: Rc::new(RefCell::new(clipboard)),
+                primary: Rc::new(RefCell::new(primary)),
             }),
         });
 
@@ -350,6 +359,17 @@ impl Client for X11Client {
         };
         self.state.borrow_mut().windows.insert(x_window, window_ref);
         Box::new(X11Window(window_ptr))
+    }
+
+    //todo!(linux)
+    fn set_cursor_style(&self, _style: CursorStyle) {}
+
+    fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
+        self.state.borrow().clipboard.clone()
+    }
+
+    fn get_primary(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
+        self.state.borrow().primary.clone()
     }
 }
 
