@@ -138,30 +138,61 @@ unsafe fn build_classes() {
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
         decl.add_method(
+            sel!(menuItemAction:),
+            test as extern "C" fn(&Object, Sel, *mut Object),
+        );
+        decl.add_method(
             sel!(applicationDockMenu:),
-            application_dock_menu as extern "C" fn(&Object, Sel, *mut Object) -> *mut Object,
+            application_dock_menu as extern "C" fn(&mut Object, Sel, *mut Object) -> *mut Object,
         );
         decl.register()
     }
 }
+
+extern "C" fn test(_this: &Object, _cmd: Sel, _sender: *mut Object) {
+    println!("here {_cmd:?} {_sender:?}");
+}
+
 extern "C" fn application_dock_menu(
-    _self: &Object,
+    this: &mut Object,
     _cmd: Sel,
     _sender: *mut Object,
 ) -> *mut Object {
+    println!("this: {this:?} command: {_cmd:?} sender: {_sender:?}");
+    println!("{:?}", this.class().instance_methods()[0].implementation());
+    if this
+        .class()
+        .instance_method(sel!(menuItemAction:))
+        .is_none()
+    {
+        panic!("no such method");
+    }
+    println!(
+        "{:?}",
+        this.class()
+            .instance_method(sel!(menuItemAction:))
+            .unwrap()
+            .name()
+    );
+    // unsafe {
+    //     println!("trying to send messages...");
+    //     let _: () = msg_send![this, menuItemAction];
+    //     println!("messages sent!");
+    // }
     let menu = unsafe { NSMenu::new(nil).autorelease() };
     let item = unsafe {
         let item = NSMenuItem::alloc(nil)
             .initWithTitle_action_keyEquivalent_(
-                NSString::alloc(nil).init_str("hello"),
-                sel!(menu_item_action:),
-                NSString::alloc(nil).init_str("q"),
+                ns_string("hello"),
+                sel!(menuItemAction:),
+                ns_string(""),
             )
             .autorelease();
-        item.setTarget_(nil);
+        item.setTarget_(this);
         item
     };
     unsafe { menu.addItem_(item) };
+    println!("finished building menu");
     menu
 }
 
@@ -1163,6 +1194,7 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
+        println!("{:?}", *item);
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.menu_command.take() {
@@ -1180,6 +1212,7 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
 
 extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
     unsafe {
+        println!("{:?}", *item);
         let mut result = false;
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
@@ -1197,11 +1230,14 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
                 .validate_menu_command
                 .get_or_insert(callback);
         }
-        result
+        println!("{result:?}");
+        // result
+        true
     }
 }
 
 extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
+    println!("menu opening");
     unsafe {
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
