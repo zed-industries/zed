@@ -579,9 +579,6 @@ impl Database {
             let edited_at = edited_at.to_offset(time::UtcOffset::UTC);
             let edited_at = time::PrimitiveDateTime::new(edited_at.date(), edited_at.time());
 
-            // TODO: connect mentions + remove the old ones(that does not match)
-            let mentions = self.format_mentions_to_entities(message_id, body, mentions);
-
             let updated_message = channel_message::ActiveModel {
                 body: ActiveValue::Set(body.to_string()),
                 edited_at: ActiveValue::Set(Some(edited_at)),
@@ -598,6 +595,19 @@ impl Database {
                 .filter(channel_message::Column::SenderId.eq(user_id))
                 .exec(&*tx)
                 .await?;
+
+            // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
+            channel_message_mention::Entity::delete_many()
+                .filter(channel_message_mention::Column::MessageId.eq(message_id))
+                .exec(&*tx)
+                .await?;
+
+            // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
+            channel_message_mention::Entity::insert_many(
+                self.format_mentions_to_entities(message_id, body, mentions),
+            )
+            .exec(&*tx)
+            .await?;
 
             Ok(participant_connection_ids)
         })
