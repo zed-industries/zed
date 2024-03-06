@@ -28,14 +28,14 @@ use util::{
     ResultExt,
 };
 
-use crate::WindowAppearance;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptHandle,
+    PromptLevel, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowAppearance, WindowContext,
+    WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -204,6 +204,13 @@ type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 
+enum PromptRenderer {
+    Default,
+    Custom(
+        Box<dyn Fn(PromptLevel, &str, Option<&str>, &[&str], &mut WindowContext) -> PromptHandle>,
+    ),
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
 /// You need a reference to an `AppContext` to access the state of a [Model].
@@ -242,6 +249,7 @@ pub struct AppContext {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
+    prompt_renderer: PromptRenderer,
 }
 
 impl AppContext {
@@ -301,6 +309,7 @@ impl AppContext {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
+                prompt_renderer: PromptRenderer::Default,
             }),
         });
 
@@ -1206,6 +1215,16 @@ impl AppContext {
     /// Is there currently something being dragged?
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
+    }
+
+    /// Set the prompt renderer for GPUI. This will replace the default or platform specific
+    /// prompts with this custom implementation.
+    pub fn set_prompt_renderer(
+        &mut self,
+        renderer: impl Fn(PromptLevel, &str, Option<&str>, &[&str], &mut WindowContext) -> PromptHandle
+            + 'static,
+    ) {
+        self.prompt_renderer = PromptRenderer::Custom(Box::new(renderer))
     }
 }
 

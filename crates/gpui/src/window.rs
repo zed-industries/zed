@@ -35,7 +35,10 @@ use std::{
 use util::{measure, ResultExt};
 
 mod element_cx;
+mod prompts;
+
 pub use element_cx::*;
+pub use prompts::*;
 
 const ACTIVE_DRAG_Z_INDEX: u16 = 1;
 
