@@ -300,7 +300,6 @@ impl Platform for WindowsPlatform {
         self.inner.callbacks.lock().open_urls = Some(callback);
     }
 
-    #[allow(overflowing_literals)]
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
         let (tx, rx) = oneshot::channel();
 
@@ -337,7 +336,7 @@ impl Platform for WindowsPlatform {
             let hr = unsafe { folder_dialog.Show(None) };
 
             if hr.is_err() {
-                if hr.unwrap_err().code() == HRESULT(0x800704C7) { // user canceled
+                if hr.unwrap_err().code() == HRESULT(0x800704C7u32 as i32)  { // user canceled error
                     if let Some(tx) = tx.take() {
                         tx.send(None).unwrap();
                     }
@@ -361,7 +360,6 @@ impl Platform for WindowsPlatform {
                 if paths.len() == 0 {
                     tx.send(None).unwrap();
                 } else {
-                    println!("paths: {:?}", paths);
                     tx.send(Some(paths)).unwrap();
                 }
             }
