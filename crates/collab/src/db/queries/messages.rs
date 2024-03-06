@@ -593,8 +593,6 @@ impl Database {
                 nonce: ActiveValue::Unchanged(channel_message.nonce),
             };
 
-            println!("{:#?}", updated_message);
-
             channel_message::Entity::update(updated_message)
                 .filter(channel_message::Column::Id.eq(message_id))
                 .filter(channel_message::Column::SenderId.eq(user_id))
