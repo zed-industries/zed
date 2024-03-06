@@ -20,7 +20,7 @@ mod dockerfile;
 mod elixir;
 mod elm;
 mod erlang;
-// mod gleam;
+mod gleam;
 mod go;
 mod haskell;
 mod html;
@@ -83,7 +83,7 @@ pub fn init(
         ),
         ("erlang", tree_sitter_erlang::language()),
         ("git_commit", tree_sitter_gitcommit::language()),
-        // ("gleam", tree_sitter_gleam::language()),
+        ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
