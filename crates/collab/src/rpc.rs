@@ -481,7 +481,7 @@ impl Server {
                     let result = future.await;
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
-                    let queue_duration_ms = processing_duration_ms - total_duration_ms;
+                    let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     match result {
                         Err(error) => {
                             tracing::error!(%error, ?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "error handling message")
