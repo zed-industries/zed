@@ -2,7 +2,7 @@
 #![allow(unused_variables)]
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashSet,
     ffi::{c_uint, c_void},
     path::{Path, PathBuf},
@@ -13,17 +13,20 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot::{channel, Receiver};
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
+    Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
     System::Threading::{CreateEventW, INFINITE},
-    UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
-        SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-        SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+    UI::{
+        WindowsAndMessaging::{
+            DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
+            SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
+            SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+        },
+        Controls::Dialogs::{GetOpenFileNameA, OPENFILENAMEA, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST}
     },
 };
 
@@ -300,7 +303,32 @@ impl Platform for WindowsPlatform {
 
     // todo!("windows")
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
-        unimplemented!()
+        let (done_tx, done_rx) = channel();
+        self.foreground_executor()
+            .spawn(async move {
+                let done_tx = Cell::new(Some(done_tx));
+                let mut filename: [u8; 1024] = [0; 1024];
+                let mut open_filename = OPENFILENAMEA  {
+                    lStructSize: std::mem::size_of::<OPENFILENAMEA>() as _,
+                    lpstrFile: windows::core::PSTR::from_raw(filename.as_mut_ptr()),
+                    nMaxFile: 1024,
+                    Flags: OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST,
+                    ..unsafe { std::mem::zeroed() }
+                };
+                let ok = unsafe { GetOpenFileNameA(&mut open_filename) };
+                let result: Option<Vec<PathBuf>> = if ok.as_bool() {
+                    let filename = unsafe { open_filename.lpstrFile.to_string() }.unwrap();
+                    Some(vec![PathBuf::from(filename)])
+                } else {
+                    None
+                };
+                if let Some(done_tx) = done_tx.take() {
+                    let _ = done_tx.send(result);
+                }
+            })
+            .detach();
+        
+        done_rx
     }
 
     // todo!("windows")
