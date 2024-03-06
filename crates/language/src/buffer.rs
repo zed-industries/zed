@@ -90,6 +90,8 @@ pub struct Buffer {
     saved_version: clock::Global,
     /// True if a peer with given id has any local changes to the buffer.
     peer_has_changes: BTreeMap<ConnectionId, bool>,
+    /// Marked as true if a conflict is detected during diffing, cleared on save.
+    has_conflict: bool,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -695,6 +697,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             peer_has_changes: Default::default(),
+            has_conflict: false,
         }
     }
 
@@ -783,6 +786,7 @@ impl Buffer {
         self.peer_has_changes
             .values_mut()
             .for_each(|has_changed| *has_changed = false);
+        self.has_conflict = false;
         cx.emit(Event::Saved);
         cx.notify();
     }
@@ -812,9 +816,19 @@ impl Buffer {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
-
+                    this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
                 } else {
+                    if !diff.edits.is_empty()
+                        || this
+                            .edits_since::<usize>(&diff.base_version)
+                            .next()
+                            .is_some()
+                    {
+                        this.has_conflict = true;
+                        dbg!("Would report conflict");
+                    }
+
                     this.did_reload(
                         prev_version.clone(),
                         this.line_ending(),
@@ -1511,7 +1525,8 @@ impl Buffer {
     }
 
     pub fn content_differs(&self) -> bool {
-        self.has_local_changes()
+        self.has_conflict
+            || self.has_local_changes()
             || self
                 .peer_has_changes
                 .values()
