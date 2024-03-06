@@ -67,7 +67,9 @@ use tracing::{field, info_span, instrument, Instrument};
 use util::SemanticVersion;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+// kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
