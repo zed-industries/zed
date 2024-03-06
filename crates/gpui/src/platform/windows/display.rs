@@ -27,7 +27,7 @@ impl PlatformDisplay for WindowsDisplay {
         Err(anyhow!("not implemented yet."))
     }
 
-    // todo!("windows")
+
     fn bounds(&self) -> Bounds<GlobalPixels> {
         let mut dev = DEVMODEA {
             dmSize: std::mem::size_of::<DEVMODEA>() as _,
