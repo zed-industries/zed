@@ -9109,6 +9109,116 @@ struct Row10;"#};
     );
 }
 
+#[gpui::test]
+async fn test_multiple_types_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx,
+    )
+    .await;
+    let base_text = indoc! {r#"struct Row;
+struct Row1;
+struct Row2;
+
+struct Row4;
+struct Row5;
+struct Row6;
+
+struct Row8;
+struct Row9;
+struct Row10;"#};
+
+    assert_hunk_revert(
+        indoc! {r#"«ˇstruct Row;
+                   struct Row0.1;
+                   struct Row0.2;
+                   struct Row1;
+
+                   struct Row4;
+                   struct Row5444;
+                   struct Row6;
+
+                   struct R»ow9;
+                   struct Row1220;"#},
+        vec![DiffHunkStatus::Added, DiffHunkStatus::Removed, DiffHunkStatus::Modified, DiffHunkStatus::Removed, DiffHunkStatus::Modified],
+        indoc! {r#"«ˇstruct Row;
+                   struct Row1;
+                   struct Row2;
+
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+
+                   struct Row8;
+                   struct R»ow9;
+                   struct Row1220;"#},
+        base_text,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = sample_text(10, 4, 'a');
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            sample_text.clone(),
+        )
+    });
+    buffer.update(cx, |buffer, cx| {
+        let mut replaced_chars = HashSet::default();
+        buffer.set_text(sample_text.chars().map(|c| {
+                if replaced_chars.insert(c) {
+                    c
+                } else {
+                    'X'
+                }
+            }).collect::<String>(), cx);
+        buffer.set_diff_base(Some(sample_text), cx);
+    });
+    cx.executor().run_until_parked();
+    let expected_initial_multibuffer_text = "aXXX\nbXXXXcXXXXdXXXXeXXXXfXXXXgXXXXhXXXXiXXXXjXXX\n\n";
+    let multibuffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        multibuffer.push_excerpts(
+            buffer.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        assert_eq!(multibuffer.read(cx).text(), expected_initial_multibuffer_text);
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
+        editor.select_all(&SelectAll, cx);
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    });
+    cx.executor().run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -9296,13 +9406,13 @@ fn assert_hunk_revert(
     });
     cx.executor().run_until_parked();
 
-    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
-        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    cx.update_editor(|editor, cx| {
         let snapshot = editor.buffer().read(cx).as_singleton().unwrap().read(cx).snapshot();
-         snapshot.git_diff_hunks_in_row_range(0..u32::MAX).map(|hunk| hunk.status()).collect::<Vec<_>>()
+        let reverted_hunk_statuses =  snapshot.git_diff_hunks_in_row_range(0..u32::MAX).map(|hunk| hunk.status()).collect::<Vec<_>>();
+        assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
+
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
     cx.executor().run_until_parked();
     cx.assert_editor_state(expected_reverted_text_with_selections);
-
-    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 }
