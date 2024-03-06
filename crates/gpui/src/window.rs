@@ -274,11 +274,19 @@ pub struct Window {
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
-    pub(crate) drawing: bool,
+    pub(crate) draw_phase: DrawPhase,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DrawPhase {
+    None,
+    Layout,
+    Paint,
+    Focus,
 }
 
 #[derive(Default, Debug)]
@@ -468,7 +476,7 @@ impl Window {
             needs_present,
             last_input_timestamp,
             refreshing: false,
-            drawing: false,
+            draw_phase: DrawPhase::None,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -528,7 +536,7 @@ impl<'a> WindowContext<'a> {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
-        if !self.window.drawing {
+        if self.window.draw_phase == DrawPhase::None {
             self.window.refreshing = true;
             self.window.dirty.set(true);
         }
@@ -870,7 +878,6 @@ impl<'a> WindowContext<'a> {
     #[profiling::function]
     pub fn draw(&mut self) {
         self.window.dirty.set(false);
-        self.window.drawing = true;
 
         // Restore the previously-used input handler.
         if let Some(input_handler) = self.window.platform_window.take_input_handler() {
@@ -919,6 +926,7 @@ impl<'a> WindowContext<'a> {
             element_arena.clear();
         });
 
+        self.window.draw_phase = DrawPhase::Focus;
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
@@ -954,7 +962,7 @@ impl<'a> WindowContext<'a> {
                 .retain(&(), |listener| listener(&event, self));
         }
         self.window.refreshing = false;
-        self.window.drawing = false;
+        self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
     }
 
@@ -1951,7 +1959,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             }
         }
 
-        if !self.window.drawing {
+        if self.window.draw_phase == DrawPhase::None {
             self.window_cx.window.dirty.set(true);
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,

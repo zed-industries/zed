@@ -31,12 +31,12 @@ use smallvec::SmallVec;
 use crate::{
     prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
     ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
-    ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId,
-    Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, LineLayoutIndex,
-    MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point,
-    PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
+    GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
+    LineLayoutIndex, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler,
+    Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, TextStyleRefinement, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -347,10 +347,18 @@ impl<'a> VisualContext for ElementContext<'a> {
 
 impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
+        self.window.draw_phase = DrawPhase::Layout;
+
         // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
         let available_space = self.window.viewport_size.map(Into::into);
         root_element.layout(Point::default(), available_space, self);
+
+        let mut sorted_deferred_draws =
+            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
+        sorted_deferred_draws
+            .sort_unstable_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+        self.layout_deferred_draws(&sorted_deferred_draws);
 
         let mut active_drag_element = None;
         let mut tooltip_element = None;
@@ -370,24 +378,19 @@ impl<'a> ElementContext<'a> {
             tooltip_element = Some(element);
         }
 
-        let mut sorted_deferred_draws =
-            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws
-            .sort_unstable_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
-        self.layout_deferred_draws(&sorted_deferred_draws);
-
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
 
         // Now actually paint the elements.
+        self.window.draw_phase = DrawPhase::Paint;
         root_element.paint(self);
+
+        self.paint_deferred_draws(&sorted_deferred_draws);
 
         if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self);
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self);
         }
-
-        self.paint_deferred_draws(&sorted_deferred_draws);
     }
 
     fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
@@ -410,6 +413,11 @@ impl<'a> ElementContext<'a> {
                 deferred_draw.layout_range = layout_start..layout_end;
             });
         }
+        assert_eq!(
+            self.window.next_frame.deferred_draws.len(),
+            0,
+            "cannot call defer_draw during deferred drawing"
+        );
         self.window.next_frame.deferred_draws = deferred_draws;
         self.window.element_id_stack.clear();
     }
@@ -781,6 +789,11 @@ impl<'a> ElementContext<'a> {
         priority: usize,
     ) {
         let window = &mut self.window;
+        assert_eq!(
+            window.draw_phase,
+            DrawPhase::Layout,
+            "defer_draw can only be called during before_layout or after_layout"
+        );
         let parent_element_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
         window.next_frame.deferred_draws.push(DeferredDraw {
             parent_element_node,
