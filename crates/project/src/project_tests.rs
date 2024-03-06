@@ -3125,7 +3125,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         events.lock().clear();
 
         // After restoring the buffer to its previously-saved state,
-        // the buffer is no longer considered dirty
+        // the buffer is not considered dirty anymore.
         buffer.edit([(1..3, "")], None, cx);
         assert!(buffer.text() == "ac");
         assert!(!buffer.is_dirty());
