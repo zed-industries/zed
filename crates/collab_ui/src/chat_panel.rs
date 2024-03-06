@@ -951,9 +951,6 @@ impl Render for ChatPanel {
                     el.when_some(reply_message, |el, reply_message| {
                         el.child(
                             h_flex()
-                                .when(edit_message_id.is_some(), |el| {
-                                    el.border_t_2().border_color(cx.theme().colors().border)
-                                })
                                 .justify_between()
                                 .overflow_hidden()
                                 .items_start()
