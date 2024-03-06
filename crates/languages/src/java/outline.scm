@@ -24,39 +24,38 @@
 
 (constructor_declaration
     (modifiers
-            [
-                "private"
-                "protected"
-                "public"
-            ]+ @context)?
-        type: (_) @context
-        name: (_) @name
-        ; TODO: fix multiline parameters causing space between parenthesis
-        parameters: (formal_parameters
-            "(" @context
-            [
-                (receiver_parameter) @context
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
+    name: (_) @name
+    ; TODO: fix multiline parameters causing space between parenthesis
+    parameters: (formal_parameters
+        "(" @context
+        [
+            (receiver_parameter) @context
+            (
                 (
+                    (receiver_parameter) @context
+                    "," @context
+                )?
+                (
+                    [
+                        (formal_parameter) @context
+                        (spread_parameter) @context
+                    ]
                     (
-                        (receiver_parameter) @context
                         "," @context
-                    )?
-                    (
                         [
                             (formal_parameter) @context
                             (spread_parameter) @context
                         ]
-                        (
-                            "," @context
-                            [
-                                (formal_parameter) @context
-                                (spread_parameter) @context
-                            ]
-                        )*
-                    )?
-                )
-            ]
-            ")" @context)) @item
+                    )*
+                )?
+            )
+        ]
+        ")" @context)) @item
 
 ; TODO: definitely needs more testing in projects with methods that actually use
 ;       all of these rules
