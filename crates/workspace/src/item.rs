@@ -33,7 +33,7 @@ use std::{
 };
 use theme::Theme;
 
-const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
+pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
