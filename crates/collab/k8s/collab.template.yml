@@ -11,6 +11,8 @@ metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
   name: ${ZED_SERVICE_NAME}
   annotations:
+    service.beta.kubernetes.io/do-loadbalancer-name: "${ZED_SERVICE_NAME}-${ZED_KUBE_NAMESPACE}"
+    service.beta.kubernetes.io/do-loadbalancer-size-unit: ${ZED_LOAD_BALANCER_SIZE_UNIT}
     service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
     service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
     service.beta.kubernetes.io/do-loadbalancer-disable-lets-encrypt-dns-records: "true"
