@@ -100,7 +100,7 @@ pushd target/
     cp "${target_dir}/cli" "bundle/usr/local/bin/cli-$channel"
     ln -s "/usr/local/bin/cli-$channel" "bundle/usr/local/bin/zed"
     rm -rf bundle/usr/bin/
-    dpkg-deb -b bundle/ "${bundle_name}"
-    bundle_path="${PWD}/${bundle_name}"
+    dpkg-deb -b bundle/ "${target_dir}/${bundle_name}"
+    bundle_path="${PWD}/${target_dir}/${bundle_name}"
 popd
 echo "Bundled ${bundle_path}"
