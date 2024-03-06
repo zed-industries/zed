@@ -1,6 +1,7 @@
 use crate::{
+    build_extension::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionIndexThemeEntry,
-    ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    ExtensionManifest, ExtensionStore, GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
@@ -21,7 +22,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::http::{FakeHttpClient, Response};
+use util::http::{self, FakeHttpClient, Response};
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
@@ -256,7 +257,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         )
     });
 
-    cx.executor().run_until_parked();
+    cx.executor().advance_clock(super::RELOAD_DEBOUNCE_DURATION);
     store.read_with(cx, |store, _| {
         let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
@@ -336,7 +337,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     let _ = store.update(cx, |store, _| store.reload(None));
 
-    cx.executor().run_until_parked();
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
     store.read_with(cx, |store, _| {
         let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
@@ -406,7 +407,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         store.uninstall_extension("zed-ruby".into(), cx)
     });
 
-    cx.executor().run_until_parked();
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
     expected_index.extensions.remove("zed-ruby");
     expected_index.languages.remove("Ruby");
     expected_index.languages.remove("ERB");
@@ -422,17 +423,23 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     init_test(cx);
 
-    let gleam_extension_dir = PathBuf::from_iter([
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        "..",
-        "extensions",
-        "gleam",
-    ])
-    .canonicalize()
-    .unwrap();
+    let root_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let cache_dir = root_dir.join("target");
+    let gleam_extension_dir = root_dir.join("extensions").join("gleam");
 
-    compile_extension("zed_gleam", &gleam_extension_dir);
+    cx.executor().allow_parking();
+    ExtensionBuilder::new(cache_dir, http::client())
+        .compile_extension(
+            &gleam_extension_dir,
+            CompileExtensionOptions { release: false },
+        )
+        .await
+        .unwrap();
+    cx.executor().forbid_parking();
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/the-extension-dir", json!({ "installed": {} }))
@@ -515,7 +522,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         )
     });
 
-    cx.executor().run_until_parked();
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
 
     let mut fake_servers = language_registry.fake_language_servers("Gleam");
 
@@ -576,27 +583,6 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             )
         ]
     );
-}
-
-fn compile_extension(name: &str, extension_dir_path: &Path) {
-    let output = std::process::Command::new("cargo")
-        .args(["component", "build", "--target-dir"])
-        .arg(extension_dir_path.join("target"))
-        .current_dir(&extension_dir_path)
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "failed to build component {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let mut wasm_path = PathBuf::from(extension_dir_path);
-    wasm_path.extend(["target", "wasm32-wasi", "debug", name]);
-    wasm_path.set_extension("wasm");
-
-    std::fs::rename(wasm_path, extension_dir_path.join("extension.wasm")).unwrap();
 }
 
 fn init_test(cx: &mut TestAppContext) {
