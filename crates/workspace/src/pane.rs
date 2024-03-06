@@ -1879,7 +1879,7 @@ impl Render for Pane {
                                 placeholder
                             } else {
                                 placeholder.child(
-                                    Label::new("Open a file or project to get started. hi!!")
+                                    Label::new("Open a file or project to get started.")
                                         .color(Color::Muted),
                                 )
                             }

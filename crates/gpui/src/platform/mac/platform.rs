@@ -137,6 +137,8 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+
+        // logic for showing recent workspaces on right click
         decl.add_method(
             sel!(openWorkspace:),
             test as extern "C" fn(&Object, Sel, *mut Object),
@@ -158,23 +160,6 @@ extern "C" fn application_dock_menu(
     _cmd: Sel,
     _sender: *mut Object,
 ) -> *mut Object {
-    println!("this: {this:?} command: {_cmd:?} sender: {_sender:?}");
-    println!("{:?}", this.class().instance_methods()[0].implementation());
-    if this.class().instance_method(sel!(openWorkspace:)).is_none() {
-        panic!("no such method");
-    }
-    println!(
-        "{:?}",
-        this.class()
-            .instance_method(sel!(openWorkspace:))
-            .unwrap()
-            .name()
-    );
-    // unsafe {
-    //     println!("trying to send messages...");
-    //     let _: () = msg_send![this, openWorkspace];
-    //     println!("messages sent!");
-    // }
     let menu = unsafe { NSMenu::new(nil).autorelease() };
     let item = unsafe {
         let item = NSMenuItem::alloc(nil)
@@ -188,7 +173,6 @@ extern "C" fn application_dock_menu(
         item
     };
     unsafe { menu.addItem_(item) };
-    println!("finished building menu");
     menu
 }
 
@@ -1190,7 +1174,6 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
-        println!("{:?}", *item);
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.menu_command.take() {
@@ -1213,7 +1196,6 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
         if action == sel!(openWorkspace:) {
             return true;
         }
-        println!("{:?}", *item);
         let mut result = false;
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
@@ -1231,13 +1213,11 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
                 .validate_menu_command
                 .get_or_insert(callback);
         }
-        println!("{result:?}");
         result
     }
 }
 
 extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
-    println!("menu opening");
     unsafe {
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
