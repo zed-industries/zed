@@ -18,12 +18,13 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
+    Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
     System::Threading::{CreateEventW, INFINITE},
     UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
-        SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-        SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+        DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage,
+        SystemParametersInfoW, TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT,
+        SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        WM_QUIT, WM_SETTINGCHANGE,
     },
 };
 
@@ -82,6 +83,7 @@ struct Callbacks {
 enum WindowsMessageWaitResult {
     ForegroundExecution,
     WindowsMessage(MSG),
+    InternalMessageHandled,
     Error,
 }
 
@@ -178,8 +180,10 @@ impl WindowsPlatform {
             WAIT_EVENT(0) => WindowsMessageWaitResult::ForegroundExecution,
             WAIT_EVENT(1) => {
                 let mut msg = MSG::default();
-                unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) };
-                WindowsMessageWaitResult::WindowsMessage(msg)
+                if unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool() {
+                    return WindowsMessageWaitResult::WindowsMessage(msg);
+                }
+                WindowsMessageWaitResult::InternalMessageHandled
             }
             _ => {
                 log::error!("unhandled windows wait message: {}", wait_result.0);
@@ -221,6 +225,7 @@ impl Platform for WindowsPlatform {
                         unsafe { DispatchMessageW(&msg) };
                     }
                 }
+                WindowsMessageWaitResult::InternalMessageHandled => {}
                 WindowsMessageWaitResult::Error => {}
             }
         }
