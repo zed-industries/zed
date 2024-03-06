@@ -61,7 +61,6 @@ use zed::{
 static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() {
-    println!("entering main!");
     menu::init();
     zed_actions::init();
 
