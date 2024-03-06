@@ -672,12 +672,6 @@ impl ChatPanel {
                                         buffer.set_text(message.body.clone(), cx)
                                     });
 
-                                    if let Some(reply_to_message_id) = message.reply_to_message_id {
-                                        editor.set_reply_to_message_id(reply_to_message_id);
-                                    } else {
-                                        editor.clear_reply_to_message_id();
-                                    }
-
                                     editor.set_edit_message_id(message_id);
                                     editor.focus_handle(cx).focus(cx);
                                 })

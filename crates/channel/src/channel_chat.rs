@@ -269,7 +269,6 @@ impl ChannelChat {
             message_id: id,
             body: message.text,
             mentions: mentions_to_proto(&message.mentions),
-            reply_to_message_id: message.reply_to_message_id,
         });
         Ok(cx.spawn(move |this, mut cx| async move {
             response.await?;

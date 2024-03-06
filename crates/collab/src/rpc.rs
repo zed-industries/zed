@@ -3127,9 +3127,6 @@ async fn update_channel_message(
             session.user_id,
             request.body.as_str(),
             &request.mentions,
-            request
-                .reply_to_message_id
-                .map(|id| MessageId::from_proto(id)),
             OffsetDateTime::now_utc(),
         )
         .await?;

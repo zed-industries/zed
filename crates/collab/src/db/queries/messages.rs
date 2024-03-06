@@ -543,7 +543,6 @@ impl Database {
         user_id: UserId,
         body: &str,
         mentions: &[proto::ChatMention],
-        reply_to_message_id: Option<MessageId>,
         edited_at: OffsetDateTime,
     ) -> Result<Vec<ConnectionId>> {
         self.transaction(|tx| async move {
@@ -585,7 +584,7 @@ impl Database {
             let updated_message = channel_message::ActiveModel {
                 body: ActiveValue::Set(body.to_string()),
                 edited_at: ActiveValue::Set(Some(edited_at)),
-                reply_to_message_id: ActiveValue::Set(reply_to_message_id),
+                reply_to_message_id: ActiveValue::Unchanged(channel_message.reply_to_message_id),
                 id: ActiveValue::Unchanged(message_id),
                 channel_id: ActiveValue::Unchanged(channel_id),
                 sender_id: ActiveValue::Unchanged(user_id),

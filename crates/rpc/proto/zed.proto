@@ -1172,7 +1172,6 @@ message UpdateChannelMessage {
     uint64 message_id = 2;
     string body = 3;
     repeated ChatMention mentions = 4;
-    optional uint64 reply_to_message_id = 5;
 }
 
 message AckChannelMessage {
