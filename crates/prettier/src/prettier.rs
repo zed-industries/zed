@@ -197,7 +197,7 @@ impl Prettier {
                 arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
                 env: None,
             },
-            Path::new("/"),
+            &prettier_dir,
             None,
             cx.clone(),
         )
@@ -335,9 +335,9 @@ impl Prettier {
                             .collect();
                         log::debug!(
                             "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
+                            buffer.file().map(|f| f.full_path(cx)),
                             plugins,
                             prettier_options,
-                            buffer.file().map(|f| f.full_path(cx))
                         );
 
                         anyhow::Ok(FormatParams {

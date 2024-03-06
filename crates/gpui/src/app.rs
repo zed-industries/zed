@@ -566,6 +566,14 @@ impl AppContext {
         self.platform.open_url(url);
     }
 
+    /// register_url_scheme requests that the given scheme (e.g. `zed` for `zed://` urls)
+    /// is opened by the current app.
+    /// On some platforms (e.g. macOS) you may be able to register URL schemes as part of app
+    /// distribution, but this method exists to let you register schemes at runtime.
+    pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
+        self.platform.register_url_scheme(scheme)
+    }
+
     /// Returns the full pathname of the current app bundle.
     /// If the app is not being run from a bundle, returns an error.
     pub fn app_path(&self) -> Result<PathBuf> {

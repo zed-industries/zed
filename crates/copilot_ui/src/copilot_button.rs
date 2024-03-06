@@ -332,7 +332,7 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     });
 }
 
-fn initiate_sign_in(cx: &mut WindowContext) {
+pub fn initiate_sign_in(cx: &mut WindowContext) {
     let Some(copilot) = Copilot::global(cx) else {
         return;
     };

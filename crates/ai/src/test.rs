@@ -54,6 +54,7 @@ impl LanguageModel for FakeLanguageModel {
     }
 }
 
+#[derive(Default)]
 pub struct FakeEmbeddingProvider {
     pub embedding_count: AtomicUsize,
 }
@@ -62,14 +63,6 @@ impl Clone for FakeEmbeddingProvider {
     fn clone(&self) -> Self {
         FakeEmbeddingProvider {
             embedding_count: AtomicUsize::new(self.embedding_count.load(Ordering::SeqCst)),
-        }
-    }
-}
-
-impl Default for FakeEmbeddingProvider {
-    fn default() -> Self {
-        FakeEmbeddingProvider {
-            embedding_count: AtomicUsize::default(),
         }
     }
 }

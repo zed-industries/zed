@@ -95,7 +95,7 @@ impl Database {
             content: ActiveValue::Set(proto.content.clone()),
             ..Default::default()
         }
-        .save(&*tx)
+        .save(tx)
         .await?;
 
         Ok(Some((
@@ -184,7 +184,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<Option<(UserId, proto::Notification)>> {
         if let Some(id) = self
-            .find_notification(recipient_id, notification, &*tx)
+            .find_notification(recipient_id, notification, tx)
             .await?
         {
             let row = notification::Entity::update(notification::ActiveModel {
@@ -236,7 +236,7 @@ impl Database {
                     }),
             )
             .into_values::<_, QueryIds>()
-            .one(&*tx)
+            .one(tx)
             .await?)
     }
 }

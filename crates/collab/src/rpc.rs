@@ -4,8 +4,9 @@ use crate::{
     auth::{self, Impersonator},
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
-        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, ProjectId,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
+        HostedProjectId, InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project,
+        ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
+        User, UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -197,6 +198,7 @@ impl Server {
             .add_request_handler(share_project)
             .add_message_handler(unshare_project)
             .add_request_handler(join_project)
+            .add_request_handler(join_hosted_project)
             .add_message_handler(leave_project)
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -462,6 +464,7 @@ impl Server {
             TypeId::of::<M>(),
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                let received_at = envelope.received_at;
                 let span = info_span!(
                     "handle message",
                     payload_type = envelope.payload_type_name()
@@ -476,12 +479,14 @@ impl Server {
                 let future = (handler)(*envelope, session);
                 async move {
                     let result = future.await;
-                    let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
+                    let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, ?duration_ms, "error handling message")
+                            tracing::error!(%error, ?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "error handling message")
                         }
-                        Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "finished handling message"),
                     }
                 }
                 .instrument(span)
@@ -842,7 +847,7 @@ impl Header for AppVersionHeader {
     }
 }
 
-pub fn routes(server: Arc<Server>) -> Router<Body> {
+pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(
@@ -1584,22 +1589,46 @@ async fn join_project(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let guest_user_id = session.user_id;
 
     tracing::info!(%project_id, "join project");
 
     let (project, replica_id) = &mut *session
         .db()
         .await
-        .join_project(project_id, session.connection_id)
+        .join_project_in_room(project_id, session.connection_id)
         .await?;
 
+    join_project_internal(response, session, project, replica_id)
+}
+
+trait JoinProjectInternalResponse {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
+}
+impl JoinProjectInternalResponse for Response<proto::JoinProject> {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
+        Response::<proto::JoinProject>::send(self, result)
+    }
+}
+impl JoinProjectInternalResponse for Response<proto::JoinHostedProject> {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
+        Response::<proto::JoinHostedProject>::send(self, result)
+    }
+}
+
+fn join_project_internal(
+    response: impl JoinProjectInternalResponse,
+    session: Session,
+    project: &mut Project,
+    replica_id: &ReplicaId,
+) -> Result<()> {
     let collaborators = project
         .collaborators
         .iter()
         .filter(|collaborator| collaborator.connection_id != session.connection_id)
         .map(|collaborator| collaborator.to_proto())
         .collect::<Vec<_>>();
+    let project_id = project.id;
+    let guest_user_id = session.user_id;
 
     let worktrees = project
         .worktrees
@@ -1631,10 +1660,12 @@ async fn join_project(
 
     // First, we send the metadata associated with each worktree.
     response.send(proto::JoinProjectResponse {
+        project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
+        role: project.role.into(), // todo
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -1707,15 +1738,17 @@ async fn join_project(
 async fn leave_project(request: proto::LeaveProject, session: Session) -> Result<()> {
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
+    let db = session.db().await;
+    if db.is_hosted_project(project_id).await? {
+        let project = db.leave_hosted_project(project_id, sender_id).await?;
+        project_left(&project, &session);
+        return Ok(());
+    }
 
-    let (room, project) = &*session
-        .db()
-        .await
-        .leave_project(project_id, sender_id)
-        .await?;
+    let (room, project) = &*db.leave_project(project_id, sender_id).await?;
     tracing::info!(
         %project_id,
-        host_user_id = %project.host_user_id,
+        host_user_id = ?project.host_user_id,
         host_connection_id = ?project.host_connection_id,
         "leave project"
     );
@@ -1724,6 +1757,24 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     room_updated(&room, &session.peer);
 
     Ok(())
+}
+
+async fn join_hosted_project(
+    request: proto::JoinHostedProject,
+    response: Response<proto::JoinHostedProject>,
+    session: Session,
+) -> Result<()> {
+    let (mut project, replica_id) = session
+        .db()
+        .await
+        .join_hosted_project(
+            HostedProjectId(request.id as i32),
+            session.user_id,
+            session.connection_id,
+        )
+        .await?;
+
+    join_project_internal(response, session, &mut project, &replica_id)
 }
 
 /// Updates other participants with changes to the project
@@ -3370,7 +3421,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
             .collect(),
         observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
         observed_channel_message_id: channels.observed_channel_messages.clone(),
-        ..Default::default()
     }
 }
 
@@ -3625,7 +3675,7 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
 
 fn project_left(project: &db::LeftProject, session: &Session) {
     for connection_id in &project.connection_ids {
-        if project.host_user_id == session.user_id {
+        if project.host_user_id == Some(session.user_id) {
             session
                 .peer
                 .send(
