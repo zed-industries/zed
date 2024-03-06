@@ -5,7 +5,7 @@ use terminal_view::terminal_panel;
 pub fn app_menus() -> Vec<Menu<'static>> {
     use zed_actions::Quit;
 
-    let vec = vec![
+    vec![
         Menu {
             name: "Zed",
             items: vec![
@@ -181,6 +181,5 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 ),
             ],
         },
-    ];
-    vec
+    ]
 }
