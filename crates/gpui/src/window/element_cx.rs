@@ -83,7 +83,7 @@ pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
 pub(crate) struct DeferredDraw {
     priority: usize,
-    parent_element_node: DispatchNodeId,
+    parent_node: DispatchNodeId,
     element_id_stack: GlobalElementId,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -400,18 +400,21 @@ impl<'a> ElementContext<'a> {
         for deferred_draw_ix in deferred_draw_indices {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
             self.window.element_id_stack = deferred_draw.element_id_stack.clone();
-            self.with_parent_element(deferred_draw.parent_element_node, |cx| {
-                let layout_start = cx.after_layout_index();
-                if let Some(element) = deferred_draw.element.as_mut() {
-                    cx.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
-                        element.after_layout(cx)
-                    });
-                } else {
-                    cx.reuse_after_layout(deferred_draw.layout_range.clone());
-                }
-                let layout_end = cx.after_layout_index();
-                deferred_draw.layout_range = layout_start..layout_end;
-            });
+            self.window
+                .next_frame
+                .dispatch_tree
+                .set_active_node(deferred_draw.parent_node);
+
+            let layout_start = self.after_layout_index();
+            if let Some(element) = deferred_draw.element.as_mut() {
+                self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
+                    element.after_layout(cx)
+                });
+            } else {
+                self.reuse_after_layout(deferred_draw.layout_range.clone());
+            }
+            let layout_end = self.after_layout_index();
+            deferred_draw.layout_range = layout_start..layout_end;
         }
         assert_eq!(
             self.window.next_frame.deferred_draws.len(),
@@ -429,16 +432,19 @@ impl<'a> ElementContext<'a> {
         for deferred_draw_ix in deferred_draw_indices {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
             self.window.element_id_stack = deferred_draw.element_id_stack.clone();
-            self.with_parent_element(deferred_draw.parent_element_node, |cx| {
-                let paint_start = cx.paint_index();
-                if let Some(element) = deferred_draw.element.as_mut() {
-                    element.paint(cx);
-                } else {
-                    cx.reuse_paint(deferred_draw.paint_range.clone());
-                }
-                let paint_end = cx.paint_index();
-                deferred_draw.paint_range = paint_start..paint_end;
-            })
+            self.window
+                .next_frame
+                .dispatch_tree
+                .set_active_node(deferred_draw.parent_node);
+
+            let paint_start = self.paint_index();
+            if let Some(element) = deferred_draw.element.as_mut() {
+                element.paint(self);
+            } else {
+                self.reuse_paint(deferred_draw.paint_range.clone());
+            }
+            let paint_end = self.paint_index();
+            deferred_draw.paint_range = paint_start..paint_end;
         }
         self.window.next_frame.deferred_draws = deferred_draws;
         self.window.element_id_stack.clear();
@@ -487,8 +493,7 @@ impl<'a> ElementContext<'a> {
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
-                    parent_element_node: reused_subtree
-                        .refresh_node_id(deferred_draw.parent_element_node),
+                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     priority: deferred_draw.priority,
                     element: None,
@@ -794,9 +799,9 @@ impl<'a> ElementContext<'a> {
             DrawPhase::Layout,
             "defer_draw can only be called during before_layout or after_layout"
         );
-        let parent_element_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
+        let parent_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
         window.next_frame.deferred_draws.push(DeferredDraw {
-            parent_element_node,
+            parent_node,
             element_id_stack: window.element_id_stack.clone(),
             priority,
             element: Some(element),
@@ -1206,25 +1211,6 @@ impl<'a> ElementContext<'a> {
     /// Sets the view id for the current element, which will be used to manage view caching.
     pub fn set_view_id(&mut self, view_id: EntityId) {
         self.window.next_frame.dispatch_tree.set_view_id(view_id);
-    }
-
-    pub(crate) fn layout_element<R>(
-        &mut self,
-        f: impl FnOnce(DispatchNodeId, &mut Self) -> R,
-    ) -> R {
-        let node_id = self.window.next_frame.dispatch_tree.push_node();
-        let result = f(node_id, self);
-        self.window.next_frame.dispatch_tree.pop_node();
-        result
-    }
-
-    pub(crate) fn with_parent_element<R>(
-        &mut self,
-        node_id: DispatchNodeId,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        self.window.next_frame.dispatch_tree.move_to_node(node_id);
-        f(self)
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

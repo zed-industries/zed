@@ -287,15 +287,15 @@ impl<E: Element> Drawable<E> {
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-                cx.layout_element(|node_id, cx| {
-                    let after_layout = self.element.after_layout(bounds, &mut before_layout, cx);
-                    self.phase = ElementDrawPhase::AfterLayout {
-                        node_id,
-                        bounds,
-                        before_layout,
-                        after_layout,
-                    };
-                });
+                let node_id = cx.window.next_frame.dispatch_tree.push_node();
+                let after_layout = self.element.after_layout(bounds, &mut before_layout, cx);
+                self.phase = ElementDrawPhase::AfterLayout {
+                    node_id,
+                    bounds,
+                    before_layout,
+                    after_layout,
+                };
+                cx.window.next_frame.dispatch_tree.pop_node();
             }
             _ => panic!("must call before_layout before after_layout"),
         }
@@ -310,10 +310,9 @@ impl<E: Element> Drawable<E> {
                 mut after_layout,
                 ..
             } => {
-                cx.with_parent_element(node_id, |cx| {
-                    self.element
-                        .paint(bounds, &mut before_layout, &mut after_layout, cx);
-                });
+                cx.window.next_frame.dispatch_tree.set_active_node(node_id);
+                self.element
+                    .paint(bounds, &mut before_layout, &mut after_layout, cx);
                 self.phase = ElementDrawPhase::Painted;
                 before_layout
             }

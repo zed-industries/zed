@@ -154,7 +154,7 @@ impl DispatchTree {
         node_id
     }
 
-    pub fn move_to_node(&mut self, node_id: DispatchNodeId) {
+    pub fn set_active_node(&mut self, node_id: DispatchNodeId) {
         let next_node_parent = self.nodes[node_id.0].parent;
         while self.node_stack.last().copied() != next_node_parent && !self.node_stack.is_empty() {
             self.pop_node();
