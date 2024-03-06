@@ -184,7 +184,6 @@ pub fn init_tracing(config: &Config) -> Option<()> {
     let filter = EnvFilter::from_str(config.rust_log.as_deref()?).log_err()?;
 
     tracing_subscriber::registry()
-        .with(console_subscriber::spawn())
         .with(if config.log_json.unwrap_or(false) {
             Box::new(
                 tracing_subscriber::fmt::layer()
