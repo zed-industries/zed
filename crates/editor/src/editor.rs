@@ -4914,7 +4914,7 @@ impl Editor {
         self.buffer.update(cx, |multi_buffer, cx| {
             let snapshot = multi_buffer.snapshot(cx);
             let selections = self.selections.disjoint_anchors();
-            let hunks = selections.into_iter().filter_map(|selection| {
+            let selected_buffer_rows = selections.into_iter().filter_map(|selection| {
                 let tail = selection.tail();
                 let buffer = multi_buffer.buffer(tail.buffer_id?)?;
                 let start = tail.to_point(&snapshot).row;
@@ -4922,12 +4922,24 @@ impl Editor {
                 let buffer_range = if start > end { end..start } else { start..end };
                 Some((buffer, buffer_range))
             });
-            for (buffer, selected_rows) in hunks {
+
+            let mut processed_buffer_rows = HashSet::default();
+            for (buffer, selected_rows) in selected_buffer_rows {
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
                         for hunk in snapshot.git_diff_hunks_in_range(selected_rows.clone()) {
-                            if hunk.status() == DiffHunkStatus::Removed || hunk.buffer_range.contains(&selected_rows.start) || hunk.buffer_range.contains(&selected_rows.end) {
-                                let original_text = &diff_base[hunk.diff_base_byte_range.clone()];
+                            // TODO kb comment about selected_rows being exclusive, and `git_diff_hunks_in_range` using inclusive ranges logic
+                            if hunk.status() == DiffHunkStatus::Removed
+                                    || hunk.buffer_range.contains(&selected_rows.start)
+                                    || hunk.buffer_range.contains(&selected_rows.end) {
+                                let Some(original_text) = diff_base.get(hunk.diff_base_byte_range.clone()) else {
+                                    return;
+                                };
+                                for row in selected_rows.start..selected_rows.end + 1 {
+                                    if !processed_buffer_rows.insert(row) {
+                                        return;
+                                    }
+                                }
                                 let buffer_range = Point::new
                                     (hunk.buffer_range.start, 0)
                                     ..Point::new(hunk.buffer_range.end, 0);

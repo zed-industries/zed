@@ -8839,6 +8839,7 @@ struct Row11;"#};
     );
 
     // When carets and selections intersect the addition hunks, those are reverted.
+    // Adjacent carets got merged.
     assert_hunk_revert(
         indoc! {r#"struct Row1;
                    ˇ// something on the top
@@ -8865,14 +8866,119 @@ struct Row11;"#};
         indoc! {r#"struct Row1;
                    ˇstruct Row2;
                    struct Row3;
-                   ˇˇ
+                   ˇ
                    struct Row5;
-                   ˇˇstruct Row6;
+                   ˇstruct Row6;
                    struct Row7;
                    ˇ
-                   ˇˇstruct Row9;
+                   ˇstruct Row9;
                    struct Row10;
                    ˇstruct Row11;"#},
+        base_text,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx,
+    )
+    .await;
+    let base_text = indoc! {r#"struct Row1;
+struct Row2;
+struct Row3;
+
+struct Row5;
+struct Row6;
+struct Row7;
+
+struct Row9;
+struct Row10;
+struct Row11;"#};
+
+    // When addition hunks are not adjacent to carets, no hunk revert is performed
+    assert_hunk_revert(
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row33;
+                   ˇ
+                   struct Row5;
+                   struct Row6;
+                   struct Row7;
+                   ˇ
+                   struct Row99;
+                   struct Row10;
+                   struct Row11;"#},
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row33;
+                   ˇ
+                   struct Row5;
+                   struct Row6;
+                   struct Row7;
+                   ˇ
+                   struct Row99;
+                   struct Row10;
+                   struct Row11;"#},
+        base_text,
+        &mut cx,
+    );
+    // Same for selections
+    assert_hunk_revert(
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row33;
+                   «ˇ
+                   struct Row5;
+                   struct» Row6;
+                   «struct Row7;
+                   ˇ»
+                   struct Row99;
+                   struct Row10;
+                   struct Row11;"#},
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row33;
+                   «ˇ
+                   struct Row5;
+                   struct» Row6;
+                   «struct Row7;
+                   ˇ»
+                   struct Row99;
+                   struct Row10;
+                   struct Row11;"#},
+        base_text,
+        &mut cx,
+    );
+
+    // When carets and selections intersect the addition hunks, those are reverted.
+    // Adjacent carets got merged.
+    assert_hunk_revert(
+        indoc! {r#"ˇstruct Row1.1;
+                   struct Row2;
+                   «ˇstr»uct Row33;
+
+                   struct ˇRow55;
+                   struct Row6;
+                   struct «Rˇ»ow77;ˇ
+
+                   «struˇ»ct Row99;
+                   struct Row10;
+                   struct Row1111;ˇ"#},
+        indoc! {r#"struct Row1;
+                   ˇstruct Row2;
+                   struct Row3;
+                   ˇ
+                   struct Row5;
+                   ˇstruct Row6;
+                   struct Row7;
+                   ˇ
+                   struct Row9;
+                   ˇstruct Row10;
+                   struct Row11;ˇ"#},
         base_text,
         &mut cx,
     );
