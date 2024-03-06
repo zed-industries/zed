@@ -184,7 +184,7 @@ unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, _: LPARAM) -> B
     TRUE
 }
 
-/// invalidates all windows belonging to a thread causing a paint message to be sheduled
+/// invalidates all windows belonging to a thread causing a paint message to be scheduled
 fn invalidate_thread_windows(win32_thread_id: u32) {
     unsafe {
         EnumThreadWindows(
