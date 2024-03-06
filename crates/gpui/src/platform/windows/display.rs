@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use uuid::Uuid;
 use windows::{
     core::PCSTR,
-    Win32::Graphics::Gdi::{DEVMODEA, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsA},
+    Win32::Graphics::Gdi::{EnumDisplaySettingsA, DEVMODEA, ENUM_CURRENT_SETTINGS},
 };
 
 use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
@@ -26,7 +26,6 @@ impl PlatformDisplay for WindowsDisplay {
     fn uuid(&self) -> Result<Uuid> {
         Err(anyhow!("not implemented yet."))
     }
-
 
     fn bounds(&self) -> Bounds<GlobalPixels> {
         let mut dev = DEVMODEA {
