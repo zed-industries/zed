@@ -4929,13 +4929,20 @@ impl Editor {
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
                         for hunk in snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+                            let Some(original_text) = diff_base.get(hunk.diff_base_byte_range.clone()) else {
+                                return;
+                            };
                             // TODO kb comment about selected_rows being exclusive, and `git_diff_hunks_in_range` using inclusive ranges logic
-                            if hunk.status() == DiffHunkStatus::Removed
-                                    || hunk.buffer_range.contains(&selected_rows.start)
-                                    || hunk.buffer_range.contains(&selected_rows.end) {
-                                let Some(original_text) = diff_base.get(hunk.diff_base_byte_range.clone()) else {
-                                    return;
-                                };
+                            let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                            let related_to_selection = if allow_adjacent {
+                                hunk.buffer_range.overlaps(&query_rows)
+                                    || hunk.buffer_range.start == query_rows.end
+                                    || hunk.buffer_range.end == query_rows.start
+                            } else {
+                                hunk.buffer_range.overlaps(&selected_rows)
+                                || selected_rows.end == hunk.buffer_range.start
+                            };
+                            if related_to_selection {
                                 for row in hunk.buffer_range.start..hunk.buffer_range.end {
                                     if !processed_buffer_rows.insert(row) {
                                         return;
@@ -4956,6 +4963,7 @@ impl Editor {
                 })
             }
         });
+
 
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {

@@ -8768,35 +8768,35 @@ struct Row10;"#};
     assert_hunk_revert(
         indoc! {r#"struct Row;
                    struct Row1;
-                   struct Row2;
-                   struct Row2.1;
-                   struct Row2.2;
-                   ˇ
+                   struct Row1.1;
+                   struct Row1.2;
+                   struct Row2;ˇ
+
                    struct Row4;
                    struct Row5;
                    struct Row6;
-                   ˇ
+
+                   struct Row8;
+                   ˇstruct Row9;
                    struct Row9.1;
                    struct Row9.2;
                    struct Row9.3;
-                   struct Row8;
-                   struct Row9;
                    struct Row10;"#},
         indoc! {r#"struct Row;
                    struct Row1;
-                   struct Row2;
-                   struct Row2.1;
-                   struct Row2.2;
-                   ˇ
+                   struct Row1.1;
+                   struct Row1.2;
+                   struct Row2;ˇ
+
                    struct Row4;
                    struct Row5;
                    struct Row6;
-                   ˇ
+
+                   struct Row8;
+                   ˇstruct Row9;
                    struct Row9.1;
                    struct Row9.2;
                    struct Row9.3;
-                   struct Row8;
-                   struct Row9;
                    struct Row10;"#},
         base_text,
         &mut cx,
