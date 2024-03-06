@@ -239,7 +239,7 @@ impl ExtensionStore {
             }
         }
 
-        // Immediately load all of the extensions in the intial manifest. If the
+        // Immediately load all of the extensions in the initial manifest. If the
         // index needs to be rebuild, then enqueue
         let load_initial_extensions = this.extensions_updated(extension_index, cx);
         if extension_index_needs_rebuild {
@@ -247,7 +247,7 @@ impl ExtensionStore {
         }
 
         // Perform all extension loading in a single task to ensure that we
-        // never attempt to simulataneously load/unload extensions from multiple
+        // never attempt to simultaneously load/unload extensions from multiple
         // parallel tasks.
         this.tasks.push(cx.spawn(|this, mut cx| {
             async move {
