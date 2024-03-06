@@ -11,6 +11,7 @@ use client::{
     proto::{self, PeerId},
     Client,
 };
+use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
     HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
@@ -27,13 +28,12 @@ use std::{
     ops::Range,
     path::PathBuf,
     rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::Duration,
 };
 use theme::Theme;
+
+pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
@@ -405,7 +405,7 @@ impl<T: Item> ItemHandle for View<T> {
                     followed_item.is_project_item(cx),
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item
-                            .remote_id(&workspace.app_state.client, cx)
+                            .remote_id(&workspace.client(), cx)
                             .map(|id| id.to_proto()),
                         variant: Some(message),
                         leader_id: workspace.leader_for_pane(&pane),
@@ -421,8 +421,46 @@ impl<T: Item> ItemHandle for View<T> {
             .is_none()
         {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
+            let (pending_update_tx, mut pending_update_rx) = mpsc::unbounded();
             let pending_update = Rc::new(RefCell::new(None));
-            let pending_update_scheduled = Arc::new(AtomicBool::new(false));
+
+            let mut send_follower_updates = None;
+            if let Some(item) = self.to_followable_item_handle(cx) {
+                let is_project_item = item.is_project_item(cx);
+                let item = item.downgrade();
+
+                send_follower_updates = Some(cx.spawn({
+                    let pending_update = pending_update.clone();
+                    |workspace, mut cx| async move {
+                        while let Some(mut leader_id) = pending_update_rx.next().await {
+                            while let Ok(Some(id)) = pending_update_rx.try_next() {
+                                leader_id = id;
+                            }
+
+                            workspace.update(&mut cx, |workspace, cx| {
+                                let item = item.upgrade().expect(
+                                    "item to be alive, otherwise task would have been dropped",
+                                );
+                                workspace.update_followers(
+                                    is_project_item,
+                                    proto::update_followers::Variant::UpdateView(
+                                        proto::UpdateView {
+                                            id: item
+                                                .remote_id(workspace.client(), cx)
+                                                .map(|id| id.to_proto()),
+                                            variant: pending_update.borrow_mut().take(),
+                                            leader_id,
+                                        },
+                                    ),
+                                    cx,
+                                );
+                            })?;
+                            cx.background_executor().timer(LEADER_UPDATE_THROTTLE).await;
+                        }
+                        anyhow::Ok(())
+                    }
+                }));
+            }
 
             let mut event_subscription =
                 Some(cx.subscribe(self, move |workspace, item, event, cx| {
@@ -438,9 +476,7 @@ impl<T: Item> ItemHandle for View<T> {
                     };
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
-                        let is_project_item = item.is_project_item(cx);
                         let leader_id = workspace.leader_for_pane(&pane);
-
                         let follow_event = item.to_follow_event(event);
                         if leader_id.is_some()
                             && matches!(follow_event, Some(FollowEvent::Unfollow))
@@ -448,35 +484,13 @@ impl<T: Item> ItemHandle for View<T> {
                             workspace.unfollow(&pane, cx);
                         }
 
-                        if item.focus_handle(cx).contains_focused(cx)
-                            && item.add_event_to_update_proto(
+                        if item.focus_handle(cx).contains_focused(cx) {
+                            item.add_event_to_update_proto(
                                 event,
                                 &mut *pending_update.borrow_mut(),
                                 cx,
-                            )
-                            && !pending_update_scheduled.load(Ordering::SeqCst)
-                        {
-                            pending_update_scheduled.store(true, Ordering::SeqCst);
-                            cx.defer({
-                                let pending_update = pending_update.clone();
-                                let pending_update_scheduled = pending_update_scheduled.clone();
-                                move |this, cx| {
-                                    pending_update_scheduled.store(false, Ordering::SeqCst);
-                                    this.update_followers(
-                                        is_project_item,
-                                        proto::update_followers::Variant::UpdateView(
-                                            proto::UpdateView {
-                                                id: item
-                                                    .remote_id(&this.app_state.client, cx)
-                                                    .map(|id| id.to_proto()),
-                                                variant: pending_update.borrow_mut().take(),
-                                                leader_id,
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                }
-                            });
+                            );
+                            pending_update_tx.unbounded_send(leader_id).ok();
                         }
                     }
 
@@ -525,6 +539,7 @@ impl<T: Item> ItemHandle for View<T> {
             cx.observe_release(self, move |workspace, _, _| {
                 workspace.panes_by_item.remove(&item_id);
                 event_subscription.take();
+                send_follower_updates.take();
             })
             .detach();
         }
@@ -700,6 +715,7 @@ pub trait FollowableItem: Item {
 
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId>;
+    fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle>;
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
@@ -726,6 +742,10 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
                 id: self.item_id().as_u64(),
             })
         })
+    }
+
+    fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle> {
+        Box::new(self.downgrade())
     }
 
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
@@ -764,6 +784,16 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 
     fn is_project_item(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_project_item(cx)
+    }
+}
+
+pub trait WeakFollowableItemHandle: Send + Sync {
+    fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>>;
+}
+
+impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
+    fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>> {
+        Some(Box::new(self.upgrade()?))
     }
 }
 

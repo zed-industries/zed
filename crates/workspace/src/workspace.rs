@@ -1109,7 +1109,7 @@ impl Workspace {
         )
     }
 
-    pub fn client(&self) -> &Client {
+    pub fn client(&self) -> &Arc<Client> {
         &self.app_state.client
     }
 

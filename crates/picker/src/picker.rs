@@ -1,3 +1,4 @@
+use anyhow::Result;
 use editor::Editor;
 use gpui::{
     div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
@@ -13,11 +14,16 @@ enum ElementContainer {
     UniformList(UniformListScrollHandle),
 }
 
+struct PendingUpdateMatches {
+    delegate_update_matches: Option<Task<()>>,
+    _task: Task<Result<()>>,
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
     editor: View<Editor>,
-    pending_update_matches: Option<Task<()>>,
+    pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
     max_height: Option<Length>,
@@ -268,15 +274,32 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
-        let update = self.delegate.update_matches(query, cx);
+        let delegate_pending_update_matches = self.delegate.update_matches(query, cx);
+
         self.matches_updated(cx);
-        self.pending_update_matches = Some(cx.spawn(|this, mut cx| async move {
-            update.await;
-            this.update(&mut cx, |this, cx| {
-                this.matches_updated(cx);
-            })
-            .ok();
-        }));
+        // This struct ensures that we can synchronously drop the task returned by the
+        // delegate's `update_matches` method and the task that the picker is spawning.
+        // If we simply capture the delegate's task into the picker's task, when the picker's
+        // task gets synchronously dropped, the delegate's task would keep running until
+        // the picker's task has a chance of being scheduled, because dropping a task happens
+        // asynchronously.
+        self.pending_update_matches = Some(PendingUpdateMatches {
+            delegate_update_matches: Some(delegate_pending_update_matches),
+            _task: cx.spawn(|this, mut cx| async move {
+                let delegate_pending_update_matches = this.update(&mut cx, |this, _| {
+                    this.pending_update_matches
+                        .as_mut()
+                        .unwrap()
+                        .delegate_update_matches
+                        .take()
+                        .unwrap()
+                })?;
+                delegate_pending_update_matches.await;
+                this.update(&mut cx, |this, cx| {
+                    this.matches_updated(cx);
+                })
+            }),
+        });
     }
 
     fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
