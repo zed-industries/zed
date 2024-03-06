@@ -89,6 +89,11 @@ pub struct Buffer {
     /// or saved to disk.
     saved_version: clock::Global,
     /// True if a peer with given id has any local changes to the buffer.
+    /// For remote peers this should have just one entry (to a host).
+    /// For a host, this tracks has_local_changes result for all peers.
+    /// When it sends out updates, it ORs it's own has_local_changes with these of peers.
+    /// That way, any other peer will know whether the buffer is dirty based on it's knowledge of
+    /// local changes + changes made upstream.
     peer_has_changes: BTreeMap<ConnectionId, bool>,
     /// Marked as true if a conflict is detected during diffing, cleared on save.
     has_conflict: bool,
@@ -1996,8 +2001,11 @@ impl Buffer {
 
     /// Removes the selections for a given peer.
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
+        // We do not clear peer_has_changes, as if we're the host, we want to know if that peer
+        // made any changes even if they're no longer around; the entry for corresponding peer will
+        // be cleared on save/buffer close. If we were to clear peer_has_changes there, we would lose track
+        // of dirty state for that peer.
         self.remote_selections.remove(&replica_id);
-        //self.peer_has_changes.remove(&replica_id);
         cx.notify();
     }
 
