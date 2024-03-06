@@ -51,7 +51,11 @@ const kCGImageAlphaOnly: u32 = 7;
 
 pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
-type FontKey = (SharedString /* font_family */, FontFeatures);
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct FontKey {
+    font_family: SharedString,
+    font_features: FontFeatures,
+}
 
 struct MacTextSystemState {
     memory_source: MemSource,
@@ -117,16 +121,16 @@ impl PlatformTextSystem for MacTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let candidates = if let Some(font_ids) = lock
-                .font_ids_by_font_key
-                .get(&(font.family.clone(), font.features))
-            {
+            let font_key = FontKey {
+                font_family: font.family.clone(),
+                font_features: font.features,
+            };
+            let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
                 let font_ids = lock.load_family(&font.family, font.features)?;
-                lock.font_ids_by_font_key
-                    .insert((font.family.clone(), font.features), font_ids);
-                lock.font_ids_by_font_key[&(font.family.clone(), font.features)].as_ref()
+                lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
+                lock.font_ids_by_font_key[&font_key].as_ref()
             };
 
             let candidate_properties = candidates
