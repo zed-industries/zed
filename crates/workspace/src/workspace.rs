@@ -3819,8 +3819,6 @@ impl Render for Workspace {
             .items_start()
             .text_color(colors.text)
             .bg(colors.background)
-            .border()
-            .border_color(colors.border)
             .children(self.titlebar_item.clone())
             .child(
                 div()
