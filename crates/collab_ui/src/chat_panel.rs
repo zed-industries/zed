@@ -903,9 +903,9 @@ impl Render for ChatPanel {
                     )
                 }
             }))
-            // .when(!self.is_scrolled_to_bottom, |el| {
-            //     el.child(div().border_t_1().border_color(cx.theme().colors().border))
-            // })
+            .when(!self.is_scrolled_to_bottom, |el| {
+                el.child(div().border_t_1().border_color(cx.theme().colors().border))
+            })
             .when_some(edit_message_id, |el, _| {
                 el.child(
                     h_flex()
@@ -984,10 +984,6 @@ impl Render for ChatPanel {
                         .key_context("MessageEditor")
                         .on_action(cx.listener(ChatPanel::close_reply_preview))
                         .on_action(cx.listener(ChatPanel::cancel_edit_message))
-                        .when(
-                            !self.is_scrolled_to_bottom && reply_to_message_id.is_none(),
-                            |el| el.border_t_1().border_color(cx.theme().colors().border),
-                        )
                         .p_2()
                         .map(|el| el.child(self.message_editor.clone())),
                 )
