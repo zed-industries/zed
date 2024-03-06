@@ -119,7 +119,7 @@
         }
       ],
       "ctrl-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "editor::RevertSelectedChunks"
+      "cmd-alt-z": "editor::RevertSelectedHunks"
     }
   },
   {

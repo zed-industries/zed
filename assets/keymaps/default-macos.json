@@ -154,7 +154,7 @@
       ],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "editor::RevertSelectedChunks"
+      "cmd-alt-z": "editor::RevertSelectedHunks"
     }
   },
   {

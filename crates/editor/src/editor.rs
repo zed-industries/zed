@@ -4908,7 +4908,7 @@ impl Editor {
         })
     }
 
-    pub fn revert_selected_chunks(&mut self, _: &RevertSelectedChunks, cx: &mut ViewContext<Self>) {
+    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
         let mut revert_changes = Vec::new();
 
         self.buffer.update(cx, |multi_buffer, cx| {

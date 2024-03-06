@@ -339,7 +339,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
         register_action(view, cx, Editor::accept_partial_copilot_suggestion);
-        register_action(view, cx, Editor::revert_selected_chunks);
+        register_action(view, cx, Editor::revert_selected_hunks);
     }
 
     fn register_key_listeners(
