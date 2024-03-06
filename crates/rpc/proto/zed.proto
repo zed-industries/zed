@@ -177,7 +177,7 @@ message Envelope {
         GetChannelMessages get_channel_messages = 140;
         GetChannelMessagesResponse get_channel_messages_response = 141;
         RemoveChannelMessage remove_channel_message = 142;
-        UpdateChannelMessage update_channel_message = 164;
+        UpdateChannelMessage update_channel_message = 165;
         AckChannelMessage ack_channel_message = 143;
         GetChannelMessagesById get_channel_messages_by_id = 144;
 
