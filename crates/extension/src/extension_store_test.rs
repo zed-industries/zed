@@ -334,7 +334,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
-    let _ = store.update(cx, |store, _| store.reload());
+    let _ = store.update(cx, |store, _| store.reload(None));
 
     cx.executor().run_until_parked();
     store.read_with(cx, |store, _| {

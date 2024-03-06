@@ -159,7 +159,7 @@ pub fn init(
 
     cx.on_action(|_: &ReloadExtensions, cx| {
         let store = cx.global::<GlobalExtensionStore>().0.clone();
-        store.update(cx, |store, _| drop(store.reload()));
+        store.update(cx, |store, _| drop(store.reload(None)));
     });
 
     cx.set_global(GlobalExtensionStore(store));
@@ -243,7 +243,7 @@ impl ExtensionStore {
         // index needs to be rebuild, then enqueue
         let load_initial_extensions = this.extensions_updated(extension_index, cx);
         if extension_index_needs_rebuild {
-            let _ = this.reload();
+            let _ = this.reload(None);
         }
 
         // Perform all extension loading in a single task to ensure that we
@@ -313,11 +313,11 @@ impl ExtensionStore {
         this
     }
 
-    fn reload(&mut self) -> impl Future<Output = ()> {
+    fn reload(&mut self, modified_extension: Option<Arc<str>>) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
         self.reload_tx
-            .unbounded_send(None)
+            .unbounded_send(modified_extension)
             .expect("reload task exited");
         async move {
             rx.await.ok();
@@ -444,7 +444,8 @@ impl ExtensionStore {
             archive
                 .unpack(extensions_dir.join(extension_id.as_ref()))
                 .await?;
-            this.update(&mut cx, |this, _| this.reload())?.await;
+            this.update(&mut cx, |this, _| this.reload(Some(extension_id)))?
+                .await;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -482,7 +483,7 @@ impl ExtensionStore {
             )
             .await?;
 
-            this.update(&mut cx, |this, _| this.reload())?.await;
+            this.update(&mut cx, |this, _| this.reload(None))?.await;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
@@ -559,7 +560,8 @@ impl ExtensionStore {
             fs.create_symlink(output_path, extension_source_path)
                 .await?;
 
-            this.update(&mut cx, |this, _| this.reload())?.await;
+            this.update(&mut cx, |this, _| this.reload(Some(extension_id)))?
+                .await;
             Ok(())
         })
         .detach_and_log_err(cx)
@@ -590,7 +592,8 @@ impl ExtensionStore {
             })?;
 
             if result.is_ok() {
-                this.update(&mut cx, |this, _| this.reload())?.await;
+                this.update(&mut cx, |this, _| this.reload(Some(extension_id)))?
+                    .await;
             }
 
             result
