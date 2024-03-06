@@ -183,7 +183,7 @@ pub fn grid_point_and_side(
     let col = min(col, cur_size.last_column());
     let mut line = (pos.y / cur_size.line_height) as i32;
     if line > cur_size.bottommost_line() {
-        line = cur_size.bottommost_line().0 as i32;
+        line = cur_size.bottommost_line().0;
         side = Side::Right;
     } else if line < 0 {
         side = Side::Left;

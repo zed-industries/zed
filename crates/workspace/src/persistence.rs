@@ -367,7 +367,7 @@ impl WorkspaceDb {
 
                 conn.exec_bound(sql!(
                     DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
-                ))?((&workspace.location, workspace.id.clone()))
+                ))?((&workspace.location, workspace.id))
                 .context("clearing out old locations")?;
 
                 // Upsert
@@ -622,11 +622,11 @@ impl WorkspaceDb {
     }
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
-        Ok(self.select_bound(sql!(
+        self.select_bound(sql!(
             SELECT kind, item_id, active FROM items
             WHERE pane_id = ?
                 ORDER BY position
-        ))?(pane_id)?)
+        ))?(pane_id)
     }
 
     fn save_items(

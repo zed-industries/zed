@@ -98,7 +98,7 @@ impl BufferSearchBar {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,

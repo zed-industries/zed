@@ -51,8 +51,10 @@ impl<M: ManagedView> PopoverMenu<M> {
 
                             cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                                 if modal.focus_handle(cx).contains_focused(cx) {
-                                    if previous_focus_handle.is_some() {
-                                        cx.focus(previous_focus_handle.as_ref().unwrap())
+                                    if let Some(previous_focus_handle) =
+                                        previous_focus_handle.as_ref()
+                                    {
+                                        cx.focus(previous_focus_handle);
                                     }
                                 }
                                 *menu2.borrow_mut() = None;

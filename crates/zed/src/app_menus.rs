@@ -40,7 +40,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action(
                     "Open Recent...",
                     recent_projects::OpenRecent {
-                        create_new_window: false,
+                        create_new_window: true,
                     },
                 ),
                 MenuItem::separator(),

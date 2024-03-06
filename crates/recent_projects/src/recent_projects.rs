@@ -16,8 +16,12 @@ use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct OpenRecent {
-    #[serde(default)]
+    #[serde(default = "default_create_new_window")]
     pub create_new_window: bool,
+}
+
+fn default_create_new_window() -> bool {
+    true
 }
 
 gpui::impl_actions!(projects, [OpenRecent]);
@@ -129,7 +133,6 @@ impl Render for RecentProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
-            .cursor_pointer()
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 this.picker.update(cx, |this, cx| {
@@ -180,7 +183,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             )
         };
         Arc::from(format!(
-            "{reuse_window} reuses the window, {create_window} opens a new one",
+            "{reuse_window} reuses this window, {create_window} opens a new one",
         ))
     }
 
@@ -269,7 +272,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace
                                         .update(&mut cx, |workspace, cx| {
                                             workspace.open_workspace_for_paths(
-                                                replace_current_window,
+                                                true,
                                                 candidate_paths,
                                                 cx,
                                             )
@@ -280,11 +283,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                             })
                         } else {
-                            workspace.open_workspace_for_paths(
-                                replace_current_window,
-                                candidate_paths,
-                                cx,
-                            )
+                            workspace.open_workspace_for_paths(false, candidate_paths, cx)
                         }
                     } else {
                         Task::ready(Ok(()))
@@ -325,10 +324,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .unzip();
 
         let highlighted_match = HighlightedMatchWithPaths {
-            match_label: HighlightedText::join(
-                match_labels.into_iter().filter_map(|name| name),
-                ", ",
-            ),
+            match_label: HighlightedText::join(match_labels.into_iter().flatten(), ", "),
             paths: if self.render_paths { paths } else { Vec::new() },
         };
         Some(
@@ -539,7 +535,7 @@ mod tests {
             !cx.has_pending_prompt(),
             "Should have no pending prompt on dirty project before opening the new recent project"
         );
-        cx.dispatch_action((*workspace).into(), menu::Confirm);
+        cx.dispatch_action(*workspace, menu::Confirm);
         workspace
             .update(cx, |workspace, cx| {
                 assert!(

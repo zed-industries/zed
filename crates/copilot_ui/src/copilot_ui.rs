@@ -1,4 +1,4 @@
-mod copilot_button;
+pub mod copilot_button;
 mod sign_in;
 
 pub use copilot_button::*;

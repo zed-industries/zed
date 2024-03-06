@@ -614,9 +614,12 @@ impl SyntaxSnapshot {
                             Some(old_tree.clone()),
                         );
                         changed_ranges = join_ranges(
-                            invalidated_ranges.iter().cloned().filter(|range| {
-                                range.start <= step_end_byte && range.end >= step_start_byte
-                            }),
+                            invalidated_ranges
+                                .iter()
+                                .filter(|&range| {
+                                    range.start <= step_end_byte && range.end >= step_start_byte
+                                })
+                                .cloned(),
                             old_tree.changed_ranges(&tree).map(|r| {
                                 step_start_byte + r.start_byte..step_start_byte + r.end_byte
                             }),
@@ -766,7 +769,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer).into_iter(),
+            self.layers_for_range(range, buffer),
             query,
         )
     }
@@ -780,7 +783,7 @@ impl SyntaxSnapshot {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer).into_iter(),
+            self.layers_for_range(range, buffer),
             query,
         )
     }
@@ -1180,6 +1183,7 @@ fn parse_text(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
@@ -1412,7 +1416,7 @@ fn insert_newlines_between_ranges(
             continue;
         }
 
-        let range_b = ranges[ix].clone();
+        let range_b = ranges[ix];
         let range_a = &mut ranges[ix - 1];
         if range_a.end_point.column == 0 {
             continue;
@@ -1421,7 +1425,7 @@ fn insert_newlines_between_ranges(
         if range_a.end_point.row < range_b.start_point.row {
             let end_point = start_point + Point::from_ts_point(range_a.end_point);
             let line_end = Point::new(end_point.row, text.line_len(end_point.row));
-            if end_point.column as u32 >= line_end.column {
+            if end_point.column >= line_end.column {
                 range_a.end_byte += 1;
                 range_a.end_point.row += 1;
                 range_a.end_point.column = 0;

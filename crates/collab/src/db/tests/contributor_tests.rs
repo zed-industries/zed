@@ -10,16 +10,15 @@ test_both_dbs!(
 
 async fn test_contributors(db: &Arc<Database>) {
     db.create_user(
-        &format!("user1@example.com"),
+        "user1@example.com",
         false,
         NewUserParams {
-            github_login: format!("user1"),
+            github_login: "user1".to_string(),
             github_user_id: 1,
         },
     )
     .await
-    .unwrap()
-    .user_id;
+    .unwrap();
 
     assert_eq!(db.get_contributors().await.unwrap(), Vec::<String>::new());
 

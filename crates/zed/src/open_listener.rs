@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
+use client::parse_zed_link;
 use collections::HashMap;
 use editor::scroll::Autoscroll;
 use editor::Editor;
@@ -10,7 +11,6 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
 use itertools::Itertools;
 use language::{Bias, Point};
-use release_channel::parse_zed_link;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -66,13 +66,13 @@ impl OpenListener {
         )
     }
 
-    pub fn open_urls(&self, urls: &[String]) {
+    pub fn open_urls(&self, urls: &[String], cx: &AppContext) {
         self.triggered.store(true, Ordering::Release);
         let request = if let Some(server_name) =
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
         {
             self.handle_cli_connection(server_name)
-        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url)) {
+        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url, cx)) {
             self.handle_zed_url_scheme(request_path)
         } else {
             self.handle_file_urls(urls)
@@ -95,10 +95,10 @@ impl OpenListener {
     }
 
     fn handle_zed_url_scheme(&self, request_path: &str) -> Option<OpenRequest> {
-        let mut parts = request_path.split("/");
+        let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split("-").last() {
+                if let Some(id_str) = slug.split('-').last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             return Some(OpenRequest::JoinChannel { channel_id });
@@ -184,7 +184,7 @@ pub async fn handle_cli_connection(
                 } else {
                     paths
                         .into_iter()
-                        .filter_map(|path_with_position_string| {
+                        .map(|path_with_position_string| {
                             let path_with_position = PathLikeWithPosition::parse_str(
                                 &path_with_position_string,
                                 |path_str| {
@@ -203,7 +203,7 @@ pub async fn handle_cli_connection(
                                     caret_positions.insert(path.clone(), Point::new(row, col));
                                 }
                             }
-                            Some(path)
+                            path
                         })
                         .collect()
                 };

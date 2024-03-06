@@ -46,10 +46,10 @@ pub fn run_test(
     let starting_seed = env::var("SEED")
         .map(|seed| seed.parse().expect("invalid SEED variable"))
         .unwrap_or(0);
-    let is_randomized = num_iterations > 1;
     if let Ok(iterations) = env::var("ITERATIONS") {
         num_iterations = iterations.parse().expect("invalid ITERATIONS variable");
     }
+    let is_randomized = num_iterations > 1;
 
     for seed in starting_seed..starting_seed + num_iterations {
         let mut retry = 0;
@@ -72,7 +72,9 @@ pub fn run_test(
                         if is_randomized {
                             eprintln!("failing seed: {}", seed);
                         }
-                        on_fail_fn.map(|f| f());
+                        if let Some(f) = on_fail_fn {
+                            f()
+                        }
                         panic::resume_unwind(error);
                     }
                 }

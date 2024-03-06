@@ -125,7 +125,7 @@ fn emit_stitched_shaders(header_path: &Path) {
         let shader_contents = std::fs::read_to_string(shader_path)?;
         let stitched_contents = format!("{header_contents}\n{shader_contents}");
         let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("stitched_shaders.metal");
-        let _ = std::fs::write(&out_path, stitched_contents)?;
+        std::fs::write(&out_path, stitched_contents)?;
         Ok(out_path)
     }
     let shader_source_path = "./src/platform/mac/shaders.metal";

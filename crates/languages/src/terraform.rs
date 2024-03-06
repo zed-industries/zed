@@ -129,7 +129,7 @@ impl LspAdapter for TerraformLspAdapter {
 }
 
 fn build_download_url(version: String) -> Result<String> {
-    let v = version.strip_prefix("v").unwrap_or(&version);
+    let v = version.strip_prefix('v').unwrap_or(&version);
     let os = match std::env::consts::OS {
         "linux" => "linux",
         "macos" => "darwin",

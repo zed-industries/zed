@@ -284,7 +284,7 @@ impl Render for SyntaxTreeView {
                 move |this, range, cx| {
                     let mut items = Vec::new();
                     let mut cursor = layer.node().walk();
-                    let mut descendant_ix = range.start as usize;
+                    let mut descendant_ix = range.start;
                     cursor.goto_descendant(descendant_ix);
                     let mut depth = cursor.depth();
                     let mut visited_children = false;

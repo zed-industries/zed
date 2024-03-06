@@ -52,7 +52,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 .map_err(|e| anyhow!("{}", e))?;
 
             Ok(LanguageServerBinary {
-                path: self.work_dir.join(&command.command).into(),
+                path: self.work_dir.join(&command.command),
                 arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
                 env: Some(command.env.into_iter().collect()),
             })
