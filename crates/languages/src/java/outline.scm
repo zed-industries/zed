@@ -122,7 +122,12 @@
     name: (_) @name) @item
 
 (annotation_type_declaration
-    (modifiers)? @context
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     "@interface" @context
     name: (_) @name) @item
 
