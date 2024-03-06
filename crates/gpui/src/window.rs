@@ -1563,6 +1563,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .platform_window
             .prompt(level, message, detail, answers)
+            .unwrap()
     }
 
     /// Returns all available actions for the focused element.

@@ -746,7 +746,7 @@ impl PlatformWindow for WindowsWindow {
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> Receiver<usize> {
+    ) -> Option<Receiver<usize>> {
         unimplemented!()
     }
 
