@@ -57,7 +57,7 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BufferDiff {
     last_buffer_version: Option<clock::Global>,
     tree: SumTree<DiffHunk<Anchor>>,

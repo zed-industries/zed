@@ -8746,11 +8746,7 @@ async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities::default(),
-        cx,
-    )
-    .await;
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
     let base_text = indoc! {r#"struct Row;
 struct Row1;
 struct Row2;
@@ -8865,8 +8861,13 @@ struct Row10;"#};
                    struct Row9;
                    «ˇ// something on bottom»
                    struct Row10;"#},
-        vec![DiffHunkStatus::Added, DiffHunkStatus::Added,
-            DiffHunkStatus::Added, DiffHunkStatus::Added, DiffHunkStatus::Added],
+        vec![
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+        ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
                    struct Row2;
@@ -8886,11 +8887,7 @@ struct Row10;"#};
 #[gpui::test]
 async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities::default(),
-        cx,
-    )
-    .await;
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
     let base_text = indoc! {r#"struct Row;
 struct Row1;
 struct Row2;
@@ -8971,8 +8968,14 @@ struct Row10;"#};
                    «struˇ»ct Row88;
                    struct Row9;
                    struct Row1011;ˇ"#},
-        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified, DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified, DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        vec![
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+        ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
                    struct Row2;
@@ -8992,11 +8995,7 @@ struct Row10;"#};
 #[gpui::test]
 async fn test_deletion_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities::default(),
-        cx,
-    )
-    .await;
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
     let base_text = indoc! {r#"struct Row;
 struct Row1;
 struct Row2;
@@ -9092,7 +9091,11 @@ struct Row10;"#};
 
                    struct Row8;ˇ»
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![
+            DiffHunkStatus::Removed,
+            DiffHunkStatus::Removed,
+            DiffHunkStatus::Removed,
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2«ˇ;
@@ -9112,11 +9115,7 @@ struct Row10;"#};
 #[gpui::test]
 async fn test_multiple_types_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities::default(),
-        cx,
-    )
-    .await;
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
     let base_text = indoc! {r#"struct Row;
 struct Row1;
 struct Row2;
@@ -9141,7 +9140,13 @@ struct Row10;"#};
 
                    struct R»ow9;
                    struct Row1220;"#},
-        vec![DiffHunkStatus::Added, DiffHunkStatus::Removed, DiffHunkStatus::Modified, DiffHunkStatus::Removed, DiffHunkStatus::Modified],
+        vec![
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Removed,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Removed,
+            DiffHunkStatus::Modified,
+        ],
         indoc! {r#"«ˇstruct Row;
                    struct Row1;
                    struct Row2;
@@ -9162,31 +9167,66 @@ struct Row10;"#};
 async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let sample_text = sample_text(10, 4, 'a');
-    let buffer = cx.new_model(|cx| {
+    let cols = 4;
+    let rows = 10;
+    // revert first character in each row, creating one large diff hunk per buffer
+    let is_first_char = |offset: usize| offset % cols == 0;
+    let sample_text_1 = sample_text(rows, 4, 'a');
+    assert_eq!(
+        sample_text_1,
+        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+    );
+    let buffer_1 = cx.new_model(|cx| {
         Buffer::new(
             0,
             BufferId::new(cx.entity_id().as_u64()).unwrap(),
-            sample_text.clone(),
+            sample_text_1.clone(),
         )
     });
-    buffer.update(cx, |buffer, cx| {
-        let mut replaced_chars = HashSet::default();
-        buffer.set_text(sample_text.chars().map(|c| {
-                if replaced_chars.insert(c) {
-                    c
-                } else {
-                    'X'
-                }
-            }).collect::<String>(), cx);
-        buffer.set_diff_base(Some(sample_text), cx);
+    buffer_1.update(cx, |buffer, cx| {
+        buffer.set_text(
+            sample_text_1
+                .chars()
+                .enumerate()
+                .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
+                .collect::<String>(),
+            cx,
+        );
+        buffer.set_diff_base(Some(sample_text_1), cx);
     });
     cx.executor().run_until_parked();
-    let expected_initial_multibuffer_text = "aXXX\nbXXXXcXXXXdXXXXeXXXXfXXXXgXXXXhXXXXiXXXXjXXX\n\n";
+
+    let sample_text_2 = sample_text(rows, 4, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let buffer_2 = cx.new_model(|cx| {
+        Buffer::new(
+            1,
+            BufferId::new(cx.entity_id().as_u64() + 1).unwrap(),
+            sample_text_2.clone(),
+        )
+    });
+    buffer_2.update(cx, |buffer, cx| {
+        buffer.set_text(
+            sample_text_2
+                .chars()
+                .enumerate()
+                .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
+                .collect::<String>(),
+            cx,
+        );
+        buffer.set_diff_base(Some(sample_text_2), cx);
+    });
+    cx.executor().run_until_parked();
+
+    let expected_initial_multibuffer_text =
+        "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n";
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
-            buffer.clone(),
+            buffer_1.clone(),
             [
                 ExcerptRange {
                     context: Point::new(0, 0)..Point::new(3, 0),
@@ -9203,7 +9243,24 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             ],
             cx,
         );
-        assert_eq!(multibuffer.read(cx).text(), expected_initial_multibuffer_text);
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
         multibuffer
     });
 
@@ -9211,11 +9268,29 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
         editor.select_all(&SelectAll, cx);
+    });
+    cx.executor().run_until_parked();
+    editor.update(cx, |editor, cx| {
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
     cx.executor().run_until_parked();
     editor.update(cx, |editor, cx| {
-        assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
+        assert_eq!(
+            editor.text(cx),
+            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+        );
+    });
+    buffer_1.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+        );
+    });
+    buffer_2.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "aaaa\nbbbb\ncccc\n\nffff\ngggg\n\njjjj\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu"
+        );
     });
 }
 
@@ -9396,19 +9471,33 @@ fn assert_hunk_revert(
     expected_not_reverted_hunk_statuses: Vec<DiffHunkStatus>,
     expected_reverted_text_with_selections: &str,
     base_text: &str,
-    cx: &mut EditorLspTestContext)
-{
+    cx: &mut EditorLspTestContext,
+) {
     cx.set_state(not_reverted_text_with_selections);
     cx.update_editor(|editor, cx| {
-        editor.buffer().read(cx).as_singleton().unwrap().update(cx, |buffer, cx| {
-            buffer.set_diff_base(Some(base_text.to_string()), cx);
-        });
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_diff_base(Some(base_text.to_string()), cx);
+            });
     });
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        let snapshot = editor.buffer().read(cx).as_singleton().unwrap().read(cx).snapshot();
-        let reverted_hunk_statuses =  snapshot.git_diff_hunks_in_row_range(0..u32::MAX).map(|hunk| hunk.status()).collect::<Vec<_>>();
+        let snapshot = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .snapshot();
+        let reverted_hunk_statuses = snapshot
+            .git_diff_hunks_in_row_range(0..u32::MAX)
+            .map(|hunk| hunk.status())
+            .collect::<Vec<_>>();
         assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);

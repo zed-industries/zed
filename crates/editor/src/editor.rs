@@ -4928,8 +4928,12 @@ impl Editor {
                 let query_rows = selected_rows.start..selected_rows.end + 1;
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
+                        // TODO kb this does not cut off the hunk in the multibuffer:
+                        // if excerpt is 1-4 lines long and the hunk is 1-10, we have to do something.
                         for hunk in snapshot.git_diff_hunks_in_range(query_rows.clone()) {
-                            let Some(original_text) = diff_base.get(hunk.diff_base_byte_range.clone()) else {
+                            let Some(original_text) =
+                                diff_base.get(hunk.diff_base_byte_range.clone())
+                            else {
                                 return;
                             };
                             // TODO kb comment about selected_rows being exclusive, and `git_diff_hunks_in_range` using inclusive ranges logic
@@ -4940,7 +4944,7 @@ impl Editor {
                                     || hunk.buffer_range.end == query_rows.start
                             } else {
                                 hunk.buffer_range.overlaps(&selected_rows)
-                                || selected_rows.end == hunk.buffer_range.start
+                                    || selected_rows.end == hunk.buffer_range.start
                             };
                             if related_to_selection {
                                 for row in hunk.buffer_range.start..hunk.buffer_range.end {
@@ -4950,12 +4954,15 @@ impl Editor {
                                 }
 
                                 if let Err(i) = revert_changes.binary_search_by(|probe| {
-                                            probe.0.start.cmp(&hunk.buffer_range.start)
-                                                .then(probe.0.end.cmp(&hunk.buffer_range.end))
-                                                .then(probe.1.as_ref().cmp(original_text)
-                                            )
-                                        }) {
-                                    revert_changes.insert(i, (hunk.buffer_range, Arc::from(original_text)));
+                                    probe
+                                        .0
+                                        .start
+                                        .cmp(&hunk.buffer_range.start)
+                                        .then(probe.0.end.cmp(&hunk.buffer_range.end))
+                                        .then(probe.1.as_ref().cmp(original_text))
+                                }) {
+                                    revert_changes
+                                        .insert(i, (hunk.buffer_range, Arc::from(original_text)));
                                 }
                             }
                         }
@@ -4964,15 +4971,17 @@ impl Editor {
             }
         });
 
-
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
-                editor.edit(revert_changes.into_iter()
-                    .map(|(buffer_row, text)| (
-                        Point::new(buffer_row.start, 0)..Point::new(buffer_row.end, 0),
-                        text
-                    )),
-                cx);
+                editor.edit(
+                    dbg!(revert_changes).into_iter().map(|(buffer_row, text)| {
+                        (
+                            Point::new(buffer_row.start, 0)..Point::new(buffer_row.end, 0),
+                            text,
+                        )
+                    }),
+                    cx,
+                );
                 editor.change_selections(None, cx, |selections| selections.refresh());
             });
         }

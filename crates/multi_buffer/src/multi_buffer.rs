@@ -3230,22 +3230,22 @@ impl MultiBufferSnapshot {
                     let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
 
                     if row_range.start > multibuffer_start.row {
-                        let buffer_start_point =
-                            excerpt_start_point + Point::new(row_range.start - multibuffer_start.row, 0);
+                        let buffer_start_point = excerpt_start_point
+                            + Point::new(row_range.start - multibuffer_start.row, 0);
                         buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
                     }
 
                     if row_range.end < multibuffer_end.row {
-                        let buffer_end_point =
-                            excerpt_start_point + Point::new(row_range.end - multibuffer_start.row, 0);
+                        let buffer_end_point = excerpt_start_point
+                            + Point::new(row_range.end - multibuffer_start.row, 0);
                         buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
                     }
                     excerpt_start_point.row..excerpt_end_point.row
-                },
-                cmp::Ordering::Equal if row_range.end == 0  => {
+                }
+                cmp::Ordering::Equal if row_range.end == 0 => {
                     buffer_end = buffer_start;
                     0..0
-                },
+                }
                 cmp::Ordering::Greater | cmp::Ordering::Equal => return None,
             };
 
@@ -3257,10 +3257,7 @@ impl MultiBufferSnapshot {
                         0..1
                     } else {
                         let start = multibuffer_start.row
-                            + hunk
-                                .buffer_range
-                                .start
-                                .saturating_sub(excerpt_rows.start);
+                            + hunk.buffer_range.start.saturating_sub(excerpt_rows.start);
                         let end = multibuffer_start.row
                             + hunk
                                 .buffer_range
