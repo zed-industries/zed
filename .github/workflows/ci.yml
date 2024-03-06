@@ -235,7 +235,7 @@ jobs:
 
   bundle-deb:
     name: Create a *.deb Linux bundle
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # keep older version for lower libc that's compatible with older distros
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:

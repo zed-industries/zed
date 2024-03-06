@@ -96,7 +96,7 @@ jobs:
   bundle-deb:
     name: Create a *.deb Linux bundle
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # keep older version for lower libc that's compatible with older distros
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -138,7 +138,7 @@ jobs:
   promote-bundles:
     name: Create a *.deb Linux bundle
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     needs: [bundle-mac, bundle-deb]
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
