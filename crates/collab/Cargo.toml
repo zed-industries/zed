@@ -17,7 +17,6 @@ name = "collab"
 name = "seed"
 
 [dependencies]
-console-subscriber = "0.2"
 anyhow.workspace = true
 async-tungstenite = "0.16"
 aws-config = { version = "1.1.5" }
