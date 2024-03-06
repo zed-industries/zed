@@ -155,12 +155,12 @@ impl DispatchTree {
     }
 
     pub fn move_to_node(&mut self, node_id: DispatchNodeId) {
-        if Some(node_id) == self.active_node_id().map(|node| DispatchNodeId(node.0 + 1)) {
-            let next_node_parent = self.nodes[node_id.0].parent;
-            while self.node_stack.last().copied() != next_node_parent {
-                self.pop_node();
-            }
+        let next_node_parent = self.nodes[node_id.0].parent;
+        while self.node_stack.last().copied() != next_node_parent && !self.node_stack.is_empty() {
+            self.pop_node();
+        }
 
+        if self.node_stack.last().copied() == next_node_parent {
             self.node_stack.push(node_id);
             let active_node = &self.nodes[node_id.0];
             if let Some(view_id) = active_node.view_id {
@@ -170,9 +170,7 @@ impl DispatchTree {
                 self.context_stack.push(context);
             }
         } else {
-            self.node_stack.clear();
-            self.context_stack.clear();
-            self.view_stack.clear();
+            debug_assert_eq!(self.node_stack.len(), 0);
 
             let mut current_node_id = Some(node_id);
             while let Some(node_id) = current_node_id {
