@@ -1,4 +1,6 @@
+use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
+use terminal_view::terminal_panel;
 
 pub fn app_menus() -> Vec<Menu<'static>> {
     use zed_actions::Quit;
@@ -18,7 +20,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
                         MenuItem::action("Open Local Settings", super::OpenLocalSettings),
-                        MenuItem::action("Select Theme", theme_selector::Toggle),
+                        MenuItem::action("Select Theme...", theme_selector::Toggle),
                     ],
                 }),
                 MenuItem::action("Extensions", extensions_ui::Extensions),
@@ -122,7 +124,9 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 }),
                 MenuItem::separator(),
                 MenuItem::action("Project Panel", project_panel::ToggleFocus),
-                MenuItem::action("Command Palette", command_palette::Toggle),
+                MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
+                MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+                MenuItem::separator(),
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
                 MenuItem::separator(),
             ],
@@ -133,13 +137,16 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Back", workspace::GoBack),
                 MenuItem::action("Forward", workspace::GoForward),
                 MenuItem::separator(),
-                MenuItem::action("Go to File", file_finder::Toggle),
+                MenuItem::action("Command Palette...", command_palette::Toggle),
+                MenuItem::separator(),
+                MenuItem::action("Go to File...", file_finder::Toggle),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
-                MenuItem::action("Go to Symbol in Editor", outline::Toggle),
+                MenuItem::action("Go to Symbol in Editor...", outline::Toggle),
+                MenuItem::action("Go to Line/Column...", go_to_line::Toggle),
+                MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
                 MenuItem::action("Find All References", editor::actions::FindAllReferences),
-                MenuItem::action("Go to Line/Column", go_to_line::Toggle),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic),
                 MenuItem::action("Previous Problem", editor::actions::GoToPrevDiagnostic),
@@ -156,8 +163,6 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Help",
             items: vec![
-                MenuItem::action("Command Palette", command_palette::Toggle),
-                MenuItem::separator(),
                 MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
