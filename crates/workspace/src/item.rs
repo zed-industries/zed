@@ -437,6 +437,7 @@ impl<T: Item> ItemHandle for View<T> {
             let mut send_follower_updates = None;
             if let Some(item) = self.to_followable_item_handle(cx) {
                 let is_project_item = item.is_project_item(cx);
+                let item = item.downgrade();
 
                 send_follower_updates = Some(cx.spawn({
                     let pending_update = pending_update.clone();
@@ -447,6 +448,9 @@ impl<T: Item> ItemHandle for View<T> {
                             }
 
                             workspace.update(&mut cx, |workspace, cx| {
+                                let item = item.upgrade().expect(
+                                    "item to be alive, otherwise task would have been dropped",
+                                );
                                 workspace.update_followers(
                                     is_project_item,
                                     proto::update_followers::Variant::UpdateView(
@@ -726,6 +730,7 @@ pub trait FollowableItem: Item {
 
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId>;
+    fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle>;
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
@@ -752,6 +757,10 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
                 id: self.item_id().as_u64(),
             })
         })
+    }
+
+    fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle> {
+        Box::new(self.downgrade())
     }
 
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
@@ -790,6 +799,16 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
 
     fn is_project_item(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_project_item(cx)
+    }
+}
+
+pub trait WeakFollowableItemHandle: Send + Sync {
+    fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>>;
+}
+
+impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
+    fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>> {
+        Some(Box::new(self.upgrade()?))
     }
 }
 
