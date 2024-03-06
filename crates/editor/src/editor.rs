@@ -4909,7 +4909,7 @@ impl Editor {
     }
 
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
-        let mut revert_changes = Vec::new();
+        let mut revert_changes: Vec<(Range<u32>, Arc<str>)> = Vec::new();
 
         self.buffer.update(cx, |multi_buffer, cx| {
             let snapshot = multi_buffer.snapshot(cx);
@@ -4925,9 +4925,10 @@ impl Editor {
 
             let mut processed_buffer_rows = HashSet::default();
             for (buffer, selected_rows) in selected_buffer_rows {
+                let query_rows = selected_rows.start..selected_rows.end + 1;
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
-                        for hunk in snapshot.git_diff_hunks_in_range(selected_rows.clone()) {
+                        for hunk in snapshot.git_diff_hunks_in_range(query_rows.clone()) {
                             // TODO kb comment about selected_rows being exclusive, and `git_diff_hunks_in_range` using inclusive ranges logic
                             if hunk.status() == DiffHunkStatus::Removed
                                     || hunk.buffer_range.contains(&selected_rows.start)
@@ -4935,15 +4936,20 @@ impl Editor {
                                 let Some(original_text) = diff_base.get(hunk.diff_base_byte_range.clone()) else {
                                     return;
                                 };
-                                for row in selected_rows.start..selected_rows.end + 1 {
+                                for row in hunk.buffer_range.start..hunk.buffer_range.end {
                                     if !processed_buffer_rows.insert(row) {
                                         return;
                                     }
                                 }
-                                let buffer_range = Point::new
-                                    (hunk.buffer_range.start, 0)
-                                    ..Point::new(hunk.buffer_range.end, 0);
-                                revert_changes.push((buffer_range, Arc::from(original_text)));
+
+                                if let Err(i) = revert_changes.binary_search_by(|probe| {
+                                            probe.0.start.cmp(&hunk.buffer_range.start)
+                                                .then(probe.0.end.cmp(&hunk.buffer_range.end))
+                                                .then(probe.1.as_ref().cmp(original_text)
+                                            )
+                                        }) {
+                                    revert_changes.insert(i, (hunk.buffer_range, Arc::from(original_text)));
+                                }
                             }
                         }
                     }
@@ -4953,7 +4959,12 @@ impl Editor {
 
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
-                editor.edit(revert_changes, cx);
+                editor.edit(revert_changes.into_iter()
+                    .map(|(buffer_row, text)| (
+                        Point::new(buffer_row.start, 0)..Point::new(buffer_row.end, 0),
+                        text
+                    )),
+                cx);
                 editor.change_selections(None, cx, |selections| selections.refresh());
             });
         }
