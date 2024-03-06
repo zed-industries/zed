@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::{
-    core::PCWSTR,
+    core::{HSTRING, PCWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
@@ -28,13 +28,14 @@ use windows::{
         },
         UI::{
             Input::KeyboardAndMouse::GetDoubleClickTime,
+            Shell::ShellExecuteW,
             WindowsAndMessaging::{
                 DispatchMessageW, GetMessageW, LoadImageW, MsgWaitForMultipleObjects,
                 PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage, HCURSOR,
                 IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
                 IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-                SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT,
-                WM_SETTINGCHANGE,
+                SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+                WM_QUIT, WM_SETTINGCHANGE,
             },
         },
     },
@@ -301,9 +302,16 @@ impl Platform for WindowsPlatform {
         WindowAppearance::Dark
     }
 
-    // todo!("windows")
     fn open_url(&self, url: &str) {
-        // todo!("windows")
+        let url_string = url.to_string();
+        self.background_executor()
+            .spawn(async move {
+                if url_string.is_empty() {
+                    return;
+                }
+                open_target(url_string.as_str());
+            })
+            .detach();
     }
 
     // todo!("windows")
@@ -321,9 +329,22 @@ impl Platform for WindowsPlatform {
         unimplemented!()
     }
 
-    // todo!("windows")
     fn reveal_path(&self, path: &Path) {
-        unimplemented!()
+        let Ok(file_full_path) = path.canonicalize() else {
+            log::error!("unable to parse file path");
+            return;
+        };
+        self.background_executor()
+            .spawn(async move {
+                let Some(path) = file_full_path.to_str() else {
+                    return;
+                };
+                if path.is_empty() {
+                    return;
+                }
+                open_target(path);
+            })
+            .detach();
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
@@ -487,4 +508,20 @@ impl Platform for WindowsPlatform {
 
 unsafe fn load_cursor(name: PCWSTR) -> Result<HANDLE> {
     LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED).map_err(|e| anyhow!(e))
+}
+
+fn open_target(target: &str) {
+    unsafe {
+        let ret = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            &HSTRING::from(target),
+            None,
+            None,
+            SW_SHOWDEFAULT,
+        );
+        if ret.0 <= 32 {
+            log::error!("Unable to open target: {}", std::io::Error::last_os_error());
+        }
+    }
 }
