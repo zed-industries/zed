@@ -8,12 +8,14 @@
     (_) @name) @item
 
 (class_declaration
-    (modifiers)? @context
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     "class" @context
-    name: (_) @name
-    superclass: (_)? @name
-    interfaces: (_)? @name
-    permits: (_)? @name) @item
+    name: (_) @name) @item
 
 (field_declaration
     (modifiers)? @context
@@ -21,96 +23,98 @@
     declarator: (_) @context) @item
 
 (constructor_declaration
-    (modifiers)? @context
-    type_parameters: (_)? @context
-    name: (_) @name
-    ; TODO: fix multiline parameters causing space between parenthesis
-    parameters: (formal_parameters
-      "(" @context
-      [
-        (receiver_parameter) @context
-        (
-          (
-            (receiver_parameter) @context
-            "," @context
-          )?
-          (
+    (modifiers
             [
-              (formal_parameter) @context
-              (spread_parameter) @context
+                "private"
+                "protected"
+                "public"
+            ]+ @context)?
+        type: (_) @context
+        name: (_) @name
+        ; TODO: fix multiline parameters causing space between parenthesis
+        parameters: (formal_parameters
+            "(" @context
+            [
+                (receiver_parameter) @context
+                (
+                    (
+                        (receiver_parameter) @context
+                        "," @context
+                    )?
+                    (
+                        [
+                            (formal_parameter) @context
+                            (spread_parameter) @context
+                        ]
+                        (
+                            "," @context
+                            [
+                                (formal_parameter) @context
+                                (spread_parameter) @context
+                            ]
+                        )*
+                    )?
+                )
             ]
-            (
-              "," @context
-              [
-                (formal_parameter) @context
-                (spread_parameter) @context
-              ]
-            )*
-          )?
-        )
-      ]
-      ")" @context)
-    (throws)? @context) @item
+            ")" @context)) @item
 
 ; TODO: definitely needs more testing in projects with methods that actually use
 ;       all of these rules
 (method_declaration
-    (modifiers _+ @context)?
-    (_
-      type_parameters: (_) @context
-      [
-        (marker_annotation) @context
-        (annotation) @context
-      ]*
-    )?
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     type: (_) @context
     name: (_) @name
     ; TODO: fix multiline parameters causing space between parenthesis
     parameters: (formal_parameters
-      "(" @context
-      [
-        (receiver_parameter) @context
-        (
-          (
+        "(" @context
+        [
             (receiver_parameter) @context
-            "," @context
-          )?
-          (
-            [
-              (formal_parameter) @context
-              (spread_parameter) @context
-            ]
             (
-              "," @context
-              [
-                (formal_parameter) @context
-                (spread_parameter) @context
-              ]
-            )*
-          )?
-        )
-      ]
-      ")" @context)
-    dimensions: (dimensions
-      (
-        (_)* @context
-        "[" @context
-        "]" @context
-      )+)?
-    (throws)? @context) @item
+                (
+                    (receiver_parameter) @context
+                    "," @context
+                )?
+                (
+                    [
+                        (formal_parameter) @context
+                        (spread_parameter) @context
+                    ]
+                    (
+                        "," @context
+                        [
+                            (formal_parameter) @context
+                            (spread_parameter) @context
+                        ]
+                    )*
+                )?
+            )
+        ]
+        ")" @context)) @item
 
 (record_declaration
-    (modifiers)? @context
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     "record" @context
-    name: (_) @name
-    interfaces: (_)? @name) @item
+    name: (_) @name) @item
 
 (interface_declaration
-    (modifiers)? @context
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     "interface" @context
-    name: (_) @name
-    (extends_interfaces)? @context
-    permits: (_)? @name) @item
+    name: (_) @name) @item
 
 (annotation_type_declaration
     (modifiers)? @context
@@ -118,7 +122,11 @@
     name: (_) @name) @item
 
 (enum_declaration
-    (modifiers)? @context
+    (modifiers
+        [
+            "private"
+            "protected"
+            "public"
+        ]+ @context)?
     "enum" @context
-    name: (_) @name
-    interfaces: (_)? @name) @item
+    name: (_) @name) @item
