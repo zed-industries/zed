@@ -7,7 +7,7 @@ use futures::io::BufReader;
 use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
@@ -30,8 +30,14 @@ const WASI_ADAPTER_URL: &str =
 ///
 /// Once Clang 17 and its wasm target are available via system package managers, we won't need
 /// to download this.
-const WASI_SDK_URL: &str =
-    "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-21/wasi-sdk-21.0-linux.tar.gz";
+const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-21/";
+const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(target_os = "macos") {
+    Some("wasi-sdk-21.0-macos.tar.gz")
+} else if cfg!(target_os = "linux") {
+    Some("wasi-sdk-21.0-linux.tar.gz")
+} else {
+    None
+};
 
 pub struct ExtensionBuilder {
     cache_dir: PathBuf,
@@ -159,25 +165,27 @@ impl ExtensionBuilder {
             &grammar_metadata.rev,
         )?;
 
-        let mut parser_path = grammar_repo_dir.clone();
-        let mut scanner_path = grammar_repo_dir.clone();
-        parser_path.extend(["src", "parser.c"]);
-        scanner_path.extend(["src", "scanner.c"]);
+        let src_path = grammar_repo_dir.join("src");
+        let parser_path = src_path.join("parser.c");
+        let scanner_path = src_path.join("scanner.c");
 
         log::info!("compiling {grammar_name} parser");
         let clang_output = Command::new(&clang_path)
-            .args(["-fPIC", "-shared", "-Os", "-o"])
-            .arg(&grammar_wasm_path)
+            .args(["-fPIC", "-shared", "-Os"])
             .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
+            .arg("-o")
+            .arg(&grammar_wasm_path)
+            .arg("-I")
+            .arg(&src_path)
             .arg(&parser_path)
             .args(scanner_path.exists().then_some(scanner_path))
             .output()
             .context("failed to run clang")?;
-        if clang_output.status.success() {
+        if !clang_output.status.success() {
             bail!(
                 "failed to compile {} parser with clang: {}",
                 grammar_name,
-                String::from_utf8_lossy(&clang_output.stderr)
+                String::from_utf8_lossy(&clang_output.stderr),
             );
         }
 
@@ -208,7 +216,9 @@ impl ExtensionBuilder {
                 );
             }
         } else {
-            fs::create_dir(&directory).context("failed to create directory")?;
+            fs::create_dir_all(&directory).with_context(|| {
+                format!("failed to create grammar directory {}", directory.display(),)
+            })?;
             let init_output = Command::new("git")
                 .arg("init")
                 .current_dir(&directory)
@@ -224,11 +234,12 @@ impl ExtensionBuilder {
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
-                .output()?;
+                .output()
+                .context("failed to execute `git remote add`")?;
             if !remote_add_output.status.success() {
                 bail!(
-                    "failed to run `git remote add` in directory '{}'",
-                    directory.display()
+                    "failed to add remote {url} for git repository {}",
+                    git_dir.display()
                 );
             }
         }
@@ -237,7 +248,8 @@ impl ExtensionBuilder {
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", &rev])
-            .output()?;
+            .output()
+            .context("failed to execute `git fetch`")?;
         if !fetch_output.status.success() {
             bail!(
                 "failed to fetch revision {} in directory '{}'",
@@ -251,7 +263,8 @@ impl ExtensionBuilder {
             .arg(&git_dir)
             .args(["checkout", &rev])
             .current_dir(&directory)
-            .output()?;
+            .output()
+            .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
             bail!(
                 "failed to checkout revision {} in directory '{}'",
@@ -324,6 +337,12 @@ impl ExtensionBuilder {
     }
 
     async fn install_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
+        let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
+            format!("{WASI_SDK_URL}/{asset_name}")
+        } else {
+            bail!("wasi-sdk is not available for platform {}", env::consts::OS);
+        };
+
         let wasi_sdk_dir = self.cache_dir.join("wasi-sdk");
         let mut clang_path = wasi_sdk_dir.clone();
         clang_path.extend(["bin", "clang-17"]);
@@ -334,10 +353,7 @@ impl ExtensionBuilder {
 
         fs::remove_dir_all(&wasi_sdk_dir).ok();
 
-        let mut response = self
-            .http
-            .get(WASI_SDK_URL, AsyncBody::default(), true)
-            .await?;
+        let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
 
         let mut tar_out_dir = wasi_sdk_dir.clone();
         tar_out_dir.set_extension(".output");
