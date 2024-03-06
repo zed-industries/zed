@@ -139,26 +139,6 @@ impl ReleaseChannel {
         }
     }
 
-    /// Returns the URL scheme for this [`ReleaseChannel`].
-    pub fn url_scheme(&self) -> &'static str {
-        match self {
-            ReleaseChannel::Dev => "zed-dev://",
-            ReleaseChannel::Nightly => "zed-nightly://",
-            ReleaseChannel::Preview => "zed-preview://",
-            ReleaseChannel::Stable => "zed://",
-        }
-    }
-
-    /// Returns the link prefix for this [`ReleaseChannel`].
-    pub fn link_prefix(&self) -> &'static str {
-        match self {
-            ReleaseChannel::Dev => "https://zed.dev/dev/",
-            ReleaseChannel::Nightly => "https://zed.dev/nightly/",
-            ReleaseChannel::Preview => "https://zed.dev/preview/",
-            ReleaseChannel::Stable => "https://zed.dev/",
-        }
-    }
-
     /// Returns the query parameter for this [`ReleaseChannel`].
     pub fn release_query_param(&self) -> Option<&'static str> {
         match self {
@@ -168,25 +148,4 @@ impl ReleaseChannel {
             Self::Stable => None,
         }
     }
-}
-
-/// Parses the given link into a Zed link.
-///
-/// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
-/// Returns [`None`] otherwise.
-pub fn parse_zed_link(link: &str) -> Option<&str> {
-    for release in [
-        ReleaseChannel::Dev,
-        ReleaseChannel::Nightly,
-        ReleaseChannel::Preview,
-        ReleaseChannel::Stable,
-    ] {
-        if let Some(stripped) = link.strip_prefix(release.link_prefix()) {
-            return Some(stripped);
-        }
-        if let Some(stripped) = link.strip_prefix(release.url_scheme()) {
-            return Some(stripped);
-        }
-    }
-    None
 }

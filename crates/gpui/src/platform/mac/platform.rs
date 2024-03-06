@@ -525,6 +525,49 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
+        // API only available post Monterey
+        // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
+        let (done_tx, done_rx) = oneshot::channel();
+        if self.os_version().ok() < Some(SemanticVersion::new(12, 0, 0)) {
+            return Task::ready(Err(anyhow!(
+                "macOS 12.0 or later is required to register URL schemes"
+            )));
+        }
+
+        let bundle_id = unsafe {
+            let bundle: id = msg_send![class!(NSBundle), mainBundle];
+            let bundle_id: id = msg_send![bundle, bundleIdentifier];
+            if bundle_id == nil {
+                return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
+            }
+            bundle_id
+        };
+
+        unsafe {
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let scheme: id = ns_string(scheme);
+            let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+            let done_tx = Cell::new(Some(done_tx));
+            let block = ConcreteBlock::new(move |error: id| {
+                let result = if error == nil {
+                    Ok(())
+                } else {
+                    let msg: id = msg_send![error, localizedDescription];
+                    Err(anyhow!("Failed to register: {:?}", msg))
+                };
+
+                if let Some(done_tx) = done_tx.take() {
+                    let _ = done_tx.send(result);
+                }
+            });
+            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
+        }
+
+        self.background_executor()
+            .spawn(async { crate::Flatten::flatten(done_rx.await.map_err(|e| anyhow!(e))) })
+    }
+
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.0.lock().open_urls = Some(callback);
     }

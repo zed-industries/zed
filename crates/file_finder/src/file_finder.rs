@@ -880,6 +880,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     h_flex()
                         .gap_2()
+                        .py_px()
                         .child(HighlightedLabel::new(file_name, file_name_positions))
                         .child(
                             HighlightedLabel::new(full_path, full_path_positions)

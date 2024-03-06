@@ -670,7 +670,7 @@ impl Terminal {
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
         // todo("windows")
         #[cfg(windows)]
-        let mut pid = -1;
+        let mut pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() } as i32;
         if pid < 0 {
             pid = self.shell_pid as i32;
         }

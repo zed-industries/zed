@@ -40,7 +40,7 @@ const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 pub struct ProjectPanel {
     project: Model<Project>,
     fs: Arc<dyn Fs>,
-    list: UniformListScrollHandle,
+    scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
@@ -166,13 +166,7 @@ impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
-            cx.observe(&project, |this, _, cx| {
-                this.update_visible_entries(None, cx);
-                cx.notify();
-            })
-            .detach();
             let focus_handle = cx.focus_handle();
-
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
             cx.subscribe(&project, |this, project, event, cx| match event {
@@ -190,6 +184,10 @@ impl ProjectPanel {
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                project::Event::WorktreeUpdatedEntries(_, _) | project::Event::WorktreeAdded => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
@@ -226,7 +224,7 @@ impl ProjectPanel {
             let mut this = Self {
                 project: project.clone(),
                 fs: workspace.app_state().fs.clone(),
-                list: UniformListScrollHandle::new(),
+                scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
@@ -866,7 +864,7 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            self.list.scroll_to_item(index);
+            self.scroll_handle.scroll_to_item(index);
             cx.notify();
         }
     }
@@ -1567,7 +1565,7 @@ impl Render for ProjectPanel {
                         },
                     )
                     .size_full()
-                    .track_scroll(self.list.clone()),
+                    .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     overlay()

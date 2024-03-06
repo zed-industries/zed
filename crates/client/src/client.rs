@@ -1437,21 +1437,29 @@ async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
         .await
 }
 
-const WORKTREE_URL_PREFIX: &str = "zed://worktrees/";
+/// prefix for the zed:// url scheme
+pub static ZED_URL_SCHEME: &str = "zed";
 
-pub fn encode_worktree_url(id: u64, access_token: &str) -> String {
-    format!("{}{}/{}", WORKTREE_URL_PREFIX, id, access_token)
-}
-
-pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
-    let path = url.trim().strip_prefix(WORKTREE_URL_PREFIX)?;
-    let mut parts = path.split('/');
-    let id = parts.next()?.parse::<u64>().ok()?;
-    let access_token = parts.next()?;
-    if access_token.is_empty() {
-        return None;
+/// Parses the given link into a Zed link.
+///
+/// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
+/// Returns [`None`] otherwise.
+pub fn parse_zed_link<'a>(link: &'a str, cx: &AppContext) -> Option<&'a str> {
+    let server_url = &ClientSettings::get_global(cx).server_url;
+    if let Some(stripped) = link
+        .strip_prefix(server_url)
+        .and_then(|result| result.strip_prefix('/'))
+    {
+        return Some(stripped);
     }
-    Some((id, access_token.to_string()))
+    if let Some(stripped) = link
+        .strip_prefix(ZED_URL_SCHEME)
+        .and_then(|result| result.strip_prefix("://"))
+    {
+        return Some(stripped);
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -1627,17 +1635,6 @@ mod tests {
         executor.run_until_parked();
         assert_eq!(*auth_count.lock(), 2);
         assert_eq!(*dropped_auth_count.lock(), 1);
-    }
-
-    #[test]
-    fn test_encode_and_decode_worktree_url() {
-        let url = encode_worktree_url(5, "deadbeef");
-        assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
-        assert_eq!(
-            decode_worktree_url(&format!("\n {}\t", url)),
-            Some((5, "deadbeef".to_string()))
-        );
-        assert_eq!(decode_worktree_url("not://the-right-format"), None);
     }
 
     #[gpui::test]

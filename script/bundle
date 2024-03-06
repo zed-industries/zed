@@ -173,6 +173,7 @@ if [ "$local_arch" = false ]; then
     cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
 else
     cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+    cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
 fi
 
 # Note: The app identifier for our development builds is the same as the app identifier for nightly.

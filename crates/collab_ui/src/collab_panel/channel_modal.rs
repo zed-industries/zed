@@ -197,7 +197,7 @@ impl Render for ChannelModal {
                                                 .read(cx)
                                                 .channel_for_id(channel_id)
                                             {
-                                                let item = ClipboardItem::new(channel.link());
+                                                let item = ClipboardItem::new(channel.link(cx));
                                                 cx.write_to_clipboard(item);
                                             }
                                         })),

@@ -265,7 +265,7 @@ impl ChannelView {
             return;
         };
 
-        let link = channel.notes_link(closest_heading.map(|heading| heading.text));
+        let link = channel.notes_link(closest_heading.map(|heading| heading.text), cx);
         cx.write_to_clipboard(ClipboardItem::new(link));
         self.workspace
             .update(cx, |workspace, cx| {

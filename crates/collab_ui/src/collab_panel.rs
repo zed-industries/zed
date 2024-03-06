@@ -7,8 +7,8 @@ use crate::{
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelStore, HostedProjectId};
-use client::{ChannelId, Client, Contact, User, UserStore};
+use channel::{Channel, ChannelEvent, ChannelStore};
+use client::{ChannelId, Client, Contact, HostedProjectId, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -911,7 +911,7 @@ impl CollabPanel {
                 this.workspace
                     .update(cx, |workspace, cx| {
                         let app_state = workspace.app_state().clone();
-                        workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+                        workspace::join_in_room_project(project_id, host_user_id, app_state, cx)
                             .detach_and_prompt_err("Failed to join project", cx, |_, _| None);
                     })
                     .ok();
@@ -1047,8 +1047,15 @@ impl CollabPanel {
         .indent_level(2)
         .indent_step_size(px(20.))
         .selected(is_selected)
-        .on_click(cx.listener(move |_this, _, _cx| {
-            // todo()
+        .on_click(cx.listener(move |this, _, cx| {
+            if let Some(workspace) = this.workspace.upgrade() {
+                let app_state = workspace.read(cx).app_state().clone();
+                workspace::join_hosted_project(id, app_state, cx).detach_and_prompt_err(
+                    "Failed to open project",
+                    cx,
+                    |_, _| None,
+                )
+            }
         }))
         .start_slot(
             h_flex()
@@ -1461,7 +1468,7 @@ impl CollabPanel {
                     } => {
                         if let Some(workspace) = self.workspace.upgrade() {
                             let app_state = workspace.read(cx).app_state().clone();
-                            workspace::join_remote_project(
+                            workspace::join_in_room_project(
                                 *project_id,
                                 *host_user_id,
                                 app_state,
@@ -2023,7 +2030,7 @@ impl CollabPanel {
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
         };
-        let item = ClipboardItem::new(channel.link());
+        let item = ClipboardItem::new(channel.link(cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2206,7 +2213,7 @@ impl CollabPanel {
 
                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
 
-                    channel_link = Some(channel.link());
+                    channel_link = Some(channel.link(cx));
                     (channel_icon, channel_tooltip_text) = match channel.visibility {
                         proto::ChannelVisibility::Public => {
                             (Some("icons/public.svg"), Some("Copy public channel link."))

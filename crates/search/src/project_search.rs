@@ -493,7 +493,7 @@ impl Item for ProjectSearchView {
             });
         let tab_name = last_query
             .filter(|query| !query.is_empty())
-            .unwrap_or_else(|| "Project search".into());
+            .unwrap_or_else(|| "Project Search".into());
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
@@ -539,11 +539,12 @@ impl Item for ProjectSearchView {
 
     fn save(
         &mut self,
+        format: bool,
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(project, cx))
+            .update(cx, |editor, cx| editor.save(format, project, cx))
     }
 
     fn save_as(

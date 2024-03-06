@@ -89,6 +89,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::Item;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -5031,7 +5032,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5052,14 +5053,20 @@ impl Editor {
                 }
             }
 
-            // Copy the text from the selected row region and splice it at the start of the region.
+            // Copy the text from the selected row region and splice it either at the start
+            // or end of the region.
             let start = Point::new(rows.start, 0);
             let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
             let text = buffer
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start..start, text));
+            let insert_location = if action.move_upwards {
+                Point::new(rows.end, 0)
+            } else {
+                start
+            };
+            edits.push((insert_location..insert_location, text));
         }
 
         self.transact(cx, |this, cx| {
@@ -8657,22 +8664,23 @@ impl Editor {
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
-        let project = project.read(cx);
-
-        let worktree = project
-            .visible_worktrees(cx)
-            .next()
-            .ok_or_else(|| anyhow!("no worktree"))?;
-
-        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-        cwd.push(".git");
+        let (path, repo) = maybe!({
+            let project_handle = self.project.as_ref()?.clone();
+            let project = project_handle.read(cx);
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let path = buffer
+                .read(cx)
+                .file()?
+                .as_local()?
+                .path()
+                .to_str()?
+                .to_string();
+            let repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
+            Some((path, repo))
+        })
+        .ok_or_else(|| anyhow!("unable to open git repository"))?;
 
         const REMOTE_NAME: &str = "origin";
-        let repo = project
-            .fs()
-            .open_repo(&cwd)
-            .ok_or_else(|| anyhow!("no Git repo"))?;
         let origin_url = repo
             .lock()
             .remote_url(REMOTE_NAME)
@@ -8681,14 +8689,6 @@ impl Editor {
             .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-
-        let path = maybe!({
-            let buffer = self.buffer().read(cx).as_singleton()?;
-            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-            file.path().to_str().map(|path| path.to_string())
-        })
-        .ok_or_else(|| anyhow!("failed to determine file path"))?;
-
         let selections = self.selections.all::<Point>(cx);
         let selection = selections.iter().peekable().next();
 
@@ -8726,7 +8726,7 @@ impl Editor {
 
         match permalink {
             Ok(permalink) => {
-                cx.open_url(&permalink.to_string());
+                cx.open_url(permalink.as_ref());
             }
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");
