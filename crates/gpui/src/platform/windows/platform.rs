@@ -2,13 +2,7 @@
 #![allow(unused_variables)]
 
 use std::{
-    cell::RefCell,
-    collections::HashSet,
-    ffi::{c_uint, c_void},
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-    time::Duration,
+    alloc::GlobalAlloc, cell::RefCell, collections::HashSet, ffi::{c_uint, c_void, OsStr, OsString}, os::windows::ffi::{OsStrExt, OsStringExt}, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Duration
 };
 
 use anyhow::{anyhow, Result};
@@ -18,8 +12,10 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
-    System::Threading::{CreateEventW, INFINITE},
+    Foundation::{CloseHandle, GetLastError, HANDLE, HGLOBAL, HWND, WAIT_EVENT},
+    System::{
+        DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData}, Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GLOBAL_ALLOC_FLAGS}, Ole::CF_UNICODETEXT, Threading::{CreateEventW, INFINITE}
+    },
     UI::WindowsAndMessaging::{
         DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
         SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
@@ -396,14 +392,110 @@ impl Platform for WindowsPlatform {
         false
     }
 
-    // todo!("windows")
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        unimplemented!()
+        let wide_text: Vec<u16> = OsStr::new(item.text()).encode_wide().chain(Some(0)).collect();
+
+        let result = unsafe { OpenClipboard(None) };
+        if result.is_err() {
+            log::error!("OpenClipboard failed: {:#?}", unsafe { GetLastError() });
+            return;
+        }
+
+        let _ = unsafe { EmptyClipboard() };
+
+        // allocate memory to hold clipboard contents
+        // size is wide_text.len() * 2 because each character is 2 bytes (u16)
+        let handle = unsafe { GlobalAlloc(GLOBAL_ALLOC_FLAGS(0), wide_text.len() * 2).unwrap() };
+
+        // lock the handle to get a mutable pointer to the memory
+        let locked_data = unsafe { GlobalLock(handle) };
+
+        if !locked_data.is_null() {
+            // copy clipboard contents into the memory
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    wide_text.as_ptr(),
+                    locked_data.cast(),
+                    wide_text.len()
+                );
+            }
+
+            let result = unsafe { SetClipboardData(CF_UNICODETEXT.0.into(), HANDLE(locked_data as isize)) };
+            if result.is_err() {
+                log::error!("SetClipboardData failed: {:#?}", unsafe { GetLastError() });
+            }
+        }
+
+        unsafe {
+            GlobalUnlock(handle).log_err();
+            CloseClipboard().log_err();
+
+        }
+
     }
 
-    // todo!("windows")
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        unimplemented!()
+        // check if the clipboard has unicode
+        let is_clipboard_valid = unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT.0.into()).is_ok() };
+        if !is_clipboard_valid {
+            return None;
+        }
+
+        // open clipboard
+        let result = unsafe { OpenClipboard(None) };
+        if result.is_err() {
+            log::error!("OpenClipboard failed: {:#?}", unsafe { GetLastError() });
+            return None;
+        }
+
+        // get clipboard data as unicode
+        let clipboard_data = unsafe { GetClipboardData(CF_UNICODETEXT.0.into()) };
+        if clipboard_data.is_err() {
+            log::error!("GetClipboardData failed: {:#?}", unsafe { GetLastError() });
+            return None;
+        }
+
+        // convert from HANDLE to HGLOBAL
+        let clipboard_data_hglobal = HGLOBAL(clipboard_data.unwrap().0 as *mut c_void);
+
+        let locked_data: *mut c_void = unsafe { GlobalLock(clipboard_data_hglobal) };
+        if locked_data.is_null() {
+            log::error!("GlobalLock failed: {:#?}", unsafe { GetLastError() });
+            return None;
+        }
+
+        // get length of string by looking for first null (\0) byte
+        let mut len = 0;
+        let mut ptr = locked_data.cast::<u16>();
+
+        while unsafe { *ptr } != 0 {
+            len += 1;
+            ptr = unsafe { ptr.offset(1) };
+        }
+
+        // convert clipboard data to a string
+        let text: Option<String> = OsString::from_wide(
+            unsafe {
+                std::slice::from_raw_parts(
+                    locked_data.cast(),
+                    // find the first null byte in the clipboard data
+                    len
+                )
+            }
+        ).into_string().ok();
+
+        // close clipboard and unlock memory
+        unsafe {
+            GlobalUnlock(clipboard_data_hglobal);
+            CloseClipboard();
+        }
+
+        if let Some(t) = text {
+            Some(ClipboardItem::new(t))
+        } else {
+            None
+        }
+
     }
 
     // todo!("windows")
