@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
+    Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
     System::Threading::{CreateEventW, INFINITE},
     UI::WindowsAndMessaging::{
         DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
@@ -169,6 +169,12 @@ impl WindowsPlatform {
         }
     }
 
+    fn run_foreground_tasks(&self) {
+        for runnable in self.inner.main_receiver.drain() {
+            runnable.run();
+        }
+    }
+
     fn wait_message(&self) -> WindowsMessageWaitResult {
         let wait_result = unsafe {
             MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
@@ -207,9 +213,7 @@ impl Platform for WindowsPlatform {
         loop {
             match self.wait_message() {
                 WindowsMessageWaitResult::ForegroundExecution => {
-                    for runnable in self.inner.main_receiver.drain() {
-                        runnable.run();
-                    }
+                    self.run_foreground_tasks();
                 }
                 WindowsMessageWaitResult::WindowsMessage(msg) => {
                     if msg.message == WM_QUIT {
@@ -220,6 +224,8 @@ impl Platform for WindowsPlatform {
                         unsafe { TranslateMessage(&msg) };
                         unsafe { DispatchMessageW(&msg) };
                     }
+
+                    self.run_foreground_tasks();
                 }
                 WindowsMessageWaitResult::Error => {}
             }
