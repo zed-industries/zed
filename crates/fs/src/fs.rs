@@ -126,7 +126,13 @@ impl Fs for RealFs {
     }
 
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
-        Ok(smol::fs::unix::symlink(target, path).await?)
+        #[cfg(target_family = "unix")]
+        smol::fs::unix::symlink(target, path).await?;
+
+        #[cfg(target_family = "windows")]
+        Err(anyhow!("not supported yet on windows"))?;
+
+        Ok(())
     }
 
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
