@@ -109,6 +109,11 @@ jobs:
           clean: false
           submodules: "recursive"
 
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Configure linux
         shell: bash -euxo pipefail {0}
         run: script/linux
