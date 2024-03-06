@@ -94,7 +94,7 @@ impl EventEmitter<ChannelChatEvent> for ChannelChat {}
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelChat::handle_message_sent);
     client.add_model_message_handler(ChannelChat::handle_message_removed);
-    //TODO: client.add_model_message_handler(ChannelChat::handle_message_updated);
+    client.add_model_message_handler(ChannelChat::handle_message_updated);
 }
 
 impl ChannelChat {
@@ -564,6 +564,18 @@ impl ChannelChat {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.message_removed(message.payload.message_id, cx)
+        })?;
+        Ok(())
+    }
+
+    async fn handle_message_updated(
+        this: Model<Self>,
+        message: TypedEnvelope<proto::UpdateChannelMessage>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.message_update(message.payload.message_id, cx)
         })?;
         Ok(())
     }
