@@ -826,7 +826,6 @@ impl Buffer {
                             .is_some()
                     {
                         this.has_conflict = true;
-                        dbg!("Would report conflict");
                     }
 
                     this.did_reload(
