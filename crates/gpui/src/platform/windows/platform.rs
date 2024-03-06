@@ -2,9 +2,9 @@
 #![allow(unused_variables)]
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashSet,
-    ffi::{c_uint, c_void},
+    ffi::{c_uint, c_void, OsString},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -13,19 +13,27 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot::{self, Receiver};
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
-use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
-    System::Threading::{CreateEventW, INFINITE},
-    UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
-        SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-        SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+use windows::{core::{IUnknown, HRESULT, HSTRING}, Win32::{
+    Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
+    System::{
+        Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE},
+        Threading::{CreateEventW, INFINITE}
     },
-};
+    UI::{
+        Shell::{
+            FileOpenDialog, IFileOpenDialog, IShellItem, FILEOPENDIALOGOPTIONS, SIGDN
+        },
+        WindowsAndMessaging::{
+            DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
+            SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
+            SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+        }
+    }
+}};
 
 use crate::{
     try_get_window_inner, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
@@ -290,7 +298,7 @@ impl Platform for WindowsPlatform {
 
     // todo!("windows")
     fn open_url(&self, url: &str) {
-        // todo!("windows")
+        unimplemented!()
     }
 
     // todo!("windows")
@@ -298,9 +306,83 @@ impl Platform for WindowsPlatform {
         self.inner.callbacks.lock().open_urls = Some(callback);
     }
 
-    // todo!("windows")
+    #[allow(overflowing_literals)]
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
-        unimplemented!()
+        println!("prompt_for_paths {:?}", options);
+
+        let (tx, rx) = oneshot::channel();
+
+        self.foreground_executor().spawn(async move {
+            // initialize COM
+            let hr = unsafe { CoInitializeEx(Some(std::ptr::null_mut()), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+            if hr.is_err() { panic!("CoInitializeEx failed: {:?}", hr); }
+
+            let tx = Cell::new(Some(tx));
+
+            // create file open dialog
+            let folder_dialog: IFileOpenDialog = unsafe {
+                CoCreateInstance::<std::option::Option<&IUnknown>, IFileOpenDialog>(
+                    &FileOpenDialog,
+                    None,
+                    CLSCTX_ALL
+                ).unwrap()
+            };
+
+            // dialog options (https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-_fileopendialogoptions)
+            let mut dialog_options: u32 = 0x1000; // FOS_FILEMUSTEXIST
+
+            if options.multiple {
+                dialog_options |= 0x200; // FOS_ALLOWMULTISELECT
+            }
+
+            if options.directories {
+                dialog_options |= 0x20; // FOS_PICKFOLDERS
+            }
+
+            unsafe {
+                folder_dialog.SetOptions(FILEOPENDIALOGOPTIONS(dialog_options)).unwrap(); // FOS_PICKFOLDERS
+                folder_dialog.SetTitle(&HSTRING::from(OsString::from("Select a folder"))).unwrap();
+            }
+
+            let hr = unsafe { folder_dialog.Show(None) };
+
+            if hr.is_err() {
+                if hr.unwrap_err().code() == HRESULT(0x800704C7) { // user canceled error (we don't want to crash)
+                    if let Some(tx) = tx.take() {
+                        tx.send(None).unwrap();
+                    }
+                    return;
+                }
+            }
+
+            let mut results = unsafe { folder_dialog.GetResults().unwrap() };
+
+            let mut paths: Vec<PathBuf> = Vec::new();
+            for i in 0..unsafe { results.GetCount().unwrap() } {
+                let mut item: IShellItem = unsafe { results.GetItemAt(i).unwrap() };
+                let mut path = unsafe { item.GetDisplayName(SIGDN(0x80058000)).unwrap() }; // SIGDN_FILESYSPATH
+
+                paths.push(PathBuf::from(unsafe { path.to_string().unwrap() }));
+            }
+
+
+            if let Some(tx) = tx.take() {
+                if paths.len() == 0 {
+                    tx.send(None).unwrap();
+                } else {
+                    println!("paths: {:?}", paths);
+                    tx.send(Some(paths)).unwrap();
+                }
+            }
+
+            // uninitialize COM
+            unsafe {
+                CoUninitialize();
+            }
+
+        }).detach();
+
+        rx
     }
 
     // todo!("windows")
