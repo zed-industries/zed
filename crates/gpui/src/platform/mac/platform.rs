@@ -138,7 +138,7 @@ unsafe fn build_classes() {
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
         decl.add_method(
-            sel!(menuItemAction:),
+            sel!(openWorkspace:),
             test as extern "C" fn(&Object, Sel, *mut Object),
         );
         decl.add_method(
@@ -160,23 +160,19 @@ extern "C" fn application_dock_menu(
 ) -> *mut Object {
     println!("this: {this:?} command: {_cmd:?} sender: {_sender:?}");
     println!("{:?}", this.class().instance_methods()[0].implementation());
-    if this
-        .class()
-        .instance_method(sel!(menuItemAction:))
-        .is_none()
-    {
+    if this.class().instance_method(sel!(openWorkspace:)).is_none() {
         panic!("no such method");
     }
     println!(
         "{:?}",
         this.class()
-            .instance_method(sel!(menuItemAction:))
+            .instance_method(sel!(openWorkspace:))
             .unwrap()
             .name()
     );
     // unsafe {
     //     println!("trying to send messages...");
-    //     let _: () = msg_send![this, menuItemAction];
+    //     let _: () = msg_send![this, openWorkspace];
     //     println!("messages sent!");
     // }
     let menu = unsafe { NSMenu::new(nil).autorelease() };
@@ -184,7 +180,7 @@ extern "C" fn application_dock_menu(
         let item = NSMenuItem::alloc(nil)
             .initWithTitle_action_keyEquivalent_(
                 ns_string("hello"),
-                sel!(menuItemAction:),
+                sel!(openWorkspace:),
                 ns_string(""),
             )
             .autorelease();
@@ -1212,6 +1208,11 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
 
 extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
     unsafe {
+        let action: Sel = msg_send![item, action];
+        // hacky way to make sure dock menu items are always enabled
+        if action == sel!(openWorkspace:) {
+            return true;
+        }
         println!("{:?}", *item);
         let mut result = false;
         let platform = get_mac_platform(this);
@@ -1231,8 +1232,7 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
                 .get_or_insert(callback);
         }
         println!("{result:?}");
-        // result
-        true
+        result
     }
 }
 
