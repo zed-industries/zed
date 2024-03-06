@@ -109,9 +109,13 @@ jobs:
           clean: false
           submodules: "recursive"
 
+      - name: Configure linux
+        shell: bash -euxo pipefail {0}
+        run: script/linux
+
       - name: Set release channel to nightly
         run: |
-          set -eu
+          set -euo pipefail
           version=$(git rev-parse --short HEAD)
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
