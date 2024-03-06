@@ -872,7 +872,7 @@ impl Item for TerminalView {
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
         cx.spawn(|pane, mut cx| async move {
-            let cwd = TERMINAL_DB
+            let mut cwd = TERMINAL_DB
                 .get_working_directory(item_id, workspace_id)
                 .log_err()
                 .flatten()
@@ -887,6 +887,13 @@ impl Item for TerminalView {
                     .flatten()
                 });
 
+            // todo("windows")
+            // can we fix this from the source?
+            if let Some(ref cwd_path) = cwd {
+                if cwd_path.as_os_str().is_empty() {
+                    cwd = None;
+                }
+            }
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(cwd, None, window, cx)
             })??;
