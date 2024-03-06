@@ -1039,8 +1039,8 @@ fn manifest_from_old_manifest(
         },
         grammars: manifest_json
             .grammars
-            .into_iter()
-            .map(|(grammar_name, _)| (grammar_name, Default::default()))
+            .into_keys()
+            .map(|grammar_name| (grammar_name, Default::default()))
             .collect(),
         language_servers: Default::default(),
     }
