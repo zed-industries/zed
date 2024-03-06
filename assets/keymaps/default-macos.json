@@ -327,6 +327,7 @@
       "alt-shift-down": "editor::DuplicateLine",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
+      "ctrl-cmd-shift-right": "editor::UnwrapSyntaxNode",
       "cmd-d": [
         "editor::SelectNext",
         {

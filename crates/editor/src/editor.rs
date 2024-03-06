@@ -7123,6 +7123,64 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
+    pub fn unwrap_syntax_node(&mut self, _: &UnwrapSyntaxNode, cx: &mut ViewContext<Self>) {
+        self.transact(cx, |this, cx| {
+            let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let buffer = this.buffer.read(cx).snapshot(cx);
+            let old_selections = this.selections.all::<usize>(cx).into_boxed_slice();
+
+            let edits = old_selections
+                .iter()
+                // only consider the first selection for now
+                .take(1)
+                .map(|selection| {
+                    let old_range = if !selection.is_empty() {
+                        selection.start..selection.end
+                    } else if let Some(range) =
+                        buffer.range_for_syntax_ancestor(selection.start..selection.end)
+                    {
+                        range
+                    } else {
+                        selection.start..selection.end
+                    };
+                    let mut new_range = old_range.clone();
+                    while let Some(containing_range) =
+                        buffer.range_for_syntax_ancestor(new_range.clone())
+                    {
+                        new_range = containing_range;
+                        if !display_map.intersects_fold(new_range.start)
+                            && !display_map.intersects_fold(new_range.end)
+                        {
+                            break;
+                        }
+                    }
+
+                    (selection, old_range, new_range)
+                })
+                .collect::<Vec<_>>();
+
+            for (_, child, parent) in &edits {
+                let text = buffer.text_for_range(child.clone()).collect::<String>();
+                this.replace_text_in_range(Some(parent.clone()), &text, cx);
+            }
+
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(
+                    edits
+                        .iter()
+                        .map(|(s, old, new)| Selection {
+                            id: s.id,
+                            start: new.start,
+                            end: new.start + old.len(),
+                            goal: SelectionGoal::None,
+                            reversed: s.reversed,
+                        })
+                        .collect(),
+                );
+            });
+        });
+    }
+
     pub fn select_smaller_syntax_node(
         &mut self,
         _: &SelectSmallerSyntaxNode,
