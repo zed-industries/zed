@@ -1151,6 +1151,7 @@ mod tests {
             nonce: 5,
             mentions: Vec::new(),
             reply_to_message_id: None,
+            edited_at: None,
         };
 
         let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
@@ -1191,6 +1192,7 @@ mod tests {
             nonce: 5,
             mentions: Vec::new(),
             reply_to_message_id: None,
+            edited_at: None,
         };
 
         let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
