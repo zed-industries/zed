@@ -1523,8 +1523,11 @@ impl Buffer {
     }
 
     pub fn has_local_changes(&self) -> bool {
-        self.peek_undo_stack().map(|entry| entry.transaction()) != self.saved_undo_top.as_ref()
+        self.edits_since::<usize>(&self.saved_version)
+            .next()
+            .is_some()
     }
+
     pub fn content_differs(&self) -> bool {
         self.has_local_changes()
             || self
