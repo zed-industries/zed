@@ -36,7 +36,7 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use ::git::diff::DiffHunk;
+use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -4925,11 +4925,14 @@ impl Editor {
             for (buffer, selected_rows) in hunks {
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
-                        for hunk in snapshot.git_diff_hunks_in_range(selected_rows) {
-                            let original_text = &diff_base[hunk.diff_base_byte_range.clone()];
-                            let buffer_range = Point::new(hunk.buffer_range.start, 0)
-                                ..Point::new(hunk.buffer_range.end, 0);
-                            revert_changes.push((buffer_range, Arc::from(original_text)));
+                        for hunk in snapshot.git_diff_hunks_in_range(selected_rows.clone()) {
+                            if hunk.status() == DiffHunkStatus::Removed || hunk.buffer_range.contains(&selected_rows.start) || hunk.buffer_range.contains(&selected_rows.end) {
+                                let original_text = &diff_base[hunk.diff_base_byte_range.clone()];
+                                let buffer_range = Point::new
+                                    (hunk.buffer_range.start, 0)
+                                    ..Point::new(hunk.buffer_range.end, 0);
+                                revert_changes.push((buffer_range, Arc::from(original_text)));
+                            }
                         }
                     }
                 })
@@ -4939,6 +4942,7 @@ impl Editor {
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
                 editor.edit(revert_changes, cx);
+                editor.change_selections(None, cx, |selections| selections.refresh());
             });
         }
     }

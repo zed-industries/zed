@@ -4427,7 +4427,6 @@ impl Project {
                                     project_transaction.0.extend(new.0);
                                 }
 
-                                // TODO kb here too:
                                 if let Some(command) = action.lsp_action.command {
                                     project.update(&mut cx, |this, _| {
                                         this.last_workspace_edits_by_language_server

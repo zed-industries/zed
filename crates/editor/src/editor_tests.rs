@@ -8743,6 +8743,141 @@ async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx,
+    )
+    .await;
+    let base_text = indoc! {r#"struct Row1;
+struct Row2;
+struct Row3;
+
+struct Row5;
+struct Row6;
+struct Row7;
+
+struct Row9;
+struct Row10;
+struct Row11;"#};
+
+    // When addition hunks are not adjacent to carets, no hunk revert is performed
+    assert_hunk_revert(
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row3;
+                   struct Row3.1;
+                   struct Row3.2;
+                   ˇ
+                   struct Row5;
+                   struct Row6;
+                   struct Row7;
+                   ˇ
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row9;
+                   struct Row10;
+                   struct Row11;"#},
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row3;
+                   struct Row3.1;
+                   struct Row3.2;
+                   ˇ
+                   struct Row5;
+                   struct Row6;
+                   struct Row7;
+                   ˇ
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row9;
+                   struct Row10;
+                   struct Row11;"#},
+        base_text,
+        &mut cx,
+    );
+    // Same for selections
+    assert_hunk_revert(
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row3;
+                   struct Row3.1;
+                   struct Row3.2;
+                   «ˇ
+                   struct Row5;
+                   struct» Row6;
+                   «struct Row7;
+                   ˇ»
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row9;
+                   struct Row10;
+                   struct Row11;"#},
+        indoc! {r#"struct Row1;
+                   struct Row2;
+                   struct Row3;
+                   struct Row3.1;
+                   struct Row3.2;
+                   «ˇ
+                   struct Row5;
+                   struct» Row6;
+                   «struct Row7;
+                   ˇ»
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row9;
+                   struct Row10;
+                   struct Row11;"#},
+        base_text,
+        &mut cx,
+    );
+
+    // When carets and selections intersect the addition hunks, those are reverted.
+    assert_hunk_revert(
+        indoc! {r#"struct Row1;
+                   ˇ// something on the top
+                   struct Row2;
+                   struct Row3;
+                   struct Roˇw3.1;
+                   struct Row3.2;
+                   struct Row3.3;ˇ
+
+                   struct Row5;
+                   struct ˇRow5.1;
+                   struct Row5.2;
+                   struct «Rowˇ»5.3;
+                   struct Row6;
+                   struct Row7;
+                   ˇ
+                   struct Row9.1;
+                   struct «Rowˇ»9.2;
+                   struct «ˇRow»9.3;
+                   struct Row9;
+                   struct Row10;
+                   «ˇ// something on bottom»
+                   struct Row11;"#},
+        indoc! {r#"struct Row1;
+                   ˇstruct Row2;
+                   struct Row3;
+                   ˇˇ
+                   struct Row5;
+                   ˇˇstruct Row6;
+                   struct Row7;
+                   ˇ
+                   ˇˇstruct Row9;
+                   struct Row10;
+                   ˇstruct Row11;"#},
+        base_text,
+        &mut cx,
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -8912,4 +9047,18 @@ pub(crate) fn rust_lang() -> Arc<Language> {
         },
         Some(tree_sitter_rust::language()),
     ))
+}
+
+#[track_caller]
+fn assert_hunk_revert(not_reverted_text_with_selections: &str, expected_reverted_text_with_selections: &str, base_text: &str, cx: &mut EditorLspTestContext) {
+    cx.set_state(not_reverted_text_with_selections);
+    cx.update_editor(|editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap().update(cx, |buffer, cx| {
+            buffer.set_diff_base(Some(base_text.to_string()), cx);
+        });
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, cx| editor.revert_selected_hunks(&RevertSelectedHunks, cx));
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(expected_reverted_text_with_selections);
 }
