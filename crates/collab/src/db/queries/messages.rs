@@ -207,8 +207,8 @@ impl Database {
         message_id: MessageId,
         body: &str,
         mentions: &[proto::ChatMention],
-    ) -> Vec<tables::channel_message_mention::ActiveModel> {
-        mentions
+    ) -> Result<Vec<tables::channel_message_mention::ActiveModel>> {
+        Ok(mentions
             .iter()
             .filter_map(|mention| {
                 let range = mention.range.as_ref()?;
@@ -224,7 +224,7 @@ impl Database {
                     user_id: ActiveValue::Set(UserId::from_proto(mention.user_id)),
                 })
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>())
     }
 
     /// Creates a new channel message.
@@ -299,7 +299,7 @@ impl Database {
                     let mentioned_user_ids =
                         mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
 
-                    let mentions = self.format_mentions_to_entities(message_id, body, mentions);
+                    let mentions = self.format_mentions_to_entities(message_id, body, mentions)?;
                     if !mentions.is_empty() {
                         channel_message_mention::Entity::insert_many(mentions)
                             .exec(&*tx)
