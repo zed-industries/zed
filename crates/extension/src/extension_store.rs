@@ -653,10 +653,20 @@ impl ExtensionStore {
             self.modified_extensions.clear();
         }
 
-        eprintln!(
-            "extensions updated. unloading {}, loading {}",
-            extensions_to_unload.len(),
-            extensions_to_load.len()
+        if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
+            return Task::ready(());
+        }
+
+        let reload_count = extensions_to_unload
+            .iter()
+            .filter(|id| extensions_to_load.contains(id))
+            .count();
+
+        log::info!(
+            "extensions updated. loading {}, reloading {}, unloading {}",
+            extensions_to_unload.len() - reload_count,
+            reload_count,
+            extensions_to_load.len() - reload_count
         );
 
         let themes_to_remove = old_index
