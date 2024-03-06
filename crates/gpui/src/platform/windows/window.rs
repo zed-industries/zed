@@ -254,6 +254,7 @@ impl WindowsWindowInner {
                 1.0,
             );
         }
+        self.invalidate_client_area();
         LRESULT(0)
     }
 
@@ -265,9 +266,6 @@ impl WindowsWindowInner {
             request_frame();
         }
         unsafe { EndPaint(self.hwnd, &paint_struct) };
-
-        // Invaliding the client area every WM_PAINT causes WN_PAINT to occur again at the displays refresh rate
-        self.invalidate_client_area();
         LRESULT(0)
     }
 

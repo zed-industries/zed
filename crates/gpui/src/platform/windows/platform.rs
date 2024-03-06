@@ -18,12 +18,13 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE, HWND, WAIT_EVENT},
-    System::Threading::{CreateEventW, INFINITE},
+    Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
+    Graphics::DirectComposition::DCompositionWaitForCompositorClock,
+    System::Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
     UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
-        SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-        SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+        DispatchMessageW, EnumThreadWindows, PeekMessageW, PostQuitMessage, SystemParametersInfoW,
+        TranslateMessage, MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
     },
 };
 
@@ -174,25 +175,24 @@ impl WindowsPlatform {
             runnable.run();
         }
     }
+}
 
-    fn wait_message(&self) -> WindowsMessageWaitResult {
-        let wait_result = unsafe {
-            MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
-        };
-
-        match wait_result {
-            WAIT_EVENT(0) => WindowsMessageWaitResult::ForegroundExecution,
-            WAIT_EVENT(1) => {
-                let mut msg = MSG::default();
-                unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) };
-                WindowsMessageWaitResult::WindowsMessage(msg)
-            }
-            _ => {
-                log::error!("unhandled windows wait message: {}", wait_result.0);
-                WindowsMessageWaitResult::Error
-            }
-        }
+unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, _: LPARAM) -> BOOL {
+    if let Some(inner) = try_get_window_inner(hwnd) {
+        inner.invalidate_client_area();
     }
+    TRUE
+}
+
+/// invalidates all windows belonging to a thread causing a paint message to be sheduled
+fn invalidate_thread_windows(win32_thread_id: u32) {
+    unsafe {
+        EnumThreadWindows(
+            win32_thread_id,
+            Some(invalidate_window_callback),
+            LPARAM::default(),
+        )
+    };
 }
 
 impl Platform for WindowsPlatform {
@@ -210,25 +210,28 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
-            match self.wait_message() {
-                WindowsMessageWaitResult::ForegroundExecution => {
-                    self.run_foreground_tasks();
-                }
-                WindowsMessageWaitResult::WindowsMessage(msg) => {
+        'a: loop {
+            let mut msg = MSG::default();
+            let wait_result =
+                unsafe { DCompositionWaitForCompositorClock(Some(&[self.inner.event]), INFINITE) };
+
+            unsafe { invalidate_thread_windows(GetCurrentThreadId()) };
+
+            if wait_result == 1 {
+                while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool()
+                {
                     if msg.message == WM_QUIT {
-                        break;
+                        break 'a;
                     }
 
                     if !self.run_immediate_msg_handlers(&msg) {
                         unsafe { TranslateMessage(&msg) };
                         unsafe { DispatchMessageW(&msg) };
                     }
-
-                    self.run_foreground_tasks();
                 }
-                WindowsMessageWaitResult::Error => {}
             }
+
+            self.run_foreground_tasks();
         }
 
         let mut callbacks = self.inner.callbacks.lock();

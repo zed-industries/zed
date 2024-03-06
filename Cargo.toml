@@ -313,6 +313,7 @@ sys-locale = "0.3.1"
 version = "0.53.0"
 features = [
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_DirectComposition",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_SystemServices",
