@@ -6745,24 +6745,30 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        if worktree.read(cx).is_local() {
-            cx.subscribe(worktree, |this, worktree, event, cx| match event {
+        cx.subscribe(worktree, |this, worktree, event, cx| {
+            let is_local = worktree.read(cx).is_local();
+            match event {
                 worktree::Event::UpdatedEntries(changes) => {
-                    this.update_local_worktree_buffers(&worktree, changes, cx);
-                    this.update_local_worktree_language_servers(&worktree, changes, cx);
-                    this.update_local_worktree_settings(&worktree, changes, cx);
-                    this.update_prettier_settings(&worktree, changes, cx);
+                    if is_local {
+                        this.update_local_worktree_buffers(&worktree, changes, cx);
+                        this.update_local_worktree_language_servers(&worktree, changes, cx);
+                        this.update_local_worktree_settings(&worktree, changes, cx);
+                        this.update_prettier_settings(&worktree, changes, cx);
+                    }
+
                     cx.emit(Event::WorktreeUpdatedEntries(
                         worktree.read(cx).id(),
                         changes.clone(),
                     ));
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
-                    this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                    if is_local {
+                        this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                    }
                 }
-            })
-            .detach();
-        }
+            }
+        })
+        .detach();
 
         let push_strong_handle = {
             let worktree = worktree.read(cx);
