@@ -8743,7 +8743,6 @@ async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
     "});
 }
 
-// TODO kb assert hunk change types
 #[gpui::test]
 async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
@@ -8782,6 +8781,7 @@ struct Row10;"#};
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
+        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -8819,6 +8819,7 @@ struct Row10;"#};
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
+        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -8864,6 +8865,8 @@ struct Row10;"#};
                    struct Row9;
                    «ˇ// something on bottom»
                    struct Row10;"#},
+        vec![DiffHunkStatus::Added, DiffHunkStatus::Added,
+            DiffHunkStatus::Added, DiffHunkStatus::Added, DiffHunkStatus::Added],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
                    struct Row2;
@@ -8913,6 +8916,7 @@ struct Row10;"#};
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
+        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -8939,6 +8943,7 @@ struct Row10;"#};
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
+        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -8966,6 +8971,8 @@ struct Row10;"#};
                    «struˇ»ct Row88;
                    struct Row9;
                    struct Row1011;ˇ"#},
+        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified, DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified, DiffHunkStatus::Modified, DiffHunkStatus::Modified],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
                    struct Row2;
@@ -9002,7 +9009,7 @@ struct Row8;
 struct Row9;
 struct Row10;"#};
 
-    // Deletion hunks trigger on ajacent, so carets and selections have to stay farther to avoird the revert
+    // Deletion hunks trigger with carets on ajacent rows, so carets and selections have to stay farther to avoid the revert
     assert_hunk_revert(
         indoc! {r#"struct Row;
                    struct Row2;
@@ -9013,6 +9020,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -9035,6 +9043,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -9059,6 +9068,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -9082,6 +9092,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ»
                    struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed, DiffHunkStatus::Removed],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2«ˇ;
@@ -9093,35 +9104,6 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row9;
                    struct Row10;"#},
-        base_text,
-        &mut cx,
-    );
-
-    // When carets and selections intersect the addition hunks, those are reverted.
-    // Adjacent carets got merged.
-    assert_hunk_revert(
-        indoc! {r#"ˇstruct Row1.1;
-                   struct Row1;
-                   «ˇstr»uct Row33;
-
-                   struct ˇRow55;
-                   struct Row5;
-                   struct «Rˇ»ow77;ˇ
-
-                   «struˇ»ct Row99;
-                   struct Row9;
-                   struct Row1011;ˇ"#},
-        indoc! {r#"struct Row;
-                   ˇstruct Row1;
-                   struct Row2;
-                   ˇ
-                   struct Row4;
-                   ˇstruct Row5;
-                   struct Row6;
-                   ˇ
-                   struct Row8;
-                   ˇstruct Row9;
-                   struct Row10;ˇ"#},
         base_text,
         &mut cx,
     );
@@ -9299,7 +9281,13 @@ pub(crate) fn rust_lang() -> Arc<Language> {
 }
 
 #[track_caller]
-fn assert_hunk_revert(not_reverted_text_with_selections: &str, expected_reverted_text_with_selections: &str, base_text: &str, cx: &mut EditorLspTestContext) {
+fn assert_hunk_revert(
+    not_reverted_text_with_selections: &str,
+    expected_not_reverted_hunk_statuses: Vec<DiffHunkStatus>,
+    expected_reverted_text_with_selections: &str,
+    base_text: &str,
+    cx: &mut EditorLspTestContext)
+{
     cx.set_state(not_reverted_text_with_selections);
     cx.update_editor(|editor, cx| {
         editor.buffer().read(cx).as_singleton().unwrap().update(cx, |buffer, cx| {
@@ -9307,7 +9295,14 @@ fn assert_hunk_revert(not_reverted_text_with_selections: &str, expected_reverted
         });
     });
     cx.executor().run_until_parked();
-    cx.update_editor(|editor, cx| editor.revert_selected_hunks(&RevertSelectedHunks, cx));
+
+    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+        let snapshot = editor.buffer().read(cx).as_singleton().unwrap().read(cx).snapshot();
+         snapshot.git_diff_hunks_in_row_range(0..u32::MAX).map(|hunk| hunk.status()).collect::<Vec<_>>()
+    });
     cx.executor().run_until_parked();
     cx.assert_editor_state(expected_reverted_text_with_selections);
+
+    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 }
