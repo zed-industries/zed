@@ -1801,7 +1801,7 @@ impl VisualContext for WindowContext<'_> {
 
     fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
         self.update_view(view, |view, cx| {
-            view.focus_handle(cx).clone().focus(cx);
+            view.focus_handle(cx).focus(cx);
         })
     }
 
