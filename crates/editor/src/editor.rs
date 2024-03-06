@@ -5072,6 +5072,47 @@ impl Editor {
         });
     }
 
+    pub fn duplicate_line_up(&mut self, _: &DuplicateLineUp, cx: &mut ViewContext<Self>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let selections = self.selections.all::<Point>(cx);
+
+        let mut edits = Vec::new();
+        let mut selections_iter = selections.iter().peekable();
+        while let Some(selection) = selections_iter.next() {
+            // Avoid duplicating the same lines twice.
+            let mut rows = selection.spanned_rows(false, &display_map);
+
+            while let Some(next_selection) = selections_iter.peek() {
+                let next_rows = next_selection.spanned_rows(false, &display_map);
+                if next_rows.start < rows.end {
+                    rows.end = next_rows.end;
+                    selections_iter.next().unwrap();
+                } else {
+                    break;
+                }
+            }
+
+            // Copy the text from the selected row region and splice it at the start of the region.
+            let start = Point::new(rows.start, 0);
+            let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
+            let text = buffer
+                .text_for_range(start..end)
+                .chain(Some("\n"))
+                .collect::<String>();
+            let line_after_end = Point::new(rows.end, 0);
+            edits.push((line_after_end..line_after_end, text));
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            this.request_autoscroll(Autoscroll::fit(), cx);
+        });
+    }
+
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);

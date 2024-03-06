@@ -153,6 +153,7 @@ gpui::actions!(
         DeleteToPreviousWordStart,
         DisplayCursorNames,
         DuplicateLine,
+        DuplicateLineUp,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
