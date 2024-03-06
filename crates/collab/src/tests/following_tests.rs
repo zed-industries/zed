@@ -373,8 +373,10 @@ async fn test_basic_following(
     editor_a1.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
     });
+    executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
     cx_b.background_executor.run_until_parked();
+
     editor_b1.update(cx_b, |editor, cx| {
         assert_eq!(editor.selections.ranges(cx), &[1..1, 2..2]);
     });
@@ -387,6 +389,7 @@ async fn test_basic_following(
         editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
         editor.set_scroll_position(point(0., 100.), cx);
     });
+    executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
     editor_b1.update(cx_b, |editor, cx| {
         assert_eq!(editor.selections.ranges(cx), &[3..3]);
@@ -1600,6 +1603,8 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     editor_a.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([1..1]))
     });
+    cx_a.executor()
+        .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     cx_a.run_until_parked();
     editor_b.update(cx_b, |editor, cx| {
         assert_eq!(editor.selections.ranges(cx), vec![1..1])
@@ -1618,6 +1623,8 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     editor_a.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([2..2]))
     });
+    cx_a.executor()
+        .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     cx_a.run_until_parked();
     editor_b.update(cx_b, |editor, cx| {
         assert_eq!(editor.selections.ranges(cx), vec![1..1])
@@ -1722,6 +1729,7 @@ async fn test_following_into_excluded_file(
 
     // When client B starts following client A, currently visible file is replicated
     workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, cx));
+    executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
 
     let editor_for_excluded_b = workspace_b.update(cx_b, |workspace, cx| {
@@ -1743,6 +1751,7 @@ async fn test_following_into_excluded_file(
     editor_for_excluded_a.update(cx_a, |editor, cx| {
         editor.select_right(&Default::default(), cx);
     });
+    executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
 
     // Changes from B to the excluded file are replicated in A's editor
