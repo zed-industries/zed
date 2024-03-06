@@ -935,53 +935,53 @@ impl Render for ChatPanel {
                         ),
                 )
             })
-            .when_some(reply_to_message_id, |el, reply_to_message_id| {
-                let reply_message = self
-                    .active_chat()
-                    .map(|active_chat| {
-                        active_chat.read(cx).messages().iter().find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .flatten()
-                    .cloned();
-
-                el.when_some(reply_message, |el, reply_message| {
-                    el.child(
-                        h_flex()
-                            .when(edit_message_id.is_some(), |el| {
-                                el.border_t_2().border_color(cx.theme().colors().border)
+            .when(edit_message_id.is_none(), |this| {
+                this.when_some(reply_to_message_id, |el, reply_to_message_id| {
+                    let reply_message = self
+                        .active_chat()
+                        .map(|active_chat| {
+                            active_chat.read(cx).messages().iter().find_map(|m| {
+                                if m.id == ChannelMessageId::Saved(reply_to_message_id) {
+                                    Some(m)
+                                } else {
+                                    None
+                                }
                             })
-                            .justify_between()
-                            .overflow_hidden()
-                            .items_start()
-                            .py_1()
-                            .px_2()
-                            .bg(cx.theme().colors().background)
-                            .child(
-                                div().flex_shrink().overflow_hidden().child(
+                        })
+                        .flatten()
+                        .cloned();
+
+                    el.when_some(reply_message, |el, reply_message| {
+                        el.child(
+                            h_flex()
+                                .when(edit_message_id.is_some(), |el| {
+                                    el.border_t_2().border_color(cx.theme().colors().border)
+                                })
+                                .justify_between()
+                                .overflow_hidden()
+                                .items_start()
+                                .py_1()
+                                .px_2()
+                                .bg(cx.theme().colors().background)
+                                .child(div().flex_shrink().overflow_hidden().child(
                                     self.render_replied_to_message(None, &reply_message, cx),
+                                ))
+                                .child(
+                                    IconButton::new("close-reply-preview", IconName::Close)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action(
+                                                "Close reply preview",
+                                                &CloseReplyPreview,
+                                                cx,
+                                            )
+                                        })
+                                        .on_click(cx.listener(move |_, _, cx| {
+                                            cx.dispatch_action(CloseReplyPreview.boxed_clone())
+                                        })),
                                 ),
-                            )
-                            .child(
-                                IconButton::new("close-reply-preview", IconName::Close)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(|cx| {
-                                        Tooltip::for_action(
-                                            "Close reply preview",
-                                            &CloseReplyPreview,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(move |_, _, cx| {
-                                        cx.dispatch_action(CloseReplyPreview.boxed_clone())
-                                    })),
-                            ),
-                    )
+                        )
+                    })
                 })
             })
             .children(
