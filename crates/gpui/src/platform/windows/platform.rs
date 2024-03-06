@@ -18,12 +18,13 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, HWND, WAIT_EVENT},
-    System::Threading::{CreateEventW, INFINITE},
+    Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
+    Graphics::DirectComposition::DCompositionWaitForCompositorClock,
+    System::Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
     UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MsgWaitForMultipleObjects, PostQuitMessage,
-        SystemParametersInfoW, TranslateMessage, MSG, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-        SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+        DispatchMessageW, EnumThreadWindows, PeekMessageW, PostQuitMessage, SystemParametersInfoW,
+        TranslateMessage, MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
     },
 };
 
@@ -169,24 +170,29 @@ impl WindowsPlatform {
         }
     }
 
-    fn wait_message(&self) -> WindowsMessageWaitResult {
-        let wait_result = unsafe {
-            MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
-        };
-
-        match wait_result {
-            WAIT_EVENT(0) => WindowsMessageWaitResult::ForegroundExecution,
-            WAIT_EVENT(1) => {
-                let mut msg = MSG::default();
-                unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) };
-                WindowsMessageWaitResult::WindowsMessage(msg)
-            }
-            _ => {
-                log::error!("unhandled windows wait message: {}", wait_result.0);
-                WindowsMessageWaitResult::Error
-            }
+    fn run_foreground_tasks(&self) {
+        for runnable in self.inner.main_receiver.drain() {
+            runnable.run();
         }
     }
+}
+
+unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, _: LPARAM) -> BOOL {
+    if let Some(inner) = try_get_window_inner(hwnd) {
+        inner.invalidate_client_area();
+    }
+    TRUE
+}
+
+/// invalidates all windows belonging to a thread causing a paint message to be scheduled
+fn invalidate_thread_windows(win32_thread_id: u32) {
+    unsafe {
+        EnumThreadWindows(
+            win32_thread_id,
+            Some(invalidate_window_callback),
+            LPARAM::default(),
+        )
+    };
 }
 
 impl Platform for WindowsPlatform {
@@ -204,16 +210,21 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
-            match self.wait_message() {
-                WindowsMessageWaitResult::ForegroundExecution => {
-                    for runnable in self.inner.main_receiver.drain() {
-                        runnable.run();
-                    }
-                }
-                WindowsMessageWaitResult::WindowsMessage(msg) => {
+        'a: loop {
+            let mut msg = MSG::default();
+            // will be 0 if woken up by self.inner.event or 1 if the compositor clock ticked
+            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
+            let wait_result =
+                unsafe { DCompositionWaitForCompositorClock(Some(&[self.inner.event]), INFINITE) };
+
+            // compositor clock ticked so we should draw a frame
+            if wait_result == 1 {
+                unsafe { invalidate_thread_windows(GetCurrentThreadId()) };
+
+                while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool()
+                {
                     if msg.message == WM_QUIT {
-                        break;
+                        break 'a;
                     }
 
                     if !self.run_immediate_msg_handlers(&msg) {
@@ -221,8 +232,9 @@ impl Platform for WindowsPlatform {
                         unsafe { DispatchMessageW(&msg) };
                     }
                 }
-                WindowsMessageWaitResult::Error => {}
             }
+
+            self.run_foreground_tasks();
         }
 
         let mut callbacks = self.inner.callbacks.lock();

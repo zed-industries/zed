@@ -17,7 +17,8 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use windows::{
     core::{w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
         System::SystemServices::{
             MK_LBUTTON, MK_MBUTTON, MK_RBUTTON, MK_XBUTTON1, MK_XBUTTON2, MODIFIERKEYS_FLAGS,
         },
@@ -158,6 +159,12 @@ impl WindowsWindowInner {
         }
     }
 
+    /// mark window client rect to be re-drawn
+    /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect
+    pub(crate) fn invalidate_client_area(&self) {
+        unsafe { InvalidateRect(self.hwnd, None, FALSE) };
+    }
+
     /// returns true if message is handled and should not dispatch
     pub(crate) fn handle_immediate_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
         match msg {
@@ -245,16 +252,20 @@ impl WindowsWindowInner {
                     height: Pixels(height.0),
                 },
                 1.0,
-            )
+            );
         }
+        self.invalidate_client_area();
         LRESULT(0)
     }
 
     fn handle_paint_msg(&self) -> LRESULT {
+        let mut paint_struct = PAINTSTRUCT::default();
+        let hdc = unsafe { BeginPaint(self.hwnd, &mut paint_struct) };
         let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(callback) = callbacks.request_frame.as_mut() {
-            callback()
+        if let Some(request_frame) = callbacks.request_frame.as_mut() {
+            request_frame();
         }
+        unsafe { EndPaint(self.hwnd, &paint_struct) };
         LRESULT(0)
     }
 
@@ -403,18 +414,12 @@ impl WindowsWindowInner {
                 };
 
                 if callback(PlatformInput::KeyDown(event)) {
-                    if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                        request_frame();
-                    }
                     CallbackResult::Handled { by_callback: true }
                 } else if let Some(mut input_handler) = self.input_handler.take() {
                     if let Some(ime_key) = ime_key {
                         input_handler.replace_text_in_range(None, &ime_key);
                     }
                     self.input_handler.set(Some(input_handler));
-                    if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                        request_frame();
-                    }
                     CallbackResult::Handled { by_callback: true }
                 } else {
                     CallbackResult::Handled { by_callback: false }
@@ -433,9 +438,8 @@ impl WindowsWindowInner {
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
                 let event = KeyUpEvent { keystroke };
-                CallbackResult::Handled {
-                    by_callback: callback(PlatformInput::KeyUp(event)),
-                }
+                let by_callback = callback(PlatformInput::KeyUp(event));
+                CallbackResult::Handled { by_callback }
             } else {
                 CallbackResult::Handled { by_callback: false }
             }
@@ -527,12 +531,8 @@ impl WindowsWindowInner {
                 modifiers: self.current_modifiers(),
                 touch_phase: TouchPhase::Moved,
             };
-            if callback(PlatformInput::ScrollWheel(event)) {
-                if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                    request_frame();
-                }
-                return LRESULT(0);
-            }
+            callback(PlatformInput::ScrollWheel(event));
+            return LRESULT(0);
         }
         LRESULT(1)
     }
@@ -554,9 +554,6 @@ impl WindowsWindowInner {
                 touch_phase: TouchPhase::Moved,
             };
             if callback(PlatformInput::ScrollWheel(event)) {
-                if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                    request_frame();
-                }
                 return LRESULT(0);
             }
         }
