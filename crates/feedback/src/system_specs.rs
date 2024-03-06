@@ -3,7 +3,7 @@ use human_bytes::human_bytes;
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Serialize;
 use std::{env, fmt::Display};
-use sysinfo::{RefreshKind, System, SystemExt};
+use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
@@ -20,7 +20,9 @@ impl SystemSpecs {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx).display_name();
         let os_name = cx.app_metadata().os_name;
-        let system = System::new_with_specifics(RefreshKind::new().with_memory());
+        let system = System::new_with_specifics(
+            RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
+        );
         let memory = system.total_memory();
         let architecture = env::consts::ARCH;
         let os_version = cx
