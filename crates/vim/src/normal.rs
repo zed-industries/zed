@@ -1037,10 +1037,26 @@ mod test {
         );
 
         cx.assert_binding(
+            ["F", "p"],
+            indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
             ["t", "p"],
             indoc! {"ˇfmt.Println(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmtˇ.Println(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["T", "p"],
+            indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.Pˇrintln(\"Hello, World!\")"},
             Mode::Normal,
         );
     }
