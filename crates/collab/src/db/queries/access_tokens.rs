@@ -55,4 +55,22 @@ impl Database {
         })
         .await
     }
+
+    /// Retrieves the access token with the given ID.
+    pub async fn update_access_token_hash(
+        &self,
+        id: AccessTokenId,
+        new_hash: &str,
+    ) -> Result<access_token::Model> {
+        self.transaction(|tx| async move {
+            Ok(access_token::Entity::update(access_token::ActiveModel {
+                id: ActiveValue::unchanged(id),
+                hash: ActiveValue::set(new_hash.into()),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?)
+        })
+        .await
+    }
 }

@@ -105,6 +105,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
+base64 = "0.13"
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -252,6 +253,7 @@ shellexpand = "2.1.0"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
+subtle = "2.5.0"
 sysinfo = "0.29.10"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
