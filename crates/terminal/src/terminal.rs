@@ -42,10 +42,12 @@ use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
+use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use std::{
     cmp::{self, min},
     fmt::Display,
+    num::NonZeroU32,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
     sync::Arc,
@@ -402,7 +404,14 @@ impl TerminalBuilder {
 
         // todo(windows)
         #[cfg(windows)]
-        let (fd, shell_pid) = (-1, 0);
+        let (fd, shell_pid) = {
+            let child = pty.child_watcher();
+            let handle = child.raw_handle();
+            let pid = child.pid().unwrap_or_else(|| unsafe {
+                NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle)))
+            });
+            (handle, u32::from(pid))
+        };
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -667,13 +676,32 @@ impl Terminal {
     /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
         #[cfg(unix)]
-        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
-        // todo(windows)
+        let pid = {
+            let ret = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+            if ret < 0 {
+                self.shell_pid as i32
+            } else {
+                ret
+            }
+        };
+
         #[cfg(windows)]
-        let mut pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() } as i32;
-        if pid < 0 {
-            pid = self.shell_pid as i32;
-        }
+        let pid = {
+            let ret = unsafe { GetProcessId(HANDLE(self.shell_fd as _)) };
+            // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
+            if ret == 0 {
+                // in the builder process, there is a small chance, almost negligible,
+                // that this value could be zero, which means child_watcher returns None,
+                // GetProcessId returns 0.
+                if self.shell_pid > 0 {
+                    self.shell_pid
+                } else {
+                    return false;
+                }
+            } else {
+                ret
+            }
+        } as i32;
 
         if let Some(process_info) = LocalProcessInfo::with_root_pid(pid as u32) {
             let res = self

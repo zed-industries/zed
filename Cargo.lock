@@ -113,9 +113,8 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7ceabf6fc76511f616ca216b51398a2511f19ba9f71bcbd977999edff1b0d1"
+version = "0.22.1-dev"
+source = "git+https://github.com/alacritty/alacritty?rev=992011a4cd9a35f197acc0a0bd430d89a0d01013#992011a4cd9a35f197acc0a0bd430d89a0d01013"
 dependencies = [
  "base64 0.21.4",
  "bitflags 2.4.2",
