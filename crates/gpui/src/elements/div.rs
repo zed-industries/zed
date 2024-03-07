@@ -1279,6 +1279,16 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
                 let style = self.compute_style_internal(None, element_state.as_mut(), cx);
 
+                if let Some(element_state) = element_state.as_ref() {
+                    if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
+                        if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
+                            if let Some(tooltip) = active_tooltip.tooltip.clone() {
+                                cx.set_tooltip(tooltip);
+                            }
+                        }
+                    }
+                }
+
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         let hitbox = if self.occlude_mouse
@@ -1290,6 +1300,7 @@ impl Interactivity {
                         } else {
                             None
                         };
+
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
@@ -1810,17 +1821,6 @@ impl Interactivity {
                 cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
                     active_tooltip.borrow_mut().take();
                 });
-
-                if let Some(active_tooltip) = element_state
-                    .active_tooltip
-                    .get_or_insert_with(Default::default)
-                    .borrow()
-                    .as_ref()
-                {
-                    if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                        cx.set_tooltip(tooltip);
-                    }
-                }
             }
 
             let active_state = element_state
