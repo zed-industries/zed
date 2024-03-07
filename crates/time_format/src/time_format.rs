@@ -3,7 +3,7 @@ use time::{OffsetDateTime, UtcOffset};
 /// The formatting style for a timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampFormat {
-    /// Formats the timestamp as an absolute time, e.g. "12:00 PM", "yesterday at 11:00 AM", "2021-12-31".
+    /// Formats the timestamp as an absolute time, e.g. "Today at 12:00 PM", "Yesterday at 11:00 AM", "2021-12-31 3:00AM".
     Absolute,
     /// Formats the timestamp as a relative time, e.g. "just now", "1 minute ago", "2 hours ago", "2 months ago".
     Relative,
