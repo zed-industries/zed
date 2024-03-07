@@ -36,7 +36,11 @@ fn format_absolute_timestamp(timestamp: OffsetDateTime, reference: OffsetDateTim
         } else if reference_date.previous_day() == Some(timestamp_date) {
             format!("Yesterday at {}", macos::format_time(&timestamp))
         } else {
-            macos::format_date(&timestamp)
+            format!(
+                "{} {}",
+                macos::format_date(&timestamp),
+                macos::format_time(&timestamp)
+            )
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -532,10 +536,8 @@ mod tests {
         );
 
         for i in 2..=11 {
-            let m = next_month();
-            dbg!(m);
             assert_eq!(
-                format_relative_date(m, reference),
+                format_relative_date(next_month(), reference),
                 format!("{} months ago", i)
             );
         }
