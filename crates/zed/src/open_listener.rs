@@ -37,8 +37,66 @@ pub enum OpenRequest {
     },
 }
 
+impl OpenRequest {
+    pub fn parse(urls: Vec<String>, cx: &AppContext) -> Result<Self> {
+        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
+            Self::parse_cli_connection(server_name)
+        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url, cx)) {
+            Self::parse_zed_url(request_path)
+        } else {
+            Ok(Self::parse_file_urls(urls))
+        }
+    }
+
+    fn parse_cli_connection(server_name: &str) -> Result<OpenRequest> {
+        let connection = connect_to_cli(server_name)?;
+        Ok(OpenRequest::CliConnection { connection })
+    }
+
+    fn parse_zed_url(request_path: &str) -> Result<OpenRequest> {
+        let mut parts = request_path.split('/');
+        if parts.next() == Some("channel") {
+            if let Some(slug) = parts.next() {
+                if let Some(id_str) = slug.split('-').last() {
+                    if let Ok(channel_id) = id_str.parse::<u64>() {
+                        let Some(next) = parts.next() else {
+                            return Ok(OpenRequest::JoinChannel { channel_id });
+                        };
+
+                        if let Some(heading) = next.strip_prefix("notes#") {
+                            return Ok(OpenRequest::OpenChannelNotes {
+                                channel_id,
+                                heading: Some([heading].into_iter().chain(parts).join("/")),
+                            });
+                        } else if next == "notes" {
+                            return Ok(OpenRequest::OpenChannelNotes {
+                                channel_id,
+                                heading: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Err(anyhow!("invalid zed url: {}", request_path))
+    }
+
+    fn parse_file_urls(urls: Vec<String>) -> OpenRequest {
+        let paths: Vec<_> = urls
+            .iter()
+            .flat_map(|url| url.strip_prefix("file://"))
+            .flat_map(|url| {
+                let decoded = urlencoding::decode_binary(url.as_bytes());
+                PathBuf::try_from_bytes(decoded.as_ref()).log_err()
+            })
+            .collect();
+
+        OpenRequest::Paths { paths }
+    }
+}
+
 pub struct OpenListener {
-    tx: UnboundedSender<OpenRequest>,
+    tx: UnboundedSender<Vec<String>>,
     pub triggered: AtomicBool,
 }
 
@@ -55,7 +113,7 @@ impl OpenListener {
         cx.set_global(GlobalOpenListener(listener))
     }
 
-    pub fn new() -> (Self, UnboundedReceiver<OpenRequest>) {
+    pub fn new() -> (Self, UnboundedReceiver<Vec<String>>) {
         let (tx, rx) = mpsc::unbounded();
         (
             OpenListener {
@@ -66,74 +124,12 @@ impl OpenListener {
         )
     }
 
-    pub fn open_urls(&self, urls: &[String], cx: &AppContext) {
+    pub fn open_urls(&self, urls: Vec<String>) {
         self.triggered.store(true, Ordering::Release);
-        let request = if let Some(server_name) =
-            urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
-        {
-            self.handle_cli_connection(server_name)
-        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url, cx)) {
-            self.handle_zed_url_scheme(request_path)
-        } else {
-            self.handle_file_urls(urls)
-        };
-
-        if let Some(request) = request {
-            self.tx
-                .unbounded_send(request)
-                .map_err(|_| anyhow!("no listener for open requests"))
-                .log_err();
-        }
-    }
-
-    fn handle_cli_connection(&self, server_name: &str) -> Option<OpenRequest> {
-        if let Some(connection) = connect_to_cli(server_name).log_err() {
-            return Some(OpenRequest::CliConnection { connection });
-        }
-
-        None
-    }
-
-    fn handle_zed_url_scheme(&self, request_path: &str) -> Option<OpenRequest> {
-        let mut parts = request_path.split('/');
-        if parts.next() == Some("channel") {
-            if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').last() {
-                    if let Ok(channel_id) = id_str.parse::<u64>() {
-                        let Some(next) = parts.next() else {
-                            return Some(OpenRequest::JoinChannel { channel_id });
-                        };
-
-                        if let Some(heading) = next.strip_prefix("notes#") {
-                            return Some(OpenRequest::OpenChannelNotes {
-                                channel_id,
-                                heading: Some([heading].into_iter().chain(parts).join("/")),
-                            });
-                        } else if next == "notes" {
-                            return Some(OpenRequest::OpenChannelNotes {
-                                channel_id,
-                                heading: None,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        log::error!("invalid zed url: {}", request_path);
-        None
-    }
-
-    fn handle_file_urls(&self, urls: &[String]) -> Option<OpenRequest> {
-        let paths: Vec<_> = urls
-            .iter()
-            .flat_map(|url| url.strip_prefix("file://"))
-            .flat_map(|url| {
-                let decoded = urlencoding::decode_binary(url.as_bytes());
-                PathBuf::try_from_bytes(decoded.as_ref()).log_err()
-            })
-            .collect();
-
-        Some(OpenRequest::Paths { paths })
+        self.tx
+            .unbounded_send(urls)
+            .map_err(|_| anyhow!("no listener for open requests"))
+            .log_err();
     }
 }
 
@@ -210,7 +206,7 @@ pub async fn handle_cli_connection(
 
                 let mut errored = false;
 
-                match cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx)) {
+                match cx.update(|cx| workspace::open_paths(&paths, app_state, None, cx)) {
                     Ok(task) => match task.await {
                         Ok((workspace, items)) => {
                             let mut item_release_futures = Vec::new();
