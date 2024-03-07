@@ -1,15 +1,12 @@
 pub mod repository;
 
 use anyhow::{anyhow, Result};
-pub use fsevent::Event;
+
 #[cfg(target_os = "macos")]
 use fsevent::EventStream;
 
 #[cfg(not(target_os = "macos"))]
-use fsevent::StreamFlags;
-
-#[cfg(not(target_os = "macos"))]
-use notify::{Config, EventKind, Watcher};
+use notify::{Config, Watcher};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -76,7 +73,7 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>>;
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>;
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
@@ -333,52 +330,30 @@ impl Fs for RealFs {
         std::thread::spawn(move || {
             stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
         });
-        Box::pin(rx.chain(futures::stream::once(async move {
+
+        Ok(Box::pin(rx.chain(futures::stream::once(async move {
             drop(handle);
             vec![]
-        })))
+        }))))
     }
 
     #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
-        latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
+        _latency: Duration,
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
         let (tx, rx) = smol::channel::unbounded();
-
-        if !path.exists() {
-            log::error!("watch path does not exist: {}", path.display());
-            return Box::pin(rx);
-        }
 
         let mut watcher =
             notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
                 Ok(event) => {
-                    let flags = match event.kind {
-                        // ITEM_REMOVED is currently the only flag we care about
-                        EventKind::Remove(_) => StreamFlags::ITEM_REMOVED,
-                        _ => StreamFlags::NONE,
-                    };
-                    let events = event
-                        .paths
-                        .into_iter()
-                        .map(|path| Event {
-                            event_id: 0,
-                            flags,
-                            path,
-                        })
-                        .collect::<Vec<_>>();
-                    let _ = tx.try_send(events);
+                    let _ = tx.try_send(event.paths);
                 }
                 Err(err) => {
                     log::error!("watch error: {}", err);
                 }
             })
-            .unwrap();
-
-        watcher
-            .configure(Config::default().with_poll_interval(latency))
             .unwrap();
 
         watcher
@@ -443,10 +418,6 @@ impl Fs for RealFs {
     }
 }
 
-pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
-    events.into_iter().map(|event| event.path).collect()
-}
-
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
@@ -459,9 +430,9 @@ struct FakeFsState {
     root: Arc<Mutex<FakeFsEntry>>,
     next_inode: u64,
     next_mtime: SystemTime,
-    event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
+    event_txs: Vec<smol::channel::Sender<Vec<PathBuf>>>,
     events_paused: bool,
-    buffered_events: Vec<fsevent::Event>,
+    buffered_events: Vec<PathBuf>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
 }
@@ -569,11 +540,7 @@ impl FakeFsState {
         T: Into<PathBuf>,
     {
         self.buffered_events
-            .extend(paths.into_iter().map(|path| fsevent::Event {
-                event_id: 0,
-                flags: fsevent::StreamFlags::empty(),
-                path: path.into(),
-            }));
+            .extend(paths.into_iter().map(Into::into));
 
         if !self.events_paused {
             self.flush_events(self.buffered_events.len());
@@ -1328,14 +1295,14 @@ impl Fs for FakeFs {
         &self,
         path: &Path,
         _: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
         self.state.lock().event_txs.push(tx);
         let path = path.to_path_buf();
         let executor = self.executor.clone();
         Box::pin(futures::StreamExt::filter(rx, move |events| {
-            let result = events.iter().any(|event| event.path.starts_with(&path));
+            let result = events.iter().any(|evt_path| evt_path.starts_with(&path));
             let executor = executor.clone();
             async move {
                 executor.simulate_random_delay().await;

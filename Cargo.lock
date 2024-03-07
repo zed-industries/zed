@@ -12790,7 +12790,6 @@ dependencies = [
  "feedback",
  "file_finder",
  "fs",
- "fsevent",
  "futures 0.3.28",
  "go_to_line",
  "gpui",
