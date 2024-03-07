@@ -20,7 +20,7 @@ use smallvec::SmallVec;
 use windows::{
     core::{implement, w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINTL, S_OK, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, MAX_PATH, POINTL, S_OK, WPARAM},
         Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
         System::{
             Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
@@ -571,16 +571,12 @@ impl WindowsWindowInner {
         LRESULT(1)
     }
 
-    fn handle_dragdrop(&self, input: PlatformInput) {
+    fn handle_drag_drop(&self, input: PlatformInput) {
         let mut callbacks = self.callbacks.borrow_mut();
         let Some(ref mut func) = callbacks.input else {
             return;
         };
         func(input);
-        // TODO: remove this if we continuously draw the view
-        if let Some(ref mut request_frame) = callbacks.request_frame {
-            request_frame();
-        }
     }
 }
 
@@ -599,7 +595,7 @@ struct Callbacks {
 
 pub(crate) struct WindowsWindow {
     inner: Rc<WindowsWindowInner>,
-    dragdrop_handler: IDropTarget,
+    drag_drop_handler: IDropTarget,
 }
 
 struct WindowCreateContext {
@@ -664,19 +660,19 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        let dragdrop_handler = {
+        let drag_drop_handler = {
             let inner = context.inner.as_ref().unwrap();
             let handler = WindowsDragDropHandler(Rc::clone(inner));
-            let dragdrop_handler: IDropTarget = handler.into();
+            let drag_drop_handler: IDropTarget = handler.into();
             unsafe {
-                RegisterDragDrop(inner.hwnd, &dragdrop_handler)
+                RegisterDragDrop(inner.hwnd, &drag_drop_handler)
                     .expect("unable to register drag-drop event")
             };
-            dragdrop_handler
+            drag_drop_handler
         };
         let wnd = Self {
             inner: context.inner.unwrap(),
-            dragdrop_handler,
+            drag_drop_handler,
         };
         platform_inner.window_handles.borrow_mut().insert(handle);
         match options.bounds {
@@ -717,7 +713,7 @@ impl HasDisplayHandle for WindowsWindow {
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
         unsafe {
-            RevokeDragDrop(self.inner.hwnd);
+            let _ = RevokeDragDrop(self.inner.hwnd);
         }
     }
 }
@@ -879,14 +875,6 @@ impl PlatformWindow for WindowsWindow {
     }
 }
 
-impl Drop for WindowsWindow {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = RevokeDragDrop(self.inner.hwnd);
-        }
-    }
-}
-
 #[implement(IDropTarget)]
 struct WindowsDragDropHandler(pub Rc<WindowsWindowInner>);
 
@@ -894,7 +882,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     fn DragEnter(
         &self,
         pdataobj: Option<&IDataObject>,
-        grfkeystate: MODIFIERKEYS_FLAGS,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
@@ -922,7 +910,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
                 let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_COUNT, None);
                 for file_index in 0..file_count {
-                    let mut buffer = [0u16; FILENAME_MAXLENGTH];
+                    let mut buffer = [0u16; MAX_PATH as _];
                     let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
                     let ret = DragQueryFileW(*hdrop, file_index, Some(&mut buffer));
                     if ret == 0 {
@@ -943,7 +931,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                     },
                     paths: crate::ExternalPaths(paths),
                 });
-                self.0.handle_dragdrop(input);
+                self.0.handle_drag_drop(input);
             } else {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -953,9 +941,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
 
     fn DragOver(
         &self,
-        grfkeystate: MODIFIERKEYS_FLAGS,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        pdweffect: *mut DROPEFFECT,
+        _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         let input = PlatformInput::FileDrop(crate::FileDropEvent::Pending {
             position: Point {
@@ -963,24 +951,24 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 y: Pixels(pt.y as _),
             },
         });
-        self.0.handle_dragdrop(input);
+        self.0.handle_drag_drop(input);
 
         Ok(())
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
         let input = PlatformInput::FileDrop(crate::FileDropEvent::Exited);
-        self.0.handle_dragdrop(input);
+        self.0.handle_drag_drop(input);
 
         Ok(())
     }
 
     fn Drop(
         &self,
-        pdataobj: Option<&IDataObject>,
-        grfkeystate: MODIFIERKEYS_FLAGS,
+        _pdataobj: Option<&IDataObject>,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        pdweffect: *mut DROPEFFECT,
+        _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         let input = PlatformInput::FileDrop(crate::FileDropEvent::Submit {
             position: Point {
@@ -988,7 +976,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 y: Pixels(pt.y as _),
             },
         });
-        self.0.handle_dragdrop(input);
+        self.0.handle_drag_drop(input);
 
         Ok(())
     }
@@ -1083,4 +1071,3 @@ unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: 
 }
 
 const DRAGDROP_GET_COUNT: u32 = 0xFFFFFFFF;
-const FILENAME_MAXLENGTH: usize = 256;
