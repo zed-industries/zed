@@ -1667,28 +1667,10 @@ impl EditorElement {
         }
     }
 
-    fn paint_blocks(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        layout: &mut EditorLayout,
-        cx: &mut ElementContext,
-    ) {
-        // todo!("blocks")
-        // let scroll_position = layout.position_map.snapshot.scroll_position();
-        // let scroll_left = scroll_position.x * layout.position_map.em_width;
-        // let scroll_top = scroll_position.y * layout.position_map.line_height;
-
-        // for mut block in layout.blocks.drain(..) {
-        //     let mut origin = bounds.origin
-        //         + point(
-        //             Pixels::ZERO,
-        //             block.row as f32 * layout.position_map.line_height - scroll_top,
-        //         );
-        //     if !matches!(block.style, BlockStyle::Sticky) {
-        //         origin += point(-scroll_left, Pixels::ZERO);
-        //     }
-        //     block.element.draw(origin, block.available_space, cx);
-        // }
+    fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        for mut block in layout.blocks.drain(..) {
+            block.element.paint(cx);
+        }
     }
 
     fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
@@ -1935,9 +1917,10 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
-        editor_width: Pixels,
+        hitbox: &Hitbox,
+        text_hitbox: &Hitbox,
         scroll_width: Pixels,
-        text_width: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         em_width: Pixels,
         text_x: Pixels,
@@ -1984,7 +1967,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
-                        max_width: scroll_width.max(text_width),
+                        max_width: scroll_width.max(text_hitbox.bounds.size.width),
                         editor_style: &self.style,
                     })
                 }
@@ -2149,8 +2132,11 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
             };
             let width = match style {
-                BlockStyle::Sticky => editor_width,
-                BlockStyle::Flex => editor_width
+                BlockStyle::Sticky => hitbox.bounds.size.width,
+                BlockStyle::Flex => hitbox
+                    .bounds
+                    .size
+                    .width
                     .max(fixed_block_max_width)
                     .max(gutter_dimensions.width + scroll_width),
                 BlockStyle::Fixed => unreachable!(),
@@ -2168,6 +2154,19 @@ impl EditorElement {
                 style,
             });
         }
+
+        for block in &mut blocks {
+            let mut origin = hitbox.bounds.origin
+                + point(
+                    Pixels::ZERO,
+                    block.row as f32 * line_height - scroll_pixel_position.y,
+                );
+            if !matches!(block.style, BlockStyle::Sticky) {
+                origin += point(-scroll_pixel_position.x, Pixels::ZERO);
+            }
+            block.element.layout(origin, block.available_space, cx);
+        }
+
         (
             scroll_width.max(fixed_block_max_width - gutter_dimensions.width),
             blocks,
@@ -2634,6 +2633,10 @@ impl Element for EditorElement {
             let mut snapshot = editor.snapshot(cx);
 
             let scroll_position = snapshot.scroll_position();
+            let scroll_pixel_position = point(
+                scroll_position.x * em_width,
+                scroll_position.y * line_height,
+            );
             // The scroll position is a fractional point, the whole number of which represents
             // the top of the window in terms of display rows.
             let start_row = scroll_position.y as u32;
@@ -2836,9 +2839,10 @@ impl Element for EditorElement {
                     self.layout_blocks(
                         start_row..end_row,
                         &snapshot,
-                        bounds.size.width,
+                        &hitbox,
+                        &text_hitbox,
                         scroll_width,
-                        text_width,
+                        scroll_pixel_position,
                         &gutter_dimensions,
                         em_width,
                         gutter_dimensions.width + gutter_dimensions.margin,
@@ -2876,10 +2880,6 @@ impl Element for EditorElement {
             }
 
             let gutter_settings = EditorSettings::get_global(cx).gutter;
-            let scroll_pixel_position = point(
-                scroll_position.x * em_width,
-                scroll_position.y * line_height,
-            );
 
             let mut context_menu = None;
             let mut code_actions_indicator = None;
@@ -3113,7 +3113,7 @@ impl Element for EditorElement {
 
                 if !layout.blocks.is_empty() {
                     cx.with_element_id(Some("editor_blocks"), |cx| {
-                        self.paint_blocks(bounds, layout, cx);
+                        self.paint_blocks(layout, cx);
                     });
                 }
 
