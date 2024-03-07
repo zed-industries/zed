@@ -351,16 +351,19 @@ impl ExtensionBuilder {
             return Ok(clang_path);
         }
 
+        let mut tar_out_dir = wasi_sdk_dir.clone();
+        tar_out_dir.set_extension("archive");
+
         fs::remove_dir_all(&wasi_sdk_dir).ok();
+        fs::remove_dir_all(&tar_out_dir).ok();
 
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
-
-        let mut tar_out_dir = wasi_sdk_dir.clone();
-        tar_out_dir.set_extension(".output");
         let body = BufReader::new(response.body_mut());
         let body = GzipDecoder::new(body);
         let tar = Archive::new(body);
-        tar.unpack(&tar_out_dir).await?;
+        tar.unpack(&tar_out_dir)
+            .await
+            .context("failed to unpack wasi-sdk archive")?;
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()
