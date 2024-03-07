@@ -541,6 +541,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let keycode = Keycode::from(key + MIN_KEYCODE);
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
+                if keysym.is_modifier_key() {
+                    return;
+                }
+
                 match key_state {
                     wl_keyboard::KeyState::Pressed => {
                         let input = PlatformInput::KeyDown(KeyDownEvent {
