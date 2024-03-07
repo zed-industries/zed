@@ -262,7 +262,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(move |cx| async move {
                     if let Some(paths) = paths.await.log_err().flatten() {
                         cx.update(|cx| {
-                            open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
+                            open_paths(&paths, app_state, None, cx).detach_and_log_err(cx)
                         })
                         .ok();
                     }
@@ -1414,7 +1414,7 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))?
+            cx.update(|cx| open_paths(&paths, app_state, window_to_replace, cx))?
                 .await?;
             Ok(())
         })
@@ -4381,7 +4381,7 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
-    app_state: &Arc<AppState>,
+    app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,
 ) -> Task<
@@ -4390,7 +4390,6 @@ pub fn open_paths(
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )>,
 > {
-    let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     // Open paths in existing workspace if possible
     let existing = activate_workspace_for_project(cx, {
@@ -4417,11 +4416,11 @@ pub fn open_paths(
 }
 
 pub fn open_new(
-    app_state: &Arc<AppState>,
+    app_state: Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
 ) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
+    let task = Workspace::new_local(Vec::new(), app_state, None, cx);
     cx.spawn(|mut cx| async move {
         if let Some((workspace, opened_paths)) = task.await.log_err() {
             workspace
