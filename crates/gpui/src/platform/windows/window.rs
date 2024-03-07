@@ -784,7 +784,6 @@ impl PlatformWindow for WindowsWindow {
         self.inner.input_handler.take()
     }
 
-    // todo(windows)
     fn prompt(
         &self,
         level: PromptLevel,
