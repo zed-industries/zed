@@ -965,6 +965,7 @@ impl<'a> WindowContext<'a> {
         }
 
         let root_view = self.window.root_view.take().unwrap();
+        let mut prompt = self.window.prompt.take();
         self.with_element_context(|cx| {
             cx.with_z_index(0, |cx| {
                 cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
@@ -983,10 +984,24 @@ impl<'a> WindowContext<'a> {
                     }
 
                     let available_space = cx.window.viewport_size.map(Into::into);
-                    root_view.draw(Point::default(), available_space, cx);
+
+                    let origin = Point::default();
+                    cx.paint_view(root_view.entity_id(), |cx| {
+                        cx.with_absolute_element_offset(origin, |cx| {
+                            let (layout_id, mut rendered_element) =
+                                (root_view.request_layout)(&root_view, cx);
+                            cx.compute_layout(layout_id, available_space);
+                            rendered_element.paint(cx);
+
+                            if let Some(prompt) = &mut prompt {
+                                prompt.paint(cx).draw(origin, available_space, cx)
+                            }
+                        });
+                    });
                 })
             })
         });
+        self.window.prompt = prompt;
 
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_element_context(|cx| {
