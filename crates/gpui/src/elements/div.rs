@@ -1957,9 +1957,7 @@ impl Interactivity {
                         if let Some(group_bounds) =
                             GroupBounds::get(&group_hover.group, cx.deref_mut())
                         {
-                            if group_bounds.contains(&mouse_position)
-                                && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                            {
+                            if group_bounds.contains(&mouse_position) {
                                 style.refine(&group_hover.style);
                             }
                         }
