@@ -117,6 +117,8 @@ pub fn format_timestamp_naive(
 ) -> String {
     let timestamp_local_hour = timestamp_local.hour();
     let timestamp_local_minute = timestamp_local.minute();
+    let reference_local_date = reference_local.date();
+    let timestamp_local_date = timestamp_local.date();
 
     let (hour, meridiem) = if is_12_hour_time {
         let meridiem = if timestamp_local_hour >= 12 {
@@ -141,18 +143,7 @@ pub fn format_timestamp_naive(
         None => format!("{:02}:{:02}", hour, timestamp_local_minute),
     };
 
-    let reference_local_date = reference_local.date();
-    let timestamp_local_date = timestamp_local.date();
-
-    if timestamp_local_date == reference_local_date {
-        return format!("Today at {}", formatted_time);
-    }
-
-    if reference_local_date.previous_day() == Some(timestamp_local_date) {
-        return format!("Yesterday at {}", formatted_time);
-    }
-
-    match meridiem {
+    let formatted_date = match meridiem {
         Some(_) => format!(
             "{:02}/{:02}/{}", // Sure
             timestamp_local_date.month() as u32,
@@ -165,6 +156,14 @@ pub fn format_timestamp_naive(
             timestamp_local_date.month() as u32,
             timestamp_local_date.year()
         ),
+    };
+
+    if timestamp_local_date == reference_local_date {
+        format!("Today at {}", formatted_time)
+    } else if reference_local_date.previous_day() == Some(timestamp_local_date) {
+        format!("Yesterday at {}", formatted_time)
+    } else {
+        format!("{} {}", formatted_date, formatted_time)
     }
 }
 
