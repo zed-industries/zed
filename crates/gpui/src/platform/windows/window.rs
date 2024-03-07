@@ -1,5 +1,5 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-// todo!("windows"): remove
+// todo(windows): remove
 #![allow(unused_variables)]
 
 use std::{
@@ -17,7 +17,8 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use windows::{
     core::{w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
         System::SystemServices::{
             MK_LBUTTON, MK_MBUTTON, MK_RBUTTON, MK_XBUTTON1, MK_XBUTTON2, MODIFIERKEYS_FLAGS,
         },
@@ -158,6 +159,12 @@ impl WindowsWindowInner {
         }
     }
 
+    /// mark window client rect to be re-drawn
+    /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect
+    pub(crate) fn invalidate_client_area(&self) {
+        unsafe { InvalidateRect(self.hwnd, None, FALSE) };
+    }
+
     /// returns true if message is handled and should not dispatch
     pub(crate) fn handle_immediate_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
         match msg {
@@ -245,16 +252,20 @@ impl WindowsWindowInner {
                     height: Pixels(height.0),
                 },
                 1.0,
-            )
+            );
         }
+        self.invalidate_client_area();
         LRESULT(0)
     }
 
     fn handle_paint_msg(&self) -> LRESULT {
+        let mut paint_struct = PAINTSTRUCT::default();
+        let hdc = unsafe { BeginPaint(self.hwnd, &mut paint_struct) };
         let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(callback) = callbacks.request_frame.as_mut() {
-            callback()
+        if let Some(request_frame) = callbacks.request_frame.as_mut() {
+            request_frame();
         }
+        unsafe { EndPaint(self.hwnd, &paint_struct) };
         LRESULT(0)
     }
 
@@ -403,18 +414,12 @@ impl WindowsWindowInner {
                 };
 
                 if callback(PlatformInput::KeyDown(event)) {
-                    if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                        request_frame();
-                    }
                     CallbackResult::Handled { by_callback: true }
                 } else if let Some(mut input_handler) = self.input_handler.take() {
                     if let Some(ime_key) = ime_key {
                         input_handler.replace_text_in_range(None, &ime_key);
                     }
                     self.input_handler.set(Some(input_handler));
-                    if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                        request_frame();
-                    }
                     CallbackResult::Handled { by_callback: true }
                 } else {
                     CallbackResult::Handled { by_callback: false }
@@ -433,9 +438,8 @@ impl WindowsWindowInner {
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
                 let event = KeyUpEvent { keystroke };
-                CallbackResult::Handled {
-                    by_callback: callback(PlatformInput::KeyUp(event)),
-                }
+                let by_callback = callback(PlatformInput::KeyUp(event));
+                CallbackResult::Handled { by_callback }
             } else {
                 CallbackResult::Handled { by_callback: false }
             }
@@ -527,12 +531,8 @@ impl WindowsWindowInner {
                 modifiers: self.current_modifiers(),
                 touch_phase: TouchPhase::Moved,
             };
-            if callback(PlatformInput::ScrollWheel(event)) {
-                if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                    request_frame();
-                }
-                return LRESULT(0);
-            }
+            callback(PlatformInput::ScrollWheel(event));
+            return LRESULT(0);
         }
         LRESULT(1)
     }
@@ -554,9 +554,6 @@ impl WindowsWindowInner {
                 touch_phase: TouchPhase::Moved,
             };
             if callback(PlatformInput::ScrollWheel(event)) {
-                if let Some(request_frame) = callbacks.request_frame.as_mut() {
-                    request_frame();
-                }
                 return LRESULT(0);
             }
         }
@@ -673,7 +670,7 @@ impl HasWindowHandle for WindowsWindow {
     }
 }
 
-// todo!("windows")
+// todo(windows)
 impl HasDisplayHandle for WindowsWindow {
     fn display_handle(
         &self,
@@ -690,7 +687,7 @@ impl PlatformWindow for WindowsWindow {
         })
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn content_size(&self) -> Size<Pixels> {
         let size = self.inner.size.get();
         Size {
@@ -699,22 +696,22 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn scale_factor(&self) -> f32 {
         1.0
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn titlebar_height(&self) -> Pixels {
         20.0.into()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Dark
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn display(&self) -> Rc<dyn PlatformDisplay> {
         Rc::new(WindowsDisplay::new())
     }
@@ -723,7 +720,7 @@ impl PlatformWindow for WindowsWindow {
         self.inner.mouse_position.get()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn modifiers(&self) -> Modifiers {
         Modifiers::none()
     }
@@ -732,108 +729,108 @@ impl PlatformWindow for WindowsWindow {
         self
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.inner.input_handler.set(Some(input_handler));
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.inner.input_handler.take()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn prompt(
         &self,
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> Receiver<usize> {
+    ) -> Option<Receiver<usize>> {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn activate(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
             .ok();
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn set_edited(&mut self, edited: bool) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn show_character_palette(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn minimize(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn zoom(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn toggle_full_screen(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
         self.inner.callbacks.borrow_mut().input = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.inner.callbacks.borrow_mut().resize = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().moved = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.callbacks.borrow_mut().should_close = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.inner.callbacks.borrow_mut().close = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
         true
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn draw(&self, scene: &Scene) {
         self.inner.renderer.borrow_mut().draw(scene)
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.inner.renderer.borrow().sprite_atlas().clone()
     }

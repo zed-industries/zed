@@ -32,9 +32,9 @@ body:
           required: false
     - type: textarea
       attributes:
-          label: |
-              If applicable, attach your `~/Library/Logs/Zed/Zed.log` file to this issue.
+          label: If applicable, attach your `~/Library/Logs/Zed/Zed.log` file to this issue.
+          description: |
+              Drag Zed.log into the text input below.
               If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
-          description: Drag Zed.log into the text input below
       validations:
           required: false

@@ -400,7 +400,7 @@ impl TerminalBuilder {
         #[cfg(unix)]
         let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
 
-        // todo("windows")
+        // todo(windows)
         #[cfg(windows)]
         let (fd, shell_pid) = (-1, 0);
 
@@ -668,7 +668,7 @@ impl Terminal {
     fn update_process_info(&mut self) -> bool {
         #[cfg(unix)]
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
-        // todo("windows")
+        // todo(windows)
         #[cfg(windows)]
         let mut pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() } as i32;
         if pid < 0 {
@@ -1365,7 +1365,13 @@ impl Terminal {
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.task {
-            Some(task_state) => truncate_and_trailoff(&task_state.label, MAX_CHARS),
+            Some(task_state) => {
+                if truncate {
+                    truncate_and_trailoff(&task_state.label, MAX_CHARS)
+                } else {
+                    task_state.label.clone()
+                }
+            }
             None => self
                 .foreground_process_info
                 .as_ref()
