@@ -80,13 +80,7 @@ fn format_relative_date(timestamp: OffsetDateTime, reference: OffsetDateTime) ->
                 1 => "1 week ago".to_string(),
                 2..=4 => format!("{} weeks ago", weeks),
                 _ => {
-                    let timestamp_month_diff: u8 = timestamp_date.month().into();
-                    let reference_month_diff: u8 = reference_date.month().into();
-                    let month_diff = if timestamp_month_diff > reference_month_diff {
-                        timestamp_month_diff - reference_month_diff
-                    } else {
-                        reference_month_diff - timestamp_month_diff
-                    };
+                    let month_diff = calculate_month_difference(timestamp, reference);
                     match month_diff {
                         0..=1 => "1 month ago".to_string(),
                         2..=11 => format!("{} months ago", month_diff),
@@ -102,6 +96,34 @@ fn format_relative_date(timestamp: OffsetDateTime, reference: OffsetDateTime) ->
                     }
                 }
             }
+        }
+    }
+}
+
+/// Calculates the difference in months between two timestamps.
+/// The reference timestamp should always be greater than the timestamp.
+fn calculate_month_difference(timestamp: OffsetDateTime, reference: OffsetDateTime) -> usize {
+    let timestamp_year = timestamp.year();
+    let reference_year = reference.year();
+    let timestamp_month: u8 = timestamp.month().into();
+    let reference_month: u8 = reference.month().into();
+
+    let month_diff = if reference_month >= timestamp_month {
+        reference_month as usize - timestamp_month as usize
+    } else {
+        12 - timestamp_month as usize + reference_month as usize
+    };
+
+    let year_diff = (reference_year - timestamp_year) as usize;
+    if year_diff == 0 {
+        reference_month as usize - timestamp_month as usize
+    } else {
+        if month_diff == 0 {
+            year_diff * 12
+        } else if timestamp_month > reference_month {
+            (year_diff - 1) * 12 + month_diff
+        } else {
+            year_diff * 12 + month_diff
         }
     }
 }
@@ -145,7 +167,7 @@ pub fn format_timestamp_naive(
 
     let formatted_date = match meridiem {
         Some(_) => format!(
-            "{:02}/{:02}/{}", // Sure
+            "{:02}/{:02}/{}",
             timestamp_local_date.month() as u32,
             timestamp_local_date.day(),
             timestamp_local_date.year()
@@ -506,17 +528,61 @@ mod tests {
 
         assert_eq!(
             format_relative_date(next_month(), reference),
-            "1 month ago".to_string()
+            "4 weeks ago".to_string()
         );
 
-        for i in 2..=12 {
+        for i in 2..=11 {
+            let m = next_month();
+            dbg!(m);
             assert_eq!(
-                format_relative_date(next_month(), reference),
+                format_relative_date(m, reference),
                 format!("{} months ago", i)
             );
         }
 
         assert_eq!(format_relative_date(next_month(), reference), "1 year ago");
+    }
+
+    #[test]
+    fn test_calculate_month_difference() {
+        let reference = create_offset_datetime(1990, 4, 12, 23, 0, 0);
+
+        assert_eq!(calculate_month_difference(reference, reference), 0);
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1990, 1, 12, 23, 0, 0), reference),
+            3
+        );
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1989, 11, 12, 23, 0, 0), reference),
+            5
+        );
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1989, 4, 12, 23, 0, 0), reference),
+            12
+        );
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1989, 3, 12, 23, 0, 0), reference),
+            13
+        );
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1987, 5, 12, 23, 0, 0), reference),
+            35
+        );
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1987, 4, 12, 23, 0, 0), reference),
+            36
+        );
+
+        assert_eq!(
+            calculate_month_difference(create_offset_datetime(1987, 3, 12, 23, 0, 0), reference),
+            37
+        );
     }
 
     fn test_timezone() -> UtcOffset {
