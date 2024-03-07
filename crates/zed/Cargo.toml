@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.126.0"
+version = "0.126.1"
 publish = false
 license = "GPL-3.0-or-later"
 
