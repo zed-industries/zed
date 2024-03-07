@@ -21,3 +21,13 @@ Last task spawned via that modal can be rerun with `task::Rerun` ("tasks: rerun"
 Same task modal opened via `task::Spawn` supports arbitrary bash-like command execution: type a command inside the modal, and use `cmd-enter` to spawn it.
 
 Task modal will persist list of those command for current Zed session, `task::Rerun` will also rerun such tasks if they were the last ones spawned.
+
+## Variables
+
+Variables allow you to pull information from the current editor and use it in your tasks.
+
+- `ZED_COLUMN`: current line column
+- `ZED_ROW`: current line row and the following, which are available for buffers with associated files:
+- `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree.
+- `ZED_FILE`: absolute path to the file
+- `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`
