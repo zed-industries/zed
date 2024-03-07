@@ -464,12 +464,12 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppConte
 }
 
 fn init_paths() {
-    std::fs::create_dir_all(&*util::paths::CONFIG_DIR).expect("could not create config path");
-    std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
-    std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
-    std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
+    std::fs::create_dir_all(dbg!(&*util::paths::CONFIG_DIR)).expect("could not create config path");
+    std::fs::create_dir_all(dbg!(&*util::paths::LANGUAGES_DIR)).expect("could not create languages path");
+    std::fs::create_dir_all(dbg!(&*util::paths::DB_DIR)).expect("could not create database path");
+    std::fs::create_dir_all(dbg!(&*util::paths::LOGS_DIR)).expect("could not create logs path");
     #[cfg(target_os = "linux")]
-    std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
+    std::fs::create_dir_all(dbg!(&*util::paths::TEMP_DIR)).expect("could not create tmp path");    
 }
 
 fn init_logger() {

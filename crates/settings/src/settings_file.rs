@@ -1,6 +1,6 @@
 use crate::{settings_store::SettingsStore, Settings};
 use anyhow::{Context, Result};
-use fs::{CreateOptions, Fs};
+use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{AppContext, BackgroundExecutor};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};

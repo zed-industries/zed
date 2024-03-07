@@ -2,12 +2,6 @@ pub mod repository;
 
 use anyhow::{anyhow, Result};
 
-#[cfg(target_os = "macos")]
-use fsevent::EventStream;
-
-#[cfg(not(target_os = "macos"))]
-use notify::{Config, Watcher};
-
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
@@ -325,16 +319,18 @@ impl Fs for RealFs {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
+        use fsevent::EventStream;
+
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
         std::thread::spawn(move || {
             stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
         });
 
-        Ok(Box::pin(rx.chain(futures::stream::once(async move {
+        Box::pin(rx.chain(futures::stream::once(async move {
             drop(handle);
             vec![]
-        }))))
+        })))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -343,24 +339,68 @@ impl Fs for RealFs {
         path: &Path,
         _latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
+        use notify::{event::EventKind, Watcher};
+        std::thread::yield_now();
+
         let (tx, rx) = smol::channel::unbounded();
 
-        let mut watcher =
-            notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
-                Ok(event) => {
-                    let _ = tx.try_send(event.paths);
+        let mut file_watcher = notify::recommended_watcher({
+            let tx = tx.clone();
+            move |event: Result<notify::Event, _>| {
+                if let Some(event) = event.log_err() {
+                    tx.try_send(event.paths).ok();
                 }
-                Err(err) => {
-                    log::error!("watch error: {}", err);
-                }
-            })
-            .unwrap();
+            }
+        })
+        .expect("Could not start file watcher");
 
-        watcher
+        file_watcher
             .watch(path, notify::RecursiveMode::Recursive)
-            .unwrap();
+            .ok(); // It's ok if this fails, the parent watcher will add it.
 
-        Box::pin(rx)
+        let mut parent_watcher = notify::recommended_watcher({
+            let watched_path = path.to_path_buf();
+            let tx = tx.clone();
+            move |event: Result<notify::Event, _>| {
+                if let Some(event) = event.ok() {
+                    if event
+                        .paths
+                        .into_iter()
+                        .find(|path| **path == watched_path)
+                        .is_some()
+                    {
+                        match event.kind {
+                            EventKind::Create(_) => {
+                                file_watcher
+                                    .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
+                                    .log_err();
+                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                            }
+                            EventKind::Remove(_) => {
+                                file_watcher.unwatch(&watched_path).log_err();
+                                let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        })
+        .expect("Could not start file watcher");
+
+        dbg!(path.parent().unwrap().is_dir());
+
+        parent_watcher
+            .watch(
+                dbg!(path.parent()).unwrap_or(path),
+                notify::RecursiveMode::Recursive,
+            )
+            .expect("Could not start file watcher");
+
+        Box::pin(rx.chain(futures::stream::once(async move {
+            drop(parent_watcher);
+            vec![]
+        })))
     }
 
     fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
