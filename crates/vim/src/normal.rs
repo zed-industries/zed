@@ -1037,7 +1037,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["F", "p"],
+            ["shift-f", "p"],
             indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
@@ -1053,7 +1053,7 @@ mod test {
         );
 
         cx.assert_binding(
-            ["T", "p"],
+            ["shift-t", "p"],
             indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
             Mode::Normal,
             indoc! {"fmt.Pˇrintln(\"Hello, World!\")"},
