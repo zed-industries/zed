@@ -645,13 +645,9 @@ impl Database {
                 );
             }
 
-            let mut channel_members = self.get_channel_participants(&channel, &tx).await?;
-            channel_members.retain(|member| !participant_user_ids.contains(member));
-
             Ok(UpdatedChannelMessage {
                 message_id,
                 participant_connection_ids,
-                channel_members,
                 notifications,
                 reply_to_message_id: channel_message.reply_to_message_id,
                 timestamp: channel_message.sent_at,

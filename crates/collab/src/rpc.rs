@@ -3177,7 +3177,6 @@ async fn update_channel_message(
     let UpdatedChannelMessage {
         message_id,
         participant_connection_ids,
-        channel_members,
         notifications,
         reply_to_message_id,
         timestamp,

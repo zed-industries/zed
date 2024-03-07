@@ -461,7 +461,6 @@ pub struct CreatedChannelMessage {
 pub struct UpdatedChannelMessage {
     pub message_id: MessageId,
     pub participant_connection_ids: Vec<ConnectionId>,
-    pub channel_members: Vec<UserId>,
     pub notifications: NotificationBatch,
     pub reply_to_message_id: Option<MessageId>,
     pub timestamp: PrimitiveDateTime,
