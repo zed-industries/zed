@@ -1,3 +1,5 @@
+// todo!("remove warnings")
+#![allow(unused)]
 #![allow(rustdoc::private_intra_doc_links)]
 //! This is the place where everything editor-related is stored (data-wise) and displayed (ui-wise).
 //! The main point of interest in this crate is [`Editor`] type, which is used in every other Zed part as a user input element.
@@ -32,6 +34,7 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 
+mod editor_element;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
@@ -51,7 +54,7 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
-pub use element::{CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine};
+pub use element::{EditorElement, HighlightedRange, HighlightedRangeLine};
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;

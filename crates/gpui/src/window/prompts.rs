@@ -55,12 +55,16 @@ impl PromptHandle {
     }
 }
 
+// todo!("remove warnings")
+#[allow(unused)]
 /// A prompt handle capable of being rendered in a window.
 pub struct RenderablePromptHandle {
     view: Box<dyn PromptViewHandle>,
 }
 
 impl RenderablePromptHandle {
+    // todo!("remove warnings")
+    #[allow(unused)]
     pub(crate) fn paint(&mut self, _: &mut ElementContext) -> AnyElement {
         self.view.any_view().into_any_element()
     }

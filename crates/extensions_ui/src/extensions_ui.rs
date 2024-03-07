@@ -6,10 +6,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
-    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
-    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace,
-    WindowContext,
+    actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::ops::DerefMut;
@@ -730,11 +729,10 @@ impl Render for ExtensionsPage {
 
                 let view = cx.view().clone();
                 let scroll_handle = self.list.clone();
-                let item_count = entries.len();
                 this.child(
                     canvas(
                         move |bounds, cx| {
-                            uniform_list::<_, ExtensionCard, _>(
+                            let mut list = uniform_list::<_, ExtensionCard, _>(
                                 view,
                                 "entries",
                                 count,

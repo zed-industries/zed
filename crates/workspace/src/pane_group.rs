@@ -832,9 +832,9 @@ mod element {
 
         fn after_layout(
             &mut self,
-            bounds: Bounds<Pixels>,
-            state: &mut Self::BeforeLayout,
-            cx: &mut ElementContext,
+            _bounds: Bounds<Pixels>,
+            _state: &mut Self::BeforeLayout,
+            _cx: &mut ElementContext,
         ) {
             // we paint children below that need to be commited
             todo!("implement commit bounds on pane axis element")

@@ -604,7 +604,6 @@ impl ChatPanel {
     ) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .right_0()
             .w_6()
             .bg(cx.theme().colors().element_hover)
