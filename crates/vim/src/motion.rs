@@ -124,30 +124,30 @@ struct PreviousWordEnd {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct NextSubwordStart {
+pub(crate) struct NextSubwordStart {
     #[serde(default)]
-    ignore_punctuation: bool,
+    pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct NextSubwordEnd {
+pub(crate) struct NextSubwordEnd {
     #[serde(default)]
-    ignore_punctuation: bool,
+    pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct PreviousSubwordStart {
+pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
-    ignore_punctuation: bool,
+    pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct PreviousSubwordEnd {
+pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
-    ignore_punctuation: bool,
+    pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -1065,8 +1065,7 @@ fn next_subword_start(
             let is_subword_start =
                 left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
 
-            let found = 
-                (!right.is_whitespace() && (is_word_start || is_subword_start))
+            let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
                 || at_newline && crossed_newline
                 || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
@@ -1109,9 +1108,7 @@ pub(crate) fn next_subword_end(
                 let is_subword_end =
                     left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
 
-                let found = !left.is_whitespace() &&
-                    !at_newline &&
-                    (is_word_end || is_subword_end);
+                let found = !left.is_whitespace() && !at_newline && (is_word_end || is_subword_end);
 
                 if found && (is_word_end || is_subword_end) {
                     need_backtrack = true;
@@ -1156,8 +1153,7 @@ fn previous_subword_start(
                 let is_subword_start =
                     left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
 
-                let found = 
-                    (!right.is_whitespace() && (is_word_start || is_subword_start))
+                let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
                     || at_newline && crossed_newline
                     || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 

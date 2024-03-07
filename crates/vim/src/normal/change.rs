@@ -6,10 +6,7 @@ use crate::{
     Vim,
 };
 use editor::{
-    display_map::DisplaySnapshot,
-    movement::TextLayoutDetails,
-    scroll::Autoscroll,
-    DisplayPoint,
+    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
@@ -125,24 +122,20 @@ fn expand_changed_word_selection(
             selection.end = motion::next_char(map, selection.end);
             true
         } else {
-            let motion = if use_subword { Motion::NextSubwordStart { ignore_punctuation } } else { Motion::NextWordStart { ignore_punctuation } };
-            motion.expand_selection(
-                map,
-                selection,
-                None,
-                false,
-                &text_layout_details,
-            )
+            let motion = if use_subword {
+                Motion::NextSubwordStart { ignore_punctuation }
+            } else {
+                Motion::NextWordStart { ignore_punctuation }
+            };
+            motion.expand_selection(map, selection, None, false, &text_layout_details)
         }
     } else {
-        let motion = if use_subword { Motion::NextSubwordStart { ignore_punctuation } } else { Motion::NextWordStart { ignore_punctuation } };
-        motion.expand_selection(
-            map,
-            selection,
-            times,
-            false,
-            &text_layout_details,
-        )
+        let motion = if use_subword {
+            Motion::NextSubwordStart { ignore_punctuation }
+        } else {
+            Motion::NextWordStart { ignore_punctuation }
+        };
+        motion.expand_selection(map, selection, times, false, &text_layout_details)
     }
 }
 
