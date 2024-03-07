@@ -1049,52 +1049,53 @@ mod test {
 
     #[gpui::test]
     async fn test_subword_motions(cx: &mut gpui::TestAppContext) {
-        let mut app = cx.app.borrow_mut();
-        app.bind_keys(vec![
-            KeyBinding::load(
-                &"w",
-                Box::new(motion::NextSubwordStart {
-                    ignore_punctuation: false,
-                }),
-                Some("Editor && VimControl && !VimWaiting && !menu"),
-            )
-            .unwrap(),
-            KeyBinding::load(
-                &"e",
-                Box::new(motion::NextSubwordEnd {
-                    ignore_punctuation: false,
-                }),
-                Some("Editor && VimControl && !VimWaiting && !menu"),
-            )
-            .unwrap(),
-            KeyBinding::load(
-                &"b",
-                Box::new(motion::PreviousSubwordStart {
-                    ignore_punctuation: false,
-                }),
-                Some("Editor && VimControl && !VimWaiting && !menu"),
-            )
-            .unwrap(),
-            KeyBinding::load(
-                &"g e",
-                Box::new(motion::PreviousSubwordEnd {
-                    ignore_punctuation: false,
-                }),
-                Some("Editor && VimControl && !VimWaiting && !menu"),
-            )
-            .unwrap(),
-        ]);
-        drop(app);
-
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|cx| {
+            cx.bind_keys(vec![
+                KeyBinding::new(
+                    "w",
+                    motion::NextSubwordStart {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+                KeyBinding::new(
+                    "b",
+                    motion::PreviousSubwordStart {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+                KeyBinding::new(
+                    "e",
+                    motion::NextSubwordEnd {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+                KeyBinding::new(
+                    "g e",
+                    motion::PreviousSubwordEnd {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+            ]);
+        });
 
         cx.assert_binding_normal(
             ["w"],
             indoc! {"ˇassert_binding"},
             indoc! {"assert_ˇbinding"},
         );
-        // Special case: In "{op}w", 'w' acts like 'e'
-        cx.assert_binding_normal(["d", "w"], indoc! {"ˇassert_binding"}, indoc! {"ˇ_binding"});
+        // Special case: In 'cw', 'w' acts like 'e'
+        cx.assert_binding(
+            ["c", "w"],
+            indoc! {"ˇassert_binding"},
+            Mode::Normal,
+            indoc! {"ˇ_binding"},
+            Mode::Insert,
+        );
 
         cx.assert_binding_normal(
             ["e"],

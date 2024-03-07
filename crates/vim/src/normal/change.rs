@@ -115,11 +115,13 @@ fn expand_changed_word_selection(
 
         if in_word {
             if !use_subword {
-                selection.end = motion::next_word_end(map, selection.end, ignore_punctuation, 1);
+                selection.end =
+                    motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
             } else {
-                selection.end = motion::next_subword_end(map, selection.end, ignore_punctuation, 1);
+                selection.end =
+                    motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
             }
-            selection.end = motion::next_char(map, selection.end);
+            selection.end = motion::next_char(map, selection.end, false);
             true
         } else {
             let motion = if use_subword {

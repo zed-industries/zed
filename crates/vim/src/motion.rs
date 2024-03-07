@@ -549,7 +549,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
-                next_word_end(map, point, *ignore_punctuation, times),
+                next_word_end(map, point, *ignore_punctuation, times, true),
                 SelectionGoal::None,
             ),
             PreviousWordStart { ignore_punctuation } => (
@@ -565,7 +565,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             NextSubwordEnd { ignore_punctuation } => (
-                next_subword_end(map, point, *ignore_punctuation, times),
+                next_subword_end(map, point, *ignore_punctuation, times, true),
                 SelectionGoal::None,
             ),
             PreviousSubwordStart { ignore_punctuation } => (
@@ -911,11 +911,19 @@ pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize
     point
 }
 
-pub(crate) fn next_char(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+pub(crate) fn next_char(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    allow_cross_newline: bool,
+) -> DisplayPoint {
     let mut new_point = point;
-    if new_point.column() < map.line_len(new_point.row()) {
+    let mut max_column = map.line_len(new_point.row());
+    if !allow_cross_newline {
+        max_column -= 1;
+    }
+    if new_point.column() < max_column {
         *new_point.column_mut() += 1;
-    } else if new_point < map.max_point() {
+    } else if new_point < map.max_point() && allow_cross_newline {
         *new_point.row_mut() += 1;
         *new_point.column_mut() = 0;
     }
@@ -956,10 +964,12 @@ pub(crate) fn next_word_end(
     mut point: DisplayPoint,
     ignore_punctuation: bool,
     times: usize,
+    allow_cross_newline: bool,
 ) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
-        let new_point = next_char(map, point);
+        let new_point = next_char(map, point, allow_cross_newline);
+        let mut need_next_char = false;
         let new_point = movement::find_boundary_exclusive(
             map,
             new_point,
@@ -967,10 +977,21 @@ pub(crate) fn next_word_end(
             |left, right| {
                 let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let at_newline = right == '\n';
+
+                if !allow_cross_newline && at_newline {
+                    need_next_char = true;
+                    return true;
+                }
 
                 left_kind != right_kind && left_kind != CharKind::Whitespace
             },
         );
+        let new_point = if need_next_char {
+            next_char(map, new_point, true)
+        } else {
+            new_point
+        };
         let new_point = map.clip_point(new_point, Bias::Left);
         if point == new_point {
             break;
@@ -1085,16 +1106,11 @@ pub(crate) fn next_subword_end(
     mut point: DisplayPoint,
     ignore_punctuation: bool,
     times: usize,
+    allow_cross_newline: bool,
 ) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
-        let mut new_point = point;
-        if new_point.column() < map.line_len(new_point.row()) {
-            *new_point.column_mut() += 1;
-        } else if new_point < map.max_point() {
-            *new_point.row_mut() += 1;
-            *new_point.column_mut() = 0;
-        }
+        let new_point = next_char(map, point, allow_cross_newline);
 
         let mut crossed_newline = false;
         let mut need_backtrack = false;
@@ -1103,6 +1119,10 @@ pub(crate) fn next_subword_end(
                 let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                 let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
                 let at_newline = right == '\n';
+
+                if !allow_cross_newline && at_newline {
+                    return true;
+                }
 
                 let is_word_end = (left_kind != right_kind) && !right.is_alphanumeric();
                 let is_subword_end =
