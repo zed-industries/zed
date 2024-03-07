@@ -340,6 +340,9 @@ impl Platform for WindowsPlatform {
                     if let Some(tx) = tx.take() {
                         tx.send(None).unwrap();
                     }
+                    unsafe {
+                        CoUninitialize();
+                    }
                     return;
                 }
             }
