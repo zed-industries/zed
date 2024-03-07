@@ -266,7 +266,7 @@ impl ChannelChat {
         //     edited_at: Some(OffsetDateTime::now_utc()),
         // };
 
-        self.message_update(id, message.text.clone(), cx);
+        self.message_update(id, message.text.clone(), message.mentions.clone(), cx);
 
         let nonce: u128 = self.rng.gen();
 
@@ -584,7 +584,21 @@ impl ChannelChat {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            this.message_update(message.payload.message_id, message.payload.body, cx)
+            this.message_update(
+                message.payload.message_id,
+                message.payload.body,
+                message
+                    .payload
+                    .mentions
+                    .iter()
+                    .filter(|m| m.range.is_some())
+                    .map(|m| {
+                        let range = m.range.as_ref().unwrap();
+                        ((range.start as usize..range.end as usize), m.user_id)
+                    })
+                    .collect::<Vec<_>>(),
+                cx,
+            )
         })?;
         Ok(())
     }
@@ -666,13 +680,20 @@ impl ChannelChat {
         }
     }
 
-    fn message_update(&mut self, id: u64, body: String, cx: &mut ModelContext<Self>) {
+    fn message_update(
+        &mut self,
+        id: u64,
+        body: String,
+        mentions: Vec<(Range<usize>, u64)>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>();
         let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
         let ix = messages.summary().count;
 
         if let Some(mut message_to_update) = cursor.item().cloned() {
             message_to_update.body = body;
+            message_to_update.mentions = mentions;
             messages.push(message_to_update, &());
             cursor.next(&());
         }

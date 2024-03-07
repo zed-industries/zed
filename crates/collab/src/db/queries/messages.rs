@@ -603,19 +603,30 @@ impl Database {
                 .await?;
 
             // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
-            // channel_message_mention::Entity::delete_many()
-            //     .filter(channel_message_mention::Column::MessageId.eq(message_id))
-            //     .exec(&*tx)
-            //     .await?;
+            let old_mentions = channel_message_mention::Entity::find()
+                .filter(channel_message_mention::Column::MessageId.eq(message_id))
+                .all(&*tx)
+                .await?;
 
-            // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
-            // channel_message_mention::Entity::insert_many(
-            //     self.format_mentions_to_entities(message_id, body, mentions)?,
-            // )
-            // .exec(&*tx)
-            // .await?;
+            // remove all existing mentions
+            channel_message_mention::Entity::delete_many()
+                .filter(channel_message_mention::Column::MessageId.eq(message_id))
+                .exec(&*tx)
+                .await?;
 
-            let mentioned_user_ids = mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+            let new_mentions = self.format_mentions_to_entities(message_id, body, mentions)?;
+            if !new_mentions.is_empty() {
+                // insert new mentions
+                channel_message_mention::Entity::insert_many(new_mentions)
+                    .exec(&*tx)
+                    .await?;
+            }
+
+            let mut mentioned_user_ids = mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+            // Filter out users that were mentioned before
+            for mention in old_mentions {
+                mentioned_user_ids.remove(&mention.user_id.to_proto());
+            }
 
             let mut notifications = Vec::new();
             for mentioned_user in mentioned_user_ids {
