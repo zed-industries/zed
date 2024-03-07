@@ -400,7 +400,6 @@ non_canonical_clone_impl = "allow"
 non_canonical_partial_ord_impl = "allow"
 reversed_empty_ranges = "allow"
 single_range_in_vec_init = "allow"
-suspicious_to_owned = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]

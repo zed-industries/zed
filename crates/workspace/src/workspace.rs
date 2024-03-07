@@ -224,7 +224,7 @@ impl Clone for Toast {
     fn clone(&self) -> Self {
         Toast {
             id: self.id,
-            msg: self.msg.to_owned(),
+            msg: self.msg.clone(),
             on_click: self.on_click.clone(),
         }
     }
