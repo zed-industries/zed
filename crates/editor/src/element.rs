@@ -609,7 +609,7 @@ impl EditorElement {
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         cx: &mut ElementContext,
-    ) -> Vec<Fold> {
+    ) -> Vec<FoldLayout> {
         snapshot
             .folds_in_range(visible_anchor_range.clone())
             .filter_map(|fold| {
@@ -654,11 +654,113 @@ impl EditorElement {
                     )
                     .into_any();
                 hover_element.layout(fold_bounds.origin, fold_bounds.size.into(), cx);
-                Some(Fold {
+                Some(FoldLayout {
                     id: fold.id,
                     display_range,
                     hover_element,
                 })
+            })
+            .collect()
+    }
+
+    fn layout_cursors(
+        &self,
+        editor: &mut Editor,
+        snapshot: &EditorSnapshot,
+        selections: &[(PlayerColor, Vec<SelectionLayout>)],
+        visible_display_row_range: Range<u32>,
+        line_layouts: &[LineWithInvisibles],
+        text_hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_width: Pixels,
+        cx: &mut ViewContext<Editor>,
+    ) -> SmallVec<[CursorLayout; 32]> {
+        selections
+            .iter()
+            .flat_map(|(player_color, selections)| {
+                selections
+                    .iter()
+                    .filter_map(|selection| {
+                        let cursor_position = selection.head;
+                        if (selection.is_local && !editor.show_local_cursors(cx))
+                            || !visible_display_row_range.contains(&cursor_position.row())
+                        {
+                            return None;
+                        }
+
+                        let cursor_row_layout = &line_layouts
+                            [(cursor_position.row() - visible_display_row_range.start) as usize]
+                            .line;
+                        let cursor_column = cursor_position.column() as usize;
+
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                        let mut block_width =
+                            cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                        if block_width == Pixels::ZERO {
+                            block_width = em_width;
+                        }
+                        let block_text = if let CursorShape::Block = selection.cursor_shape {
+                            snapshot
+                                .chars_at(cursor_position)
+                                .next()
+                                .and_then(|(character, _)| {
+                                    let text = if character == '\n' {
+                                        SharedString::from(" ")
+                                    } else {
+                                        SharedString::from(character.to_string())
+                                    };
+                                    let len = text.len();
+                                    cx.text_system()
+                                        .shape_line(
+                                            text,
+                                            cursor_row_layout.font_size,
+                                            &[TextRun {
+                                                len,
+                                                font: self.style.text.font(),
+                                                color: self.style.background,
+                                                background_color: None,
+                                                strikethrough: None,
+                                                underline: None,
+                                            }],
+                                        )
+                                        .log_err()
+                                })
+                        } else {
+                            None
+                        };
+
+                        let x = cursor_character_x - scroll_pixel_position.x;
+                        let y =
+                            cursor_position.row() as f32 * line_height - scroll_pixel_position.y;
+                        if selection.is_newest {
+                            editor.pixel_position_of_newest_cursor = Some(point(
+                                text_hitbox.origin.x + x + block_width / 2.,
+                                text_hitbox.origin.y + y + line_height / 2.,
+                            ))
+                        }
+
+                        let mut cursor = CursorLayout {
+                            color: player_color.cursor,
+                            block_width,
+                            origin: point(x, y),
+                            line_height,
+                            shape: selection.cursor_shape,
+                            block_text,
+                            cursor_name: None,
+                        };
+                        let cursor_name = selection.user_name.clone().map(|name| CursorName {
+                            string: name,
+                            color: self.style.background,
+                            is_top_row: cursor_position.row() == 0,
+                        });
+                        cx.with_element_context(|cx| {
+                            cursor.layout(content_origin, cursor_name, cx)
+                        });
+                        Some(cursor)
+                    })
+                    .collect::<SmallVec<[_; 32]>>()
             })
             .collect()
     }
@@ -1482,7 +1584,6 @@ impl EditorElement {
                     );
                 }
 
-                let mut cursors = SmallVec::<[Cursor; 32]>::new();
                 let corner_radius = 0.15 * layout.position_map.line_height;
                 let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
@@ -1501,94 +1602,6 @@ impl EditorElement {
 
                         if selection.is_local && !selection.range.is_empty() {
                             invisible_display_ranges.push(selection.range.clone());
-                        }
-
-                        if !selection.is_local || self.editor.read(cx).show_local_cursors(cx) {
-                            let cursor_position = selection.head;
-                            if layout
-                                .visible_display_row_range
-                                .contains(&cursor_position.row())
-                            {
-                                let cursor_row_layout = &layout.position_map.line_layouts
-                                    [(cursor_position.row() - start_row) as usize]
-                                    .line;
-                                let cursor_column = cursor_position.column() as usize;
-
-                                let cursor_character_x =
-                                    cursor_row_layout.x_for_index(cursor_column);
-                                let mut block_width = cursor_row_layout
-                                    .x_for_index(cursor_column + 1)
-                                    - cursor_character_x;
-                                if block_width == Pixels::ZERO {
-                                    block_width = layout.position_map.em_width;
-                                }
-                                let block_text = if let CursorShape::Block = selection.cursor_shape
-                                {
-                                    layout
-                                        .position_map
-                                        .snapshot
-                                        .chars_at(cursor_position)
-                                        .next()
-                                        .and_then(|(character, _)| {
-                                            let text = if character == '\n' {
-                                                SharedString::from(" ")
-                                            } else {
-                                                SharedString::from(character.to_string())
-                                            };
-                                            let len = text.len();
-                                            cx.text_system()
-                                                .shape_line(
-                                                    text,
-                                                    cursor_row_layout.font_size,
-                                                    &[TextRun {
-                                                        len,
-                                                        font: self.style.text.font(),
-                                                        color: self.style.background,
-                                                        background_color: None,
-                                                        strikethrough: None,
-                                                        underline: None,
-                                                    }],
-                                                )
-                                                .log_err()
-                                        })
-                                } else {
-                                    None
-                                };
-
-                                let x = cursor_character_x
-                                    - layout.position_map.scroll_pixel_position.x;
-                                let y = cursor_position.row() as f32
-                                    * layout.position_map.line_height
-                                    - layout.position_map.scroll_pixel_position.y;
-                                if selection.is_newest {
-                                    self.editor.update(cx, |editor, _| {
-                                        editor.pixel_position_of_newest_cursor = Some(point(
-                                            layout.text_hitbox.origin.x + x + block_width / 2.,
-                                            layout.text_hitbox.origin.y
-                                                + y
-                                                + layout.position_map.line_height / 2.,
-                                        ))
-                                    });
-                                }
-
-                                cursors.push(Cursor {
-                                    color: player_color.cursor,
-                                    block_width,
-                                    origin: point(x, y),
-                                    line_height: layout.position_map.line_height,
-                                    shape: selection.cursor_shape,
-                                    block_text,
-                                    cursor_name: None,
-                                    // cursor_name: selection.user_name.clone().map(|name| {
-                                    //     CursorName {
-                                    //         string: name,
-                                    //         color: self.style.background,
-                                    //         is_top_row: cursor_position.row() == 0,
-                                    //         z_index: (participant_ix % 256).try_into().unwrap(),
-                                    //     }
-                                    // }),
-                                });
-                            }
                         }
                     }
                 }
@@ -1609,7 +1622,7 @@ impl EditorElement {
 
                 self.paint_redactions(&layout, cx);
 
-                for cursor in &mut cursors {
+                for cursor in &mut layout.cursors {
                     cursor.paint(layout.content_origin, cx);
                 }
             },
@@ -2844,6 +2857,20 @@ impl Element for EditorElement {
                 scroll_position.y * line_height,
             );
 
+            let cursors = self.layout_cursors(
+                editor,
+                &snapshot,
+                &selections,
+                start_row..end_row,
+                &line_layouts,
+                &text_hitbox,
+                content_origin,
+                scroll_pixel_position,
+                line_height,
+                em_width,
+                cx,
+            );
+
             let scrollbar_layout = self.layout_scrollbar(
                 editor,
                 &snapshot,
@@ -3079,6 +3106,7 @@ impl Element for EditorElement {
                 display_hunks,
                 folds,
                 blocks,
+                cursors,
                 selections,
                 context_menu,
                 code_actions_indicator,
@@ -3163,10 +3191,11 @@ pub struct EditorLayout {
     highlighted_rows: Option<Range<u32>>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
+    folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
-    folds: Vec<Fold>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
+    cursors: SmallVec<[CursorLayout; 32]>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     is_singleton: bool,
     max_row: u32,
@@ -3208,7 +3237,7 @@ impl ScrollbarLayout {
     }
 }
 
-struct Fold {
+struct FoldLayout {
     id: FoldId,
     display_range: Range<DisplayPoint>,
     hover_element: AnyElement,
@@ -3327,7 +3356,7 @@ fn layout_line(
     )
 }
 
-pub struct Cursor {
+pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
     block_width: Pixels,
     line_height: Pixels,
@@ -3342,10 +3371,9 @@ pub struct CursorName {
     string: SharedString,
     color: Hsla,
     is_top_row: bool,
-    z_index: u16,
 }
 
-impl Cursor {
+impl CursorLayout {
     pub fn new(
         origin: gpui::Point<Pixels>,
         block_width: Pixels,
@@ -3353,8 +3381,8 @@ impl Cursor {
         color: Hsla,
         shape: CursorShape,
         block_text: Option<ShapedLine>,
-    ) -> Cursor {
-        Cursor {
+    ) -> CursorLayout {
+        CursorLayout {
             origin,
             block_width,
             line_height,
@@ -3397,11 +3425,11 @@ impl Cursor {
         cursor_name: Option<CursorName>,
         cx: &mut ElementContext,
     ) {
-        if let Some(name) = cursor_name {
+        if let Some(cursor_name) = cursor_name {
             let bounds = self.bounds(origin);
             let text_size = self.line_height / 1.5;
 
-            let name_origin = if name.is_top_row {
+            let name_origin = if cursor_name.is_top_row {
                 point(bounds.right() - px(1.), bounds.top())
             } else {
                 point(bounds.left(), bounds.top() - text_size / 2. - px(1.))
@@ -3411,8 +3439,8 @@ impl Cursor {
                 .text_size(text_size)
                 .px_0p5()
                 .line_height(text_size + px(2.))
-                .text_color(name.color)
-                .child(name.string.clone())
+                .text_color(cursor_name.color)
+                .child(cursor_name.string.clone())
                 .into_any_element();
 
             name_element.layout(
@@ -3420,6 +3448,7 @@ impl Cursor {
                 size(AvailableSpace::MinContent, AvailableSpace::MinContent),
                 cx,
             );
+
             self.cursor_name = Some(name_element);
         }
     }
