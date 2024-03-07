@@ -121,7 +121,7 @@ oo7 = "0.3.0"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-
+copypasta = "0.10.1"
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
