@@ -1365,7 +1365,13 @@ impl Terminal {
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.task {
-            Some(task_state) => truncate_and_trailoff(&task_state.label, MAX_CHARS),
+            Some(task_state) => {
+                if truncate {
+                    truncate_and_trailoff(&task_state.label, MAX_CHARS)
+                } else {
+                    task_state.label.clone()
+                }
+            }
             None => self
                 .foreground_process_info
                 .as_ref()
