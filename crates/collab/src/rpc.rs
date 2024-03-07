@@ -68,8 +68,13 @@ use util::SemanticVersion;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-// kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
-pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
+// This timeout must be longer than the kubernetes graceful shutdown period (10s) so that
+// we can be sure the old server is gone.
+// It also needs to be long enough that clients have a chance to reconnect before we kick
+// them out of any rooms. They have a 15s timeout, so 35s should give enough time for them
+// to try ~twice.
+// This is all to paper over our server restarts causing a huge stampede, more work is needed.
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(35);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;

@@ -65,7 +65,7 @@ lazy_static! {
 }
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
-pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
 
@@ -249,7 +249,6 @@ struct ClientState {
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
     _reconnect_task: Option<Task<()>>,
-    reconnect_interval: Duration,
     entities_by_type_and_remote_id: HashMap<(TypeId, u64), WeakSubscriber>,
     models_by_message_type: HashMap<TypeId, AnyWeakModel>,
     entity_types_by_message_type: HashMap<TypeId, TypeId>,
@@ -287,7 +286,6 @@ impl Default for ClientState {
             status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
             _reconnect_task: None,
-            reconnect_interval: Duration::from_secs(5),
             models_by_message_type: Default::default(),
             entities_by_type_and_remote_id: Default::default(),
             entity_types_by_message_type: Default::default(),
@@ -524,14 +522,13 @@ impl Client {
             }
             Status::ConnectionLost => {
                 let this = self.clone();
-                let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(move |cx| async move {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
                     let mut rng = StdRng::from_entropy();
 
-                    let mut delay = INITIAL_RECONNECTION_DELAY;
+                    let mut delay = INITIAL_RECONNECTION_DELAY.mul_f32(rng.gen_range(0.1..=5.0));
                     while let Err(error) = this.authenticate_and_connect(true, &cx).await {
                         log::error!("failed to connect {}", error);
                         if matches!(*this.status().borrow(), Status::ConnectionError) {
@@ -544,7 +541,7 @@ impl Client {
                             cx.background_executor().timer(delay).await;
                             delay = delay
                                 .mul_f32(rng.gen_range(1.0..=2.0))
-                                .min(reconnect_interval);
+                                .min(CONNECTION_TIMEOUT);
                         } else {
                             break;
                         }
