@@ -61,11 +61,13 @@ pub enum Motion {
         before: bool,
         char: char,
         mode: FindRange,
+        smartcase: bool,
     },
     FindBackward {
         after: bool,
         char: char,
         mode: FindRange,
+        smartcase: bool,
     },
     RepeatFind {
         last_find: Box<Motion>,
@@ -512,30 +514,30 @@ impl Motion {
             ),
             Matching => (matching(map, point), SelectionGoal::None),
             // t f
-            FindForward { before, char, mode } => {
-                return find_forward(map, point, *before, *char, times, *mode)
+            FindForward { before, char, mode, smartcase } => {
+                return find_forward(map, point, *before, *char, times, *mode, *smartcase)
                     .map(|new_point| (new_point, SelectionGoal::None))
             }
             // T F
-            FindBackward { after, char, mode } => (
-                find_backward(map, point, *after, *char, times, *mode),
+            FindBackward { after, char, mode, smartcase } => (
+                find_backward(map, point, *after, *char, times, *mode, *smartcase),
                 SelectionGoal::None,
             ),
             // ; -- repeat the last find done with t, f, T, F
             RepeatFind { last_find } => match **last_find {
-                Motion::FindForward { before, char, mode } => {
-                    let mut new_point = find_forward(map, point, before, char, times, mode);
+                Motion::FindForward { before, char, mode, smartcase } => {
+                    let mut new_point = find_forward(map, point, before, char, times, mode, smartcase);
                     if new_point == Some(point) {
-                        new_point = find_forward(map, point, before, char, times + 1, mode);
+                        new_point = find_forward(map, point, before, char, times + 1, mode, smartcase);
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
                 }
 
-                Motion::FindBackward { after, char, mode } => {
-                    let mut new_point = find_backward(map, point, after, char, times, mode);
+                Motion::FindBackward { after, char, mode, smartcase } => {
+                    let mut new_point = find_backward(map, point, after, char, times, mode, smartcase);
                     if new_point == point {
-                        new_point = find_backward(map, point, after, char, times + 1, mode);
+                        new_point = find_backward(map, point, after, char, times + 1, mode, smartcase);
                     }
 
                     (new_point, SelectionGoal::None)
@@ -544,19 +546,19 @@ impl Motion {
             },
             // , -- repeat the last find done with t, f, T, F, in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
-                Motion::FindForward { before, char, mode } => {
-                    let mut new_point = find_backward(map, point, before, char, times, mode);
+                Motion::FindForward { before, char, mode, smartcase } => {
+                    let mut new_point = find_backward(map, point, before, char, times, mode, smartcase);
                     if new_point == point {
-                        new_point = find_backward(map, point, before, char, times + 1, mode);
+                        new_point = find_backward(map, point, before, char, times + 1, mode, smartcase);
                     }
 
                     (new_point, SelectionGoal::None)
                 }
 
-                Motion::FindBackward { after, char, mode } => {
-                    let mut new_point = find_forward(map, point, after, char, times, mode);
+                Motion::FindBackward { after, char, mode, smartcase } => {
+                    let mut new_point = find_forward(map, point, after, char, times, mode, smartcase);
                     if new_point == Some(point) {
-                        new_point = find_forward(map, point, after, char, times + 1, mode);
+                        new_point = find_forward(map, point, after, char, times + 1, mode, smartcase);
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
@@ -1047,6 +1049,7 @@ fn find_forward(
     target: char,
     times: usize,
     mode: FindRange,
+    smartcase: bool,
 ) -> Option<DisplayPoint> {
     let mut to = from;
     let mut found = false;
@@ -1054,7 +1057,7 @@ fn find_forward(
     for _ in 0..times {
         found = false;
         let new_to = find_boundary(map, to, mode, |_, right| {
-            found = right == target;
+            found = is_character_match(target, right, smartcase);
             found
         });
         if to == new_to {
@@ -1082,19 +1085,21 @@ fn find_backward(
     target: char,
     times: usize,
     mode: FindRange,
+    smartcase: bool,
 ) -> DisplayPoint {
     let mut to = from;
 
     for _ in 0..times {
         let new_to =
-            find_preceding_boundary_display_point(map, to, mode, |_, right| right == target);
+            find_preceding_boundary_display_point(map, to, mode, |_, right| is_character_match(target, right, smartcase));
         if to == new_to {
             break;
         }
         to = new_to;
     }
 
-    if map.buffer_snapshot.chars_at(to.to_point(map)).next() == Some(target) {
+    let next = map.buffer_snapshot.chars_at(to.to_point(map)).next();
+    if next.is_some() && is_character_match(next.unwrap(), target, smartcase) {
         if after {
             *to.column_mut() += 1;
             map.clip_point(to, Bias::Right)
@@ -1105,6 +1110,19 @@ fn find_backward(
         from
     }
 }
+
+fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
+    if smartcase {
+        if target.is_uppercase() {
+            target == other
+        } else {
+            target == other.to_ascii_lowercase()
+        }
+    } else {
+        target == other
+    }
+}
+
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, times as isize);
