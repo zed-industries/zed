@@ -310,15 +310,14 @@ impl PlatformWindow for WaylandWindow {
         self.0.inner.borrow_mut().input_handler.take()
     }
 
-    // todo(linux)
     fn prompt(
         &self,
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> Receiver<usize> {
-        unimplemented!()
+    ) -> Option<Receiver<usize>> {
+        None
     }
 
     fn activate(&self) {
