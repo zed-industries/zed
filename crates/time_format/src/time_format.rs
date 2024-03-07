@@ -32,9 +32,9 @@ fn format_absolute_timestamp(timestamp: OffsetDateTime, reference: OffsetDateTim
         let timestamp_date = timestamp.date();
         let reference_date = reference.date();
         if timestamp_date == reference_date {
-            macos::format_time(&timestamp)
+            format!("Today at {}", macos::format_time(&timestamp))
         } else if reference_date.previous_day() == Some(timestamp_date) {
-            format!("yesterday at {}", macos::format_time(&timestamp))
+            format!("Yesterday at {}", macos::format_time(&timestamp))
         } else {
             macos::format_date(&timestamp)
         }
@@ -120,9 +120,9 @@ pub fn format_timestamp_naive(
 
     let (hour, meridiem) = if is_12_hour_time {
         let meridiem = if timestamp_local_hour >= 12 {
-            "pm"
+            "PM"
         } else {
-            "am"
+            "AM"
         };
 
         let hour_12 = match timestamp_local_hour {
@@ -137,7 +137,7 @@ pub fn format_timestamp_naive(
     };
 
     let formatted_time = match meridiem {
-        Some(meridiem) => format!("{:02}:{:02} {}", hour, timestamp_local_minute, meridiem),
+        Some(meridiem) => format!("{}:{:02} {}", hour, timestamp_local_minute, meridiem),
         None => format!("{:02}:{:02}", hour, timestamp_local_minute),
     };
 
@@ -145,16 +145,16 @@ pub fn format_timestamp_naive(
     let timestamp_local_date = timestamp_local.date();
 
     if timestamp_local_date == reference_local_date {
-        return formatted_time;
+        return format!("Today at {}", formatted_time);
     }
 
     if reference_local_date.previous_day() == Some(timestamp_local_date) {
-        return format!("yesterday at {}", formatted_time);
+        return format!("Yesterday at {}", formatted_time);
     }
 
     match meridiem {
         Some(_) => format!(
-            "{:02}/{:02}/{}",
+            "{:02}/{:02}/{}", // Sure
             timestamp_local_date.month() as u32,
             timestamp_local_date.day(),
             timestamp_local_date.year()
@@ -268,7 +268,10 @@ mod tests {
         let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
         let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
 
-        assert_eq!(format_timestamp_naive(timestamp, reference, false), "15:30");
+        assert_eq!(
+            format_timestamp_naive(timestamp, reference, false),
+            "Today at 15:30"
+        );
     }
 
     #[test]
@@ -278,7 +281,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "03:30 pm"
+            "Today at 3:30 PM"
         );
     }
 
@@ -289,7 +292,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "yesterday at 09:00 am"
+            "Yesterday at 9:00 AM"
         );
     }
 
@@ -300,7 +303,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "yesterday at 08:00 pm"
+            "Yesterday at 8:00 PM"
         );
     }
 
@@ -311,7 +314,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "yesterday at 06:00 pm"
+            "Yesterday at 6:00 PM"
         );
     }
 
@@ -322,7 +325,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "yesterday at 11:55 pm"
+            "Yesterday at 11:55 PM"
         );
     }
 
@@ -333,7 +336,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "yesterday at 08:00 pm"
+            "Yesterday at 8:00 PM"
         );
     }
 
@@ -344,7 +347,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(timestamp, reference, true),
-            "04/10/1990"
+            "04/10/1990 8:20 PM"
         );
     }
 
@@ -504,7 +507,7 @@ mod tests {
 
         assert_eq!(
             format_relative_date(next_month(), reference),
-            "1 months ago".to_string()
+            "1 month ago".to_string()
         );
 
         for i in 2..=12 {
