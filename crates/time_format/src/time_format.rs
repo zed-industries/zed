@@ -38,7 +38,7 @@ pub fn format_localized_timestamp(
 fn format_absolute_timestamp(
     timestamp: OffsetDateTime,
     reference: OffsetDateTime,
-    enhanced_date_formatting: bool,
+    #[allow(unused_variables)] enhanced_date_formatting: bool,
 ) -> String {
     #[cfg(target_os = "macos")]
     {
