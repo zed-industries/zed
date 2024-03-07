@@ -488,8 +488,8 @@ impl ChatPanel {
                                 )
                                 .child(
                                     Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
                                         message.timestamp,
+                                        OffsetDateTime::now_utc(),
                                         self.local_timezone,
                                         time_format::TimestampFormat::Absolute,
                                     ))

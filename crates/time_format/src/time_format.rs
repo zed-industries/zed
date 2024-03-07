@@ -11,8 +11,8 @@ pub enum TimestampFormat {
 
 /// Formats a timestamp, which respects the user's date and time preferences/custom format.
 pub fn format_localized_timestamp(
-    reference: OffsetDateTime,
     timestamp: OffsetDateTime,
+    reference: OffsetDateTime,
     timezone: UtcOffset,
     format: TimestampFormat,
 ) -> String {
