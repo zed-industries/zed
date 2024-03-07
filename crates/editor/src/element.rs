@@ -2907,24 +2907,29 @@ impl Element for EditorElement {
                         if let Some(button) =
                             editor.render_code_actions_indicator(&style, active, cx)
                         {
-                            let mut button = button.into_any_element();
-                            let available_space = size(
-                                AvailableSpace::MinContent,
-                                AvailableSpace::Definite(line_height),
-                            );
-                            let indicator_size =
-                                cx.with_element_context(|cx| button.measure(available_space, cx));
+                            cx.with_element_context(|cx| {
+                                let mut button = button.into_any_element();
+                                let available_space = size(
+                                    AvailableSpace::MinContent,
+                                    AvailableSpace::Definite(line_height),
+                                );
+                                let indicator_size = button.measure(available_space, cx);
 
-                            let mut x = Pixels::ZERO;
-                            let mut y = newest_selection_head.row() as f32 * line_height
-                                - scroll_pixel_position.y;
-                            // Center indicator.
-                            x += (gutter_dimensions.margin + gutter_dimensions.left_padding
-                                - indicator_size.width)
-                                / 2.;
-                            y += (line_height - indicator_size.height) / 2.;
-
-                            code_actions_indicator = Some(button);
+                                let mut x = Pixels::ZERO;
+                                let mut y = newest_selection_head.row() as f32 * line_height
+                                    - scroll_pixel_position.y;
+                                // Center indicator.
+                                x += (gutter_dimensions.margin + gutter_dimensions.left_padding
+                                    - indicator_size.width)
+                                    / 2.;
+                                y += (line_height - indicator_size.height) / 2.;
+                                button.layout(
+                                    gutter_hitbox.bounds.origin + point(x, y),
+                                    available_space,
+                                    cx,
+                                );
+                                code_actions_indicator = Some(button);
+                            });
                         }
                     }
                 }
