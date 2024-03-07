@@ -698,7 +698,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Theme...", theme_selector::Toggle.boxed_clone())
+                            .action("Themes...", theme_selector::Toggle.boxed_clone())
                             .separator()
                             .action("Share Feedback...", feedback::GiveFeedback.boxed_clone())
                             .action("Sign Out", client::SignOut.boxed_clone())
@@ -722,8 +722,8 @@ impl CollabTitlebarItem {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Theme...", theme_selector::Toggle.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                            .action("Themes...", theme_selector::Toggle.boxed_clone())
                             .separator()
                             .action("Share Feedback...", feedback::GiveFeedback.boxed_clone())
                     })
