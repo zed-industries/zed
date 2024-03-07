@@ -500,13 +500,17 @@ impl ChatPanel {
                                         .child(Label::new(message.sender.github_login.clone())),
                                 )
                                 .child(
-                                    Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
-                                        message.timestamp,
-                                        self.local_timezone,
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    div()
+                                        .child(
+                                            Label::new(time_format::format_localized_timestamp(
+                                                OffsetDateTime::now_utc(),
+                                                message.timestamp,
+                                                self.local_timezone,
+                                            ))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                        )
+                                        .pt_0p5(),
                                 ),
                         )
                     })
