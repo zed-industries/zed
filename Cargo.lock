@@ -2301,6 +2301,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "emojis",
  "extensions_ui",
  "feedback",
  "futures 0.3.28",
@@ -3281,6 +3282,7 @@ dependencies = [
  "copilot",
  "ctor",
  "db",
+ "emojis",
  "env_logger",
  "futures 0.3.28",
  "fuzzy",
@@ -3347,6 +3349,15 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "emojis"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee61eb945bff65ee7d19d157d39c67c33290ff0742907413fd5eefd29edc979"
+dependencies = [
+ "phf",
 ]
 
 [[package]]

@@ -211,6 +211,11 @@
     // Default width of the channels panel.
     "default_width": 240
   },
+  "message_editor": {
+    // Whether to automatically replace emoji shortcodes with emoji characters.
+    // For example: typing `:wave:` gets replaced with `👋`.
+    "auto_replace_emoji_shortcode": true
+  },
   "notification_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,

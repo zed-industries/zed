@@ -207,6 +207,7 @@ ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+emojis = "0.6.1"
 env_logger = "0.9"
 futures = "0.3"
 git2 = { version = "0.15", default-features = false }

@@ -5172,6 +5172,59 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::language()),
+    ));
+
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+            .with_language(language, cx)
+    });
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    _ = editor.update(cx, |editor, cx| {
+        editor.set_auto_replace_emoji_shortcode(true);
+
+        editor.handle_input("Hello ", cx);
+        editor.handle_input(":wave", cx);
+        assert_eq!(editor.text(cx), "Hello :wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋".unindent());
+
+        editor.handle_input(" :smile", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 :smile".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄".unindent());
+
+        editor.handle_input(":1:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+
+        // Ensure shortcode does not get replaced when it is part of a word
+        editor.handle_input(" Test:wave:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1: Test:wave:".unindent());
+
+        editor.set_auto_replace_emoji_shortcode(false);
+
+        // Ensure shortcode does not get replaced when auto replace is off
+        editor.handle_input(" :wave:", cx);
+        assert_eq!(
+            editor.text(cx),
+            "Hello 👋 😄:1: Test:wave: :wave:".unindent()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_snippets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
