@@ -396,7 +396,7 @@
       "t": "vim::Tag",
       "s": "vim::Sentence",
       "p": "vim::Paragraph",
-      "i": "vim::Indentation",
+      "i": "vim::Indentation", // zed specific
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",
