@@ -65,6 +65,7 @@ impl TextSystem {
                 font("Zed Mono"),
                 font("Helvetica"),
                 font("Cantarell"), // Gnome
+                font("Ubuntu"),    // Gnome (Ubuntu)
                 font("Noto Sans"), // KDE
             ],
         }
