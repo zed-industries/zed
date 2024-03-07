@@ -41,9 +41,9 @@ use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWin
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, WindowOptions,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, WindowOptions,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -681,6 +681,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let Some(focused_window) = focused_window else {
                     return;
                 };
+                let focused_window = focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
@@ -688,12 +689,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed => {
-                        let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                            is_held: false, // todo(linux)
-                        });
-
-                        focused_window.handle_input(input.clone());
+                        let input = if keysym.is_modifier_key() {
+                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                                modifiers: state.modifiers,
+                            })
+                        } else {
+                            PlatformInput::KeyDown(KeyDownEvent {
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
+                                is_held: false, // todo(linux)
+                            })
+                        };
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_id += 1;
@@ -706,6 +715,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                             let timer = Timer::from_duration(delay);
                             let state_ = Rc::clone(&this.client_state_inner);
+                            let input_ = input.clone();
                             state
                                 .loop_handle
                                 .insert_source(timer, move |event, _metadata, shared_data| {
@@ -723,21 +733,39 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                                     drop(state_);
 
-                                    focused_window.handle_input(input.clone());
+                                    focused_window.handle_input(input_.clone());
 
                                     TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                                 })
                                 .unwrap();
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     wl_keyboard::KeyState::Released => {
-                        focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                        }));
+                        let input = if keysym.is_modifier_key() {
+                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                                modifiers: state.modifiers,
+                            })
+                        } else {
+                            PlatformInput::KeyUp(KeyUpEvent {
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
+                            })
+                        };
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_keysym = None;
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     _ => {}
                 }
