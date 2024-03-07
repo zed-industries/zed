@@ -49,7 +49,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::fold_map::{Fold, FoldPoint};
+pub use self::fold_map::{Fold, FoldId, FoldPoint};
 pub use self::inlay_map::{InlayOffset, InlayPoint};
 pub(crate) use inlay_map::Inlay;
 
