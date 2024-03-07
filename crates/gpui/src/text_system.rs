@@ -63,7 +63,9 @@ impl TextSystem {
                 // TODO: This is currently Zed-specific.
                 // We should allow GPUI users to provide their own fallback font stack.
                 font("Zed Mono"),
-                font("Helvetica")
+                font("Helvetica"),
+                font("Cantarell"), // Gnome
+                font("Noto Sans"), // KDE
             ],
         }
     }
