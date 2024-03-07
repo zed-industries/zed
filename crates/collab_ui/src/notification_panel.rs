@@ -261,10 +261,11 @@ impl NotificationPanel {
                         .child(
                             h_flex()
                                 .child(
-                                    Label::new(format_timestamp(
+                                    Label::new(time_format::format_localized_timestamp(
                                         timestamp,
                                         now,
                                         self.local_timezone,
+                                        time_format::TimestampFormat::Relative,
                                     ))
                                     .color(Color::Muted),
                                 )
@@ -757,29 +758,3 @@ impl Render for NotificationToast {
 }
 
 impl EventEmitter<DismissEvent> for NotificationToast {}
-
-fn format_timestamp(
-    mut timestamp: OffsetDateTime,
-    mut now: OffsetDateTime,
-    local_timezone: UtcOffset,
-) -> String {
-    timestamp = timestamp.to_offset(local_timezone);
-    now = now.to_offset(local_timezone);
-
-    let today = now.date();
-    let date = timestamp.date();
-    if date == today {
-        let difference = now - timestamp;
-        if difference >= Duration::from_secs(3600) {
-            format!("{}h", difference.whole_seconds() / 3600)
-        } else if difference >= Duration::from_secs(60) {
-            format!("{}m", difference.whole_seconds() / 60)
-        } else {
-            "just now".to_string()
-        }
-    } else if date.next_day() == Some(today) {
-        "yesterday".to_string()
-    } else {
-        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
-    }
-}
