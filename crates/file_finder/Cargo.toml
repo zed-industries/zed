@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/file_finder.rs"
 doctest = false
@@ -18,10 +21,7 @@ gpui.workspace = true
 itertools = "0.11"
 menu.workspace = true
 picker.workspace = true
-postage.workspace = true
 project.workspace = true
-serde.workspace = true
-settings.workspace = true
 text.workspace = true
 theme.workspace = true
 ui.workspace = true

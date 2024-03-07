@@ -5,15 +5,15 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [features]
 default = []
-stories = ["dep:itertools", "dep:story"]
 
 [lib]
 path = "src/color.rs"
 doctest = true
 
 [dependencies]
-itertools = { version = "0.11.0", optional = true }
-palette = "0.7.3"
-story = { workspace = true, optional = true }
+palette.workspace = true

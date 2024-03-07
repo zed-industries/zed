@@ -20,7 +20,7 @@ use smol::io::AsyncReadExt;
 use settings::{Settings, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use release_channel::{AppCommitSha, ReleaseChannel};
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
     env::consts::{ARCH, OS},
     ffi::OsString,
@@ -29,7 +29,7 @@ use std::{
 };
 use update_notification::UpdateNotification;
 use util::{
-    http::{HttpClient, ZedHttpClient},
+    http::{HttpClient, HttpClientWithUrl},
     ResultExt,
 };
 use workspace::Workspace;
@@ -67,7 +67,7 @@ pub enum AutoUpdateStatus {
 pub struct AutoUpdater {
     status: AutoUpdateStatus,
     current_version: SemanticVersion,
-    http_client: Arc<ZedHttpClient>,
+    http_client: Arc<HttpClientWithUrl>,
     pending_poll: Option<Task<Option<()>>>,
 }
 
@@ -115,7 +115,7 @@ struct ReleaseNotesBody {
     release_notes: String,
 }
 
-pub fn init(http_client: Arc<ZedHttpClient>, cx: &mut AppContext) {
+pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
@@ -181,7 +181,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
         let current_version = auto_updater.current_version;
         let url = &auto_updater
             .http_client
-            .zed_url(&format!("/releases/{release_channel}/{current_version}"));
+            .build_url(&format!("/releases/{release_channel}/{current_version}"));
         cx.open_url(&url);
     }
 
@@ -190,10 +190,10 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
 
 fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx);
-    let version = env!("CARGO_PKG_VERSION");
+    let version = AppVersion::global(cx).to_string();
 
     let client = client::Client::global(cx).http_client();
-    let url = client.zed_url(&format!(
+    let url = client.build_url(&format!(
         "/api/release_notes/{}/{}",
         release_channel.dev_name(),
         version
@@ -242,7 +242,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 Some(tab_description),
                                 cx,
                             );
-                            workspace.add_item(Box::new(view.clone()), cx);
+                            workspace.add_item_to_active_pane(Box::new(view.clone()), cx);
                             cx.notify();
                         })
                         .log_err();
@@ -283,7 +283,7 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(current_version: SemanticVersion, http_client: Arc<ZedHttpClient>) -> Self {
+    fn new(current_version: SemanticVersion, http_client: Arc<HttpClientWithUrl>) -> Self {
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
@@ -337,14 +337,13 @@ impl AutoUpdater {
             (this.http_client.clone(), this.current_version)
         })?;
 
-        let mut url_string = client.zed_url(&format!(
+        let mut url_string = client.build_url(&format!(
             "/api/releases/latest?asset=Zed.dmg&os={}&arch={}",
             OS, ARCH
         ));
         cx.update(|cx| {
             if let Some(param) = ReleaseChannel::try_global(cx)
-                .map(|release_channel| release_channel.release_query_param())
-                .flatten()
+                .and_then(|release_channel| release_channel.release_query_param())
             {
                 url_string += "&";
                 url_string += param;

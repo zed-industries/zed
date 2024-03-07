@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -eu
+if [[ $# -eq 0 ]] || [[ "$1" == "--help" ]]; then
+  echo "Usage: $(basename $0) <path_to_ips_file>"
+  echo "This script symbolicates the provided .ips file using the appropriate dSYM file from digital ocean"
+  echo ""
+  exit 1
+fi
+
+ips_file=$1;
+
+version=$(cat $ips_file | head -n 1 | jq -r .app_version)
+bundle_id=$(cat $ips_file | head -n 1 | jq -r .bundleID)
+cpu_type=$(cat $ips_file | tail -n+2 | jq -r .cpuType)
+
+which symbolicate >/dev/null || cargo install symbolicate
+
+arch="x86_64-apple-darwin"
+if [[ "$cpu_type" == *ARM-64* ]]; then
+    arch="aarch64-apple-darwin"
+fi
+echo $bundle_id;
+
+channel="stable"
+if [[ "$bundle_id" == *Nightly* ]]; then
+    channel="nightly"
+elif [[ "$bundle_id" == *Preview* ]]; then
+    channel="preview"
+fi
+
+mkdir -p target/dsyms/$channel
+
+dsym="$channel/Zed-$version-$arch.dwarf"
+if [[ ! -f target/dsyms/$dsym ]]; then
+    echo "Downloading $dsym..."
+    curl -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$channel/Zed-$version-$arch.dwarf.gz"
+    gunzip  target/dsyms/$dsym.gz
+fi
+
+symbolicate $ips_file target/dsyms/$dsym

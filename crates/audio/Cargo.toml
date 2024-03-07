@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/audio.rs"
 doctest = false
@@ -13,9 +16,7 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
-futures.workspace = true
 gpui.workspace = true
-log.workspace = true
 parking_lot.workspace = true
 rodio = { version = "0.17.1", default-features = false, features = ["wav"] }
 util.workspace = true

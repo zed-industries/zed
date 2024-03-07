@@ -6,12 +6,12 @@ use anyhow::{anyhow, Context as _};
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     extract::{Path, Query},
+    http::StatusCode,
     response::Redirect,
     routing::get,
     Extension, Json, Router,
 };
 use collections::HashMap;
-use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
@@ -55,7 +55,7 @@ async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
-    let extensions = app.db.get_extensions(params.filter.as_deref(), 30).await?;
+    let extensions = app.db.get_extensions(params.filter.as_deref(), 500).await?;
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
 
@@ -148,6 +148,7 @@ async fn fetch_extensions_from_blob_store(
         .await?;
 
     let objects = list.contents.unwrap_or_default();
+
     let mut published_versions = HashMap::<&str, Vec<&str>>::default();
     for object in &objects {
         let Some(key) = object.key.as_ref() else {

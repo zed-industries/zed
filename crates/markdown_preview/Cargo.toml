@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/markdown_preview.rs"
 
@@ -12,19 +15,13 @@ path = "src/markdown_preview.rs"
 test-support = []
 
 [dependencies]
-anyhow.workspace = true
 editor.workspace = true
 gpui.workspace = true
 language.workspace = true
-lazy_static.workspace = true
-log.workspace = true
-menu.workspace = true
-project.workspace = true
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
 theme.workspace = true
 ui.workspace = true
-util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

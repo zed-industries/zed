@@ -26,7 +26,7 @@ message Envelope {
         Error error = 6;
         Ping ping = 7;
         Test test = 8;
-        EndStream end_stream = 162;
+        EndStream end_stream = 165;
 
         CreateRoom create_room = 9;
         CreateRoomResponse create_room_response = 10;
@@ -198,10 +198,12 @@ message Envelope {
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
 
-        CompleteWithLanguageModel complete_with_language_model = 164;
-        LanguageModelResponse language_model_response = 165;
-        CountTokensWithLanguageModel count_tokens_with_language_model = 166;
-        CountTokensResponse count_tokens_response = 167; // current max
+        JoinHostedProject join_hosted_project = 164;
+
+        CompleteWithLanguageModel complete_with_language_model = 166;
+        LanguageModelResponse language_model_response = 167;
+        CountTokensWithLanguageModel count_tokens_with_language_model = 168;
+        CountTokensResponse count_tokens_response = 169; // current max
     }
 
     reserved 158 to 161;
@@ -236,6 +238,7 @@ enum ErrorCode {
     CircularNesting = 10;
     WrongMoveTarget = 11;
     UnsharedItem = 12;
+    NoSuchProject = 13;
     reserved 6;
 }
 
@@ -412,11 +415,17 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
+message JoinHostedProject {
+    uint64 id = 1;
+}
+
 message JoinProjectResponse {
+    uint64 project_id = 5;
     uint32 replica_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+    ChannelRole role = 6;
 }
 
 message LeaveProject {
@@ -1034,6 +1043,9 @@ message UpdateChannels {
     repeated ChannelParticipants channel_participants = 7;
     repeated ChannelMessageId latest_channel_message_ids = 8;
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
+
+    repeated HostedProject hosted_projects = 10;
+    repeated uint64 deleted_hosted_projects = 11;
 }
 
 message UpdateUserChannels {
@@ -1060,6 +1072,13 @@ message ChannelPermission {
 message ChannelParticipants {
     uint64 channel_id = 1;
     repeated uint64 participant_user_ids = 2;
+}
+
+message HostedProject {
+    uint64 id = 1;
+    uint64 channel_id = 2;
+    string name = 3;
+    ChannelVisibility visibility = 4;
 }
 
 message JoinChannel {
@@ -1115,6 +1134,7 @@ enum ChannelRole {
     Member = 1;
     Guest = 2;
     Banned = 3;
+    Talker = 4;
 }
 
 message SetChannelMemberRole {

@@ -52,7 +52,7 @@ fn scroll(
 ) {
     Vim::update(cx, |vim, cx| {
         let amount = by(vim.take_count(cx).map(|c| c as f32));
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             scroll_editor(editor, move_cursor, &amount, cx)
         });
     })

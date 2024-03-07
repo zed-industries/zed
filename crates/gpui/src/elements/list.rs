@@ -241,7 +241,7 @@ impl ListState {
             let mut cursor = state.items.cursor::<ListItemSummary>();
             cursor.seek(&Count(ix + 1), Bias::Right, &());
             let bottom = cursor.start().height + padding.top;
-            let goal_top = px(0.).max(bottom - height);
+            let goal_top = px(0.).max(bottom - height + padding.bottom);
 
             cursor.seek(&Height(goal_top), Bias::Left, &());
             let start_ix = cursor.start().count;
@@ -548,32 +548,28 @@ impl Element for List {
 
                     let summary = state.items.summary();
                     let total_height = summary.height;
-                    let all_rendered = summary.unrendered_count == 0;
 
-                    if all_rendered {
-                        cx.request_measured_layout(
-                            style,
-                            move |known_dimensions, available_space, _cx| {
-                                let width = known_dimensions.width.unwrap_or(match available_space
+                    cx.request_measured_layout(
+                        style,
+                        move |known_dimensions, available_space, _cx| {
+                            let width =
+                                known_dimensions
                                     .width
-                                {
-                                    AvailableSpace::Definite(x) => x,
-                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                        max_element_width
-                                    }
-                                });
-                                let height = match available_space.height {
-                                    AvailableSpace::Definite(height) => total_height.min(height),
-                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                        total_height
-                                    }
-                                };
-                                size(width, height)
-                            },
-                        )
-                    } else {
-                        cx.request_layout(&style, None)
-                    }
+                                    .unwrap_or(match available_space.width {
+                                        AvailableSpace::Definite(x) => x,
+                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                            max_element_width
+                                        }
+                                    });
+                            let height = match available_space.height {
+                                AvailableSpace::Definite(height) => total_height.min(height),
+                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                    total_height
+                                }
+                            };
+                            size(width, height)
+                        },
+                    )
                 })
             }
             ListSizingBehavior::Auto => {

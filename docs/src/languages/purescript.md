@@ -1,4 +1,4 @@
 # PureScript
 
-- Tree Sitter: [tree-sitter-purescript](https://github.com/ivanmoreau/tree-sitter-purescript)
+- Tree Sitter: [tree-sitter-purescript](https://github.com/postsolar/tree-sitter-purescript)
 - Language Server: [purescript](https://github.com/nwolverson/purescript-language-server)

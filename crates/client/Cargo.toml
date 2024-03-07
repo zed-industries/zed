@@ -5,17 +5,20 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/client.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
+clock.workspace = true
 collections.workspace = true
-db.workspace = true
 gpui.workspace = true
 util.workspace = true
 release_channel.workspace = true
@@ -23,13 +26,11 @@ rpc.workspace = true
 text.workspace = true
 settings.workspace = true
 feature_flags.workspace = true
-sum_tree.workspace = true
 
 anyhow.workspace = true
 async-recursion = "0.3"
 async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
 futures.workspace = true
-image = "0.23"
 lazy_static.workspace = true
 log.workspace = true
 once_cell = "1.19.0"
@@ -38,19 +39,19 @@ postage.workspace = true
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+telemetry_events.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
-uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }

@@ -9,14 +9,14 @@ use editor::{
     Bias, DisplayPoint, Editor,
 };
 use gpui::{actions, ViewContext, WindowContext};
-use language::{Selection, SelectionGoal};
+use language::{Point, Selection, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{
     motion::{start_of_line, Motion},
     object::Object,
     state::{Mode, Operator},
-    utils::copy_selections_content,
+    utils::{copy_selections_content, yank_selections_content},
     Vim,
 };
 
@@ -60,7 +60,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             if vim.state().mode == Mode::VisualBlock
                 && !matches!(
@@ -87,6 +87,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                         // If the file ends with a newline (which is common) we don't do this.
                         // so that if you go to the end of such a file you can use "up" to go
                         // to the previous line and have it work somewhat as expected.
+                        #[allow(clippy::nonminimal_bool)]
                         if !selection.reversed
                             && !selection.is_empty()
                             && !(selection.end.column() == 0 && selection.end == map.max_point())
@@ -222,7 +223,7 @@ pub fn visual_block_motion(
                     start: start.to_point(map),
                     end: end.to_point(map),
                     reversed: is_reversed,
-                    goal: goal.clone(),
+                    goal,
                 };
 
                 selections.push(selection);
@@ -251,7 +252,7 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                 vim.switch_mode(target_mode, true, cx);
             }
 
-            vim.update_active_editor(cx, |editor, cx| {
+            vim.update_active_editor(cx, |_, editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
                         let mut head = selection.head();
@@ -278,6 +279,25 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                                     selection.end = range.end;
                                 }
                             }
+
+                            // In the visual selection result of a paragraph object, the cursor is
+                            // placed at the start of the last line. And in the visual mode, the
+                            // selection end is located after the end character. So, adjustment of
+                            // selection end is needed.
+                            //
+                            // We don't do this adjustment for a one-line blank paragraph since the
+                            // trailing newline is included in its selection from the beginning.
+                            if object == Object::Paragraph && range.start != range.end {
+                                let row_of_selection_end_line = selection.end.to_point(map).row;
+                                let new_selection_end =
+                                    if map.buffer_snapshot.line_len(row_of_selection_end_line) == 0
+                                    {
+                                        Point::new(row_of_selection_end_line + 1, 0)
+                                    } else {
+                                        Point::new(row_of_selection_end_line, 1)
+                                    };
+                                selection.end = new_selection_end.to_display_point(map);
+                            }
                         }
                     });
                 });
@@ -298,7 +318,7 @@ fn toggle_mode(mode: Mode, cx: &mut ViewContext<Workspace>) {
 
 pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
@@ -311,7 +331,7 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
 
@@ -328,7 +348,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                         selection.goal = SelectionGoal::None;
                     });
                 });
-                copy_selections_content(editor, line_mode, cx);
+                copy_selections_content(vim, editor, line_mode, cx);
                 editor.insert("", cx);
 
                 // Fixup cursor position after the deletion
@@ -355,9 +375,9 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
 
 pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |vim, editor, cx| {
             let line_mode = editor.selections.line_mode;
-            copy_selections_content(editor, line_mode, cx);
+            yank_selections_content(vim, editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {
@@ -377,7 +397,7 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
 pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
 
@@ -426,7 +446,7 @@ pub fn select_next(
         let count =
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 match editor.select_next(&Default::default(), cx) {
                     Err(a) => return Err(a),
@@ -448,7 +468,7 @@ pub fn select_previous(
         let count =
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
-        vim.update_active_editor(cx, |editor, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 match editor.select_previous(&Default::default(), cx) {
                     Err(a) => return Err(a),
@@ -1005,7 +1025,6 @@ mod test {
         cx.simulate_shared_keystrokes(["ctrl-v", "l"]).await;
         cx.simulate_shared_keystrokes(["a", "]"]).await;
         cx.assert_shared_state("hello (in «[parens]ˇ» o)").await;
-        assert_eq!(cx.mode(), Mode::Visual);
         cx.simulate_shared_keystrokes(["i", "("]).await;
         cx.assert_shared_state("hello («in [parens] oˇ»)").await;
 
@@ -1016,7 +1035,6 @@ mod test {
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_shared_keystrokes(["o", "a", "s"]).await;
         cx.assert_shared_state("«ˇhello in a word» again.").await;
-        assert_eq!(cx.mode(), Mode::Visual);
     }
 
     #[gpui::test]

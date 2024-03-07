@@ -8,17 +8,31 @@ use serde::{Deserialize, Serialize};
 
 lazy_static::lazy_static! {
     pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
-    pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
+    pub static ref CONFIG_DIR: PathBuf = if cfg!(target_os = "windows") {
+        dirs::config_dir()
+            .expect("failed to determine RoamingAppData directory")
+            .join("Zed")
+    } else {
+        HOME.join(".config").join("zed")
+    };
     pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
     pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
     pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
     pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/Zed")
+    } else if cfg!(target_os = "windows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Zed/logs")
     } else {
         CONFIG_DIR.join("logs")
     };
     pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Application Support/Zed")
+    } else if cfg!(target_os = "windows") {
+        dirs::config_dir()
+            .expect("failed to determine RoamingAppData directory")
+            .join("Zed")
     } else {
         CONFIG_DIR.clone()
     };
@@ -29,6 +43,10 @@ lazy_static::lazy_static! {
     pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
     pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/DiagnosticReports")
+    } else if cfg!(target_os = "windows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Zed/crashes")
     } else {
         CONFIG_DIR.join("crashes")
     };
@@ -44,11 +62,19 @@ lazy_static::lazy_static! {
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
+    pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
+    pub static ref TEMP_DIR: PathBuf = if cfg!(target_os = "widows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Temp/Zed")
+    } else {
+        HOME.join(".cache").join("zed")
+    };
 }
 
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
-    fn icon_suffix(&self) -> Option<&str>;
+    fn icon_stem_or_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
@@ -100,17 +126,17 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns a suffix of the path that is used to determine which file icon to use
-    fn icon_suffix(&self) -> Option<&str> {
-        let file_name = self.as_ref().file_name()?.to_str()?;
-
+    /// Returns either the suffix if available, or the file stem otherwise to determine which file icon to use
+    fn icon_stem_or_suffix(&self) -> Option<&str> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
         if file_name.starts_with('.') {
             return file_name.strip_prefix('.');
         }
 
-        self.as_ref()
-            .extension()
-            .and_then(|extension| extension.to_str())
+        path.extension()
+            .and_then(|e| e.to_str())
+            .or_else(|| path.file_stem()?.to_str())
     }
 
     /// Returns a file's extension or, if the file is hidden, its name without the leading dot
@@ -403,26 +429,30 @@ mod tests {
     }
 
     #[test]
-    fn test_icon_suffix() {
+    fn test_icon_stem_or_suffix() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
-        assert_eq!(path.icon_suffix(), Some("rs"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
 
         // Single dot in name
         let path = Path::new("/a/b/c/file.name.rs");
-        assert_eq!(path.icon_suffix(), Some("rs"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
+
+        // No suffix
+        let path = Path::new("/a/b/c/file");
+        assert_eq!(path.icon_stem_or_suffix(), Some("file"));
 
         // Multiple dots in name
         let path = Path::new("/a/b/c/long.file.name.rs");
-        assert_eq!(path.icon_suffix(), Some("rs"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
 
         // Hidden file, no extension
         let path = Path::new("/a/b/c/.gitignore");
-        assert_eq!(path.icon_suffix(), Some("gitignore"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("gitignore"));
 
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
-        assert_eq!(path.icon_suffix(), Some("eslintrc.js"));
+        assert_eq!(path.icon_stem_or_suffix(), Some("eslintrc.js"));
     }
 
     #[test]
@@ -453,7 +483,7 @@ mod tests {
         let path = Path::new("/work/node_modules");
         let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
         assert!(
-            path_matcher.is_match(&path),
+            path_matcher.is_match(path),
             "Path matcher {path_matcher} should match {path:?}"
         );
     }
@@ -463,7 +493,7 @@ mod tests {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
         assert!(
-            path_matcher.is_match(&path),
+            path_matcher.is_match(path),
             "Path matcher {path_matcher} should match {path:?}"
         );
     }

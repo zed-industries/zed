@@ -62,7 +62,6 @@ pub fn expand_macro_recursively(
             project
                 .read(cx)
                 .language_servers_for_buffer(buffer.read(cx), cx)
-                .into_iter()
                 .find_map(|(adapter, server)| {
                     if adapter.name.0.as_ref() == "rust-analyzer" {
                         Some((
@@ -105,7 +104,7 @@ pub fn expand_macro_recursively(
             let buffer = cx.new_model(|cx| {
                 MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
             });
-            workspace.add_item(
+            workspace.add_item_to_active_pane(
                 Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                 cx,
             );

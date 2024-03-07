@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/outline.rs"
 doctest = false
@@ -16,10 +19,8 @@ gpui.workspace = true
 language.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
-postage.workspace = true
 settings.workspace = true
 smol.workspace = true
-text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

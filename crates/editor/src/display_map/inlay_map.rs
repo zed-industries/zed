@@ -1,8 +1,8 @@
-use crate::{Anchor, InlayId, MultiBufferSnapshot, ToOffset};
+use crate::InlayId;
 use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{MultiBufferChunks, MultiBufferRows};
+use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferRows, MultiBufferSnapshot, ToOffset};
 use std::{
     any::TypeId,
     cmp,
@@ -283,7 +283,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 self.output_offset.0 += prefix.len();
                 let mut prefix = Chunk {
                     text: prefix,
-                    ..chunk.clone()
+                    ..*chunk
                 };
                 if !self.active_highlights.is_empty() {
                     let mut highlight_style = HighlightStyle::default();
@@ -322,7 +322,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
                         highlight_style
                             .get_or_insert_with(|| Default::default())
-                            .highlight(style.clone());
+                            .highlight(*style);
                     }
                 } else {
                     next_inlay_highlight_endpoint = usize::MAX;
@@ -982,7 +982,7 @@ impl InlaySnapshot {
         summary
     }
 
-    pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
+    pub fn buffer_rows(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());

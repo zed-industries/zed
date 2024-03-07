@@ -10,6 +10,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
+use clock::SystemClock;
 use collections::HashMap;
 use futures::{
     channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
@@ -26,7 +27,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json;
+
 use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
@@ -44,11 +45,11 @@ use std::{
 use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
-use util::http::{HttpClient, ZedHttpClient};
+use util::http::{HttpClient, HttpClientWithUrl};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
-pub use telemetry::Event;
+pub use telemetry_events::Event;
 pub use user::*;
 
 lazy_static! {
@@ -63,7 +64,7 @@ lazy_static! {
     pub static ref ZED_APP_PATH: Option<PathBuf> =
         std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
     pub static ref ZED_ALWAYS_ACTIVE: bool =
-        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| e.len() > 0);
+        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
 }
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
@@ -155,7 +156,7 @@ impl Global for GlobalClient {}
 pub struct Client {
     id: AtomicU64,
     peer: Arc<Peer>,
-    http: Arc<ZedHttpClient>,
+    http: Arc<HttpClientWithUrl>,
     telemetry: Arc<Telemetry>,
     state: RwLock<ClientState>,
 
@@ -424,11 +425,15 @@ impl settings::Settings for TelemetrySettings {
 }
 
 impl Client {
-    pub fn new(http: Arc<ZedHttpClient>, cx: &mut AppContext) -> Arc<Self> {
-        let client = Arc::new(Self {
+    pub fn new(
+        clock: Arc<dyn SystemClock>,
+        http: Arc<HttpClientWithUrl>,
+        cx: &mut AppContext,
+    ) -> Arc<Self> {
+        Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
-            telemetry: Telemetry::new(http.clone(), cx),
+            telemetry: Telemetry::new(clock, http.clone(), cx),
             http,
             state: Default::default(),
 
@@ -436,16 +441,14 @@ impl Client {
             authenticate: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             establish_connection: Default::default(),
-        });
-
-        client
+        })
     }
 
     pub fn id(&self) -> u64 {
         self.id.load(Ordering::SeqCst)
     }
 
-    pub fn http_client(&self) -> Arc<ZedHttpClient> {
+    pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
         self.http.clone()
     }
 
@@ -571,17 +574,18 @@ impl Client {
         let mut state = self.state.write();
         if state.entities_by_type_and_remote_id.contains_key(&id) {
             return Err(anyhow!("already subscribed to entity"));
-        } else {
-            state
-                .entities_by_type_and_remote_id
-                .insert(id, WeakSubscriber::Pending(Default::default()));
-            Ok(PendingEntitySubscription {
-                client: self.clone(),
-                remote_id,
-                consumed: false,
-                _entity_type: PhantomData,
-            })
         }
+
+        state
+            .entities_by_type_and_remote_id
+            .insert(id, WeakSubscriber::Pending(Default::default()));
+
+        Ok(PendingEntitySubscription {
+            client: self.clone(),
+            remote_id,
+            consumed: false,
+            _entity_type: PhantomData,
+        })
     }
 
     #[track_caller]
@@ -924,7 +928,7 @@ impl Client {
             move |cx| async move {
                 match handle_io.await {
                     Ok(()) => {
-                        if this.status().borrow().clone()
+                        if *this.status().borrow()
                             == (Status::Connected {
                                 connection_id,
                                 peer_id,
@@ -968,14 +972,14 @@ impl Client {
     }
 
     async fn get_rpc_url(
-        http: Arc<ZedHttpClient>,
+        http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
     ) -> Result<Url> {
         if let Some(url) = &*ZED_RPC_URL {
             return Url::parse(url).context("invalid rpc url");
         }
 
-        let mut url = http.zed_url("/rpc");
+        let mut url = http.build_url("/rpc");
         if let Some(preview_param) =
             release_channel.and_then(|channel| channel.release_query_param())
         {
@@ -1108,7 +1112,7 @@ impl Client {
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
-                    let mut url = http.zed_url(&format!(
+                    let mut url = http.build_url(&format!(
                         "/native_app_signin?native_app_port={}&native_app_public_key={}",
                         port, public_key_string
                     ));
@@ -1143,7 +1147,7 @@ impl Client {
                                     }
 
                                     let post_auth_url =
-                                        http.zed_url("/native_app_signin_succeeded");
+                                        http.build_url("/native_app_signin_succeeded");
                                     req.respond(
                                         tiny_http::Response::empty(302).with_header(
                                             tiny_http::Header::from_bytes(
@@ -1185,7 +1189,7 @@ impl Client {
     }
 
     async fn authenticate_as_admin(
-        http: Arc<ZedHttpClient>,
+        http: Arc<HttpClientWithUrl>,
         login: String,
         mut api_token: String,
     ) -> Result<Credentials> {
@@ -1357,7 +1361,7 @@ impl Client {
                     pending.push(message);
                     return;
                 }
-                Some(weak_subscriber @ _) => match weak_subscriber {
+                Some(weak_subscriber) => match weak_subscriber {
                     WeakSubscriber::Entity { handle } => {
                         subscriber = handle.upgrade();
                     }
@@ -1460,21 +1464,29 @@ async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
         .await
 }
 
-const WORKTREE_URL_PREFIX: &str = "zed://worktrees/";
+/// prefix for the zed:// url scheme
+pub static ZED_URL_SCHEME: &str = "zed";
 
-pub fn encode_worktree_url(id: u64, access_token: &str) -> String {
-    format!("{}{}/{}", WORKTREE_URL_PREFIX, id, access_token)
-}
-
-pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
-    let path = url.trim().strip_prefix(WORKTREE_URL_PREFIX)?;
-    let mut parts = path.split('/');
-    let id = parts.next()?.parse::<u64>().ok()?;
-    let access_token = parts.next()?;
-    if access_token.is_empty() {
-        return None;
+/// Parses the given link into a Zed link.
+///
+/// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
+/// Returns [`None`] otherwise.
+pub fn parse_zed_link<'a>(link: &'a str, cx: &AppContext) -> Option<&'a str> {
+    let server_url = &ClientSettings::get_global(cx).server_url;
+    if let Some(stripped) = link
+        .strip_prefix(server_url)
+        .and_then(|result| result.strip_prefix('/'))
+    {
+        return Some(stripped);
     }
-    Some((id, access_token.to_string()))
+    if let Some(stripped) = link
+        .strip_prefix(ZED_URL_SCHEME)
+        .and_then(|result| result.strip_prefix("://"))
+    {
+        return Some(stripped);
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -1482,6 +1494,7 @@ mod tests {
     use super::*;
     use crate::test::FakeServer;
 
+    use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
     use parking_lot::Mutex;
     use settings::SettingsStore;
@@ -1492,7 +1505,13 @@ mod tests {
     async fn test_reconnection(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
         let mut status = client.status();
         assert!(matches!(
@@ -1527,7 +1546,13 @@ mod tests {
     async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let mut status = client.status();
 
         // Time out when client tries to connect.
@@ -1600,7 +1625,13 @@ mod tests {
         init_test(cx);
         let auth_count = Arc::new(Mutex::new(0));
         let dropped_auth_count = Arc::new(Mutex::new(0));
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         client.override_authenticate({
             let auth_count = auth_count.clone();
             let dropped_auth_count = dropped_auth_count.clone();
@@ -1633,22 +1664,17 @@ mod tests {
         assert_eq!(*dropped_auth_count.lock(), 1);
     }
 
-    #[test]
-    fn test_encode_and_decode_worktree_url() {
-        let url = encode_worktree_url(5, "deadbeef");
-        assert_eq!(decode_worktree_url(&url), Some((5, "deadbeef".to_string())));
-        assert_eq!(
-            decode_worktree_url(&format!("\n {}\t", url)),
-            Some((5, "deadbeef".to_string()))
-        );
-        assert_eq!(decode_worktree_url("not://the-right-format"), None);
-    }
-
     #[gpui::test]
     async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
@@ -1702,7 +1728,13 @@ mod tests {
     async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.new_model(|_| TestModel::default());
@@ -1731,7 +1763,13 @@ mod tests {
     async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
         init_test(cx);
         let user_id = 5;
-        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::default()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.new_model(|_| TestModel::default());

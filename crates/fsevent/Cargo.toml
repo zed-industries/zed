@@ -1,17 +1,19 @@
 [package]
 name = "fsevent"
-version = "2.0.2"
-license = "MIT"
+version = "0.1.0"
 edition = "2021"
 publish = false
+license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
 
 [lib]
 path = "src/fsevent.rs"
 doctest = false
 
 [dependencies]
-bitflags = "1"
+bitflags.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

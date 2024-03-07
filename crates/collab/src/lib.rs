@@ -78,8 +78,8 @@ impl From<axum::Error> for Error {
     }
 }
 
-impl From<hyper::Error> for Error {
-    fn from(error: hyper::Error) -> Self {
+impl From<axum::http::Error> for Error {
+    fn from(error: axum::http::Error) -> Self {
         Self::Internal(error.into())
     }
 }
@@ -93,11 +93,24 @@ impl From<serde_json::Error> for Error {
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
-            Error::Http(code, message) => (code, message).into_response(),
+            Error::Http(code, message) => {
+                log::error!("HTTP error {}: {}", code, &message);
+                (code, message).into_response()
+            }
             Error::Database(error) => {
+                log::error!(
+                    "HTTP error {}: {:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
             Error::Internal(error) => {
+                log::error!(
+                    "HTTP error {}: {:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
         }
@@ -132,6 +145,10 @@ pub struct Config {
     pub database_url: String,
     pub database_max_connections: u32,
     pub api_token: String,
+    pub clickhouse_url: Option<String>,
+    pub clickhouse_user: Option<String>,
+    pub clickhouse_password: Option<String>,
+    pub clickhouse_database: Option<String>,
     pub invite_link_prefix: String,
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
@@ -146,6 +163,8 @@ pub struct Config {
     pub zed_environment: Arc<str>,
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
+    pub zed_client_checksum_seed: Option<String>,
+    pub slack_panics_webhook: Option<String>,
 }
 
 impl Config {
@@ -166,6 +185,7 @@ pub struct AppState {
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
+    pub clickhouse_client: Option<clickhouse::Client>,
     pub config: Config,
 }
 
@@ -198,6 +218,10 @@ impl AppState {
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
+            clickhouse_client: config
+                .clickhouse_url
+                .as_ref()
+                .and_then(|_| build_clickhouse_client(&config).log_err()),
             config,
         };
         Ok(Arc::new(this))
@@ -237,4 +261,32 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
         .await;
 
     Ok(aws_sdk_s3::Client::new(&s3_config))
+}
+
+fn build_clickhouse_client(config: &Config) -> anyhow::Result<clickhouse::Client> {
+    Ok(clickhouse::Client::default()
+        .with_url(
+            config
+                .clickhouse_url
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing clickhouse_url"))?,
+        )
+        .with_user(
+            config
+                .clickhouse_user
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing clickhouse_user"))?,
+        )
+        .with_password(
+            config
+                .clickhouse_password
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing clickhouse_password"))?,
+        )
+        .with_database(
+            config
+                .clickhouse_database
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing clickhouse_database"))?,
+        ))
 }

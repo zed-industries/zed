@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/language_tools.rs"
 doctest = false
@@ -18,7 +21,6 @@ gpui.workspace = true
 language.workspace = true
 lsp.workspace = true
 project.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
@@ -33,5 +35,4 @@ editor = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }

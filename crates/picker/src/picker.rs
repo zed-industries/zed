@@ -1,3 +1,4 @@
+use anyhow::Result;
 use editor::Editor;
 use gpui::{
     div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
@@ -8,16 +9,23 @@ use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
+pub mod highlighted_match_with_paths;
+
 enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),
+}
+
+struct PendingUpdateMatches {
+    delegate_update_matches: Option<Task<()>>,
+    _task: Task<Result<()>>,
 }
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
     editor: View<Editor>,
-    pending_update_matches: Option<Task<()>>,
+    pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
     max_height: Option<Length>,
@@ -30,6 +38,7 @@ pub struct Picker<D: PickerDelegate> {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
+
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -37,7 +46,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
-    fn placeholder_text(&self) -> Arc<str>;
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
@@ -55,6 +64,9 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn selected_as_query(&self) -> Option<String> {
+        None
+    }
 
     fn render_match(
         &self,
@@ -98,7 +110,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool) -> Self {
-        let editor = create_editor(delegate.placeholder_text(), cx);
+        let editor = create_editor(delegate.placeholder_text(cx), cx);
         cx.subscribe(&editor, Self::on_input_editor_event).detach();
         let mut this = Self {
             delegate,
@@ -237,6 +249,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    fn use_selected_query(&mut self, _: &menu::UseSelectedQuery, cx: &mut ViewContext<Self>) {
+        if let Some(new_query) = self.delegate.selected_as_query() {
+            self.set_query(new_query, cx);
+            cx.stop_propagation();
+        }
+    }
+
     fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
         cx.stop_propagation();
         cx.prevent_default();
@@ -268,15 +287,32 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
-        let update = self.delegate.update_matches(query, cx);
+        let delegate_pending_update_matches = self.delegate.update_matches(query, cx);
+
         self.matches_updated(cx);
-        self.pending_update_matches = Some(cx.spawn(|this, mut cx| async move {
-            update.await;
-            this.update(&mut cx, |this, cx| {
-                this.matches_updated(cx);
-            })
-            .ok();
-        }));
+        // This struct ensures that we can synchronously drop the task returned by the
+        // delegate's `update_matches` method and the task that the picker is spawning.
+        // If we simply capture the delegate's task into the picker's task, when the picker's
+        // task gets synchronously dropped, the delegate's task would keep running until
+        // the picker's task has a chance of being scheduled, because dropping a task happens
+        // asynchronously.
+        self.pending_update_matches = Some(PendingUpdateMatches {
+            delegate_update_matches: Some(delegate_pending_update_matches),
+            _task: cx.spawn(|this, mut cx| async move {
+                let delegate_pending_update_matches = this.update(&mut cx, |this, _| {
+                    this.pending_update_matches
+                        .as_mut()
+                        .unwrap()
+                        .delegate_update_matches
+                        .take()
+                        .unwrap()
+                })?;
+                delegate_pending_update_matches.await;
+                this.update(&mut cx, |this, cx| {
+                    this.matches_updated(cx);
+                })
+            }),
+        });
     }
 
     fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -312,6 +348,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn render_element(&self, cx: &mut ViewContext<Self>, ix: usize) -> impl IntoElement {
         div()
             .id(("item", ix))
+            .cursor_pointer()
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                 this.handle_click(ix, event.down.modifiers.command, cx)
             }))
@@ -382,6 +419,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
+            .on_action(cx.listener(Self::use_selected_query))
             .child(picker_editor)
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {

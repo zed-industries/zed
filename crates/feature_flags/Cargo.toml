@@ -5,9 +5,11 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/feature_flags.rs"
 
 [dependencies]
-anyhow.workspace = true
 gpui.workspace = true

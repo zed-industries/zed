@@ -98,7 +98,7 @@ impl BufferSearchBar {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -127,7 +127,9 @@ impl Render for BufferSearchBar {
 
         let supported_options = self.supported_options();
 
-        if self.query_editor.read(cx).placeholder_text().is_none() {
+        if self.query_editor.update(cx, |query_editor, cx| {
+            query_editor.placeholder_text(cx).is_none()
+        }) {
             let query_focus_handle = self.query_editor.focus_handle(cx);
             let up_keystrokes = cx
                 .bindings_for_action_in(&PreviousHistoryQuery {}, &query_focus_handle)
@@ -1470,7 +1472,7 @@ mod tests {
                 buffer_text,
             )
         });
-        let window = cx.add_window(|_| ());
+        let window = cx.add_window(|_| gpui::Empty);
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 

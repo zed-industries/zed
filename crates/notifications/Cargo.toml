@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/notification_store.rs"
 doctest = false
@@ -21,15 +24,11 @@ test-support = [
 anyhow.workspace = true
 channel.workspace = true
 client.workspace = true
-clock.workspace = true
 collections.workspace = true
 db.workspace = true
-feature_flags.workspace = true
 gpui.workspace = true
 rpc.workspace = true
-settings.workspace = true
 sum_tree.workspace = true
-text.workspace = true
 time.workspace = true
 util.workspace = true
 

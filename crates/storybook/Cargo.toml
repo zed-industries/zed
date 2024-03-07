@@ -5,16 +5,16 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "storybook"
 path = "src/storybook.rs"
 
 [dependencies]
 anyhow.workspace = true
-# TODO: Remove after diagnosing stack overflow.
-backtrace-on-stack-overflow = "0.3.0"
-chrono = "0.4"
-clap = { version = "4.4", features = ["derive", "string"] }
+clap = { workspace = true, features = ["derive", "string"] }
 collab_ui = { workspace = true, features = ["stories"] }
 ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
@@ -22,21 +22,17 @@ editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-itertools = "0.11.0"
 language.workspace = true
 log.workspace = true
 menu.workspace = true
 picker.workspace = true
 rust-embed.workspace = true
-serde.workspace = true
 settings.workspace = true
 simplelog = "0.9"
-smallvec.workspace = true
 story.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
 ui = { workspace = true, features = ["stories"] }
-util.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

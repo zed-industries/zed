@@ -1328,7 +1328,7 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    /// Create a minimal edit that will cause the the given row to be indented
+    /// Create a minimal edit that will cause the given row to be indented
     /// with the given size. After applying this edit, the length of the line
     /// will always be at least `new_size.len`.
     pub fn edit_for_indent_size_adjustment(
@@ -2492,7 +2492,7 @@ impl BufferSnapshot {
         self.syntax.layers_for_range(0..self.len(), &self.text)
     }
 
-    fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
+    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text)
@@ -2839,10 +2839,10 @@ impl BufferSnapshot {
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
@@ -2886,13 +2886,59 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns enclosing bracket ranges containing the given range
+    pub fn enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        self.bracket_ranges(range.clone())
+            .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
+    }
+
+    /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
+    ///
+    /// Can optionally pass a range_filter to filter the ranges of brackets to consider
+    pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        // Get the ranges of the innermost pair of brackets.
+        let mut result: Option<(Range<usize>, Range<usize>)> = None;
+
+        for (open, close) in self.enclosing_bracket_ranges(range.clone()) {
+            if let Some(range_filter) = range_filter {
+                if !range_filter(open.clone(), close.clone()) {
+                    continue;
+                }
+            }
+
+            let len = close.end - open.start;
+
+            if let Some((existing_open, existing_close)) = &result {
+                let existing_len = existing_close.end - existing_open.start;
+                if len > existing_len {
+                    continue;
+                }
+            }
+
+            result = Some((open, close));
+        }
+
+        result
+    }
+
     /// Returns anchor ranges for any matches of the redaction query.
     /// The buffer can be associated with multiple languages, and the redaction query associated with each
     /// will be run on the relevant section of the buffer.
-    pub fn redacted_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn redacted_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = Range<usize>> + 'a {
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar
@@ -2969,28 +3015,28 @@ impl BufferSnapshot {
 
     /// Returns all the Git diff hunks intersecting the given
     /// row range.
-    pub fn git_diff_hunks_in_row_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_in_row_range(
+        &self,
         range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_row_range(range, self)
     }
 
     /// Returns all the Git diff hunks intersecting the given
     /// range.
-    pub fn git_diff_hunks_intersecting_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_intersecting_range(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range(range, self)
     }
 
     /// Returns all the Git diff hunks intersecting the given
     /// range, in reverse order.
-    pub fn git_diff_hunks_intersecting_range_rev<'a>(
-        &'a self,
+    pub fn git_diff_hunks_intersecting_range_rev(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 

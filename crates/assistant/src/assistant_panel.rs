@@ -9,7 +9,6 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::{DateTime, Local};
-use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp},
@@ -37,6 +36,7 @@ use settings::Settings;
 use std::{
     cell::Cell, cmp, fmt::Write, iter, ops::Range, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
 };
+use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
     prelude::*,
@@ -312,7 +312,7 @@ impl AssistantPanel {
                         move |cx: &mut BlockContext| {
                             measurements.set(BlockMeasurements {
                                 anchor_x: cx.anchor_x,
-                                gutter_width: cx.gutter_width,
+                                gutter_width: cx.gutter_dimensions.width,
                             });
                             inline_assistant.clone().into_any_element()
                         }

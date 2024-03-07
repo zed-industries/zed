@@ -94,6 +94,12 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DuplicateLine {
+    #[serde(default)]
+    pub move_upwards: bool,
+}
+
 impl_actions!(
     editor,
     [
@@ -112,13 +118,15 @@ impl_actions!(
         MoveUpByLines,
         MoveDownByLines,
         SelectUpByLines,
-        SelectDownByLines
+        SelectDownByLines,
+        DuplicateLine
     ]
 );
 
 gpui::actions!(
     editor,
     [
+        AcceptPartialCopilotSuggestion,
         AddSelectionAbove,
         AddSelectionBelow,
         Backspace,
@@ -151,7 +159,6 @@ gpui::actions!(
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
         DisplayCursorNames,
-        DuplicateLine,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -197,6 +204,7 @@ gpui::actions!(
         NewlineBelow,
         NextScreen,
         OpenExcerpts,
+        OpenExcerptsSplit,
         OpenPermalinkToLine,
         Outdent,
         PageDown,
@@ -238,6 +246,7 @@ gpui::actions!(
         TabPrev,
         ToggleInlayHints,
         ToggleSoftWrap,
+        ToggleLineNumbers,
         Transpose,
         Undo,
         UndoSelection,

@@ -4,9 +4,11 @@ use std::{
     time::Duration,
 };
 
-use client::telemetry::Telemetry;
+use client::{parse_zed_link, telemetry::Telemetry};
 use collections::HashMap;
-use copilot::CommandPaletteFilter;
+use command_palette_hooks::{
+    CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
@@ -15,7 +17,6 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 
 use postage::{sink::Sink, stream::Stream};
-use release_channel::parse_zed_link;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -24,6 +25,7 @@ use zed_actions::OpenZedUrl;
 actions!(command_palette, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
+    client::init_settings(cx);
     cx.set_global(HitCounts::default());
     cx.set_global(CommandPaletteFilter::default());
     cx.observe_new_views(CommandPalette::register).detach();
@@ -33,6 +35,24 @@ impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
+}
+
+fn trim_consecutive_whitespaces(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut last_char_was_whitespace = false;
+
+    for char in input.trim().chars() {
+        if char.is_whitespace() {
+            if !last_char_was_whitespace {
+                result.push(char);
+            }
+            last_char_was_whitespace = true;
+        } else {
+            result.push(char);
+            last_char_was_whitespace = false;
+        }
+    }
+    result
 }
 
 impl CommandPalette {
@@ -99,18 +119,6 @@ impl Render for CommandPalette {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
-}
-
-pub struct CommandPaletteInterceptor(
-    pub Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>,
-);
-
-impl Global for CommandPaletteInterceptor {}
-
-pub struct CommandInterceptResult {
-    pub action: Box<dyn Action>,
-    pub string: String,
-    pub positions: Vec<usize>,
 }
 
 pub struct CommandPaletteDelegate {
@@ -184,7 +192,7 @@ impl CommandPaletteDelegate {
                 None
             };
 
-        if parse_zed_link(&query).is_some() {
+        if parse_zed_link(&query, cx).is_some() {
             intercept_result = Some(CommandInterceptResult {
                 action: OpenZedUrl { url: query.clone() }.boxed_clone(),
                 string: query.clone(),
@@ -231,7 +239,7 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Execute a command...".into()
     }
 
@@ -257,7 +265,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = query.clone();
+            let query = trim_consecutive_whitespaces(&query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -275,7 +283,6 @@ impl PickerDelegate for CommandPaletteDelegate {
                         char_bag: command.name.chars().collect(),
                     })
                     .collect::<Vec<_>>();
-
                 let matches = if query.is_empty() {
                     candidates
                         .into_iter()
@@ -389,6 +396,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .child(
                     h_flex()
                         .w_full()
+                        .py_px()
                         .justify_between()
                         .child(HighlightedLabel::new(
                             command.name.clone(),
@@ -478,7 +486,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| editor.focus(cx))
         });
 

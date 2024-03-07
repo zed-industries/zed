@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/cli.rs"
 doctest = false
@@ -15,14 +18,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+# TODO: Use workspace version of `clap`.
 clap = { version = "3.1", features = ["derive"] }
-dirs = "3.0"
 ipc-channel = "0.16"
 serde.workspace = true
-serde_derive.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.9"
+core-foundation.workspace = true
 core-services = "0.2"
 plist = "1.3"

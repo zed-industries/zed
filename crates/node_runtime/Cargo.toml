@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/node_runtime.rs"
 doctest = false
@@ -12,13 +15,11 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
-async-tar = "0.4.2"
+async-tar.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 log.workspace = true
-parking_lot.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 util.workspace = true

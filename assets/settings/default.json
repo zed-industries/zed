@@ -140,6 +140,14 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  "gutter": {
+    // Whether to show line numbers in the gutter.
+    "line_numbers": true,
+    // Whether to show code action buttons in the gutter.
+    "code_actions": true,
+    // Whether to show fold buttons in the gutter.
+    "folds": true
+  },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   "relative_line_numbers": false,
@@ -161,7 +169,13 @@
     "show_type_hints": true,
     "show_parameter_hints": true,
     // Corresponds to null/None LSP hint type value.
-    "show_other_hints": true
+    "show_other_hints": true,
+    // Time to wait after editing the buffer, before requesting the hints,
+    // set to 0 to disable debouncing.
+    "edit_debounce_ms": 700,
+    // Time to wait after scrolling the buffer, before requesting the hints,
+    // set to 0 to disable debouncing.
+    "scroll_debounce_ms": 50
   },
   "project_panel": {
     // Default width of the project panel.
@@ -448,6 +462,10 @@
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
+    },
+    "toolbar": {
+      // Whether to display the terminal title in its toolbar.
+      "title": true
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -554,6 +572,11 @@
     //         }
     //     }
     // }
+  },
+  // Vim settings
+  "vim": {
+    "use_system_clipboard": "always",
+    "use_multiline_find": false
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

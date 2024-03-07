@@ -3,7 +3,7 @@
 set -e
 
 # if sudo is not installed, define an empty alias
-maysudo=$(command -v sudo || true)
+maysudo=$(command -v sudo || command -v doas || true)
 
 # Ubuntu, Debian, etc.
 # https://packages.ubuntu.com/
@@ -12,10 +12,10 @@ if [[ -n $apt ]]; then
   deps=(
     libasound2-dev
     libfontconfig-dev
-    vulkan-validationlayers*
     libwayland-dev
     libxkbcommon-x11-dev
-    openssl
+    libssl-dev
+    libzstd-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -28,10 +28,10 @@ if [[ -n $dnf ]]; then
   deps=(
     alsa-lib-devel
     fontconfig-devel
-    vulkan-validation-layers
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
+    libzstd-devel
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -44,10 +44,10 @@ if [[ -n $zyp ]]; then
   deps=(
     alsa-devel
     fontconfig-devel
-    vulkan-validationlayers
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
+    libzstd-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -60,12 +60,29 @@ if [[ -n $pacman ]]; then
   deps=(
     alsa-lib
     fontconfig
-    vulkan-validation-layers
     wayland
     libxkbcommon-x11
     openssl
+    zstd
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
+  exit 0
+fi
+
+# Void
+# https://voidlinux.org/packages/
+xbps=$(command -v xbps-install || true)
+if [[ -n $xbps ]]; then
+  deps=(
+    alsa-lib-devel
+    fontconfig-devel
+    libxcb-devel
+    libxkbcommon-devel
+    libzstd-devel
+    openssl-devel
+    wayland-devel
+  )
+  $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
 fi
 
