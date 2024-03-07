@@ -72,7 +72,6 @@ usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
-copypasta = "0.10.1"
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -104,6 +103,7 @@ blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 open = "5.0.1"
