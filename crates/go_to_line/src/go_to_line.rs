@@ -1,3 +1,5 @@
+pub mod cursor_position;
+
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
@@ -49,20 +51,24 @@ impl GoToLine {
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let editor = active_editor.read(cx);
+        let cursor = editor.selections.last::<Point>(cx).head();
+
+        let line = cursor.row + 1;
+        let column = cursor.column + 1;
+
+        let line_editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
+            editor
+        });
         let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
 
         let editor = active_editor.read(cx);
-        let cursor = editor.selections.last::<Point>(cx).head();
         let last_line = editor.buffer().read(cx).snapshot(cx).max_point().row;
         let scroll_position = active_editor.update(cx, |editor, cx| editor.scroll_position(cx));
 
-        let current_text = format!(
-            "line {} of {} (column {})",
-            cursor.row + 1,
-            last_line + 1,
-            cursor.column + 1,
-        );
+        let current_text = format!("line {} of {} (column {})", line, last_line + 1, column);
 
         Self {
             line_editor,
@@ -116,17 +122,22 @@ impl GoToLine {
     }
 
     fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
-        let line_editor = self.line_editor.read(cx).text(cx);
-        let mut components = line_editor
+        let (row, column) = self.line_column_from_query(cx);
+        Some(Point::new(
+            row?.saturating_sub(1),
+            column.unwrap_or(0).saturating_sub(1),
+        ))
+    }
+
+    fn line_column_from_query(&self, cx: &ViewContext<Self>) -> (Option<u32>, Option<u32>) {
+        let input = self.line_editor.read(cx).text(cx);
+        let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
             .map(str::trim)
             .fuse();
-        let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
+        let row = components.next().and_then(|row| row.parse::<u32>().ok());
         let column = components.next().and_then(|col| col.parse::<u32>().ok());
-        Some(Point::new(
-            row.saturating_sub(1),
-            column.unwrap_or(0).saturating_sub(1),
-        ))
+        (row, column)
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -153,6 +164,16 @@ impl GoToLine {
 
 impl Render for GoToLine {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut help_text = self.current_text.clone();
+        let query = self.line_column_from_query(cx);
+        if let Some(line) = query.0 {
+            if let Some(column) = query.1 {
+                help_text = format!("Go to line {line}, column {column}").into();
+            } else {
+                help_text = format!("Go to line {line}").into();
+            }
+        }
+
         div()
             .elevation_2(cx)
             .key_context("GoToLine")
@@ -181,7 +202,7 @@ impl Render for GoToLine {
                             .justify_between()
                             .px_2()
                             .py_1()
-                            .child(Label::new(self.current_text.clone()).color(Color::Muted)),
+                            .child(Label::new(help_text).color(Color::Muted)),
                     ),
             )
     }
