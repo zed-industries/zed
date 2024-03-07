@@ -6,6 +6,7 @@ use std::{
     any::Any,
     cell::{Cell, RefCell},
     ffi::c_void,
+    iter::once,
     num::NonZeroIsize,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -836,7 +837,7 @@ impl PlatformWindow for WindowsWindow {
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
                     for (index, btn_string) in answers.iter().enumerate() {
-                        let encoded = btn_string.encode_utf16().collect_vec();
+                        let encoded = btn_string.encode_utf16().chain(once(0)).collect_vec();
                         buttons.push(TASKDIALOG_BUTTON {
                             nButtonID: index as _,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
@@ -856,7 +857,7 @@ impl PlatformWindow for WindowsWindow {
             })
             .detach();
 
-        done_rx
+        Some(done_rx)
     }
 
     // todo(windows)
