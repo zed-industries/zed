@@ -29,7 +29,7 @@ pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppCont
     cx.set_global(GlobalChannelStore(channel_store));
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct NotesVersion {
     epoch: u64,
     version: clock::Global,
@@ -81,12 +81,12 @@ pub struct Channel {
     pub parent_path: Vec<ChannelId>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ChannelState {
     latest_chat_message: Option<u64>,
-    latest_notes_versions: Option<NotesVersion>,
+    latest_notes_version: NotesVersion,
+    observed_notes_version: NotesVersion,
     observed_chat_message: Option<u64>,
-    observed_notes_versions: Option<NotesVersion>,
     role: Option<ChannelRole>,
     projects: HashSet<HostedProjectId>,
 }
@@ -1236,19 +1236,12 @@ impl ChannelState {
     }
 
     fn has_channel_buffer_changed(&self) -> bool {
-        if let Some(latest_version) = &self.latest_notes_versions {
-            if let Some(observed_version) = &self.observed_notes_versions {
-                latest_version.epoch > observed_version.epoch
-                    || (latest_version.epoch == observed_version.epoch
-                        && latest_version
-                            .version
-                            .changed_since(&observed_version.version))
-            } else {
-                true
-            }
-        } else {
-            false
-        }
+        self.latest_notes_version.epoch > self.observed_notes_version.epoch
+            || (self.latest_notes_version.epoch == self.observed_notes_version.epoch
+                && self
+                    .latest_notes_version
+                    .version
+                    .changed_since(&self.observed_notes_version.version))
     }
 
     fn has_new_messages(&self) -> bool {
@@ -1275,29 +1268,25 @@ impl ChannelState {
     }
 
     fn acknowledge_notes_version(&mut self, epoch: u64, version: &clock::Global) {
-        if let Some(existing) = &mut self.observed_notes_versions {
-            if existing.epoch == epoch {
-                existing.version.join(version);
-                return;
-            }
+        if self.observed_notes_version.epoch == epoch {
+            self.observed_notes_version.version.join(version);
+        } else {
+            self.observed_notes_version = NotesVersion {
+                epoch,
+                version: version.clone(),
+            };
         }
-        self.observed_notes_versions = Some(NotesVersion {
-            epoch,
-            version: version.clone(),
-        });
     }
 
     fn update_latest_notes_version(&mut self, epoch: u64, version: &clock::Global) {
-        if let Some(existing) = &mut self.latest_notes_versions {
-            if existing.epoch == epoch {
-                existing.version.join(version);
-                return;
-            }
+        if self.latest_notes_version.epoch == epoch {
+            self.latest_notes_version.version.join(version);
+        } else {
+            self.latest_notes_version = NotesVersion {
+                epoch,
+                version: version.clone(),
+            };
         }
-        self.latest_notes_versions = Some(NotesVersion {
-            epoch,
-            version: version.clone(),
-        });
     }
 
     fn add_hosted_project(&mut self, project_id: HostedProjectId) {
