@@ -411,7 +411,7 @@ impl AnyElement {
 
     /// Attempt to downcast a reference to the boxed element to a specific type.
     pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        self.0.inner_element().downcast_mut()
+        self.0.inner_element().downcast_mut::<T>()
     }
 
     /// Request the layout ID of the element stored in this `AnyElement`.

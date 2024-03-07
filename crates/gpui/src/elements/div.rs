@@ -1156,6 +1156,11 @@ impl IntoElement for Div {
 pub struct Interactivity {
     /// The element ID of the element
     pub element_id: Option<ElementId>,
+    /// Whether the element was clicked. This will only be present after layout.
+    pub active: Option<bool>,
+    /// Whether the element was hovered. This will only be present after paint if an hitbox
+    /// was created for the interactive element.
+    pub hovered: Option<bool>,
     pub(crate) content_size: Size<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
@@ -1280,6 +1285,11 @@ impl Interactivity {
                 let style = self.compute_style_internal(None, element_state.as_mut(), cx);
 
                 if let Some(element_state) = element_state.as_ref() {
+                    if let Some(clicked_state) = element_state.clicked_state.as_ref() {
+                        let clicked_state = clicked_state.borrow();
+                        self.active = Some(clicked_state.element);
+                    }
+
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
                         if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
                             if let Some(tooltip) = active_tooltip.tooltip.clone() {
@@ -1381,6 +1391,7 @@ impl Interactivity {
         cx: &mut ElementContext,
         f: impl FnOnce(&Style, &mut ElementContext),
     ) {
+        self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(cx));
         cx.with_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, cx| {
