@@ -935,11 +935,7 @@ impl CompletionsMenu {
                                 documentation,
                                 max_completion_len,
                             );
-                        let min_completion_len = match inline_documentation_exists {
-                            true => max_completion_len,
-                            false => px(190.),
-                        };
-
+                        let min_completion_len = max_completion_len;
                         div()
                             .min_w(min_completion_len + px(30.))
                             .max_w(max_completion_len + px(30.))
