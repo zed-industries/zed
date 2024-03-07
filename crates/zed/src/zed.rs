@@ -619,7 +619,9 @@ pub fn handle_keymap_file_changes(
                         if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
                             user_keymap = keymap_content;
                         } else {
-                            continue
+                            // TODO: Show which file failed to parse
+                            log::error!("Failed to parse keymap file content: {}", user_keymap_content);
+                            continue;
                         }
                     }
                 }
