@@ -512,17 +512,29 @@ impl Database {
     /// Adds the given connection to the specified hosted project
     pub async fn join_hosted_project(
         &self,
-        id: HostedProjectId,
+        id: ProjectId,
         user_id: UserId,
         connection: ConnectionId,
     ) -> Result<(Project, ReplicaId)> {
         self.transaction(|tx| async move {
-            let (hosted_project, role) = self.get_hosted_project(id, user_id, &tx).await?;
-            let project = project::Entity::find()
-                .filter(project::Column::HostedProjectId.eq(hosted_project.id))
+            let (project, hosted_project) = project::Entity::find_by_id(id)
+                .find_also_related(hosted_project::Entity)
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("hosted project is no longer shared"))?;
+
+            let Some(hosted_project) = hosted_project else {
+                return Err(anyhow!("project is not hosted"))?;
+            };
+
+            let channel = channel::Entity::find_by_id(hosted_project.channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+
+            let role = self
+                .check_user_is_channel_participant(&channel, user_id, &tx)
+                .await?;
 
             self.join_project_internal(project, user_id, connection, role, &tx)
                 .await

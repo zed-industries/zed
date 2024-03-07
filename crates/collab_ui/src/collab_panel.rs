@@ -8,7 +8,7 @@ use crate::{
 };
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
-use client::{ChannelId, Client, Contact, HostedProjectId, User, UserStore};
+use client::{ChannelId, Client, Contact, ProjectId, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -185,7 +185,7 @@ enum ListEntry {
         depth: usize,
     },
     HostedProject {
-        id: HostedProjectId,
+        id: ProjectId,
         name: SharedString,
     },
     Contact {
@@ -1035,7 +1035,7 @@ impl CollabPanel {
 
     fn render_channel_project(
         &self,
-        id: HostedProjectId,
+        id: ProjectId,
         name: &SharedString,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
