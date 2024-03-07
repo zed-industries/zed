@@ -233,7 +233,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.toggle_full_screen();
             })
             .register_action(|_, action: &OpenZedUrl, cx| {
-                OpenListener::global(cx).open_urls(&[action.url.clone()], cx)
+                OpenListener::global(cx).open_urls(vec![action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
             .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
@@ -399,7 +399,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewWindow, cx| {
                     if let Some(app_state) = app_state.upgrade() {
-                        open_new(&app_state, cx, |workspace, cx| {
+                        open_new(app_state, cx, |workspace, cx| {
                             Editor::new_file(workspace, &Default::default(), cx)
                         })
                         .detach();
@@ -410,7 +410,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewFile, cx| {
                     if let Some(app_state) = app_state.upgrade() {
-                        open_new(&app_state, cx, |workspace, cx| {
+                        open_new(app_state, cx, |workspace, cx| {
                             Editor::new_file(workspace, &Default::default(), cx)
                         })
                         .detach();
@@ -911,7 +911,7 @@ mod tests {
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
-                &app_state,
+                app_state.clone(),
                 None,
                 cx,
             )
@@ -920,7 +920,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], app_state.clone(), None, cx))
             .await
             .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
@@ -942,7 +942,7 @@ mod tests {
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
-                &app_state,
+                app_state.clone(),
                 None,
                 cx,
             )
@@ -958,7 +958,7 @@ mod tests {
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
-                &app_state,
+                app_state,
                 Some(window),
                 cx,
             )
@@ -995,7 +995,7 @@ mod tests {
             .insert_tree("/root", json!({"a": "hey"}))
             .await;
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], app_state.clone(), None, cx))
             .await
             .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
@@ -1062,7 +1062,7 @@ mod tests {
         assert!(!window_is_edited(window, cx));
 
         // Opening the buffer again doesn't impact the window's edited state.
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], app_state, None, cx))
             .await
             .unwrap();
         let editor = window
@@ -1100,7 +1100,7 @@ mod tests {
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         cx.update(|cx| {
-            open_new(&app_state, cx, |workspace, cx| {
+            open_new(app_state.clone(), cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })
@@ -1291,7 +1291,7 @@ mod tests {
             )
             .await;
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], app_state, None, cx))
             .await
             .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
@@ -1525,7 +1525,7 @@ mod tests {
             Path::new("/root/excluded_dir/ignored_subdir").to_path_buf(),
         ];
         let (opened_workspace, new_items) = cx
-            .update(|cx| workspace::open_paths(&paths_to_open, &app_state, None, cx))
+            .update(|cx| workspace::open_paths(&paths_to_open, app_state, None, cx))
             .await
             .unwrap();
 
