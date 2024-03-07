@@ -306,6 +306,70 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
+## Code Actions On Format
+
+- Description: The code actions to perform with the primary language server when formatting the buffer.
+- Setting: `code_actions_on_format`
+- Default: `{}`, except for Go it's `{ "source.organizeImports": true }`
+
+**Examples**
+
+1. Organize imports on format in TypeScript and TSX buffers:
+
+```json
+{
+  "languages": {
+    "TypeScript": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    },
+    "TSX": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    }
+  }
+}
+```
+
+2. Run ESLint `fixAll` code action when formatting (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  }
+}
+```
+
+3. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  },
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "codeActionOnSave": {
+          "rules": ["import/order"]
+        }
+      }
+    }
+  }
+}
+```
+
 ## Auto close
 
 - Description: Whether or not to automatically type closing characters for you.

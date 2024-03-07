@@ -614,9 +614,12 @@ impl SyntaxSnapshot {
                             Some(old_tree.clone()),
                         );
                         changed_ranges = join_ranges(
-                            invalidated_ranges.iter().cloned().filter(|range| {
-                                range.start <= step_end_byte && range.end >= step_start_byte
-                            }),
+                            invalidated_ranges
+                                .iter()
+                                .filter(|&range| {
+                                    range.start <= step_end_byte && range.end >= step_start_byte
+                                })
+                                .cloned(),
                             old_tree.changed_ranges(&tree).map(|r| {
                                 step_start_byte + r.start_byte..step_start_byte + r.end_byte
                             }),

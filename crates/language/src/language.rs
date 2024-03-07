@@ -120,6 +120,46 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
+pub struct LanguageContext {
+    pub package: Option<String>,
+    pub symbol: Option<String>,
+}
+
+pub trait LanguageContextProvider: Send + Sync {
+    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
+}
+
+/// A context provider that fills out LanguageContext without inspecting the contents.
+pub struct DefaultContextProvider;
+
+impl LanguageContextProvider for DefaultContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut AppContext,
+    ) -> gpui::Result<LanguageContext> {
+        let symbols = location
+            .buffer
+            .read(cx)
+            .snapshot()
+            .symbols_containing(location.range.start, None);
+        let symbol = symbols.and_then(|symbols| {
+            symbols.last().map(|symbol| {
+                let range = symbol
+                    .name_ranges
+                    .last()
+                    .cloned()
+                    .unwrap_or(0..symbol.text.len());
+                symbol.text[range].to_string()
+            })
+        });
+        Ok(LanguageContext {
+            package: None,
+            symbol,
+        })
+    }
+}
+
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -727,6 +767,7 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
+    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -841,7 +882,16 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
+            context_provider: None,
         }
+    }
+
+    pub fn with_context_provider(
+        mut self,
+        provider: Option<Arc<dyn LanguageContextProvider>>,
+    ) -> Self {
+        self.context_provider = provider;
+        self
     }
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
@@ -1137,6 +1187,10 @@ impl Language {
 
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
+    }
+
+    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+        self.context_provider.clone()
     }
 
     pub fn highlight_text<'a>(

@@ -530,8 +530,27 @@ impl MacWindow {
                 }
             }
 
+            let window_rect = match options.bounds {
+                WindowBounds::Fullscreen => {
+                    // Set a temporary size as we will asynchronously resize the window
+                    NSRect::new(NSPoint::new(0., 0.), NSSize::new(1024., 768.))
+                }
+                WindowBounds::Maximized => {
+                    let display_bounds = display.bounds();
+                    global_bounds_to_ns_rect(display_bounds)
+                }
+                WindowBounds::Fixed(bounds) => {
+                    let display_bounds = display.bounds();
+                    if bounds.intersects(&display_bounds) {
+                        global_bounds_to_ns_rect(bounds)
+                    } else {
+                        global_bounds_to_ns_rect(display_bounds)
+                    }
+                }
+            };
+
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
-                NSRect::new(NSPoint::new(0., 0.), NSSize::new(1024., 768.)),
+                window_rect,
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
@@ -685,25 +704,10 @@ impl MacWindow {
                 native_window.orderFront_(nil);
             }
 
-            let screen = native_window.screen();
-            match options.bounds {
-                WindowBounds::Fullscreen => {
-                    // We need to toggle full screen asynchronously as doing so may
-                    // call back into the platform handlers.
-                    window.toggle_full_screen()
-                }
-                WindowBounds::Maximized => {
-                    native_window.setFrame_display_(screen.visibleFrame(), YES);
-                }
-                WindowBounds::Fixed(bounds) => {
-                    let display_bounds = display.bounds();
-                    let frame = if bounds.intersects(&display_bounds) {
-                        global_bounds_to_ns_rect(bounds)
-                    } else {
-                        global_bounds_to_ns_rect(display_bounds)
-                    };
-                    native_window.setFrame_display_(frame, YES);
-                }
+            if options.bounds == WindowBounds::Fullscreen {
+                // We need to toggle full screen asynchronously as doing so may
+                // call back into the platform handlers.
+                window.toggle_full_screen();
             }
 
             window.0.lock().move_traffic_light();

@@ -11,11 +11,15 @@ mod project_tests;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
-use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
+use client::{
+    proto, Client, Collaborator, HostedProjectId, PendingEntitySubscription, TypedEnvelope,
+    UserStore,
+};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
+use fs::repository::GitRepository;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
@@ -36,11 +40,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
-    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    LocalFile, LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -167,6 +171,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
+    hosted_project_id: Option<HostedProjectId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -605,6 +610,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                hosted_project_id: None,
             }
         })
     }
@@ -615,8 +621,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        role: proto::ChannelRole,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
@@ -626,6 +631,28 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
+        Self::from_join_project_response(
+            response,
+            subscription,
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
+    }
+    async fn from_join_project_response(
+        response: TypedEnvelope<proto::JoinProjectResponse>,
+        subscription: PendingEntitySubscription<Project>,
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        let remote_id = response.payload.project_id;
+        let role = response.payload.role();
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
@@ -714,6 +741,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                hosted_project_id: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -740,6 +768,32 @@ impl Project {
         })??;
 
         Ok(this)
+    }
+
+    pub async fn hosted(
+        _hosted_project_id: HostedProjectId,
+        _user_store: Model<UserStore>,
+        _client: Arc<Client>,
+        _languages: Arc<LanguageRegistry>,
+        _fs: Arc<dyn Fs>,
+        _cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        // let response = client
+        //     .request_envelope(proto::JoinHostedProject {
+        //         id: hosted_project_id.0,
+        //     })
+        //     .await?;
+        // Self::from_join_project_response(
+        //     response,
+        //     Some(hosted_project_id),
+        //     client,
+        //     user_store,
+        //     languages,
+        //     fs,
+        //     cx,
+        // )
+        // .await
+        Err(anyhow!("disabled"))
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -985,6 +1039,10 @@ impl Project {
             ProjectClientState::Shared { remote_id, .. }
             | ProjectClientState::Remote { remote_id, .. } => Some(remote_id),
         }
+    }
+
+    pub fn hosted_project_id(&self) -> Option<HostedProjectId> {
+        self.hosted_project_id
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -4302,7 +4360,10 @@ impl Project {
                                 })?
                                 .await?;
 
-                            for action in actions {
+                            for mut action in actions {
+                                Self::try_resolve_code_action(&language_server, &mut action)
+                                    .await
+                                    .context("resolving a formatting code action")?;
                                 if let Some(edit) = action.lsp_action.edit {
                                     if edit.changes.is_none() && edit.document_changes.is_none() {
                                         continue;
@@ -4322,6 +4383,7 @@ impl Project {
                                     project_transaction.0.extend(new.0);
                                 }
 
+                                // TODO kb here too:
                                 if let Some(command) = action.lsp_action.command {
                                     project.update(&mut cx, |this, _| {
                                         this.last_workspace_edits_by_language_server
@@ -5364,33 +5426,10 @@ impl Project {
             } else {
                 return Task::ready(Ok(Default::default()));
             };
-            let range = action.range.to_point_utf16(buffer);
-
             cx.spawn(move |this, mut cx| async move {
-                if let Some(lsp_range) = action
-                    .lsp_action
-                    .data
-                    .as_mut()
-                    .and_then(|d| d.get_mut("codeActionParams"))
-                    .and_then(|d| d.get_mut("range"))
-                {
-                    *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
-                    action.lsp_action = lang_server
-                        .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                        .await?;
-                } else {
-                    let actions = this
-                        .update(&mut cx, |this, cx| {
-                            this.code_actions(&buffer_handle, action.range, cx)
-                        })?
-                        .await?;
-                    action.lsp_action = actions
-                        .into_iter()
-                        .find(|a| a.lsp_action.title == action.lsp_action.title)
-                        .ok_or_else(|| anyhow!("code action is outdated"))?
-                        .lsp_action;
-                }
-
+                Self::try_resolve_code_action(&lang_server, &mut action)
+                    .await
+                    .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
                         return Self::deserialize_workspace_edit(
@@ -7257,6 +7296,18 @@ impl Project {
         })
     }
 
+    pub fn get_repo(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        self.worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .as_local()?
+            .snapshot()
+            .local_git_repo(&project_path.path)
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(
@@ -8250,6 +8301,23 @@ impl Project {
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
         })
+    }
+
+    async fn try_resolve_code_action(
+        lang_server: &LanguageServer,
+        action: &mut CodeAction,
+    ) -> anyhow::Result<()> {
+        if GetCodeActions::can_resolve_actions(&lang_server.capabilities()) {
+            if action.lsp_action.data.is_some()
+                && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
+            {
+                action.lsp_action = lang_server
+                    .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
+                    .await?;
+            }
+        }
+
+        anyhow::Ok(())
     }
 
     async fn handle_refresh_inlay_hints(
@@ -9456,23 +9524,38 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
     )?;
+
+    // What we're doing here is to spawn a shell and then `cd` into
+    // the project directory to get the env in there as if the user
+    // `cd`'d into it. We do that because tools like direnv, asdf, ...
+    // hook into `cd` and only set up the env after that.
+    //
+    // In certain shells we need to execute additional_command in order to
+    // trigger the behavior of direnv, etc.
+    //
+    //
+    // The `exit 0` is the result of hours of debugging, trying to find out
+    // why running this command here, without `exit 0`, would mess
+    // up signal process for our process so that `ctrl-c` doesn't work
+    // anymore.
+    //
+    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
+    // do that, but it does, and `exit 0` helps.
+    let additional_command = PathBuf::from(&shell)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .and_then(|shell| match shell {
+            "fish" => Some("emit fish_prompt;"),
+            _ => None,
+        });
+
+    let command = format!(
+        "cd {dir:?};{} echo {marker}; /usr/bin/env -0; exit 0;",
+        additional_command.unwrap_or("")
+    );
+
     let output = smol::process::Command::new(&shell)
-        .args([
-            "-i",
-            "-c",
-            // What we're doing here is to spawn a shell and then `cd` into
-            // the project directory to get the env in there as if the user
-            // `cd`'d into it. We do that because tools like direnv, asdf, ...
-            // hook into `cd` and only set up the env after that.
-            //
-            // The `exit 0` is the result of hours of debugging, trying to find out
-            // why running this command here, without `exit 0`, would mess
-            // up signal process for our process so that `ctrl-c` doesn't work
-            // anymore.
-            // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-            // do that, but it does, and `exit 0` helps.
-            &format!("cd {dir:?}; echo {marker}; /usr/bin/env -0; exit 0;"),
-        ])
+        .args(["-i", "-c", &command])
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;

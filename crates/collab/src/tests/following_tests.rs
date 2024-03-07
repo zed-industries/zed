@@ -1534,7 +1534,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     executor.run_until_parked();
     assert_eq!(visible_push_notifications(cx_a).len(), 1);
     cx_a.update(|cx| {
-        workspace::join_remote_project(
+        workspace::join_in_room_project(
             project_b_id,
             client_b.user_id().unwrap(),
             client_a.app_state.clone(),

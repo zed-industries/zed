@@ -122,212 +122,245 @@ pub fn init(
         ("dart", tree_sitter_dart::language()),
     ]);
 
-    let language = |asset_dir_name: &'static str, adapters: Vec<Arc<dyn LspAdapter>>| {
-        let config = load_config(asset_dir_name);
-        for adapter in adapters {
-            languages.register_lsp_adapter(config.name.clone(), adapter);
-        }
-        languages.register_language(
-            config.name.clone(),
-            config.grammar.clone(),
-            config.matcher.clone(),
-            move || Ok((config.clone(), load_queries(asset_dir_name))),
-        );
-    };
-
-    language(
+    macro_rules! language {
+        ($name:literal) => {
+            let config = load_config($name);
+            languages.register_language(
+                config.name.clone(),
+                config.grammar.clone(),
+                config.matcher.clone(),
+                Some(Arc::new(language::DefaultContextProvider)),
+                move || Ok((config.clone(), load_queries($name))),
+            );
+        };
+        ($name:literal, $adapters:expr) => {
+            let config = load_config($name);
+            // typeck helper
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in adapters {
+                languages.register_lsp_adapter(config.name.clone(), adapter);
+            }
+            languages.register_language(
+                config.name.clone(),
+                config.grammar.clone(),
+                config.matcher.clone(),
+                Some(Arc::new(language::DefaultContextProvider)),
+                move || Ok((config.clone(), load_queries($name))),
+            );
+        };
+        ($name:literal, $adapters:expr, $context_provider:expr) => {
+            let config = load_config($name);
+            // typeck helper
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in $adapters {
+                languages.register_lsp_adapter(config.name.clone(), adapter);
+            }
+            languages.register_language(
+                config.name.clone(),
+                config.grammar.clone(),
+                config.matcher.clone(),
+                Some(Arc::new($context_provider)),
+                move || Ok((config.clone(), load_queries($name))),
+            );
+        };
+    }
+    language!(
         "astro",
         vec![
             Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
-    language("bash", vec![]);
-    language("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
-    language("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
-    language("cpp", vec![Arc::new(c::CLspAdapter)]);
-    language("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
-    language(
+    language!("bash");
+    language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
+    language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
+    language!("cpp", vec![Arc::new(c::CLspAdapter)]);
+    language!("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
+    language!(
         "css",
         vec![
             Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
 
-    language(
+    language!(
         "dockerfile",
         vec![Arc::new(dockerfile::DockerfileLspAdapter::new(
             node_runtime.clone(),
-        ))],
+        ))]
     );
 
     match &ElixirSettings::get(None, cx).lsp {
-        elixir::ElixirLspSetting::ElixirLs => language(
-            "elixir",
-            vec![
-                Arc::new(elixir::ElixirLspAdapter),
-                Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-            ],
-        ),
-        elixir::ElixirLspSetting::NextLs => {
-            language("elixir", vec![Arc::new(elixir::NextLspAdapter)])
+        elixir::ElixirLspSetting::ElixirLs => {
+            language!(
+                "elixir",
+                vec![
+                    Arc::new(elixir::ElixirLspAdapter),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ]
+            );
         }
-        elixir::ElixirLspSetting::Local { path, arguments } => language(
-            "elixir",
-            vec![Arc::new(elixir::LocalLspAdapter {
-                path: path.clone(),
-                arguments: arguments.clone(),
-            })],
-        ),
+        elixir::ElixirLspSetting::NextLs => {
+            language!("elixir", vec![Arc::new(elixir::NextLspAdapter)]);
+        }
+        elixir::ElixirLspSetting::Local { path, arguments } => {
+            language!(
+                "elixir",
+                vec![Arc::new(elixir::LocalLspAdapter {
+                    path: path.clone(),
+                    arguments: arguments.clone(),
+                })]
+            );
+        }
     }
-    language("gitcommit", vec![]);
-    language("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
+    language!("gitcommit");
+    language!("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
 
-    language("gleam", vec![Arc::new(gleam::GleamLspAdapter)]);
-    language("go", vec![Arc::new(go::GoLspAdapter)]);
-    language("gomod", vec![]);
-    language("gowork", vec![]);
-    language("zig", vec![Arc::new(zig::ZlsAdapter)]);
-    language(
+    language!("gleam", vec![Arc::new(gleam::GleamLspAdapter)]);
+    language!("go", vec![Arc::new(go::GoLspAdapter)]);
+    language!("gomod");
+    language!("gowork");
+    language!("zig", vec![Arc::new(zig::ZlsAdapter)]);
+    language!(
         "heex",
         vec![
             Arc::new(elixir::ElixirLspAdapter),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
-    language(
+    language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
-        ))],
+        ))]
     );
-    language("markdown", vec![]);
-    language(
+    language!("markdown");
+    language!(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
-        ))],
+        ))]
     );
-    language("rust", vec![Arc::new(rust::RustLspAdapter)]);
-    language("toml", vec![Arc::new(toml::TaploLspAdapter)]);
+    language!("rust", vec![Arc::new(rust::RustLspAdapter)]);
+    language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
-            language(
+            language!(
                 "tsx",
                 vec![
                     Arc::new(deno::DenoLspAdapter::new()),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ],
+                ]
             );
-            language("typescript", vec![Arc::new(deno::DenoLspAdapter::new())]);
-            language(
+            language!("typescript", vec![Arc::new(deno::DenoLspAdapter::new())]);
+            language!(
                 "javascript",
                 vec![
                     Arc::new(deno::DenoLspAdapter::new()),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ],
+                ]
             );
         }
         false => {
-            language(
+            language!(
                 "tsx",
                 vec![
                     Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ],
+                ]
             );
-            language(
+            language!(
                 "typescript",
                 vec![
                     Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-                ],
+                ]
             );
-            language(
+            language!(
                 "javascript",
                 vec![
                     Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ],
+                ]
             );
         }
     }
 
-    language("haskell", vec![Arc::new(haskell::HaskellLanguageServer {})]);
-    language(
+    language!("haskell", vec![Arc::new(haskell::HaskellLanguageServer {})]);
+    language!(
         "html",
         vec![
             Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
-    language("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
-    language(
+    language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
+    language!(
         "erb",
         vec![
             Arc::new(ruby::RubyLanguageServer),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
-    language("scheme", vec![]);
-    language("racket", vec![]);
-    language("lua", vec![Arc::new(lua::LuaLspAdapter)]);
-    language(
+    language!("scheme");
+    language!("racket");
+    language!("lua", vec![Arc::new(lua::LuaLspAdapter)]);
+    language!(
         "yaml",
-        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
+        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language(
+    language!(
         "svelte",
         vec![
             Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
-    language(
+    language!(
         "php",
         vec![
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        ]
     );
-    language(
+    language!(
         "purescript",
         vec![Arc::new(purescript::PurescriptLspAdapter::new(
             node_runtime.clone(),
-        ))],
+        ))]
     );
-    language(
+    language!(
         "elm",
-        vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))],
+        vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
-    language("glsl", vec![]);
-    language("nix", vec![]);
-    language("nu", vec![Arc::new(nu::NuLanguageServer {})]);
-    language("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language(
+    language!("glsl");
+    language!("nix");
+    language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
+    language!("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
+    language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
+    language!(
         "vue",
-        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))],
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]
     );
-    language("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
-    language("proto", vec![]);
-    language("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
-    language(
+    language!("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
+    language!("proto");
+    language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
+    language!(
         "terraform-vars",
-        vec![Arc::new(terraform::TerraformLspAdapter)],
+        vec![Arc::new(terraform::TerraformLspAdapter)]
     );
-    language("hcl", vec![]);
-    language(
+    language!("hcl", vec![]);
+    language!(
         "prisma",
         vec![Arc::new(prisma::PrismaLspAdapter::new(
             node_runtime.clone(),
-        ))],
+        ))]
     );
-    language("dart", vec![Arc::new(dart::DartLanguageServer {})]);
+    language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -7,6 +7,9 @@ description = "Zed's GPU-accelerated UI framework"
 publish = false
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [features]
 test-support = [
     "backtrace",
@@ -113,6 +116,7 @@ xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 as-raw-xcb-connection = "1"
 calloop = "0.12.4"
 calloop-wayland-source = "0.2.0"
+copypasta = "0.10.1"
 oo7 = "0.3.0"
 
 [target.'cfg(windows)'.dependencies]

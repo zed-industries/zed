@@ -2091,7 +2091,7 @@ impl EditorElement {
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
-                        true,
+                        editor.leader_peer_id.is_none(),
                         None,
                     );
                     if is_newest {
