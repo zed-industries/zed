@@ -16,14 +16,23 @@ pub fn format_localized_timestamp(
         let timestamp_local_date = timestamp_local.date();
 
         let native_fmt = if timestamp_local_date == reference_local_date {
-            macos::format_time(&timestamp)
+            macos::format_time(&timestamp).map(|t| format!("Today at {}", t).to_string())
         } else if reference_local_date.previous_day() == Some(timestamp_local_date) {
-            macos::format_time(&timestamp).map(|t| format!("yesterday at {}", t).to_string())
+            macos::format_time(&timestamp).map(|t| format!("Yesterday at {}", t).to_string())
         } else {
-            macos::format_date(&timestamp)
+            match macos::format_time(&timestamp) {
+                Ok(time_format) => macos::format_date(&timestamp)
+                    .map(|t| format!("{} {}", t.replace('-', "/"), time_format)),
+                Err(_) => macos::format_date(&timestamp),
+            }
         };
-        native_fmt.unwrap_or_else(|_| format_timestamp_fallback(reference, timestamp, timezone))
+
+        match native_fmt {
+            Ok(format) => format,
+            Err(_) => format_timestamp_fallback(reference, timestamp, timezone),
+        }
     }
+
     #[cfg(not(target_os = "macos"))]
     {
         // todo(linux) respect user's date/time preferences
@@ -58,12 +67,15 @@ pub fn format_timestamp_naive(
     let timestamp_local = timestamp.to_offset(timezone);
     let timestamp_local_hour = timestamp_local.hour();
     let timestamp_local_minute = timestamp_local.minute();
+    let reference_local = reference.to_offset(timezone);
+    let reference_local_date = reference_local.date();
+    let timestamp_local_date = timestamp_local.date();
 
     let (hour, meridiem) = if is_12_hour_time {
         let meridiem = if timestamp_local_hour >= 12 {
-            "pm"
+            "PM"
         } else {
-            "am"
+            "AM"
         };
 
         let hour_12 = match timestamp_local_hour {
@@ -78,23 +90,11 @@ pub fn format_timestamp_naive(
     };
 
     let formatted_time = match meridiem {
-        Some(meridiem) => format!("{:02}:{:02} {}", hour, timestamp_local_minute, meridiem),
+        Some(meridiem) => format!("{}:{:02} {}", hour, timestamp_local_minute, meridiem),
         None => format!("{:02}:{:02}", hour, timestamp_local_minute),
     };
 
-    let reference_local = reference.to_offset(timezone);
-    let reference_local_date = reference_local.date();
-    let timestamp_local_date = timestamp_local.date();
-
-    if timestamp_local_date == reference_local_date {
-        return formatted_time;
-    }
-
-    if reference_local_date.previous_day() == Some(timestamp_local_date) {
-        return format!("yesterday at {}", formatted_time);
-    }
-
-    match meridiem {
+    let formatted_date = match meridiem {
         Some(_) => format!(
             "{:02}/{:02}/{}",
             timestamp_local_date.month() as u32,
@@ -107,7 +107,17 @@ pub fn format_timestamp_naive(
             timestamp_local_date.month() as u32,
             timestamp_local_date.year()
         ),
+    };
+
+    if timestamp_local_date == reference_local_date {
+        return format!("Today at {}", formatted_time);
     }
+
+    if reference_local_date.previous_day() == Some(timestamp_local_date) {
+        return format!("Yesterday at {}", formatted_time);
+    }
+
+    format!("{} {}", formatted_date, formatted_time)
 }
 
 /// Returns `true` if the locale is recognized as a 12-hour time locale.
@@ -202,7 +212,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), false),
-            "15:30"
+            "Today at 15:30"
         );
     }
 
@@ -213,7 +223,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "03:30 pm"
+            "Today at 3:30 PM"
         );
     }
 
@@ -224,7 +234,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "yesterday at 09:00 am"
+            "Yesterday at 9:00 AM"
         );
     }
 
@@ -235,7 +245,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "yesterday at 08:00 pm"
+            "Yesterday at 8:00 PM"
         );
     }
 
@@ -246,7 +256,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "yesterday at 06:00 pm"
+            "Yesterday at 6:00 PM"
         );
     }
 
@@ -257,7 +267,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "yesterday at 11:55 pm"
+            "Yesterday at 11:55 PM"
         );
     }
 
@@ -268,7 +278,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "yesterday at 08:00 pm"
+            "Yesterday at 8:00 PM"
         );
     }
 
@@ -279,7 +289,7 @@ mod tests {
 
         assert_eq!(
             format_timestamp_naive(reference, timestamp, test_timezone(), true),
-            "04/10/1990"
+            "04/10/1990 8:20 PM"
         );
     }
 
