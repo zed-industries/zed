@@ -694,13 +694,13 @@ impl EditorElement {
 
                 if !contains_non_empty_selection {
                     let origin = point(
-                        layout.hitbox.bounds.origin.x,
-                        layout.hitbox.bounds.origin.y
+                        layout.hitbox.origin.x,
+                        layout.hitbox.origin.y
                             + (layout.position_map.line_height * *start_row as f32)
                             - scroll_top,
                     );
                     let size = size(
-                        layout.hitbox.bounds.size.width,
+                        layout.hitbox.size.width,
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
                     let active_line_bg = cx.theme().colors().editor_active_line_background;
@@ -710,13 +710,13 @@ impl EditorElement {
 
             if let Some(highlighted_rows) = &layout.highlighted_rows {
                 let origin = point(
-                    layout.hitbox.bounds.origin.x,
-                    layout.hitbox.bounds.origin.y
+                    layout.hitbox.origin.x,
+                    layout.hitbox.origin.y
                         + (layout.position_map.line_height * highlighted_rows.start as f32)
                         - scroll_top,
                 );
                 let size = size(
-                    layout.hitbox.bounds.size.width,
+                    layout.hitbox.size.width,
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
                 let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
@@ -727,7 +727,7 @@ impl EditorElement {
                 layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
 
             for (wrap_position, active) in layout.wrap_guides.iter() {
-                let x = (layout.text_hitbox.bounds.origin.x
+                let x = (layout.text_hitbox.origin.x
                     + *wrap_position
                     + layout.position_map.em_width / 2.)
                     - scroll_left;
@@ -736,7 +736,7 @@ impl EditorElement {
                     .scrollbar_layout
                     .as_ref()
                     .map_or(false, |scrollbar| scrollbar.visible);
-                if x < layout.text_hitbox.bounds.origin.x
+                if x < layout.text_hitbox.origin.x
                     || (show_scrollbars && x > self.scrollbar_left(&layout.hitbox.bounds))
                 {
                     continue;
@@ -749,8 +749,8 @@ impl EditorElement {
                 };
                 cx.paint_quad(fill(
                     Bounds {
-                        origin: point(x, layout.text_hitbox.bounds.origin.y),
-                        size: size(px(1.), layout.text_hitbox.bounds.size.height),
+                        origin: point(x, layout.text_hitbox.origin.y),
+                        size: size(px(1.), layout.text_hitbox.size.height),
                     },
                     color,
                 ));
@@ -779,9 +779,9 @@ impl EditorElement {
 
         for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
-                let line_origin = layout.gutter_hitbox.bounds.origin
+                let line_origin = layout.gutter_hitbox.origin
                     + point(
-                        layout.gutter_hitbox.bounds.size.width
+                        layout.gutter_hitbox.size.width
                             - line.width
                             - layout.gutter_dimensions.right_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
@@ -816,8 +816,7 @@ impl EditorElement {
                     let end_y = start_y + line_height;
 
                     let width = 0.275 * line_height;
-                    let highlight_origin =
-                        layout.gutter_hitbox.bounds.origin + point(-width, start_y);
+                    let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
                     let highlight_size = size(width * 2., end_y - start_y);
                     let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
                     cx.paint_quad(quad(
@@ -850,8 +849,7 @@ impl EditorElement {
                     let end_y = start_y + line_height;
 
                     let width = 0.275 * line_height;
-                    let highlight_origin =
-                        layout.gutter_hitbox.bounds.origin + point(-width, start_y);
+                    let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
                     let highlight_size = size(width * 2., end_y - start_y);
                     let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
                     cx.paint_quad(quad(
@@ -891,7 +889,7 @@ impl EditorElement {
             let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
 
             let width = 0.275 * line_height;
-            let highlight_origin = layout.gutter_hitbox.bounds.origin + point(-width, start_y);
+            let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
             let highlight_size = size(width * 2., end_y - start_y);
             let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
             cx.paint_quad(quad(
@@ -908,7 +906,7 @@ impl EditorElement {
         let start_row = layout.visible_display_row_range.start;
         // Offset the content_bounds from the text_bounds by the gutter margin (which is roughly half a character wide) to make hit testing work more like how we want.
         let content_origin =
-            layout.text_hitbox.bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
+            layout.text_hitbox.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
         let whitespace_setting = self
             .editor
@@ -1114,10 +1112,8 @@ impl EditorElement {
                                 if selection.is_newest {
                                     self.editor.update(cx, |editor, _| {
                                         editor.pixel_position_of_newest_cursor = Some(point(
-                                            layout.text_hitbox.bounds.origin.x
-                                                + x
-                                                + block_width / 2.,
-                                            layout.text_hitbox.bounds.origin.y
+                                            layout.text_hitbox.origin.x + x + block_width / 2.,
+                                            layout.text_hitbox.origin.y
                                                 + y
                                                 + layout.position_map.line_height / 2.,
                                         ))
@@ -1171,7 +1167,7 @@ impl EditorElement {
 
     fn paint_redactions(&mut self, layout: &EditorLayout, cx: &mut ElementContext) {
         let content_origin =
-            layout.text_hitbox.bounds.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
+            layout.text_hitbox.origin + point(layout.gutter_dimensions.margin, Pixels::ZERO);
         let line_end_overshoot = layout.line_end_overshoot();
 
         // A softer than perfect black
@@ -1341,8 +1337,8 @@ impl EditorElement {
                         end_y = start_y + px(1.);
                     }
                     let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.bounds.left(), start_y),
-                        point(scrollbar_layout.hitbox.bounds.right(), end_y),
+                        point(scrollbar_layout.hitbox.left(), start_y),
+                        point(scrollbar_layout.hitbox.right(), end_y),
                     );
                     cx.paint_quad(quad(
                         bounds,
@@ -1381,8 +1377,8 @@ impl EditorElement {
                         end_y = start_y + px(1.);
                     }
                     let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.bounds.left(), start_y),
-                        point(scrollbar_layout.hitbox.bounds.right(), end_y),
+                        point(scrollbar_layout.hitbox.left(), start_y),
+                        point(scrollbar_layout.hitbox.right(), end_y),
                     );
 
                     cx.paint_quad(quad(
@@ -1422,8 +1418,8 @@ impl EditorElement {
                         end_y = start_y + px(1.);
                     }
                     let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.bounds.left(), start_y),
-                        point(scrollbar_layout.hitbox.bounds.right(), end_y),
+                        point(scrollbar_layout.hitbox.left(), start_y),
+                        point(scrollbar_layout.hitbox.right(), end_y),
                     );
 
                     let color = match hunk.status() {
@@ -1482,8 +1478,8 @@ impl EditorElement {
                         end_y = start_y + px(1.);
                     }
                     let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.bounds.left(), start_y),
-                        point(scrollbar_layout.hitbox.bounds.right(), end_y),
+                        point(scrollbar_layout.hitbox.left(), start_y),
+                        point(scrollbar_layout.hitbox.right(), end_y),
                     );
 
                     let color = match diagnostic.diagnostic.severity {
@@ -1542,7 +1538,7 @@ impl EditorElement {
                     {
                         let y = mouse_position.y;
                         let new_y = event.position.y;
-                        if (hitbox.bounds.top()..hitbox.bounds.bottom()).contains(&y) {
+                        if (hitbox.top()..hitbox.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
                             position.y += (new_y - y) * (max_row as f32) / height;
                             if position.y < 0.0 {
@@ -1591,8 +1587,8 @@ impl EditorElement {
 
                         let y = event.position.y;
                         if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
-                            let center_row = ((y - hitbox.bounds.top()) * (max_row as f32) / height)
-                                .round() as u32;
+                            let center_row =
+                                ((y - hitbox.top()) * (max_row as f32) / height).round() as u32;
                             let top_row = center_row
                                 .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                             let mut position = editor.scroll_position(cx);
@@ -1967,7 +1963,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
-                        max_width: scroll_width.max(text_hitbox.bounds.size.width),
+                        max_width: scroll_width.max(text_hitbox.size.width),
                         editor_style: &self.style,
                     })
                 }
@@ -2132,9 +2128,8 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
             };
             let width = match style {
-                BlockStyle::Sticky => hitbox.bounds.size.width,
+                BlockStyle::Sticky => hitbox.size.width,
                 BlockStyle::Flex => hitbox
-                    .bounds
                     .size
                     .width
                     .max(fixed_block_max_width)
@@ -2156,7 +2151,7 @@ impl EditorElement {
         }
 
         for block in &mut blocks {
-            let mut origin = hitbox.bounds.origin
+            let mut origin = hitbox.origin
                 + point(
                     Pixels::ZERO,
                     block.row as f32 * line_height - scroll_pixel_position.y,
@@ -2621,7 +2616,7 @@ impl Element for EditorElement {
             let text_hitbox = cx.with_element_context(|cx| {
                 cx.insert_hitbox(
                     Bounds {
-                        origin: gutter_hitbox.bounds.upper_right(),
+                        origin: gutter_hitbox.upper_right(),
                         size: size(text_width, bounds.size.height),
                     },
                     false,
@@ -2856,7 +2851,7 @@ impl Element for EditorElement {
             });
 
             let scroll_max = point(
-                ((scroll_width - text_hitbox.bounds.size.width) / em_width).max(0.0),
+                ((scroll_width - text_hitbox.size.width) / em_width).max(0.0),
                 max_row as f32,
             );
 
@@ -2865,7 +2860,7 @@ impl Element for EditorElement {
             let autoscrolled = if autoscroll_horizontally {
                 editor.autoscroll_horizontally(
                     start_row,
-                    text_hitbox.bounds.size.width,
+                    text_hitbox.size.width,
                     scroll_width,
                     em_width,
                     &line_layouts,
@@ -2924,7 +2919,7 @@ impl Element for EditorElement {
                                     / 2.;
                                 y += (line_height - indicator_size.height) / 2.;
                                 button.layout(
-                                    gutter_hitbox.bounds.origin + point(x, y),
+                                    gutter_hitbox.origin + point(x, y),
                                     available_space,
                                     cx,
                                 );
@@ -2992,8 +2987,7 @@ impl Element for EditorElement {
                                         / 2.,
                                     (line_height - fold_indicator_size.height) / 2.,
                                 );
-                                let origin =
-                                    gutter_hitbox.bounds.origin + position + centering_offset;
+                                let origin = gutter_hitbox.origin + position + centering_offset;
                                 fold_indicator.layout(origin, available_space, cx);
                             }
                         }
@@ -3106,7 +3100,7 @@ impl Element for EditorElement {
                 self.paint_mouse_listeners(layout, cx);
 
                 self.paint_background(layout, cx);
-                if layout.gutter_hitbox.bounds.size.width > Pixels::ZERO {
+                if layout.gutter_hitbox.size.width > Pixels::ZERO {
                     self.paint_gutter(layout, cx);
                 }
                 self.paint_text(layout, cx);
@@ -3183,13 +3177,13 @@ impl ScrollbarLayout {
         let thumb_top = self.y_for_row(self.row_range.start) - self.first_row_y_offset;
         let thumb_bottom = self.y_for_row(self.row_range.end) + self.first_row_y_offset;
         Bounds::from_corners(
-            point(self.hitbox.bounds.left(), thumb_top),
-            point(self.hitbox.bounds.right(), thumb_bottom),
+            point(self.hitbox.left(), thumb_top),
+            point(self.hitbox.right(), thumb_bottom),
         )
     }
 
     fn y_for_row(&self, row: f32) -> Pixels {
-        self.hitbox.bounds.top() + self.first_row_y_offset + row * self.row_height
+        self.hitbox.top() + self.first_row_y_offset + row * self.row_height
     }
 }
 

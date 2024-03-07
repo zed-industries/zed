@@ -1462,10 +1462,10 @@ impl Interactivity {
                     .ok()
                     .and_then(|mut text| text.pop())
                 {
-                    text.paint(hitbox.bounds.origin, FONT_SIZE, cx).ok();
+                    text.paint(hitbox.origin, FONT_SIZE, cx).ok();
 
                     let text_bounds = crate::Bounds {
-                        origin: hitbox.bounds.origin,
+                        origin: hitbox.origin,
                         size: text.size(FONT_SIZE),
                     };
                     if self.location.is_some()
@@ -1520,7 +1520,7 @@ impl Interactivity {
                         });
                         cx.paint_quad(crate::outline(
                             crate::Bounds {
-                                origin: hitbox.bounds.origin
+                                origin: hitbox.origin
                                     + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
                                 size: crate::Size {
                                     width: text_bounds.size.width,
@@ -1690,7 +1690,7 @@ impl Interactivity {
                             {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
                                     *clicked_state.borrow_mut() = ElementClickedState::default();
-                                    let cursor_offset = event.position - hitbox.bounds.origin;
+                                    let cursor_offset = event.position - hitbox.origin;
                                     let drag = (drag_listener)(drag_value.as_ref(), cx);
                                     cx.active_drag = Some(AnyDrag {
                                         view: drag,
