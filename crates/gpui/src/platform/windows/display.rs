@@ -1,5 +1,9 @@
 use anyhow::{anyhow, Result};
 use uuid::Uuid;
+use windows::{
+    core::PCSTR,
+    Win32::Graphics::Gdi::{EnumDisplaySettingsA, DEVMODEA, ENUM_CURRENT_SETTINGS},
+};
 
 use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
 
@@ -23,13 +27,21 @@ impl PlatformDisplay for WindowsDisplay {
         Err(anyhow!("not implemented yet."))
     }
 
-    // todo!("windows")
     fn bounds(&self) -> Bounds<GlobalPixels> {
+        let mut dev = DEVMODEA {
+            dmSize: std::mem::size_of::<DEVMODEA>() as _,
+            ..unsafe { std::mem::zeroed() }
+        };
+        unsafe { EnumDisplaySettingsA(PCSTR::null(), ENUM_CURRENT_SETTINGS, &mut dev) };
+        let w = dev.dmPelsWidth;
+        let h = dev.dmPelsHeight;
+
+        log::debug!("Screen size: {w} {h}");
         Bounds::new(
             Point::new(0.0.into(), 0.0.into()),
             Size {
-                width: 1920.0.into(),
-                height: 1280.0.into(),
+                width: GlobalPixels(w as f32),
+                height: GlobalPixels(h as f32),
             },
         )
     }
