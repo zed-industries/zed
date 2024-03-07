@@ -14,7 +14,8 @@ doctest = false
 
 
 [dependencies]
-alacritty_terminal = "0.22.0"
+# TODO: when new version of this crate is released, change it
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "992011a4cd9a35f197acc0a0bd430d89a0d01013" }
 anyhow.workspace = true
 collections.workspace = true
 dirs = "4.0.0"
