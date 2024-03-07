@@ -67,7 +67,9 @@ use tracing::{field, info_span, instrument, Instrument};
 use util::SemanticVersion;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+// kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
@@ -464,6 +466,7 @@ impl Server {
             TypeId::of::<M>(),
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                let received_at = envelope.received_at;
                 let span = info_span!(
                     "handle message",
                     payload_type = envelope.payload_type_name()
@@ -478,12 +481,14 @@ impl Server {
                 let future = (handler)(*envelope, session);
                 async move {
                     let result = future.await;
-                    let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
+                    let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, ?duration_ms, "error handling message")
+                            tracing::error!(%error, ?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "error handling message")
                         }
-                        Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "finished handling message"),
                     }
                 }
                 .instrument(span)
@@ -844,7 +849,7 @@ impl Header for AppVersionHeader {
     }
 }
 
-pub fn routes(server: Arc<Server>) -> Router<Body> {
+pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(

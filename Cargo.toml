@@ -105,6 +105,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
+base64 = "0.13"
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -197,8 +198,8 @@ async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 chrono = { version = "0.4", features = ["serde"] }
 clap = "4.4"
@@ -207,6 +208,7 @@ ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+emojis = "0.6.1"
 env_logger = "0.9"
 futures = "0.3"
 git2 = { version = "0.15", default-features = false }
@@ -215,7 +217,10 @@ hex = "0.4.3"
 ignore = "0.4.22"
 indoc = "1"
 # We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
+isahc = { version = "1.7.2", default-features = false, features = [
+    "static-curl",
+    "text-decoding",
+] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
 linkify = "0.10.0"
@@ -238,18 +243,26 @@ semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
+serde_json_lenient = { version = "0.1", features = [
+    "preserve_order",
+    "raw_value",
+] }
 serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
+subtle = "2.5.0"
 sysinfo = "0.29.10"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
-time = { version = "0.3", features = ["serde", "serde-well-known", "formatting"] }
+time = { version = "0.3", features = [
+    "serde",
+    "serde-well-known",
+    "formatting",
+] }
 toml = "0.8"
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
@@ -307,18 +320,26 @@ wasmparser = "0.121"
 wasmtime = "18.0"
 wasmtime-wasi = "18.0"
 which = "6.0.0"
+wit-component = "0.20"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
 version = "0.53.0"
 features = [
+    "Wdk_System_SystemServices",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_DirectComposition",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Time",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_System_DataExchange",
+    "Win32_System_Ole",
 ]
-
-
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
@@ -337,12 +358,50 @@ debug = "full"
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
 
 [profile.release]
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+# These are all of the rules that currently have violations in the Zed
+# codebase.
+#
+# We'll want to drive this list down by either:
+# 1. fixing violations of the rule and begin enforcing it
+# 2. deciding we want to allow the rule permanently, at which point
+#    we should codify that separately above.
+#
+# This list shouldn't be added to; it should only get shorter.
+# =============================================================================
+
+# There are a bunch of rules currently failing in the `style` group, so
+# allow all of those, for now.
+style = "allow"
+
+# Individual rules that have violations in the codebase:
+almost_complete_range = "allow"
+arc_with_non_send_sync = "allow"
+await_holding_lock = "allow"
+borrowed_box = "allow"
+derive_ord_xor_partial_ord = "allow"
+eq_op = "allow"
+let_underscore_future = "allow"
+map_entry = "allow"
+never_loop = "allow"
+non_canonical_clone_impl = "allow"
+non_canonical_partial_ord_impl = "allow"
+reversed_empty_ranges = "allow"
+single_range_in_vec_init = "allow"
+suspicious_to_owned = "allow"
+type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

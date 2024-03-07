@@ -89,6 +89,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::Item;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -424,6 +425,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1538,6 +1540,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1826,6 +1829,10 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
+        self.auto_replace_emoji_shortcode = auto_replace;
     }
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
@@ -2504,6 +2511,47 @@ impl Editor {
                 }
             }
 
+            if self.auto_replace_emoji_shortcode
+                && selection.is_empty()
+                && text.as_ref().ends_with(':')
+            {
+                if let Some(possible_emoji_short_code) =
+                    Self::find_possible_emoji_shortcode_at_position(&snapshot, selection.start)
+                {
+                    if !possible_emoji_short_code.is_empty() {
+                        if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_short_code) {
+                            let emoji_shortcode_start = Point::new(
+                                selection.start.row,
+                                selection.start.column - possible_emoji_short_code.len() as u32 - 1,
+                            );
+
+                            // Remove shortcode from buffer
+                            edits.push((
+                                emoji_shortcode_start..selection.start,
+                                "".to_string().into(),
+                            ));
+                            new_selections.push((
+                                Selection {
+                                    id: selection.id,
+                                    start: snapshot.anchor_after(emoji_shortcode_start),
+                                    end: snapshot.anchor_before(selection.start),
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                                0,
+                            ));
+
+                            // Insert emoji
+                            let selection_start_anchor = snapshot.anchor_after(selection.start);
+                            new_selections.push((selection.map(|_| selection_start_anchor), 0));
+                            edits.push((selection.start..selection.end, emoji.to_string().into()));
+
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
@@ -2585,6 +2633,32 @@ impl Editor {
                 this.refresh_copilot_suggestions(true, cx);
             }
         });
+    }
+
+    fn find_possible_emoji_shortcode_at_position(
+        snapshot: &MultiBufferSnapshot,
+        position: Point,
+    ) -> Option<String> {
+        let mut chars = Vec::new();
+        let mut found_colon = false;
+        for char in snapshot.reversed_chars_at(position).take(100) {
+            // Found a possible emoji shortcode in the middle of the buffer
+            if found_colon && char.is_whitespace() {
+                chars.reverse();
+                return Some(chars.iter().collect());
+            }
+            if char.is_whitespace() || !char.is_ascii() {
+                return None;
+            }
+            if char == ':' {
+                found_colon = true;
+            } else {
+                chars.push(char);
+            }
+        }
+        // Found a possible emoji shortcode at the beginning of the buffer
+        chars.reverse();
+        Some(chars.iter().collect())
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
@@ -5031,7 +5105,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5052,14 +5126,20 @@ impl Editor {
                 }
             }
 
-            // Copy the text from the selected row region and splice it at the start of the region.
+            // Copy the text from the selected row region and splice it either at the start
+            // or end of the region.
             let start = Point::new(rows.start, 0);
             let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
             let text = buffer
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start..start, text));
+            let insert_location = if action.move_upwards {
+                Point::new(rows.end, 0)
+            } else {
+                start
+            };
+            edits.push((insert_location..insert_location, text));
         }
 
         self.transact(cx, |this, cx| {
@@ -8657,22 +8737,23 @@ impl Editor {
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
-        let project = project.read(cx);
-
-        let worktree = project
-            .visible_worktrees(cx)
-            .next()
-            .ok_or_else(|| anyhow!("no worktree"))?;
-
-        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-        cwd.push(".git");
+        let (path, repo) = maybe!({
+            let project_handle = self.project.as_ref()?.clone();
+            let project = project_handle.read(cx);
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let path = buffer
+                .read(cx)
+                .file()?
+                .as_local()?
+                .path()
+                .to_str()?
+                .to_string();
+            let repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
+            Some((path, repo))
+        })
+        .ok_or_else(|| anyhow!("unable to open git repository"))?;
 
         const REMOTE_NAME: &str = "origin";
-        let repo = project
-            .fs()
-            .open_repo(&cwd)
-            .ok_or_else(|| anyhow!("no Git repo"))?;
         let origin_url = repo
             .lock()
             .remote_url(REMOTE_NAME)
@@ -8681,14 +8762,6 @@ impl Editor {
             .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-
-        let path = maybe!({
-            let buffer = self.buffer().read(cx).as_singleton()?;
-            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-            file.path().to_str().map(|path| path.to_string())
-        })
-        .ok_or_else(|| anyhow!("failed to determine file path"))?;
-
         let selections = self.selections.all::<Point>(cx);
         let selection = selections.iter().peekable().next();
 
@@ -8726,7 +8799,7 @@ impl Editor {
 
         match permalink {
             Ok(permalink) => {
-                cx.open_url(&permalink.to_string());
+                cx.open_url(permalink.as_ref());
             }
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");

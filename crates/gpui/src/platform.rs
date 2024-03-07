@@ -1,6 +1,6 @@
 // todo(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
-// todo("windows"): remove
+// todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
@@ -68,7 +68,7 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(LinuxPlatform::new())
 }
-// todo("windows")
+// todo(windows)
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
@@ -183,7 +183,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> oneshot::Receiver<usize>;
+    ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);

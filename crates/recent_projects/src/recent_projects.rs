@@ -133,7 +133,6 @@ impl Render for RecentProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
-            .cursor_pointer()
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, cx| {
                 this.picker.update(cx, |this, cx| {
@@ -184,7 +183,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             )
         };
         Arc::from(format!(
-            "{reuse_window} reuses the window, {create_window} opens a new one",
+            "{reuse_window} reuses this window, {create_window} opens a new one",
         ))
     }
 
@@ -326,14 +325,21 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let highlighted_match = HighlightedMatchWithPaths {
             match_label: HighlightedText::join(match_labels.into_iter().flatten(), ", "),
-            paths: if self.render_paths { paths } else { Vec::new() },
+            paths,
         };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(highlighted_match.clone().render(cx))
+                .child({
+                    let mut highlighted = highlighted_match.clone();
+                    if !self.render_paths {
+                        highlighted.paths.clear();
+                    }
+                    highlighted.render(cx)
+                })
                 .when(!is_current_workspace, |el| {
                     let delete_button = div()
                         .child(
@@ -345,7 +351,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                                     this.delegate.delete_recent_project(ix, cx)
                                 }))
-                                .tooltip(|cx| Tooltip::text("Delete From Recent Projects...", cx)),
+                                .tooltip(|cx| Tooltip::text("Delete from Recent Projects...", cx)),
                         )
                         .into_any_element();
 

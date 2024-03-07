@@ -6,6 +6,9 @@ version = "0.1.0"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/rpc.rs"
 doctest = false
@@ -16,7 +19,7 @@ test-support = ["collections/test-support", "gpui/test-support"]
 [dependencies]
 anyhow.workspace = true
 async-tungstenite = "0.16"
-base64 = "0.13"
+base64.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui = { workspace = true, optional = true }

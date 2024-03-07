@@ -348,6 +348,12 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().allow_parking();
     }
 
+    /// undoes the effect of [`allow_parking`].
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forbid_parking(&self) {
+        self.dispatcher.as_test().unwrap().forbid_parking();
+    }
+
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> StdRng {

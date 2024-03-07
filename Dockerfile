@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.2
 
-FROM rust:1.76-bullseye as builder
+FROM rust:1.76-bookworm as builder
 WORKDIR app
 COPY . .
 
@@ -20,9 +20,10 @@ RUN --mount=type=cache,target=./target \
     cp /app/target/release/collab /app/collab
 
 # Copy collab server binary to the runtime image
-FROM debian:bullseye-slim as runtime
+FROM debian:bookworm-slim as runtime
 RUN apt-get update; \
-    apt-get install -y --no-install-recommends libcurl4-openssl-dev ca-certificates
+    apt-get install -y --no-install-recommends libcurl4-openssl-dev ca-certificates \
+    linux-perf binutils
 WORKDIR app
 COPY --from=builder /app/collab /app/collab
 COPY --from=builder /app/crates/collab/migrations /app/migrations

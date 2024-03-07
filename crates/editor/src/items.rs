@@ -1154,8 +1154,8 @@ impl SearchableItem for Editor {
                                 let end = excerpt
                                     .buffer
                                     .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id, start)
-                                    ..buffer.anchor_in_excerpt(excerpt.id, end)
+                                buffer.anchor_in_excerpt(excerpt.id, start).unwrap()
+                                    ..buffer.anchor_in_excerpt(excerpt.id, end).unwrap()
                             }),
                     );
                 }
@@ -1186,9 +1186,9 @@ pub fn active_match_index(
         None
     } else {
         match ranges.binary_search_by(|probe| {
-            if probe.end.cmp(cursor, &*buffer).is_lt() {
+            if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
-            } else if probe.start.cmp(cursor, &*buffer).is_gt() {
+            } else if probe.start.cmp(cursor, buffer).is_gt() {
                 Ordering::Greater
             } else {
                 Ordering::Equal

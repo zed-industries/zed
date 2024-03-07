@@ -885,7 +885,8 @@ impl Item for TerminalView {
                     })
                     .ok()
                     .flatten()
-                });
+                })
+                .filter(|cwd| !cwd.as_os_str().is_empty());
 
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(cwd, None, window, cx)
