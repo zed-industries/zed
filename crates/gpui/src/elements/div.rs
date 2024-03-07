@@ -1293,6 +1293,7 @@ impl Interactivity {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         let hitbox = if self.occlude_mouse
                             || style.mouse_cursor.is_some()
+                            || self.group.is_some()
                             || self.has_hover_styles()
                             || self.has_mouse_listeners()
                         {
@@ -1396,16 +1397,15 @@ impl Interactivity {
                         .insert(debug_selector.clone(), bounds);
                 }
 
+                self.paint_hover_group_handler(cx);
+
                 if style.visibility == Visibility::Hidden {
-                    self.paint_hover_group_handler(cx);
                     return ((), element_state);
                 }
 
                 style.paint(bounds, cx, |cx: &mut ElementContext| {
                     cx.with_text_style(style.text_style().cloned(), |cx| {
                         cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                            self.paint_hover_group_handler(cx);
-
                             if let Some(hitbox) = hitbox {
                                 self.paint_debug_info(hitbox, &style, cx);
 
