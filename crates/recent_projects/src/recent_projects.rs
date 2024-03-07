@@ -486,7 +486,7 @@ mod tests {
                 }),
             )
             .await;
-        cx.update(|cx| open_paths(&[PathBuf::from("/dir/main.ts")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir/main.ts")], app_state, None, cx))
             .await
             .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
