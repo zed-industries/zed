@@ -926,15 +926,14 @@ impl CompletionsMenu {
                         };
 
                         let max_completion_len = px(510.);
-                        let (inline_documentation_exists, completion_label, documentation_label) =
-                            Self::truncate_completion(
-                                &style,
-                                cx,
-                                mat,
-                                &mut completion.clone(),
-                                documentation,
-                                max_completion_len,
-                            );
+                        let (completion_label, documentation_label) = Self::truncate_completion(
+                            &style,
+                            cx,
+                            mat,
+                            &mut completion.clone(),
+                            documentation,
+                            max_completion_len,
+                        );
                         let min_completion_len = max_completion_len;
                         div()
                             .min_w(min_completion_len + px(30.))
@@ -980,7 +979,7 @@ impl CompletionsMenu {
         completion: &mut Completion,
         documentation: &Option<Documentation>,
         max_completion_len: Pixels,
-    ) -> (bool, StyledText, StyledText) {
+    ) -> (StyledText, StyledText) {
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
             styled_runs_for_code_label(&completion.label, &style.syntax).map(
@@ -1250,11 +1249,7 @@ impl CompletionsMenu {
 
         let documentation_label = StyledText::new(documentation_text)
             .with_highlights(&documentation_style, documentation_highlights);
-        (
-            inline_documentation_exists,
-            completion_label,
-            documentation_label,
-        )
+        (completion_label, documentation_label)
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
