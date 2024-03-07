@@ -3103,13 +3103,13 @@ impl Element for EditorElement {
         };
         cx.with_text_style(Some(text_style), |cx| {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                self.paint_mouse_listeners(layout, cx);
+
                 self.paint_background(layout, cx);
                 if layout.gutter_hitbox.bounds.size.width > Pixels::ZERO {
                     self.paint_gutter(layout, cx);
                 }
                 self.paint_text(layout, cx);
-
-                self.paint_mouse_listeners(layout, cx);
 
                 if !layout.blocks.is_empty() {
                     cx.with_element_id(Some("editor_blocks"), |cx| {
