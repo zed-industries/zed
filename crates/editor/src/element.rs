@@ -3,7 +3,7 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
         TransformBlock,
     },
-    editor_settings::ShowScrollbar,
+    editor_settings::{MultiCursorModifier, ShowScrollbar},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -435,10 +435,15 @@ impl EditorElement {
                 cx,
             );
         } else {
+            let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+            let multi_cursor_modifier = match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.alt,
+                MultiCursorModifier::Cmd => modifiers.command,
+            };
             editor.select(
                 SelectPhase::Begin {
                     position,
-                    add: modifiers.alt,
+                    add: multi_cursor_modifier,
                     click_count,
                 },
                 cx,
@@ -484,9 +489,15 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let multi_cursor_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => event.modifiers.command,
+            MultiCursorModifier::Cmd => event.modifiers.alt,
+        };
+
         if interactive_bounds.visibly_contains(&event.position, cx)
             && !pending_nonempty_selections
-            && event.modifiers.command
+            && multi_cursor_modifier
             && text_bounds.contains(&event.position)
             && cx.was_top_layer(&event.position, stacking_order)
         {
