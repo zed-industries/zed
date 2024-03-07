@@ -1,5 +1,8 @@
 # Building Zed for Windows
 
+> [!NOTE]
+> The following commands may be executed in any shell.
+
 ## Repository
 
 After cloning the repository, ensure all git submodules are initialized:
