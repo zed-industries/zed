@@ -693,11 +693,10 @@ impl Terminal {
                 // in the builder process, there is a small chance, almost negligible,
                 // that this value could be zero, which means child_watcher returns None,
                 // GetProcessId returns 0.
-                if self.shell_pid > 0 {
-                    self.shell_pid
-                } else {
+                if self.shell_pid == 0 {
                     return false;
                 }
+                self.shell_pid
             } else {
                 ret
             }
