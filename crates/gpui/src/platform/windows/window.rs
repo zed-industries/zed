@@ -1,5 +1,5 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-// todo!("windows"): remove
+// todo(windows): remove
 #![allow(unused_variables)]
 
 use std::{
@@ -670,7 +670,7 @@ impl HasWindowHandle for WindowsWindow {
     }
 }
 
-// todo!("windows")
+// todo(windows)
 impl HasDisplayHandle for WindowsWindow {
     fn display_handle(
         &self,
@@ -687,7 +687,7 @@ impl PlatformWindow for WindowsWindow {
         })
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn content_size(&self) -> Size<Pixels> {
         let size = self.inner.size.get();
         Size {
@@ -696,22 +696,22 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn scale_factor(&self) -> f32 {
         1.0
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn titlebar_height(&self) -> Pixels {
         20.0.into()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Dark
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn display(&self) -> Rc<dyn PlatformDisplay> {
         Rc::new(WindowsDisplay::new())
     }
@@ -720,7 +720,7 @@ impl PlatformWindow for WindowsWindow {
         self.inner.mouse_position.get()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn modifiers(&self) -> Modifiers {
         Modifiers::none()
     }
@@ -729,17 +729,17 @@ impl PlatformWindow for WindowsWindow {
         self
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.inner.input_handler.set(Some(input_handler));
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.inner.input_handler.take()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn prompt(
         &self,
         level: PromptLevel,
@@ -750,87 +750,87 @@ impl PlatformWindow for WindowsWindow {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn activate(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
             .ok();
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn set_edited(&mut self, edited: bool) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn show_character_palette(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn minimize(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn zoom(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn toggle_full_screen(&self) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
         self.inner.callbacks.borrow_mut().input = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.inner.callbacks.borrow_mut().resize = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
         self.inner.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().moved = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.callbacks.borrow_mut().should_close = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.inner.callbacks.borrow_mut().close = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
         true
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn draw(&self, scene: &Scene) {
         self.inner.renderer.borrow_mut().draw(scene)
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.inner.renderer.borrow().sprite_atlas().clone()
     }
