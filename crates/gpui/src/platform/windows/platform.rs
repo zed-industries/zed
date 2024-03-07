@@ -150,7 +150,7 @@ impl WindowsPlatformSystemSettings {
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
         unsafe {
-            OleInitialize(None).expect("unable to initialize Widnows OLE");
+            OleInitialize(None).expect("unable to initialize Windows OLE");
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
