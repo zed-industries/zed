@@ -37,30 +37,42 @@
       "_": "vim::StartOfLineDownward",
       "g _": "vim::EndOfLineDownward",
       "shift-g": "vim::EndOfDocument",
-      "w": "vim::NextWordStart",
       "{": "vim::StartOfParagraph",
       "}": "vim::EndOfParagraph",
       "|": "vim::GoToColumn",
+
+      // Word motions
+      "w": "vim::NextWordStart",
+      "e": "vim::NextWordEnd",
+      "b": "vim::PreviousWordStart",
+      "g e": "vim::PreviousWordEnd",
+
+      // Subword motions
+      // "w": "vim::NextSubwordStart",
+      // "b": "vim::PreviousSubwordStart",
+      // "e": "vim::NextSubwordEnd",
+      // "g e": "vim::PreviousSubwordEnd",
+
       "shift-w": [
         "vim::NextWordStart",
         {
           "ignorePunctuation": true
         }
       ],
-      "e": "vim::NextWordEnd",
       "shift-e": [
         "vim::NextWordEnd",
         {
           "ignorePunctuation": true
         }
       ],
-      "b": "vim::PreviousWordStart",
       "shift-b": [
         "vim::PreviousWordStart",
         {
           "ignorePunctuation": true
         }
       ],
+      "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
+
       "n": "search::SelectNextMatch",
       "shift-n": "search::SelectPrevMatch",
       "%": "vim::Matching",
@@ -117,8 +129,6 @@
       "ctrl-e": "vim::LineDown",
       "ctrl-y": "vim::LineUp",
       // "g" commands
-      "g e": "vim::PreviousWordEnd",
-      "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g t": "pane::ActivateNextItem",
