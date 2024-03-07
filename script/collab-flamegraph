@@ -17,9 +17,10 @@ environment=$1
 
 target_zed_kube_cluster
 
-echo "Running perf on collab, collecting 30s of data..."
+# 5s in production is ~200Mb..., in staging you probably want to bump this up.
+echo "Running perf on collab, collecting 5s of data..."
 
-kubectl -n $environment exec -it deployments/collab -- perf record -p 1 -g -m 64 --call-graph dwarf -- sleep 30
+kubectl -n $environment exec -it deployments/collab -- perf record -p 1 -g -m 64 --call-graph dwarf -- sleep 5
 
 run="collab-$environment-$(date -Iseconds)"
 echo "Processing data and downloading to '$run.perf'..."
@@ -29,4 +30,4 @@ kubectl -n $environment exec -it deployments/collab -- perf --no-pager script > 
 which inferno-flamegraph 2>/dev/null || (echo "installing inferno..."; cargo install inferno)
 
 inferno-collapse-perf "$run.perf" | inferno-flamegraph > "$run.svg"
-open "$run.svg"
+open "./$run.svg"
