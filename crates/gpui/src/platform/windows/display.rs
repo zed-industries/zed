@@ -17,12 +17,12 @@ impl WindowsDisplay {
 }
 
 impl PlatformDisplay for WindowsDisplay {
-    // todo!("windows")
+    // todo(windows)
     fn id(&self) -> DisplayId {
         DisplayId(1)
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn uuid(&self) -> Result<Uuid> {
         Err(anyhow!("not implemented yet."))
     }
