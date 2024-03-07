@@ -63,8 +63,6 @@
         ]
         ")" @context)) @item
 
-; TODO: definitely needs more testing in projects with methods that actually use
-;       all of these rules
 (method_declaration
     (modifiers
         [
