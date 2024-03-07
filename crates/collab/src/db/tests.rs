@@ -109,13 +109,13 @@ macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
-            let test_db = crate::db::TestDb::postgres(cx.executor().clone());
+            let test_db = $crate::db::TestDb::postgres(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
 
         #[gpui::test]
         async fn $sqlite_test_name(cx: &mut gpui::TestAppContext) {
-            let test_db = crate::db::TestDb::sqlite(cx.executor().clone());
+            let test_db = $crate::db::TestDb::sqlite(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
     };

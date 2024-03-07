@@ -702,14 +702,21 @@ impl Item for Editor {
         }
     }
 
-    fn save(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn save(
+        &mut self,
+        format: bool,
+        project: Model<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|this, mut cx| async move {
-            this.update(&mut cx, |this, cx| {
-                this.perform_format(project.clone(), FormatTrigger::Save, cx)
-            })?
-            .await?;
+            if format {
+                this.update(&mut cx, |this, cx| {
+                    this.perform_format(project.clone(), FormatTrigger::Save, cx)
+                })?
+                .await?;
+            }
 
             if buffers.len() == 1 {
                 project
@@ -1179,9 +1186,9 @@ pub fn active_match_index(
         None
     } else {
         match ranges.binary_search_by(|probe| {
-            if probe.end.cmp(cursor, &*buffer).is_lt() {
+            if probe.end.cmp(cursor, buffer).is_lt() {
                 Ordering::Less
-            } else if probe.start.cmp(cursor, &*buffer).is_gt() {
+            } else if probe.start.cmp(cursor, buffer).is_gt() {
                 Ordering::Greater
             } else {
                 Ordering::Equal

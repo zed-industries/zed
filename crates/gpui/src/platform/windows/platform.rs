@@ -4,6 +4,7 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
+    ffi::{c_uint, c_void},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -15,25 +16,52 @@ use async_task::Runnable;
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
-use util::SemanticVersion;
-use windows::Win32::{
-    Foundation::{CloseHandle, HANDLE, HWND},
-    System::Threading::{CreateEventW, INFINITE},
-    UI::WindowsAndMessaging::{
-        DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostQuitMessage,
-        TranslateMessage, MSG, PM_REMOVE, QS_ALLINPUT, WM_QUIT,
+use util::{ResultExt, SemanticVersion};
+use windows::{
+    core::{HSTRING, PCWSTR},
+    Wdk::System::SystemServices::RtlGetVersion,
+    Win32::{
+        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
+        Graphics::DirectComposition::DCompositionWaitForCompositorClock,
+        System::{
+            Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
+            Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
+        },
+        UI::{
+            Input::KeyboardAndMouse::GetDoubleClickTime,
+            Shell::ShellExecuteW,
+            WindowsAndMessaging::{
+                DispatchMessageW, EnumThreadWindows, LoadImageW, MsgWaitForMultipleObjects,
+                PeekMessageW, PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage,
+                HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
+                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
+                SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+            },
+        },
     },
 };
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher, WindowsDisplay,
-    WindowsTextSystem, WindowsWindow,
+    try_get_window_inner, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
+    ForegroundExecutor, Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
+    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher,
+    WindowsDisplay, WindowsTextSystem, WindowsWindow,
 };
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
+}
+
+/// Windows settings pulled from SystemParametersInfo
+/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
+#[derive(Default, Debug)]
+pub(crate) struct WindowsPlatformSystemSettings {
+    /// SEE: SPI_GETWHEELSCROLLCHARS
+    pub(crate) wheel_scroll_chars: u32,
+
+    /// SEE: SPI_GETWHEELSCROLLLINES
+    pub(crate) wheel_scroll_lines: u32,
 }
 
 pub(crate) struct WindowsPlatformInner {
@@ -44,6 +72,7 @@ pub(crate) struct WindowsPlatformInner {
     callbacks: Mutex<Callbacks>,
     pub(crate) window_handles: RefCell<HashSet<AnyWindowHandle>>,
     pub(crate) event: HANDLE,
+    pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
 
 impl Drop for WindowsPlatformInner {
@@ -65,6 +94,57 @@ struct Callbacks {
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
+enum WindowsMessageWaitResult {
+    ForegroundExecution,
+    WindowsMessage(MSG),
+    Error,
+}
+
+impl WindowsPlatformSystemSettings {
+    fn new() -> Self {
+        let mut settings = Self::default();
+        settings.update_all();
+        settings
+    }
+
+    pub(crate) fn update_all(&mut self) {
+        self.update_wheel_scroll_lines();
+        self.update_wheel_scroll_chars();
+    }
+
+    pub(crate) fn update_wheel_scroll_lines(&mut self) {
+        let mut value = c_uint::default();
+        let result = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWHEELSCROLLLINES,
+                0,
+                Some((&mut value) as *mut c_uint as *mut c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+            )
+        };
+
+        if result.log_err() != None {
+            self.wheel_scroll_lines = value;
+        }
+    }
+
+    pub(crate) fn update_wheel_scroll_chars(&mut self) {
+        let mut value = c_uint::default();
+        let result = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWHEELSCROLLCHARS,
+                0,
+                Some((&mut value) as *mut c_uint as *mut c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+            )
+        };
+
+        if result.log_err() != None {
+            self.wheel_scroll_chars = value;
+        }
+    }
+}
+
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
@@ -75,6 +155,7 @@ impl WindowsPlatform {
         let text_system = Arc::new(WindowsTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let window_handles = RefCell::new(HashSet::new());
+        let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -83,9 +164,49 @@ impl WindowsPlatform {
             callbacks,
             window_handles,
             event,
+            settings,
         });
         Self { inner }
     }
+
+    /// runs message handlers that should be processed before dispatching to prevent translating unnecessary messages
+    /// returns true if message is handled and should not dispatch
+    fn run_immediate_msg_handlers(&self, msg: &MSG) -> bool {
+        if msg.message == WM_SETTINGCHANGE {
+            self.inner.settings.borrow_mut().update_all();
+            return true;
+        }
+
+        if let Some(inner) = try_get_window_inner(msg.hwnd) {
+            inner.handle_immediate_msg(msg.message, msg.wParam, msg.lParam)
+        } else {
+            false
+        }
+    }
+
+    fn run_foreground_tasks(&self) {
+        for runnable in self.inner.main_receiver.drain() {
+            runnable.run();
+        }
+    }
+}
+
+unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, _: LPARAM) -> BOOL {
+    if let Some(inner) = try_get_window_inner(hwnd) {
+        inner.invalidate_client_area();
+    }
+    TRUE
+}
+
+/// invalidates all windows belonging to a thread causing a paint message to be scheduled
+fn invalidate_thread_windows(win32_thread_id: u32) {
+    unsafe {
+        EnumThreadWindows(
+            win32_thread_id,
+            Some(invalidate_window_callback),
+            LPARAM::default(),
+        )
+    };
 }
 
 impl Platform for WindowsPlatform {
@@ -104,21 +225,32 @@ impl Platform for WindowsPlatform {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         'a: loop {
-            unsafe {
-                MsgWaitForMultipleObjects(Some(&[self.inner.event]), false, INFINITE, QS_ALLINPUT)
-            };
             let mut msg = MSG::default();
-            while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool() {
-                if msg.message == WM_QUIT {
-                    break 'a;
+            // will be 0 if woken up by self.inner.event or 1 if the compositor clock ticked
+            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
+            let wait_result =
+                unsafe { DCompositionWaitForCompositorClock(Some(&[self.inner.event]), INFINITE) };
+
+            // compositor clock ticked so we should draw a frame
+            if wait_result == 1 {
+                unsafe { invalidate_thread_windows(GetCurrentThreadId()) };
+
+                while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool()
+                {
+                    if msg.message == WM_QUIT {
+                        break 'a;
+                    }
+
+                    if !self.run_immediate_msg_handlers(&msg) {
+                        unsafe { TranslateMessage(&msg) };
+                        unsafe { DispatchMessageW(&msg) };
+                    }
                 }
-                unsafe { TranslateMessage(&msg) };
-                unsafe { DispatchMessageW(&msg) };
             }
-            while let Ok(runnable) = self.inner.main_receiver.try_recv() {
-                runnable.run();
-            }
+
+            self.run_foreground_tasks();
         }
+
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {
             callback()
@@ -182,9 +314,16 @@ impl Platform for WindowsPlatform {
         WindowAppearance::Dark
     }
 
-    // todo!("windows")
     fn open_url(&self, url: &str) {
-        // todo!("windows")
+        let url_string = url.to_string();
+        self.background_executor()
+            .spawn(async move {
+                if url_string.is_empty() {
+                    return;
+                }
+                open_target(url_string.as_str());
+            })
+            .detach();
     }
 
     // todo!("windows")
@@ -202,9 +341,22 @@ impl Platform for WindowsPlatform {
         unimplemented!()
     }
 
-    // todo!("windows")
     fn reveal_path(&self, path: &Path) {
-        unimplemented!()
+        let Ok(file_full_path) = path.canonicalize() else {
+            log::error!("unable to parse file path");
+            return;
+        };
+        self.background_executor()
+            .spawn(async move {
+                let Some(path) = file_full_path.to_str() else {
+                    return;
+                };
+                if path.is_empty() {
+                    return;
+                }
+                open_target(path);
+            })
+            .detach();
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
@@ -247,11 +399,20 @@ impl Platform for WindowsPlatform {
     }
 
     fn os_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        })
+        let mut info = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut info) };
+        if status.is_ok() {
+            Ok(SemanticVersion {
+                major: info.dwMajorVersion as _,
+                minor: info.dwMinorVersion as _,
+                patch: info.dwBuildNumber as _,
+            })
+        } else {
+            Err(anyhow::anyhow!(
+                "unable to get Windows version: {}",
+                std::io::Error::last_os_error()
+            ))
+        }
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
@@ -267,14 +428,28 @@ impl Platform for WindowsPlatform {
         Err(anyhow!("not yet implemented"))
     }
 
-    // todo!("windows")
     fn local_timezone(&self) -> UtcOffset {
-        UtcOffset::from_hms(9, 0, 0).unwrap()
+        let mut info = unsafe { std::mem::zeroed() };
+        let ret = unsafe { GetTimeZoneInformation(&mut info) };
+        if ret == TIME_ZONE_ID_INVALID {
+            log::error!(
+                "Unable to get local timezone: {}",
+                std::io::Error::last_os_error()
+            );
+            return UtcOffset::UTC;
+        }
+        // Windows treat offset as:
+        // UTC = localtime + offset
+        // so we add a minus here
+        let hours = -info.Bias / 60;
+        let minutes = -info.Bias % 60;
+
+        UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
     }
 
-    // todo!("windows")
     fn double_click_interval(&self) -> Duration {
-        Duration::from_millis(100)
+        let millis = unsafe { GetDoubleClickTime() };
+        Duration::from_millis(millis as _)
     }
 
     // todo!("windows")
@@ -282,8 +457,31 @@ impl Platform for WindowsPlatform {
         Err(anyhow!("not yet implemented"))
     }
 
-    // todo!("windows")
-    fn set_cursor_style(&self, style: CursorStyle) {}
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let handle = match style {
+            CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => unsafe {
+                load_cursor(IDC_IBEAM)
+            },
+            CursorStyle::Crosshair => unsafe { load_cursor(IDC_CROSS) },
+            CursorStyle::PointingHand | CursorStyle::DragLink => unsafe { load_cursor(IDC_HAND) },
+            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => unsafe {
+                load_cursor(IDC_SIZEWE)
+            },
+            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => unsafe {
+                load_cursor(IDC_SIZENS)
+            },
+            CursorStyle::OperationNotAllowed => unsafe { load_cursor(IDC_NO) },
+            _ => unsafe { load_cursor(IDC_ARROW) },
+        };
+        if handle.is_err() {
+            log::error!(
+                "Error loading cursor image: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let _ = unsafe { SetCursor(HCURSOR(handle.unwrap().0)) };
+    }
 
     // todo!("windows")
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -313,5 +511,29 @@ impl Platform for WindowsPlatform {
     // todo!("windows")
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         Task::Ready(Some(Err(anyhow!("not implemented yet."))))
+    }
+
+    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+}
+
+unsafe fn load_cursor(name: PCWSTR) -> Result<HANDLE> {
+    LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED).map_err(|e| anyhow!(e))
+}
+
+fn open_target(target: &str) {
+    unsafe {
+        let ret = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            &HSTRING::from(target),
+            None,
+            None,
+            SW_SHOWDEFAULT,
+        );
+        if ret.0 <= 32 {
+            log::error!("Unable to open target: {}", std::io::Error::last_os_error());
+        }
     }
 }

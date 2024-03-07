@@ -735,8 +735,13 @@ impl Item for ProjectDiagnosticsEditor {
         true
     }
 
-    fn save(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        self.editor.save(project, cx)
+    fn save(
+        &mut self,
+        format: bool,
+        project: Model<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.editor.save(format, project, cx)
     }
 
     fn save_as(

@@ -670,6 +670,8 @@ pub struct RefreshedChannelBuffer {
 }
 
 pub struct Project {
+    pub id: ProjectId,
+    pub role: ChannelRole,
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
@@ -695,7 +697,7 @@ impl ProjectCollaborator {
 #[derive(Debug)]
 pub struct LeftProject {
     pub id: ProjectId,
-    pub host_user_id: UserId,
+    pub host_user_id: Option<UserId>,
     pub host_connection_id: Option<ConnectionId>,
     pub connection_ids: Vec<ConnectionId>,
 }

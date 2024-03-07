@@ -6,6 +6,9 @@ description = "Bindings to LiveKit Swift client SDK"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/live_kit_client.rs"
 doctest = false

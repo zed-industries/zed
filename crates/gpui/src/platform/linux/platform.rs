@@ -354,15 +354,23 @@ impl Platform for LinuxPlatform {
         false
     }
 
-    // todo(linux)
-    fn write_to_clipboard(&self, item: ClipboardItem) {}
-
-    // todo(linux)
-    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        let clipboard = self.client.get_clipboard();
+        clipboard.borrow_mut().set_contents(item.text);
     }
 
-    //todo!(linux)
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        let clipboard = self.client.get_clipboard();
+        let contents = clipboard.borrow_mut().get_contents();
+        match contents {
+            Ok(text) => Some(ClipboardItem {
+                metadata: None,
+                text,
+            }),
+            _ => None,
+        }
+    }
+
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let url = url.to_string();
         let username = username.to_string();
@@ -382,7 +390,8 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //todo!(linux)
+    //todo!(linux): add trait methods for accessing the primary selection
+
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -410,7 +419,6 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //todo!(linux)
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -432,6 +440,10 @@ impl Platform for LinuxPlatform {
 
     fn window_appearance(&self) -> crate::WindowAppearance {
         crate::WindowAppearance::Light
+    }
+
+    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
 }
 

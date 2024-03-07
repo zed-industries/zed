@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
+use client::parse_zed_link;
 use collections::HashMap;
 use editor::scroll::Autoscroll;
 use editor::Editor;
@@ -10,7 +11,6 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
 use itertools::Itertools;
 use language::{Bias, Point};
-use release_channel::parse_zed_link;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -66,13 +66,13 @@ impl OpenListener {
         )
     }
 
-    pub fn open_urls(&self, urls: &[String]) {
+    pub fn open_urls(&self, urls: &[String], cx: &AppContext) {
         self.triggered.store(true, Ordering::Release);
         let request = if let Some(server_name) =
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
         {
             self.handle_cli_connection(server_name)
-        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url)) {
+        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url, cx)) {
             self.handle_zed_url_scheme(request_path)
         } else {
             self.handle_file_urls(urls)
