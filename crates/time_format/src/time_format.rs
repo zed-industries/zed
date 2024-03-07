@@ -3,8 +3,12 @@ use time::{OffsetDateTime, UtcOffset};
 /// The formatting style for a timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampFormat {
-    /// Formats the timestamp as an absolute time, e.g. "Today at 12:00 PM", "Yesterday at 11:00 AM", "2021-12-31 3:00AM".
+    /// Formats the timestamp as an absolute time, e.g. "2021-12-31 3:00AM".
     Absolute,
+    /// Formats the timestamp as an absolute time.
+    /// If the message is from today or yesterday the date will be replaced with "Today at x" or "Yesterday at x" respectively.
+    /// E.g. "Today at 12:00 PM", "Yesterday at 11:00 AM", "2021-12-31 3:00AM".
+    EnhancedAbsolute,
     /// Formats the timestamp as a relative time, e.g. "just now", "1 minute ago", "2 hours ago", "2 months ago".
     Relative,
 }
@@ -20,15 +24,32 @@ pub fn format_localized_timestamp(
     let reference_local = reference.to_offset(timezone);
 
     match format {
-        TimestampFormat::Absolute => format_absolute_timestamp(timestamp_local, reference_local),
+        TimestampFormat::Absolute => {
+            format_absolute_timestamp(timestamp_local, reference_local, false)
+        }
+        TimestampFormat::EnhancedAbsolute => {
+            format_absolute_timestamp(timestamp_local, reference_local, true)
+        }
         TimestampFormat::Relative => format_relative_time(timestamp_local, reference_local)
             .unwrap_or_else(|| format_relative_date(timestamp_local, reference_local)),
     }
 }
 
-fn format_absolute_timestamp(timestamp: OffsetDateTime, reference: OffsetDateTime) -> String {
+fn format_absolute_timestamp(
+    timestamp: OffsetDateTime,
+    reference: OffsetDateTime,
+    enhanced_date_formatting: bool,
+) -> String {
     #[cfg(target_os = "macos")]
     {
+        if !enhanced_date_formatting {
+            return format!(
+                "{} {}",
+                macos::format_date(&timestamp),
+                macos::format_time(&timestamp)
+            );
+        }
+
         let timestamp_date = timestamp.date();
         let reference_date = reference.date();
         if timestamp_date == reference_date {

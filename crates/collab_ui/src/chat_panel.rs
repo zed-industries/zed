@@ -491,7 +491,7 @@ impl ChatPanel {
                                         message.timestamp,
                                         OffsetDateTime::now_utc(),
                                         self.local_timezone,
-                                        time_format::TimestampFormat::Absolute,
+                                        time_format::TimestampFormat::EnhancedAbsolute,
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
