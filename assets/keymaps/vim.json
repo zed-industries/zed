@@ -396,6 +396,7 @@
       "t": "vim::Tag",
       "s": "vim::Sentence",
       "p": "vim::Paragraph",
+      "i": "vim::Indentation",
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",

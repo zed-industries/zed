@@ -10,7 +10,7 @@ use editor::{
     Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
+use language::{char_kind, BufferSnapshot, CharKind, IndentSize, Point, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -19,6 +19,7 @@ pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,
     Paragraph,
+    Indentation,
     Quotes,
     BackQuotes,
     DoubleQuotes,
@@ -45,6 +46,7 @@ actions!(
     [
         Sentence,
         Paragraph,
+        Indentation,
         Quotes,
         BackQuotes,
         DoubleQuotes,
@@ -54,7 +56,7 @@ actions!(
         CurlyBrackets,
         AngleBrackets,
         Argument,
-        Tag
+        Tag,
     ]
 );
 
@@ -69,6 +71,8 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &Paragraph, cx: _| object(Object::Paragraph, cx));
+    workspace
+        .register_action(|_: &mut Workspace, _: &Indentation, cx: _| object(Object::Indentation, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
@@ -114,6 +118,7 @@ impl Object {
             | Object::DoubleQuotes => false,
             Object::Sentence
             | Object::Paragraph
+            | Object::Indentation
             | Object::Parentheses
             | Object::Tag
             | Object::AngleBrackets
@@ -125,7 +130,7 @@ impl Object {
 
     pub fn always_expands_both_ways(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Sentence | Object::Paragraph | Object::Argument => false,
+            Object::Word { .. } | Object::Sentence | Object::Paragraph | Object::Indentation | Object::Argument => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -158,7 +163,8 @@ impl Object {
             | Object::VerticalBars
             | Object::Tag
             | Object::Argument => Mode::Visual,
-            Object::Paragraph => Mode::VisualLine,
+            Object::Paragraph
+            | Object::Indentation => Mode::VisualLine,
         }
     }
 
@@ -178,6 +184,7 @@ impl Object {
             }
             Object::Sentence => sentence(map, relative_to, around),
             Object::Paragraph => paragraph(map, relative_to, around),
+            Object::Indentation => indentation(map, relative_to),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
@@ -784,6 +791,73 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
     map.max_point()
 }
 
+/// Returns a range that selects the lines that are at the same current indentation
+/// level or more.
+fn indentation(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+) -> Option<Range<DisplayPoint>> {
+    let indentation_start = start_of_indentation(map, relative_to);
+    let indentation_end = end_of_indentation(map, relative_to);
+
+    let range = indentation_start..indentation_end;
+
+    Some(range)
+}
+
+/// Returns a position of the start of the current indentation, where a indentation
+/// is defined as a run of lines at the same indentation level or more.
+pub fn start_of_indentation(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == 0 {
+        return DisplayPoint::zero();
+    }
+
+    let mut initial_indent = map.buffer_snapshot.indent_size_for_line(point.row);
+    if initial_indent.len == 0 {
+        initial_indent = IndentSize::spaces(1);
+    }
+
+    for row in (0..point.row).rev() {
+        let current_indent = map.buffer_snapshot.indent_size_for_line(row);
+        let is_blank = map.buffer_snapshot.is_line_blank(row);
+        if is_blank || current_indent.len >= initial_indent.len {
+            continue;
+        }
+        return Point::new(row + 1, 0).to_display_point(map);
+    }
+
+    DisplayPoint::zero()
+}
+
+/// Returns a position of the end of the current indentation, where a indentation
+/// is defined as a run of lines at the same indentation level or more.
+pub fn end_of_indentation(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == map.max_buffer_row() {
+        return map.max_point();
+    }
+
+    let mut initial_indent = map.buffer_snapshot.indent_size_for_line(point.row);
+    if initial_indent.len == 0 {
+        initial_indent = IndentSize::spaces(1);
+    }
+
+    for row in point.row + 1..map.max_buffer_row() + 1 {
+        let current_indent = map.buffer_snapshot.indent_size_for_line(row);
+        let is_blank = map.buffer_snapshot.is_line_blank(row);
+        if is_blank || current_indent.len >= initial_indent.len {
+            continue;
+        }
+
+        let previous_row = row - 1;
+        let end_point = Point::new(previous_row, map.buffer_snapshot.line_len(previous_row)).to_display_point(map);
+        return DisplayPoint::new(end_point.row(), 1);
+    }
+
+    map.max_point()
+}
+
 fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -1307,6 +1381,144 @@ mod test {
             cx.assert_binding_matches_all(["v", "a", "p"], paragraph_example)
                 .await;
         }
+    }
+
+    const INDENTATION_EXAMPLE: &[&'static str] = &[
+        indoc! {"
+            function test() {
+            ˇ    let ok = query()
+
+                if (ok === true) {
+                    print()
+                } else {
+                    abort()
+                    return false
+                }
+
+                return ok
+            }
+        "},
+        indoc! {"
+            function test() {
+                let ok = query()
+
+                if (ok === true) {
+                    print()
+                } else {
+            ˇ        abort()
+                    return false
+                }
+
+                return ok
+            }
+        "},
+    ];
+
+    #[gpui::test]
+    async fn test_change_indentation_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.assert_binding(["c", "i", "i"],
+            INDENTATION_EXAMPLE[0],
+            Mode::Normal,
+            indoc! {"
+                function test() {
+                    ˇ
+                }
+            "},
+            Mode::Insert,
+        );
+        cx.assert_binding(["c", "i", "i"],
+            INDENTATION_EXAMPLE[1],
+            Mode::Normal,
+            indoc! {"
+                function test() {
+                    let ok = query()
+
+                    if (ok === true) {
+                        print()
+                    } else {
+                        ˇ
+                    }
+
+                    return ok
+                }
+            "},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_indentation_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.assert_binding(["d", "i", "i"],
+            INDENTATION_EXAMPLE[0],
+            Mode::Normal,
+            indoc! {"
+                function test() {
+                ˇ}
+            "},
+            Mode::Normal,
+        );
+        cx.assert_binding(["d", "i", "i"],
+            INDENTATION_EXAMPLE[1],
+            Mode::Normal,
+            indoc! {"
+                function test() {
+                    let ok = query()
+
+                    if (ok === true) {
+                        print()
+                    } else {
+                    ˇ}
+
+                    return ok
+                }
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_visual_indentation_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.assert_binding(["d", "i", "i"],
+            INDENTATION_EXAMPLE[0],
+            Mode::Normal,
+            indoc! {"
+                function test() {
+                «    let ok = query()
+
+                    if (ok === true) {
+                        print()
+                    } else {
+                        abort()
+                        return false
+                    }
+
+                ˇ    return ok»
+                }
+            "},
+            Mode::Normal,
+        );
+        cx.assert_binding(["d", "i", "i"],
+            INDENTATION_EXAMPLE[1],
+            Mode::Normal,
+            indoc! {"
+                function test() {
+                    let ok = query()
+
+                    if (ok === true) {
+                        print()
+                    } else {
+                «        abort()
+                ˇ        return false»
+                    }
+
+                    return ok
+                }
+            "},
+            Mode::Normal,
+        );
     }
 
     // Test string with "`" for opening surrounders and "'" for closing surrounders
