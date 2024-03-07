@@ -38,16 +38,18 @@ use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
+#[cfg(target_os = "windows")]
+use std::num::NonZeroU32;
 use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
+#[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use std::{
     cmp::{self, min},
     fmt::Display,
-    num::NonZeroU32,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
     sync::Arc,
