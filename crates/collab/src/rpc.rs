@@ -6,7 +6,7 @@ use crate::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
         HostedProjectId, InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project,
         ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
-        User, UserId,
+        UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -3094,6 +3094,7 @@ async fn send_channel_message(
             },
         )
         .await?;
+
     let message = proto::ChannelMessage {
         sender_id: session.user_id.to_proto(),
         id: message_id.to_proto(),
@@ -3172,7 +3173,15 @@ async fn update_channel_message(
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     let message_id = MessageId::from_proto(request.message_id);
-    let connection_ids = session
+    let updated_at = OffsetDateTime::now_utc();
+    let UpdatedChannelMessage {
+        message_id,
+        participant_connection_ids,
+        channel_members,
+        notifications,
+        reply_to_message_id,
+        timestamp,
+    } = session
         .db()
         .await
         .update_channel_message(
@@ -3181,14 +3190,39 @@ async fn update_channel_message(
             session.user_id,
             request.body.as_str(),
             &request.mentions,
-            OffsetDateTime::now_utc(),
+            updated_at,
         )
         .await?;
 
-    broadcast(Some(session.connection_id), connection_ids, |connection| {
-        session.peer.send(connection, request.clone())
-    });
-    response.send(proto::Ack {})?;
+    let nonce = request
+        .nonce
+        .clone()
+        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+
+    let message = proto::ChannelMessage {
+        sender_id: session.user_id.to_proto(),
+        id: message_id.to_proto(),
+        body: request.body.clone(),
+        mentions: request.mentions.clone(),
+        timestamp: timestamp.assume_utc().unix_timestamp() as u64,
+        nonce: Some(nonce),
+        reply_to_message_id: reply_to_message_id.map(|id| id.to_proto()),
+        edited_at: Some(updated_at.unix_timestamp() as u64),
+    };
+
+    response.send(proto::UpdateChannelMessageResponse {
+        message: Some(message),
+    })?;
+
+    let pool = &*session.connection_pool().await;
+    broadcast(
+        Some(session.connection_id),
+        participant_connection_ids,
+        |connection| session.peer.send(connection, request.clone()),
+    );
+
+    send_notifications(pool, &session.peer, notifications);
+
     Ok(())
 }
 

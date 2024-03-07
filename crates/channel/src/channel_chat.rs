@@ -84,6 +84,10 @@ pub enum ChannelChatEvent {
         old_range: Range<usize>,
         new_count: usize,
     },
+    UpdateMessage {
+        message_id: u64,
+        message_ix: usize,
+    },
     NewMessage {
         channel_id: ChannelId,
         message_id: u64,
@@ -243,38 +247,38 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<()>>> {
-        let current_user = self
-            .user_store
-            .read(cx)
-            .current_user()
-            .ok_or_else(|| anyhow!("current_user is not present"))?;
-        let nonce = self.rng.gen();
+        // TODO: we want to display the updated message immediately, but we don't have the updated message yet
+        // let current_user = self
+        //     .user_store
+        //     .read(cx)
+        //     .current_user()
+        //     .ok_or_else(|| anyhow!("current_user is not present"))?;
+        // let nonce = self.rng.gen();
 
-        let updated_message = ChannelMessage {
-            id: ChannelMessageId::Saved(id),
-            body: message.text.clone(),
-            sender: current_user,
-            timestamp: OffsetDateTime::now_utc(),
-            mentions: message.mentions.clone(),
-            nonce,
-            reply_to_message_id: message.reply_to_message_id,
-            edited_at: Some(OffsetDateTime::now_utc()),
-        };
+        // let updated_message = ChannelMessage {
+        //     id: ChannelMessageId::Saved(id),
+        //     body: message.text.clone(),
+        //     sender: current_user,
+        //     timestamp: OffsetDateTime::now_utc(),
+        //     mentions: message.mentions.clone(),
+        //     nonce,
+        //     reply_to_message_id: message.reply_to_message_id,
+        //     edited_at: Some(OffsetDateTime::now_utc()),
+        // };
 
-        let mut cursor = self.messages.cursor::<(ChannelMessageId, Count)>();
-        let result: Option<&ChannelMessage> = cursor.find(|m| updated_message.id == m.id);
+        self.message_update(id, message.text.clone(), cx);
+
+        let nonce: u128 = self.rng.gen();
 
         let response = self.rpc.request(proto::UpdateChannelMessage {
             channel_id: self.channel_id.0,
             message_id: id,
             body: message.text,
+            nonce: Some(nonce.into()),
             mentions: mentions_to_proto(&message.mentions),
         });
-        Ok(cx.spawn(move |this, mut cx| async move {
+        Ok(cx.spawn(move |_, _| async move {
             response.await?;
-            this.update(&mut cx, |this, cx| {
-                this.message_update(id, cx);
-            })?;
             Ok(())
         }))
     }
@@ -505,7 +509,12 @@ impl ChannelChat {
     pub fn message(&self, ix: usize) -> &ChannelMessage {
         let mut cursor = self.messages.cursor::<Count>();
         cursor.seek(&Count(ix), Bias::Right, &());
-        cursor.item().unwrap()
+        if let Some(item) = cursor.item() {
+            item
+        } else {
+            dbg!(ix, &self.messages);
+            panic!("message not found")
+        }
     }
 
     pub fn acknowledge_message(&mut self, id: u64) {
@@ -575,7 +584,7 @@ impl ChannelChat {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            this.message_update(message.payload.message_id, cx)
+            this.message_update(message.payload.message_id, message.payload.body, cx)
         })?;
         Ok(())
     }
@@ -657,23 +666,27 @@ impl ChannelChat {
         }
     }
 
-    fn message_update(&mut self, id: u64, cx: &mut ModelContext<Self>) {
-        // let mut cursor = self.messages.cursor::<ChannelMessageId>();
+    fn message_update(&mut self, id: u64, body: String, cx: &mut ModelContext<Self>) {
+        let mut cursor = self.messages.cursor::<ChannelMessageId>();
+        let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
+        let ix = messages.summary().count;
 
-        // let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
-        // if let Some(item) = cursor.item() {
-        //     if item.id == ChannelMessageId::Saved(id) {
-        //         let ix = messages.summary().count;
-        //         cursor.next(&());
-        //         // messages.append(cursor.suffix(&()), &());
-        //         // drop(cursor);
-        //         // self.messages = messages;
-        //         cx.emit(ChannelChatEvent::MessagesUpdated {
-        //             old_range: ix..ix + 1,
-        //             new_count: 0,
-        //         });
-        //     }
-        // }
+        if let Some(mut message_to_update) = cursor.item().cloned() {
+            message_to_update.body = body;
+            messages.push(message_to_update, &());
+            cursor.next(&());
+        }
+
+        messages.append(cursor.suffix(&()), &());
+        drop(cursor);
+        self.messages = messages;
+
+        cx.emit(ChannelChatEvent::UpdateMessage {
+            message_ix: ix,
+            message_id: id,
+        });
+
+        cx.notify();
     }
 }
 

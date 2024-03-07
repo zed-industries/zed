@@ -545,8 +545,12 @@ impl Database {
         body: &str,
         mentions: &[proto::ChatMention],
         edited_at: OffsetDateTime,
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<UpdatedChannelMessage> {
         self.transaction(|tx| async move {
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
+                .await?;
+
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
                 .stream(&*tx)
@@ -554,11 +558,13 @@ impl Database {
 
             let mut is_participant = false;
             let mut participant_connection_ids = Vec::new();
+            let mut participant_user_ids = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
                 if row.user_id == user_id {
                     is_participant = true;
                 }
+                participant_user_ids.push(row.user_id);
                 participant_connection_ids.push(row.connection());
             }
             drop(rows);
@@ -597,19 +603,48 @@ impl Database {
                 .await?;
 
             // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
-            channel_message_mention::Entity::delete_many()
-                .filter(channel_message_mention::Column::MessageId.eq(message_id))
-                .exec(&*tx)
-                .await?;
+            // channel_message_mention::Entity::delete_many()
+            //     .filter(channel_message_mention::Column::MessageId.eq(message_id))
+            //     .exec(&*tx)
+            //     .await?;
 
             // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
-            channel_message_mention::Entity::insert_many(
-                self.format_mentions_to_entities(message_id, body, mentions),
-            )
-            .exec(&*tx)
-            .await?;
+            // channel_message_mention::Entity::insert_many(
+            //     self.format_mentions_to_entities(message_id, body, mentions)?,
+            // )
+            // .exec(&*tx)
+            // .await?;
 
-            Ok(participant_connection_ids)
+            let mentioned_user_ids = mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+
+            let mut notifications = Vec::new();
+            for mentioned_user in mentioned_user_ids {
+                notifications.extend(
+                    self.create_notification(
+                        UserId::from_proto(mentioned_user),
+                        rpc::Notification::ChannelMessageMention {
+                            message_id: message_id.to_proto(),
+                            sender_id: user_id.to_proto(),
+                            channel_id: channel_id.to_proto(),
+                        },
+                        false,
+                        &tx,
+                    )
+                    .await?,
+                );
+            }
+
+            let mut channel_members = self.get_channel_participants(&channel, &tx).await?;
+            channel_members.retain(|member| !participant_user_ids.contains(member));
+
+            Ok(UpdatedChannelMessage {
+                message_id,
+                participant_connection_ids,
+                channel_members,
+                notifications,
+                reply_to_message_id: channel_message.reply_to_message_id,
+                timestamp: channel_message.sent_at,
+            })
         })
         .await
     }

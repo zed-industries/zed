@@ -200,6 +200,7 @@ message Envelope {
         JoinHostedProject join_hosted_project = 164;
 
         UpdateChannelMessage update_channel_message = 165;
+        UpdateChannelMessageResponse update_channel_message_response = 166;
     }
 
     reserved 158 to 161;
@@ -1180,8 +1181,13 @@ message RemoveChannelMessage {
 message UpdateChannelMessage {
     uint64 channel_id = 1;
     uint64 message_id = 2;
-    string body = 3;
-    repeated ChatMention mentions = 4;
+    Nonce nonce = 4;
+    string body = 5;
+    repeated ChatMention mentions = 6;
+}
+
+message UpdateChannelMessageResponse {
+    ChannelMessage message = 1;
 }
 
 message AckChannelMessage {

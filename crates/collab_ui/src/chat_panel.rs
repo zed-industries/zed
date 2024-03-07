@@ -269,6 +269,15 @@ impl ChatPanel {
                     self.acknowledge_last_message(cx);
                 }
             }
+            ChannelChatEvent::UpdateMessage {
+                message_id,
+                message_ix,
+            } => {
+                let range = *message_ix..*message_ix + 1;
+                self.message_list.splice(range, 1);
+                self.markdown_data
+                    .remove(&ChannelMessageId::Saved(*message_id));
+            }
             ChannelChatEvent::NewMessage {
                 channel_id,
                 message_id,
