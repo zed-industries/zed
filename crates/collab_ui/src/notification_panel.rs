@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label};
+use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -228,6 +228,20 @@ impl NotificationPanel {
             self.did_render_notification(notification_id, &notification, cx);
         }
 
+        let relative_timestamp = time_format::format_localized_timestamp(
+            timestamp,
+            now,
+            self.local_timezone,
+            time_format::TimestampFormat::Relative,
+        );
+
+        let absolute_timestamp = time_format::format_localized_timestamp(
+            timestamp,
+            now,
+            self.local_timezone,
+            time_format::TimestampFormat::Absolute,
+        );
+
         Some(
             div()
                 .id(ix)
@@ -237,6 +251,7 @@ impl NotificationPanel {
                 .px_2()
                 .py_1()
                 .gap_2()
+                .hover(|style| style.bg(cx.theme().colors().element_hover))
                 .when(can_navigate, |el| {
                     el.cursor(CursorStyle::PointingHand).on_click({
                         let notification = notification.clone();
@@ -261,13 +276,17 @@ impl NotificationPanel {
                         .child(
                             h_flex()
                                 .child(
-                                    Label::new(time_format::format_localized_timestamp(
-                                        timestamp,
-                                        now,
-                                        self.local_timezone,
-                                        time_format::TimestampFormat::Relative,
-                                    ))
-                                    .color(Color::Muted),
+                                    div()
+                                        .id("notification_timestamp")
+                                        .hover(|style| {
+                                            style
+                                                .bg(cx.theme().colors().element_selected)
+                                                .rounded_md()
+                                        })
+                                        .child(Label::new(relative_timestamp).color(Color::Muted))
+                                        .tooltip(move |cx| {
+                                            Tooltip::text(absolute_timestamp.clone(), cx)
+                                        }),
                                 )
                                 .children(if let Some(is_accepted) = response {
                                     Some(div().flex().flex_grow().justify_end().child(Label::new(
