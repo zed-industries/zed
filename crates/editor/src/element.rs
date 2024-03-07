@@ -923,17 +923,18 @@ impl EditorElement {
                 bounds: layout.text_hitbox.bounds,
             }),
             |cx| {
-                if self
+                let cursor_style = if self
                     .editor
                     .read(cx)
                     .hovered_link_state
                     .as_ref()
                     .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
                 {
-                    cx.set_cursor_style(CursorStyle::PointingHand, &layout.text_hitbox);
+                    CursorStyle::PointingHand
                 } else {
-                    cx.set_cursor_style(CursorStyle::IBeam, &layout.text_hitbox);
-                }
+                    CursorStyle::IBeam
+                };
+                cx.set_cursor_style(cursor_style, &layout.text_hitbox);
 
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
@@ -1520,8 +1521,7 @@ impl EditorElement {
             ));
         }
 
-        let mut mouse_position = cx.mouse_position();
-        cx.set_cursor_style(CursorStyle::Arrow, &layout.hitbox);
+        cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout.hitbox);
 
         let max_row = layout.max_row;
         let height = scrollbar_layout.height;
@@ -1529,7 +1529,8 @@ impl EditorElement {
 
         cx.on_mouse_event({
             let editor = self.editor.clone();
-            let hitbox = layout.hitbox.clone();
+            let hitbox = scrollbar_layout.hitbox.clone();
+            let mut mouse_position = cx.mouse_position();
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     return;
@@ -1579,32 +1580,29 @@ impl EditorElement {
         } else {
             cx.on_mouse_event({
                 let editor = self.editor.clone();
-                let hitbox = layout.hitbox.clone();
+                let hitbox = scrollbar_layout.hitbox.clone();
                 move |event: &MouseDownEvent, phase, cx| {
-                    if phase == DispatchPhase::Capture {
+                    if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
                         return;
                     }
 
                     editor.update(cx, |editor, cx| {
-                        if hitbox.is_hovered(cx) {
-                            editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
+                        editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
 
-                            let y = event.position.y;
-                            if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
-                                let center_row =
-                                    ((y - hitbox.bounds.top()) * (max_row as f32) / height).round()
-                                        as u32;
-                                let top_row = center_row
-                                    .saturating_sub((row_range.end - row_range.start) as u32 / 2);
-                                let mut position = editor.scroll_position(cx);
-                                position.y = top_row as f32;
-                                editor.set_scroll_position(position, cx);
-                            } else {
-                                editor.scroll_manager.show_scrollbar(cx);
-                            }
-
-                            cx.stop_propagation();
+                        let y = event.position.y;
+                        if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
+                            let center_row = ((y - hitbox.bounds.top()) * (max_row as f32) / height)
+                                .round() as u32;
+                            let top_row = center_row
+                                .saturating_sub((row_range.end - row_range.start) as u32 / 2);
+                            let mut position = editor.scroll_position(cx);
+                            position.y = top_row as f32;
+                            editor.set_scroll_position(position, cx);
+                        } else {
+                            editor.scroll_manager.show_scrollbar(cx);
                         }
+
+                        cx.stop_propagation();
                     });
                 }
             });
