@@ -17,7 +17,7 @@ use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
-use clipboard_win::{formats, get_clipboard, set_clipboard};
+use copypasta::{ClipboardContext, ClipboardProvider};
 use windows::{
     core::{HSTRING, PCWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
@@ -490,13 +490,15 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        set_clipboard(formats::Unicode, item.text()).expect("To set clipboard");
+        let mut ctx = ClipboardContext::new().unwrap();
+        ctx.set_contents(item.text().to_owned()).unwrap();
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let result: String = get_clipboard(formats::Unicode).expect("To set clipboard");
+        let mut ctx = ClipboardContext::new().unwrap();
+        let content = ctx.get_contents().unwrap();
         Some(ClipboardItem {
-            text: result,
+            text: content,
             metadata: None,
         })
     }

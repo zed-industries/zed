@@ -72,8 +72,7 @@ usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
-nfd = "0.0.4"
-clipboard-win = "5.2.0"
+copypasta = "0.10.1"
 
 [dev-dependencies]
 backtrace = "0.3"
