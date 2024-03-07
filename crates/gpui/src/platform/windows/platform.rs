@@ -12,12 +12,12 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+use copypasta::ClipboardContext;
 use async_task::Runnable;
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
-use copypasta::{ClipboardContext, ClipboardProvider};
 use windows::{
     core::{HSTRING, PCWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
