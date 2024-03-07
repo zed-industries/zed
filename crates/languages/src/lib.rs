@@ -82,7 +82,6 @@ pub fn init(
             tree_sitter_embedded_template::language(),
         ),
         ("erlang", tree_sitter_erlang::language()),
-        ("git_commit", tree_sitter_gitcommit::language()),
         ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
@@ -214,7 +213,6 @@ pub fn init(
             );
         }
     }
-    language!("gitcommit");
     language!("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
 
     language!("gleam", vec![Arc::new(gleam::GleamLspAdapter)]);

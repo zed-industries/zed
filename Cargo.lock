@@ -5355,7 +5355,6 @@ dependencies = [
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
  "tree-sitter-erlang",
- "tree-sitter-gitcommit",
  "tree-sitter-gleam",
  "tree-sitter-glsl",
  "tree-sitter-go",
@@ -10550,15 +10549,6 @@ name = "tree-sitter-erlang"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93ced5145ebb17f83243bf055b74e108da7cc129e12faab4166df03f59b287f4"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-gitcommit"
-version = "0.3.3"
-source = "git+https://github.com/gbprod/tree-sitter-gitcommit#7c01af8d227b5344f62aade2ff00f19bd0c458ca"
 dependencies = [
  "cc",
  "tree-sitter",
