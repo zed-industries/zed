@@ -3,10 +3,9 @@
 # Based on the template in: https://docs.digitalocean.com/reference/api/spaces-api/
 bash -euo pipefail
 
-default_operation="upload_bundles"
-allowed_operations=("upload_bundles" "update_sha")
-is_allowed_operation() {
-    for val in "${allowed_operations[@]}"; do
+allowed_targets=("linux-deb" "macos")
+is_allowed_target() {
+    for val in "${allowed_targets[@]}"; do
         if [[ "$1" == "$val" ]]; then
             return 0
         fi
@@ -15,17 +14,19 @@ is_allowed_operation() {
 }
 
 if [[ -n "${1:-}" ]]; then
-    if is_allowed_operation "$1"; then
-        operation="$1"
+    if is_allowed_target "$1"; then
+        target="$1"
     else
-        echo "Error: Operation '$1' is not allowed."
-        echo "Usage: $0 [${allowed_operations[@]}]"
+        echo "Error: Target '$1' is not allowed"
+        echo "Usage: $0 [${allowed_targets[@]}]"
         exit 1
     fi
 else
-    operation="$default_operation"
+echo "Error: Target is not specified"
+echo "Usage: $0 [${allowed_targets[@]}]"
+exit 1
 fi
-echo "Performing operation: $operation"
+echo "Uploading nightly for target: $target"
 
 # Step 1: Define the parameters for the Space you want to upload to.
 SPACE="zed-nightly-host" # Find your endpoint in the control panel, under Settings.
@@ -54,19 +55,21 @@ function uploadToSpaces
     "https://${SPACE}.${REGION}.digitaloceanspaces.com/${space_path}/${file_name}"
 }
 
-case "$operation" in
-    upload_bundles)
-        find target/release -type f \( -name "*.dmg" -o -name "*.deb" \) -print0 | while IFS= read -r -d '' bundle_file; do
-            uploadToSpaces "$bundle_file" "$(basename "$bundle_file")"
-        done
-        ;;
-    update_sha)
-        sha=$(git rev-parse HEAD)
-        echo ${sha} > target/latest-sha
+sha=$(git rev-parse HEAD)
+echo ${sha} > target/latest-sha
+case "$target" in
+    macos)
+        uploadToSpaces "target/release/Zed.dmg" "Zed.dmg"
         uploadToSpaces "target/latest-sha" "latest-sha"
         ;;
+    linux-deb)
+        find target/release -type f -name "*.deb" -print0 | while IFS= read -r -d '' bundle_file; do
+            uploadToSpaces "$bundle_file" "$(basename "$bundle_file")"
+        done
+        uploadToSpaces "target/latest-sha" "latest-sha-linux-deb"
+        ;;
     *)
-        echo "Error: Unknown operation '$operation'"
+        echo "Error: Unknown target '$target'"
         exit 1
         ;;
 esac

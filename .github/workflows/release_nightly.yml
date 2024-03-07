@@ -91,7 +91,7 @@ jobs:
         run: script/bundle-mac
 
       - name: Upload Zed Nightly
-        run: script/upload-nightly upload_bundles
+        run: script/upload-nightly macos
 
   bundle-deb:
     name: Create a *.deb Linux bundle
@@ -133,19 +133,4 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Zed Nightly
-        run: script/upload-nightly upload_bundles
-
-  promote-bundles:
-    name: Create a *.deb Linux bundle
-    if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-20.04
-    needs: [bundle-mac, bundle-deb]
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Promote new Zed Nightly bundles version
-        run: script/upload-nightly update_sha
+        run: script/upload-nightly linux-deb
