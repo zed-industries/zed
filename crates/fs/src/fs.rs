@@ -223,9 +223,11 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let mut file = smol::fs::File::open(path).await?;
-        let mut text = String::new();
-        file.read_to_string(&mut text).await?;
-        Ok(text)
+        // We use `read_exact` here instead of `read_to_string` as the latter is *very*
+        // happy to reallocate often, which comes into play when we're loading large files.
+        let mut storage = vec![0; file.metadata().await?.len() as usize];
+        file.read_exact(&mut storage).await?;
+        Ok(String::from_utf8(storage)?)
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
