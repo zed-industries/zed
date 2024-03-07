@@ -908,7 +908,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                     return Ok(());
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
-                let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_COUNT, None);
+                let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
                 for file_index in 0..file_count {
                     let mut buffer = [0u16; MAX_PATH as _];
                     let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
@@ -1070,4 +1070,5 @@ unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: 
     }
 }
 
-const DRAGDROP_GET_COUNT: u32 = 0xFFFFFFFF;
+// https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
+const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
