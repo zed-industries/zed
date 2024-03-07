@@ -62,10 +62,6 @@ impl LspAdapter for DenoLspAdapter {
         LanguageServerName("deno-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "deno-ts"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,

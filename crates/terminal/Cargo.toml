@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/terminal.rs"
 doctest = false
@@ -29,6 +32,9 @@ smol.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

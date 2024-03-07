@@ -5,13 +5,16 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "storybook"
 path = "src/storybook.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap = { version = "4.4", features = ["derive", "string"] }
+clap = { workspace = true, features = ["derive", "string"] }
 collab_ui = { workspace = true, features = ["stories"] }
 ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }

@@ -5,13 +5,15 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/time_format.rs"
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
-lazy_static.workspace = true
 sys-locale.workspace = true
 time.workspace = true
 

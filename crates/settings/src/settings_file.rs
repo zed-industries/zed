@@ -6,7 +6,7 @@ use gpui::{AppContext, BackgroundExecutor};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
-pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
+pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {
@@ -52,7 +52,7 @@ pub fn watch_config_file(
                 }
 
                 if let Ok(contents) = fs.load(&path).await {
-                    if !tx.unbounded_send(contents).is_ok() {
+                    if tx.unbounded_send(contents).is_err() {
                         break;
                     }
                 }
@@ -100,7 +100,7 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
                     return Ok(crate::initial_user_settings_content().to_string());
                 }
             }
-            return Err(err);
+            Err(err)
         }
     }
 }

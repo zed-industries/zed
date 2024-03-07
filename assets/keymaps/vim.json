@@ -218,6 +218,7 @@
       // z commands
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
+      "z .": ["workspace::SendKeystrokes", "z z ^"],
       "z b": "editor::ScrollCursorBottom",
       "z c": "editor::Fold",
       "z o": "editor::UnfoldLines",
@@ -352,7 +353,9 @@
       "> >": "vim::Indent",
       "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
-      "ctrl-pageup": "pane::ActivatePrevItem"
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "[ x": "editor::SelectLargerSyntaxNode",
+      "] x": "editor::SelectSmallerSyntaxNode"
     }
   },
   {
@@ -392,6 +395,7 @@
       ],
       "t": "vim::Tag",
       "s": "vim::Sentence",
+      "p": "vim::Paragraph",
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",

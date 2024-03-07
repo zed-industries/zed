@@ -13,7 +13,7 @@ use project::{
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
-use util::TryFutureExt;
+use util::{maybe, TryFutureExt};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -381,7 +381,7 @@ pub fn show_link_definition(
     let Some((buffer, buffer_position)) = editor
         .buffer
         .read(cx)
-        .text_anchor_for_position(trigger_anchor.clone(), cx)
+        .text_anchor_for_position(*trigger_anchor, cx)
     else {
         return;
     };
@@ -389,7 +389,7 @@ pub fn show_link_definition(
     let Some((excerpt_id, _, _)) = editor
         .buffer()
         .read(cx)
-        .excerpt_containing(trigger_anchor.clone(), cx)
+        .excerpt_containing(*trigger_anchor, cx)
     else {
         return;
     };
@@ -424,13 +424,13 @@ pub fn show_link_definition(
                 TriggerPoint::Text(_) => {
                     if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
                         this.update(&mut cx, |_, _| {
-                            let start =
-                                snapshot.anchor_in_excerpt(excerpt_id.clone(), url_range.start);
-                            let end = snapshot.anchor_in_excerpt(excerpt_id.clone(), url_range.end);
-                            (
-                                Some(RangeInEditor::Text(start..end)),
-                                vec![HoverLink::Url(url)],
-                            )
+                            let range = maybe!({
+                                let start =
+                                    snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
+                                let end = snapshot.anchor_in_excerpt(excerpt_id, url_range.end)?;
+                                Some(RangeInEditor::Text(start..end))
+                            });
+                            (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
                     } else if let Some(project) = project {
@@ -450,16 +450,14 @@ pub fn show_link_definition(
                             .map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
-                                        link.origin.as_ref().map(|origin| {
+                                        link.origin.as_ref().and_then(|origin| {
                                             let start = snapshot.anchor_in_excerpt(
-                                                excerpt_id.clone(),
+                                                excerpt_id,
                                                 origin.range.start,
-                                            );
-                                            let end = snapshot.anchor_in_excerpt(
-                                                excerpt_id.clone(),
-                                                origin.range.end,
-                                            );
-                                            RangeInEditor::Text(start..end)
+                                            )?;
+                                            let end = snapshot
+                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
+                                            Some(RangeInEditor::Text(start..end))
                                         })
                                     }),
                                     definition_result.into_iter().map(HoverLink::Text).collect(),

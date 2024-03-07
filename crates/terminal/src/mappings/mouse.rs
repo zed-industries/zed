@@ -107,7 +107,7 @@ pub fn scroll_report(
 pub fn alt_scroll(scroll_lines: i32) -> Vec<u8> {
     let cmd = if scroll_lines > 0 { b'A' } else { b'B' };
 
-    let mut content = Vec::with_capacity(scroll_lines.abs() as usize * 3);
+    let mut content = Vec::with_capacity(scroll_lines.unsigned_abs() as usize * 3);
     for _ in 0..scroll_lines.abs() {
         content.push(0x1b);
         content.push(b'O');
@@ -183,7 +183,7 @@ pub fn grid_point_and_side(
     let col = min(col, cur_size.last_column());
     let mut line = (pos.y / cur_size.line_height) as i32;
     if line > cur_size.bottommost_line() {
-        line = cur_size.bottommost_line().0 as i32;
+        line = cur_size.bottommost_line().0;
         side = Side::Right;
     } else if line < 0 {
         side = Side::Left;

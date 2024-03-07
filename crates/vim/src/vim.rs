@@ -623,12 +623,15 @@ impl Settings for VimModeSetting {
     }
 }
 
-/// Controls the soft-wrapping behavior in the editor.
+/// Controls when to use system clipboard.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UseSystemClipboard {
+    /// Don't use system clipboard.
     Never,
+    /// Use system clipboard.
     Always,
+    /// Use system clipboard for yank operations.
     OnYank,
 }
 

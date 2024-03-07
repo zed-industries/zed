@@ -7,8 +7,8 @@ use crate::{
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelStore, HostedProjectId};
-use client::{ChannelId, Client, Contact, User, UserStore};
+use channel::{Channel, ChannelEvent, ChannelStore};
+use client::{ChannelId, Client, Contact, HostedProjectId, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -62,7 +62,7 @@ struct ChannelMoveClipboard {
     channel_id: ChannelId,
 }
 
-const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
+const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -441,17 +441,13 @@ impl CollabPanel {
                 // Populate remote participants.
                 self.match_candidates.clear();
                 self.match_candidates
-                    .extend(
-                        room.remote_participants()
-                            .iter()
-                            .filter_map(|(_, participant)| {
-                                Some(StringMatchCandidate {
-                                    id: participant.user.id as usize,
-                                    string: participant.user.github_login.clone(),
-                                    char_bag: participant.user.github_login.chars().collect(),
-                                })
-                            }),
-                    );
+                    .extend(room.remote_participants().values().map(|participant| {
+                        StringMatchCandidate {
+                            id: participant.user.id as usize,
+                            string: participant.user.github_login.clone(),
+                            char_bag: participant.user.github_login.chars().collect(),
+                        }
+                    }));
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
@@ -915,7 +911,7 @@ impl CollabPanel {
                 this.workspace
                     .update(cx, |workspace, cx| {
                         let app_state = workspace.app_state().clone();
-                        workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+                        workspace::join_in_room_project(project_id, host_user_id, app_state, cx)
                             .detach_and_prompt_err("Failed to join project", cx, |_, _| None);
                     })
                     .ok();
@@ -956,7 +952,7 @@ impl CollabPanel {
                         })
                         .ok();
                 }))
-                .tooltip(move |cx| Tooltip::text(format!("Open shared screen"), cx))
+                .tooltip(move |cx| Tooltip::text("Open shared screen", cx))
             })
     }
 
@@ -1049,8 +1045,15 @@ impl CollabPanel {
         .indent_level(2)
         .indent_step_size(px(20.))
         .selected(is_selected)
-        .on_click(cx.listener(move |_this, _, _cx| {
-            // todo()
+        .on_click(cx.listener(move |this, _, cx| {
+            if let Some(workspace) = this.workspace.upgrade() {
+                let app_state = workspace.read(cx).app_state().clone();
+                workspace::join_hosted_project(id, app_state, cx).detach_and_prompt_err(
+                    "Failed to open project",
+                    cx,
+                    |_, _| None,
+                )
+            }
         }))
         .start_slot(
             h_flex()
@@ -1463,7 +1466,7 @@ impl CollabPanel {
                     } => {
                         if let Some(workspace) = self.workspace.upgrade() {
                             let app_state = workspace.read(cx).app_state().clone();
-                            workspace::join_remote_project(
+                            workspace::join_in_room_project(
                                 *project_id,
                                 *host_user_id,
                                 app_state,
@@ -1631,7 +1634,7 @@ impl CollabPanel {
         self.toggle_channel_collapsed(id, cx)
     }
 
-    fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+    fn toggle_channel_collapsed(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         match self.collapsed_channels.binary_search(&channel_id) {
             Ok(ix) => {
                 self.collapsed_channels.remove(ix);
@@ -2025,7 +2028,7 @@ impl CollabPanel {
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
         };
-        let item = ClipboardItem::new(channel.link());
+        let item = ClipboardItem::new(channel.link(cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2173,7 +2176,7 @@ impl CollabPanel {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -2208,7 +2211,7 @@ impl CollabPanel {
 
                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
 
-                    channel_link = Some(channel.link());
+                    channel_link = Some(channel.link(cx));
                     (channel_icon, channel_tooltip_text) = match channel.visibility {
                         proto::ChannelVisibility::Public => {
                             (Some("icons/public.svg"), Some("Copy public channel link."))
@@ -2222,7 +2225,7 @@ impl CollabPanel {
                 });
 
                 if let Some(name) = channel_name {
-                    SharedString::from(format!("{}", name))
+                    SharedString::from(name.to_string())
                 } else {
                     SharedString::from("Current Call")
                 }
@@ -2508,7 +2511,7 @@ impl CollabPanel {
             .map(|channel| channel.visibility)
             == Some(proto::ChannelVisibility::Public);
         let disclosed =
-            has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
+            has_children.then(|| self.collapsed_channels.binary_search(&channel.id).is_err());
 
         let has_messages_notification = channel_store.has_new_messages(channel_id);
         let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);

@@ -34,7 +34,7 @@ use workspace::{
 mod message_editor;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
-const CHAT_PANEL_KEY: &'static str = "ChatPanel";
+const CHAT_PANEL_KEY: &str = "ChatPanel";
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -430,7 +430,6 @@ impl ChatPanel {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
-        let this = cx.view().clone();
 
         let mentioning_you = message
             .mentions
@@ -444,8 +443,7 @@ impl ChatPanel {
 
         let reply_to_message = message
             .reply_to_message_id
-            .map(|id| active_chat.read(cx).find_loaded_message(id))
-            .flatten()
+            .and_then(|id| active_chat.read(cx).find_loaded_message(id))
             .cloned();
 
         let replied_to_you =
@@ -468,11 +466,15 @@ impl ChatPanel {
             .relative()
             .child(
                 div()
+                    .group("")
                     .bg(background)
                     .rounded_md()
                     .overflow_hidden()
                     .px_1()
                     .py_0p5()
+                    .when(!self.has_open_menu(message_id), |this| {
+                        this.hover(|style| style.bg(cx.theme().colors().element_hover))
+                    })
                     .when(!is_continuation_from_previous, |this| {
                         this.mt_2().child(
                             h_flex()
@@ -495,8 +497,18 @@ impl ChatPanel {
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                                ),
+                                )
+                                .map(|el| {
+                                    el.child(self.render_popover_button(
+                                        &cx,
+                                        message_id,
+                                        can_delete_message,
+                                    ))
+                                }),
                         )
+                    })
+                    .when(is_continuation_from_previous, |el| {
+                        el.child(self.render_popover_button(&cx, message_id, can_delete_message))
                     })
                     .when(
                         message.reply_to_message_id.is_some() && reply_to_message.is_none(),
@@ -546,36 +558,11 @@ impl ChatPanel {
                                 .w_full()
                                 .text_ui_sm()
                                 .id(element_id)
-                                .group("")
-                                .child(text.element("body".into(), cx))
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .right_0()
-                                        .w_6()
-                                        .bg(background)
-                                        .when(!self.has_open_menu(message_id), |el| {
-                                            el.visible_on_hover("")
-                                        })
-                                        .when_some(message_id, |el, message_id| {
-                                            el.child(
-                                                popover_menu(("menu", message_id))
-                                                    .trigger(IconButton::new(
-                                                        ("trigger", message_id),
-                                                        IconName::Ellipsis,
-                                                    ))
-                                                    .menu(move |cx| {
-                                                        Some(Self::render_message_menu(
-                                                            &this,
-                                                            message_id,
-                                                            can_delete_message,
-                                                            cx,
-                                                        ))
-                                                    }),
-                                            )
-                                        }),
-                                ),
+                                .child(text.element("body".into(), cx)),
                         )
+                        .when(self.has_open_menu(message_id), |el| {
+                            el.bg(cx.theme().colors().element_selected)
+                        })
                     }),
             )
             .when(
@@ -609,6 +596,39 @@ impl ChatPanel {
         }
     }
 
+    fn render_popover_button(
+        &self,
+        cx: &ViewContext<Self>,
+        message_id: Option<u64>,
+        can_delete_message: bool,
+    ) -> Div {
+        div()
+            .absolute()
+            .z_index(1)
+            .right_0()
+            .w_6()
+            .bg(cx.theme().colors().element_hover)
+            .when(!self.has_open_menu(message_id), |el| {
+                el.visible_on_hover("")
+            })
+            .when_some(message_id, |el, message_id| {
+                let chat_panel_view = cx.view().clone();
+
+                el.child(
+                    popover_menu(("menu", message_id))
+                        .trigger(IconButton::new(("trigger", message_id), IconName::Ellipsis))
+                        .menu(move |cx| {
+                            Some(Self::render_message_menu(
+                                &chat_panel_view,
+                                message_id,
+                                can_delete_message,
+                                cx,
+                            ))
+                        }),
+                )
+            })
+    }
+
     fn render_message_menu(
         this: &View<Self>,
         message_id: u64,
@@ -631,14 +651,12 @@ impl ChatPanel {
                     "Copy message text",
                     None,
                     cx.handler_for(&this, move |this, cx| {
-                        this.active_chat().map(|active_chat| {
-                            if let Some(message) =
-                                active_chat.read(cx).find_loaded_message(message_id)
-                            {
-                                let text = message.body.clone();
-                                cx.write_to_clipboard(ClipboardItem::new(text))
-                            }
-                        });
+                        if let Some(message) = this.active_chat().and_then(|active_chat| {
+                            active_chat.read(cx).find_loaded_message(message_id)
+                        }) {
+                            let text = message.body.clone();
+                            cx.write_to_clipboard(ClipboardItem::new(text))
+                        }
                     }),
                 )
                 .when(can_delete_message, move |menu| {
@@ -838,16 +856,11 @@ impl Render for ChatPanel {
             .when_some(reply_to_message_id, |el, reply_to_message_id| {
                 let reply_message = self
                     .active_chat()
-                    .map(|active_chat| {
-                        active_chat.read(cx).messages().iter().find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
+                    .and_then(|active_chat| {
+                        active_chat.read(cx).messages().iter().find(|message| {
+                            message.id == ChannelMessageId::Saved(reply_to_message_id)
                         })
                     })
-                    .flatten()
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {

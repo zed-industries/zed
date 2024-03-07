@@ -42,6 +42,15 @@ pub struct PanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct MessageEditorSettings {
+    /// Whether to automatically replace emoji shortcodes with emoji characters.
+    /// For example: typing `:wave:` gets replaced with `👋`.
+    ///
+    /// Default: false
+    pub auto_replace_emoji_shortcode: Option<bool>,
+}
+
 impl Settings for CollaborationPanelSettings {
     const KEY: Option<&'static str> = Some("collaboration_panel");
     type FileContent = PanelSettingsContent;
@@ -69,6 +78,18 @@ impl Settings for ChatPanelSettings {
 impl Settings for NotificationPanelSettings {
     const KEY: Option<&'static str> = Some("notification_panel");
     type FileContent = PanelSettingsContent;
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut gpui::AppContext,
+    ) -> anyhow::Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
+
+impl Settings for MessageEditorSettings {
+    const KEY: Option<&'static str> = Some("message_editor");
+    type FileContent = MessageEditorSettings;
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],

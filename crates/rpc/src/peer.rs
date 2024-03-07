@@ -13,7 +13,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use serde::{ser::SerializeStruct, Serialize};
-use std::{fmt, sync::atomic::Ordering::SeqCst};
+use std::{fmt, sync::atomic::Ordering::SeqCst, time::Instant};
 use std::{
     future::Future,
     marker::PhantomData,
@@ -79,6 +79,7 @@ pub struct TypedEnvelope<T> {
     pub original_sender_id: Option<PeerId>,
     pub message_id: u32,
     pub payload: T,
+    pub received_at: Instant,
 }
 
 impl<T> TypedEnvelope<T> {
@@ -111,8 +112,16 @@ pub struct ConnectionState {
     next_message_id: Arc<AtomicU32>,
     #[allow(clippy::type_complexity)]
     #[serde(skip)]
-    response_channels:
-        Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, oneshot::Sender<()>)>>>>>,
+    response_channels: Arc<
+        Mutex<
+            Option<
+                HashMap<
+                    u32,
+                    oneshot::Sender<(proto::Envelope, std::time::Instant, oneshot::Sender<()>)>,
+                >,
+            >,
+        >,
+    >,
 }
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
@@ -154,7 +163,7 @@ impl Peer {
         #[cfg(any(test, feature = "test-support"))]
         const INCOMING_BUFFER_SIZE: usize = 1;
         #[cfg(not(any(test, feature = "test-support")))]
-        const INCOMING_BUFFER_SIZE: usize = 64;
+        const INCOMING_BUFFER_SIZE: usize = 256;
         let (mut incoming_tx, incoming_rx) = mpsc::channel(INCOMING_BUFFER_SIZE);
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
@@ -238,10 +247,10 @@ impl Peer {
                             tracing::trace!(%connection_id, "incoming rpc message: received");
                             tracing::trace!(%connection_id, "receive timeout: resetting");
                             receive_timeout.set(create_timer(RECEIVE_TIMEOUT).fuse());
-                            if let proto::Message::Envelope(incoming) = incoming {
+                            if let (proto::Message::Envelope(incoming), received_at) = incoming {
                                 tracing::trace!(%connection_id, "incoming rpc message: processing");
                                 futures::select_biased! {
-                                    result = incoming_tx.send(incoming).fuse() => match result {
+                                    result = incoming_tx.send((incoming, received_at)).fuse() => match result {
                                         Ok(_) => {
                                             tracing::trace!(%connection_id, "incoming rpc message: processed");
                                         }
@@ -272,7 +281,7 @@ impl Peer {
             .write()
             .insert(connection_id, connection_state);
 
-        let incoming_rx = incoming_rx.filter_map(move |incoming| {
+        let incoming_rx = incoming_rx.filter_map(move |(incoming, received_at)| {
             let response_channels = response_channels.clone();
             async move {
                 let message_id = incoming.id;
@@ -291,7 +300,7 @@ impl Peer {
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(tx) = channel {
                         let requester_resumed = oneshot::channel();
-                        if let Err(error) = tx.send((incoming, requester_resumed.0)) {
+                        if let Err(error) = tx.send((incoming, received_at, requester_resumed.0)) {
                             tracing::trace!(
                                 %connection_id,
                                 message_id,
@@ -315,8 +324,9 @@ impl Peer {
                             "incoming response: requester resumed"
                         );
                     } else {
-                        let message_type = proto::build_typed_envelope(connection_id, incoming)
-                            .map(|p| p.payload_type_name());
+                        let message_type =
+                            proto::build_typed_envelope(connection_id, received_at, incoming)
+                                .map(|p| p.payload_type_name());
                         tracing::warn!(
                             %connection_id,
                             message_id,
@@ -329,14 +339,16 @@ impl Peer {
                     None
                 } else {
                     tracing::trace!(%connection_id, message_id, "incoming message: received");
-                    proto::build_typed_envelope(connection_id, incoming).or_else(|| {
-                        tracing::error!(
-                            %connection_id,
-                            message_id,
-                            "unable to construct a typed envelope"
-                        );
-                        None
-                    })
+                    proto::build_typed_envelope(connection_id, received_at, incoming).or_else(
+                        || {
+                            tracing::error!(
+                                %connection_id,
+                                message_id,
+                                "unable to construct a typed envelope"
+                            );
+                            None
+                        },
+                    )
                 }
             }
         });
@@ -361,8 +373,8 @@ impl Peer {
         self.connections.write().remove(&connection_id);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn reset(&self, epoch: u32) {
-        self.teardown();
         self.next_connection_id.store(0, SeqCst);
         self.epoch.store(epoch, SeqCst);
     }
@@ -425,7 +437,8 @@ impl Peer {
         });
         async move {
             send?;
-            let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
+            let (response, received_at, _barrier) =
+                rx.await.map_err(|_| anyhow!("connection was closed"))?;
 
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 Err(RpcError::from_proto(&error, T::NAME))
@@ -436,6 +449,7 @@ impl Peer {
                     original_sender_id: response.original_sender_id,
                     payload: T::Response::from_envelope(response)
                         .ok_or_else(|| anyhow!("received response of the wrong type"))?,
+                    received_at,
                 })
             }
         }

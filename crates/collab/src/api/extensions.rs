@@ -7,12 +7,12 @@ use anyhow::{anyhow, Context as _};
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     extract::{Path, Query},
+    http::StatusCode,
     response::Redirect,
     routing::get,
     Extension, Json, Router,
 };
 use collections::HashMap;
-use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
@@ -147,9 +147,7 @@ async fn fetch_extensions_from_blob_store(
         .send()
         .await?;
 
-    let objects = list
-        .contents
-        .ok_or_else(|| anyhow!("missing bucket contents"))?;
+    let objects = list.contents.unwrap_or_default();
 
     let mut published_versions = HashMap::<&str, Vec<&str>>::default();
     for object in &objects {

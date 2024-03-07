@@ -227,8 +227,12 @@ impl SyntaxTreeView {
         let multibuffer = editor_state.editor.read(cx).buffer();
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         let excerpt_id = buffer_state.excerpt_id;
-        let range = multibuffer.anchor_in_excerpt(excerpt_id, range.start)
-            ..multibuffer.anchor_in_excerpt(excerpt_id, range.end);
+        let range = multibuffer
+            .anchor_in_excerpt(excerpt_id, range.start)
+            .unwrap()
+            ..multibuffer
+                .anchor_in_excerpt(excerpt_id, range.end)
+                .unwrap();
 
         // Update the editor with the anchor range.
         editor_state.editor.update(cx, |editor, cx| {
@@ -284,7 +288,7 @@ impl Render for SyntaxTreeView {
                 move |this, range, cx| {
                     let mut items = Vec::new();
                     let mut cursor = layer.node().walk();
-                    let mut descendant_ix = range.start as usize;
+                    let mut descendant_ix = range.start;
                     cursor.goto_descendant(descendant_ix);
                     let mut depth = cursor.depth();
                     let mut visited_children = false;

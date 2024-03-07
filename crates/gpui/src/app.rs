@@ -28,14 +28,14 @@ use util::{
     ResultExt,
 };
 
-use crate::WindowAppearance;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
+    PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
+    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -242,6 +242,7 @@ pub struct AppContext {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
+    pub(crate) prompt_builder: Option<PromptBuilder>,
 }
 
 impl AppContext {
@@ -301,6 +302,7 @@ impl AppContext {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
+                prompt_builder: Some(PromptBuilder::Default),
             }),
         });
 
@@ -564,6 +566,14 @@ impl AppContext {
     /// Directs the platform's default browser to open the given URL.
     pub fn open_url(&self, url: &str) {
         self.platform.open_url(url);
+    }
+
+    /// register_url_scheme requests that the given scheme (e.g. `zed` for `zed://` urls)
+    /// is opened by the current app.
+    /// On some platforms (e.g. macOS) you may be able to register URL schemes as part of app
+    /// distribution, but this method exists to let you register schemes at runtime.
+    pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
+        self.platform.register_url_scheme(scheme)
     }
 
     /// Returns the full pathname of the current app bundle.
@@ -1202,6 +1212,23 @@ impl AppContext {
     /// Is there currently something being dragged?
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
+    }
+
+    /// Set the prompt renderer for GPUI. This will replace the default or platform specific
+    /// prompts with this custom implementation.
+    pub fn set_prompt_builder(
+        &mut self,
+        renderer: impl Fn(
+                PromptLevel,
+                &str,
+                Option<&str>,
+                &[&str],
+                PromptHandle,
+                &mut WindowContext,
+            ) -> RenderablePromptHandle
+            + 'static,
+    ) {
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
 }
 

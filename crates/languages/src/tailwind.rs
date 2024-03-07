@@ -16,7 +16,7 @@ use std::{
 };
 use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str = "node_modules/.bin/tailwindcss-language-server";
+const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -36,10 +36,6 @@ impl TailwindLspAdapter {
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("tailwindcss-language-server".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "tailwind"
     }
 
     async fn fetch_latest_server_version(

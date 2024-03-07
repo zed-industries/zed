@@ -34,7 +34,10 @@ use std::{
 use util::{measure, ResultExt};
 
 mod element_cx;
+mod prompts;
+
 pub use element_cx::*;
+pub use prompts::*;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
@@ -279,6 +282,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    prompt: Option<RenderablePromptHandle>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -481,6 +485,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            prompt: None,
         }
     }
     fn new_focus_listener(
@@ -1431,15 +1436,48 @@ impl<'a> WindowContext<'a> {
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
     pub fn prompt(
-        &self,
+        &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
-        self.window
-            .platform_window
-            .prompt(level, message, detail, answers)
+        let prompt_builder = self.app.prompt_builder.take();
+        let Some(prompt_builder) = prompt_builder else {
+            unreachable!("Re-entrant window prompting is not supported by GPUI");
+        };
+
+        let receiver = match &prompt_builder {
+            PromptBuilder::Default => self
+                .window
+                .platform_window
+                .prompt(level, message, detail, answers)
+                .unwrap_or_else(|| {
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+                }),
+            PromptBuilder::Custom(_) => {
+                self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+            }
+        };
+
+        self.app.prompt_builder = Some(prompt_builder);
+
+        receiver
+    }
+
+    fn build_custom_prompt(
+        &mut self,
+        prompt_builder: &PromptBuilder,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        let (sender, receiver) = oneshot::channel();
+        let handle = PromptHandle::new(sender);
+        let handle = (prompt_builder)(level, message, detail, answers, handle, self);
+        self.window.prompt = Some(handle);
+        receiver
     }
 
     /// Returns all available actions for the focused element.

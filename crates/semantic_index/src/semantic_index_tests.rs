@@ -414,7 +414,7 @@ async fn test_code_context_retrieval_json() {
                     }
                 }"#
             .unindent(),
-            text.find("{").unwrap(),
+            text.find('{').unwrap(),
         )],
     );
 
@@ -443,7 +443,7 @@ async fn test_code_context_retrieval_json() {
                     "age": 42
                 }]"#
             .unindent(),
-            text.find("[").unwrap(),
+            text.find('[').unwrap(),
         )],
     );
 }

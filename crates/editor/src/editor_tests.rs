@@ -3118,7 +3118,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
             ])
         });
-        view.duplicate_line(&DuplicateLine, cx);
+        view.duplicate_line(&DuplicateLine::default(), cx);
         assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -3142,13 +3142,63 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ])
         });
-        view.duplicate_line(&DuplicateLine, cx);
+        view.duplicate_line(&DuplicateLine::default(), cx);
         assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
                 DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
                 DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+            ]
+        );
+    });
+
+    // With `move_upwards` the selections stay in place, except for
+    // the lines inserted above them
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
+        build_editor(buffer, cx)
+    });
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+            ])
+        });
+        view.duplicate_line(&DuplicateLine { move_upwards: true }, cx);
+        assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+            ]
+        );
+    });
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
+        build_editor(buffer, cx)
+    });
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+            ])
+        });
+        view.duplicate_line(&DuplicateLine { move_upwards: true }, cx);
+        assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ]
         );
     });
@@ -3999,7 +4049,7 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches::default(), cx))
+    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 }
@@ -5122,6 +5172,59 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::language()),
+    ));
+
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+            .with_language(language, cx)
+    });
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    _ = editor.update(cx, |editor, cx| {
+        editor.set_auto_replace_emoji_shortcode(true);
+
+        editor.handle_input("Hello ", cx);
+        editor.handle_input(":wave", cx);
+        assert_eq!(editor.text(cx), "Hello :wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋".unindent());
+
+        editor.handle_input(" :smile", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 :smile".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄".unindent());
+
+        editor.handle_input(":1:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+
+        // Ensure shortcode does not get replaced when it is part of a word
+        editor.handle_input(" Test:wave:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1: Test:wave:".unindent());
+
+        editor.set_auto_replace_emoji_shortcode(false);
+
+        // Ensure shortcode does not get replaced when auto replace is off
+        editor.handle_input(" :wave:", cx);
+        assert_eq!(
+            editor.text(cx),
+            "Hello 👋 😄:1: Test:wave: :wave:".unindent()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_snippets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5233,32 +5336,24 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
 async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
+        },
+    );
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
-
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    _ = project.update(cx, |project, _| project.languages().add(Arc::new(language)));
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
         .await
@@ -5273,7 +5368,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
@@ -5311,7 +5406,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         unreachable!()
     });
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
     cx.executor().start_waiting();
@@ -5334,7 +5429,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     });
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
@@ -5355,32 +5450,24 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
 async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
+        },
+    );
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
-
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    _ = project.update(cx, |project, _| project.languages().add(Arc::new(language)));
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
         .await
@@ -5395,7 +5482,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
@@ -5434,7 +5521,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         },
     );
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
     cx.executor().start_waiting();
@@ -5457,7 +5544,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     });
 
     let save = editor
-        .update(cx, |editor, cx| editor.save(project.clone(), cx))
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
     fake_server
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
@@ -5480,7 +5567,13 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         settings.defaults.formatter = Some(language_settings::Formatter::LanguageServer)
     });
 
-    let mut language = Language::new(
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -5493,24 +5586,18 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
-    );
-    let mut fake_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    )));
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
+        },
+    );
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
-
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    _ = project.update(cx, |project, _| {
-        project.languages().add(Arc::new(language));
-    });
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
         .await
@@ -6768,8 +6855,8 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         cx.open_window(
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds::from_corners(
-                    gpui::Point::new((0. as f64).into(), (0. as f64).into()),
-                    gpui::Point::new((10. as f64).into(), (80. as f64).into()),
+                    gpui::Point::new(0_f64.into(), 0_f64.into()),
+                    gpui::Point::new(10_f64.into(), 80_f64.into()),
                 )),
                 ..Default::default()
             },
@@ -6790,7 +6877,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
                 move |_, leader, event, cx| {
                     leader
                         .read(cx)
-                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                        .add_event_to_update_proto(event, &mut update.borrow_mut(), cx);
                 },
             )
             .detach();
@@ -6959,7 +7046,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
             cx.subscribe(&leader, move |_, leader, event, cx| {
                 leader
                     .read(cx)
-                    .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                    .add_event_to_update_proto(event, &mut update.borrow_mut(), cx);
             })
             .detach();
         }
@@ -7326,7 +7413,7 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
 #[test]
 fn test_split_words() {
-    fn split<'a>(text: &'a str) -> Vec<&'a str> {
+    fn split(text: &str) -> Vec<&str> {
         split_words(text).collect()
     }
 
@@ -7639,6 +7726,128 @@ async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContex
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_accept_partial_copilot_suggestion(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    // flaky
+    init_test(cx, |_| {});
+
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    _ = cx.update(|cx| Copilot::set_global(copilot, cx));
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Setup the editor with a completion request.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+
+        // Accepting the first word of the suggestion should only accept the first word and still show the rest.
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.copilot\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+
+        // Accepting next word should accept the non-word and copilot suggestion should be gone
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+    });
+
+    // Reset the editor and check non-word and whitespace completion
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.123. copilot\n 456".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+
+        // Accepting the first word (non-word) of the suggestion should only accept the first word and still show the rest.
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.123. \ntwo\nthree\n");
+        assert_eq!(
+            editor.display_text(cx),
+            "one.123. copilot\n 456\ntwo\nthree\n"
+        );
+
+        // Accepting next word should accept the next word and copilot suggestion should still exist
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.123. copilot\ntwo\nthree\n");
+        assert_eq!(
+            editor.display_text(cx),
+            "one.123. copilot\n 456\ntwo\nthree\n"
+        );
+
+        // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
+        editor.accept_partial_copilot_suggestion(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
+        assert_eq!(
+            editor.display_text(cx),
+            "one.123. copilot\n 456\ntwo\nthree\n"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_copilot_completion_invalidation(
     executor: BackgroundExecutor,
@@ -7912,7 +8121,19 @@ async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui
 async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut language = Language::new(
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "fn main() { let a = 5; }",
+            "other.rs": "// Test file",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -7931,9 +8152,10 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
-    );
-    let mut fake_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    )));
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
                     first_trigger_character: "{".to_string(),
@@ -7942,20 +8164,9 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
+        },
+    );
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/a",
-        json!({
-            "main.rs": "fn main() { let a = 5; }",
-            "other.rs": "// Test file",
-        }),
-    )
-    .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
-    _ = project.update(cx, |project, _| project.languages().add(Arc::new(language)));
     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -8026,8 +8237,25 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "fn main() { let a = 5; }",
+            "other.rs": "// Test file",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+
+    let server_restarts = Arc::new(AtomicUsize::new(0));
+    let closure_restarts = Arc::clone(&server_restarts);
+    let language_server_name = "test language server";
     let language_name: Arc<str> = "Rust".into();
-    let mut language = Language::new(
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: Arc::clone(&language_name),
             matcher: LanguageMatcher {
@@ -8037,13 +8265,10 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
-    );
-
-    let server_restarts = Arc::new(AtomicUsize::new(0));
-    let closure_restarts = Arc::clone(&server_restarts);
-    let language_server_name = "test language server";
-    let mut fake_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    )));
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             name: language_server_name,
             initialization_options: Some(json!({
                 "testOptionValue": true
@@ -8056,20 +8281,9 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
                 });
             })),
             ..Default::default()
-        }))
-        .await;
+        },
+    );
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/a",
-        json!({
-            "main.rs": "fn main() { let a = 5; }",
-            "other.rs": "// Test file",
-        }),
-    )
-    .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
-    _ = project.update(cx, |project, _| project.languages().add(Arc::new(language)));
     let _window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
     let _buffer = project
         .update(cx, |project, cx| {
@@ -8365,7 +8579,13 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         settings.defaults.formatter = Some(language_settings::Formatter::Prettier)
     });
 
-    let mut language = Language::new(
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -8376,24 +8596,18 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
-    );
+    )));
 
     let test_plugin = "test_plugin";
-    let _ = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    let _ = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             prettier_plugins: vec![test_plugin],
             ..Default::default()
-        }))
-        .await;
+        },
+    );
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file("/file.rs", Default::default()).await;
-
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
-    _ = project.update(cx, |project, _| {
-        project.languages().add(Arc::new(language));
-    });
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
         .await
@@ -8684,4 +8898,18 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
     });
 
     update_test_language_settings(cx, f);
+}
+
+pub(crate) fn rust_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ))
 }

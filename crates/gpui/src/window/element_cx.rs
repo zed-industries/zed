@@ -349,6 +349,10 @@ impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
         self.window.draw_phase = DrawPhase::Layout;
 
+        if self.window.prompt.is_some() {
+            todo!("implement prompts");
+        }
+
         // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
         let available_space = self.window.viewport_size.map(Into::into);

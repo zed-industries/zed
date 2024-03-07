@@ -1,3 +1,10 @@
+use std::{
+    env,
+    fmt::{self, Display},
+    io,
+    sync::Arc,
+};
+
 use anyhow::{anyhow, Result};
 use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
@@ -6,22 +13,16 @@ use futures::{
 use gpui::{AppContext, BackgroundExecutor};
 use isahc::{http::StatusCode, Request, RequestExt};
 use parking_lot::RwLock;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{
-    env,
-    fmt::{self, Display},
-    io,
-    sync::Arc,
-};
 use util::ResultExt;
 
+use crate::providers::open_ai::{OpenAiLanguageModel, OPEN_AI_API_URL};
 use crate::{
     auth::{CredentialProvider, ProviderCredential},
     completion::{CompletionProvider, CompletionRequest},
     models::LanguageModel,
 };
-
-use crate::providers::open_ai::{OpenAiLanguageModel, OPEN_AI_API_URL};
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -196,12 +197,56 @@ async fn stream_completion(
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum AzureOpenAiApiVersion {
+    /// Retiring April 2, 2024.
+    #[serde(rename = "2023-03-15-preview")]
+    V2023_03_15Preview,
+    #[serde(rename = "2023-05-15")]
+    V2023_05_15,
+    /// Retiring April 2, 2024.
+    #[serde(rename = "2023-06-01-preview")]
+    V2023_06_01Preview,
+    /// Retiring April 2, 2024.
+    #[serde(rename = "2023-07-01-preview")]
+    V2023_07_01Preview,
+    /// Retiring April 2, 2024.
+    #[serde(rename = "2023-08-01-preview")]
+    V2023_08_01Preview,
+    /// Retiring April 2, 2024.
+    #[serde(rename = "2023-09-01-preview")]
+    V2023_09_01Preview,
+    #[serde(rename = "2023-12-01-preview")]
+    V2023_12_01Preview,
+    #[serde(rename = "2024-02-15-preview")]
+    V2024_02_15Preview,
+}
+
+impl fmt::Display for AzureOpenAiApiVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::V2023_03_15Preview => "2023-03-15-preview",
+                Self::V2023_05_15 => "2023-05-15",
+                Self::V2023_06_01Preview => "2023-06-01-preview",
+                Self::V2023_07_01Preview => "2023-07-01-preview",
+                Self::V2023_08_01Preview => "2023-08-01-preview",
+                Self::V2023_09_01Preview => "2023-09-01-preview",
+                Self::V2023_12_01Preview => "2023-12-01-preview",
+                Self::V2024_02_15Preview => "2024-02-15-preview",
+            }
+        )
+    }
+}
+
 #[derive(Clone)]
 pub enum OpenAiCompletionProviderKind {
     OpenAi,
     AzureOpenAi {
         deployment_id: String,
-        api_version: String,
+        api_version: AzureOpenAiApiVersion,
     },
 }
 
@@ -217,8 +262,8 @@ impl OpenAiCompletionProviderKind {
                 deployment_id,
                 api_version,
             } => {
-                // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#completions
-                format!("{api_url}/openai/deployments/{deployment_id}/completions?api-version={api_version}")
+                // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#chat-completions
+                format!("{api_url}/openai/deployments/{deployment_id}/chat/completions?api-version={api_version}")
             }
         }
     }

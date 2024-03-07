@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, HostedProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -106,6 +106,7 @@ actions!(
         AddFolderToProject,
         Unfollow,
         SaveAs,
+        SaveWithoutFormat,
         ReloadActiveItem,
         ActivatePreviousPane,
         ActivateNextPane,
@@ -679,8 +680,7 @@ impl Workspace {
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
             let call = call.clone();
-            let mut subscriptions = Vec::new();
-            subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
+            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
 
@@ -871,7 +871,6 @@ impl Workspace {
 
                 cx.open_window(options, {
                     let app_state = app_state.clone();
-                    let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {
@@ -1109,7 +1108,7 @@ impl Workspace {
         )
     }
 
-    pub fn client(&self) -> &Client {
+    pub fn client(&self) -> &Arc<Client> {
         &self.app_state.client
     }
 
@@ -1244,11 +1243,10 @@ impl Workspace {
                 }
             }
 
-            Ok(this
-                .update(&mut cx, |this, cx| {
-                    this.save_all_internal(SaveIntent::Close, cx)
-                })?
-                .await?)
+            this.update(&mut cx, |this, cx| {
+                this.save_all_internal(SaveIntent::Close, cx)
+            })?
+            .await
         })
     }
 
@@ -1260,7 +1258,7 @@ impl Workspace {
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
         let mut keystrokes: Vec<Keystroke> = action
             .0
-            .split(" ")
+            .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
             .collect();
         keystrokes.reverse();
@@ -1628,8 +1626,11 @@ impl Workspace {
         action: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) =
+            self.close_all_internal(true, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+        {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn close_all_items_and_panes(
@@ -1637,8 +1638,11 @@ impl Workspace {
         action: &CloseAllItemsAndPanes,
         cx: &mut ViewContext<Self>,
     ) {
-        self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) =
+            self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+        {
+            task.detach_and_log_err(cx)
+        }
     }
 
     fn close_all_internal(
@@ -2600,8 +2604,9 @@ impl Workspace {
         if Some(leader_id) == self.unfollow(&pane, cx) {
             return;
         }
-        self.start_following(leader_id, cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) = self.start_following(leader_id, cx) {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) {
@@ -2630,7 +2635,7 @@ impl Workspace {
         // if they are active in another project, follow there.
         if let Some(project_id) = other_project_id {
             let app_state = self.app_state.clone();
-            crate::join_remote_project(project_id, remote_participant.user.id, app_state, cx)
+            crate::join_in_room_project(project_id, remote_participant.user.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
 
@@ -2643,8 +2648,9 @@ impl Workspace {
         }
 
         // Otherwise, follow.
-        self.start_following(leader_id, cx)
-            .map(|task| task.detach_and_log_err(cx));
+        if let Some(task) = self.start_following(leader_id, cx) {
+            task.detach_and_log_err(cx)
+        }
     }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
@@ -2955,7 +2961,7 @@ impl Workspace {
         })?;
 
         let Some(id) = view.id.clone() else {
-            return Err(anyhow!("no id for view")).into();
+            return Err(anyhow!("no id for view"));
         };
         let id = ViewId::from_proto(id)?;
 
@@ -3355,7 +3361,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let left_dock_zoom = left_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3365,7 +3371,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let right_dock_zoom = right_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3375,7 +3381,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name().to_string()));
+                .map(|panel| panel.persistent_name().to_string());
             let bottom_dock_zoom = bottom_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3525,6 +3531,11 @@ impl Workspace {
             .on_action(cx.listener(|workspace, action: &Save, cx| {
                 workspace
                     .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+                    .detach_and_log_err(cx);
+            }))
+            .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, cx| {
+                workspace
+                    .save_active_item(SaveIntent::SaveWithoutFormat, cx)
                     .detach_and_log_err(cx);
             }))
             .on_action(cx.listener(|workspace, _: &SaveAs, cx| {
@@ -3713,7 +3724,7 @@ fn open_items(
             project_paths_to_open
                 .into_iter()
                 .enumerate()
-                .map(|(i, (abs_path, project_path))| {
+                .map(|(ix, (abs_path, project_path))| {
                     let workspace = workspace.clone();
                     cx.spawn(|mut cx| {
                         let fs = app_state.fs.clone();
@@ -3721,7 +3732,7 @@ fn open_items(
                             let file_project_path = project_path?;
                             if fs.is_file(&abs_path).await {
                                 Some((
-                                    i,
+                                    ix,
                                     workspace
                                         .update(&mut cx, |workspace, cx| {
                                             workspace.open_path(file_project_path, None, true, cx)
@@ -3738,11 +3749,9 @@ fn open_items(
 
         let tasks = tasks.collect::<Vec<_>>();
 
-        let tasks = futures::future::join_all(tasks.into_iter());
-        for maybe_opened_path in tasks.await.into_iter() {
-            if let Some((i, path_open_result)) = maybe_opened_path {
-                opened_items[i] = Some(path_open_result);
-            }
+        let tasks = futures::future::join_all(tasks);
+        for (ix, path_open_result) in tasks.await.into_iter().flatten() {
+            opened_items[ix] = Some(path_open_result);
         }
 
         Ok(opened_items)
@@ -3790,7 +3799,7 @@ impl Render for Workspace {
             let theme_settings = ThemeSettings::get_global(cx);
             (
                 theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size.clone(),
+                theme_settings.ui_font_size,
             )
         };
 
@@ -3810,8 +3819,6 @@ impl Render for Workspace {
             .items_start()
             .text_color(colors.text)
             .bg(colors.background)
-            .border()
-            .border_color(colors.border)
             .children(self.titlebar_item.clone())
             .child(
                 div()
@@ -4145,7 +4152,7 @@ async fn join_channel_internal(
     if let Some(room) = open_room {
         let task = room.update(cx, |room, cx| {
             if let Some((project, host)) = room.most_active_project(cx) {
-                return Some(join_remote_project(project, host, app_state.clone(), cx));
+                return Some(join_in_room_project(project, host, app_state.clone(), cx));
             }
 
             None
@@ -4216,7 +4223,7 @@ async fn join_channel_internal(
 
     let task = room.update(cx, |room, cx| {
         if let Some((project, host)) = room.most_active_project(cx) {
-            return Some(join_remote_project(project, host, app_state.clone(), cx));
+            return Some(join_in_room_project(project, host, app_state.clone(), cx));
         }
 
         // if you are the first to join a channel, share your project
@@ -4389,7 +4396,7 @@ pub fn open_paths(
     cx.spawn(move |mut cx| async move {
         if let Some(existing) = existing {
             Ok((
-                existing.clone(),
+                existing,
                 existing
                     .update(&mut cx, |workspace, cx| {
                         workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
@@ -4451,7 +4458,56 @@ pub fn create_and_open_local_file(
     })
 }
 
-pub fn join_remote_project(
+pub fn join_hosted_project(
+    hosted_project_id: HostedProjectId,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|mut cx| async move {
+        let existing_window = cx.update(|cx| {
+            cx.windows().into_iter().find_map(|window| {
+                let workspace = window.downcast::<Workspace>()?;
+                workspace
+                    .read(cx)
+                    .is_ok_and(|workspace| {
+                        workspace.project().read(cx).hosted_project_id() == Some(hosted_project_id)
+                    })
+                    .then(|| workspace)
+            })
+        })?;
+
+        let workspace = if let Some(existing_window) = existing_window {
+            existing_window
+        } else {
+            let project = Project::hosted(
+                hosted_project_id,
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx.clone(),
+            )
+            .await?;
+
+            let window_bounds_override = window_bounds_env_override(&cx);
+            cx.update(|cx| {
+                let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+                cx.open_window(options, |cx| {
+                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                })
+            })?
+        };
+
+        workspace.update(&mut cx, |_, cx| {
+            cx.activate(true);
+            cx.activate_window();
+        })?;
+
+        Ok(())
+    })
+}
+
+pub fn join_in_room_project(
     project_id: u64,
     follow_user_id: u64,
     app_state: Arc<AppState>,
@@ -5487,7 +5543,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             // Since panel_2 was not visible on the right, we don't open the left dock.
             assert!(!workspace.left_dock().read(cx).is_open());
-            // And the right dock is unaffected in it's displaying of panel_1
+            // And the right dock is unaffected in its displaying of panel_1
             assert!(workspace.right_dock().read(cx).is_open());
             assert_eq!(
                 workspace

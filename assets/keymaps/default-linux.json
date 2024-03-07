@@ -117,7 +117,8 @@
         {
           "stop_at_soft_wraps": true
         }
-      ]
+      ],
+      "ctrl-;": "editor::ToggleLineNumbers"
     }
   },
   {
@@ -134,10 +135,21 @@
           "focus": true
         }
       ],
-      "alt-\\": "copilot::Suggest",
+      "ctrl->": "assistant::QuoteSelection"
+    }
+  },
+  {
+    "context": "Editor && mode == full && copilot_suggestion",
+    "bindings": {
       "alt-]": "copilot::NextSuggestion",
       "alt-[": "copilot::PreviousSuggestion",
-      "ctrl->": "assistant::QuoteSelection"
+      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
+  {
+    "context": "Editor && !copilot_suggestion",
+    "bindings": {
+      "alt-\\": "copilot::Suggest"
     }
   },
   {
@@ -342,10 +354,18 @@
   {
     "context": "Workspace",
     "bindings": {
+      // Change the default action on `menu::Confirm` by setting the parameter
+      // "alt-cmd-o": [
+      //     "projects::OpenRecent",
+      //     {
+      //         "create_new_window": true
+      //     }
+      // ]
       "ctrl-alt-o": "projects::OpenRecent",
       "ctrl-alt-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
+      "ctrl-k s": "workspace::SaveWithoutFormat",
       "ctrl-shift-s": "workspace::SaveAs",
       "ctrl-n": "workspace::NewFile",
       "ctrl-shift-n": "workspace::NewWindow",

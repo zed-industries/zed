@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -20,17 +20,18 @@ impl super::LspAdapter for CLspAdapter {
         LanguageServerName("clangd".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "clangd"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
-        let asset_name = format!("clangd-mac-{}.zip", release.tag_name);
+        let os_suffix = match consts::OS {
+            "macos" => "mac",
+            "linux" => "linux",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+        let asset_name = format!("clangd-{}-{}.zip", os_suffix, release.tag_name);
         let asset = release
             .assets
             .iter()
@@ -296,7 +297,7 @@ mod tests {
                 });
             });
         });
-        let language = crate::language("c", tree_sitter_c::language(), None).await;
+        let language = crate::language("c", tree_sitter_c::language());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

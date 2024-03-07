@@ -152,7 +152,8 @@
           "center_cursor": true
         }
       ],
-      "ctrl-cmd-space": "editor::ShowCharacterPalette"
+      "ctrl-cmd-space": "editor::ShowCharacterPalette",
+      "cmd-;": "editor::ToggleLineNumbers"
     }
   },
   {
@@ -175,10 +176,21 @@
           "focus": false
         }
       ],
-      "alt-\\": "copilot::Suggest",
+      "cmd->": "assistant::QuoteSelection"
+    }
+  },
+  {
+    "context": "Editor && mode == full && copilot_suggestion",
+    "bindings": {
       "alt-]": "copilot::NextSuggestion",
       "alt-[": "copilot::PreviousSuggestion",
-      "cmd->": "assistant::QuoteSelection"
+      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+    }
+  },
+  {
+    "context": "Editor && !copilot_suggestion",
+    "bindings": {
+      "alt-\\": "copilot::Suggest"
     }
   },
   {
@@ -303,6 +315,18 @@
       "cmd-ctrl-p": "editor::AddSelectionAbove",
       "cmd-alt-down": "editor::AddSelectionBelow",
       "cmd-ctrl-n": "editor::AddSelectionBelow",
+      "cmd-shift-k": "editor::DeleteLine",
+      "alt-up": "editor::MoveLineUp",
+      "alt-down": "editor::MoveLineDown",
+      "alt-shift-up": [
+        "editor::DuplicateLine",
+        {
+          "move_upwards": true
+        }
+      ],
+      "alt-shift-down": "editor::DuplicateLine",
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
       "cmd-d": [
         "editor::SelectNext",
         {
@@ -335,8 +359,6 @@
           "advance_downwards": false
         }
       ],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
@@ -385,10 +407,18 @@
   {
     "context": "Workspace",
     "bindings": {
+      // Change the default action on `menu::Confirm` by setting the parameter
+      // "alt-cmd-o": [
+      //     "projects::OpenRecent",
+      //     {
+      //         "create_new_window": true
+      //     }
+      // ]
       "alt-cmd-o": "projects::OpenRecent",
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
+      "cmd-k s": "workspace::SaveWithoutFormat",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-n": "workspace::NewFile",
       "cmd-shift-n": "workspace::NewWindow",
@@ -407,8 +437,8 @@
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
-      "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
+      "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
       "cmd-shift-p": "command_palette::Toggle",
@@ -434,11 +464,7 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-k": "editor::DeleteLine",
-      "cmd-shift-d": "editor::DuplicateLine",
       "ctrl-j": "editor::JoinLines",
-      "ctrl-cmd-up": "editor::MoveLineUp",
-      "ctrl-cmd-down": "editor::MoveLineDown",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",

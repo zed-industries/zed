@@ -7,16 +7,18 @@ use crate::{
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use editor::{
-    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor, EditorEvent,
-    MultiBuffer, MAX_TAB_TITLE_LEN,
+    actions::SelectAll,
+    items::active_match_index,
+    scroll::{Autoscroll, Axis},
+    Anchor, Editor, EditorEvent, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
     EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Hsla,
-    InteractiveElement, IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakModel, WeakView, WhiteSpace, WindowContext,
+    InteractiveElement, IntoElement, KeyContext, Model, ModelContext, ParentElement, Point,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -217,7 +219,7 @@ impl ProjectSearch {
             active_query: self.active_query.clone(),
             search_id: self.search_id,
             search_history: self.search_history.clone(),
-            no_results: self.no_results.clone(),
+            no_results: self.no_results,
         })
     }
 
@@ -491,7 +493,7 @@ impl Item for ProjectSearchView {
             });
         let tab_name = last_query
             .filter(|query| !query.is_empty())
-            .unwrap_or_else(|| "Project search".into());
+            .unwrap_or_else(|| "Project Search".into());
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
@@ -537,11 +539,12 @@ impl Item for ProjectSearchView {
 
     fn save(
         &mut self,
+        format: bool,
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(project, cx))
+            .update(cx, |editor, cx| editor.save(format, project, cx))
     }
 
     fn save_as(
@@ -1277,7 +1280,7 @@ impl ProjectSearchView {
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor.clone()..cursor]));
+            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
         });
         self.query_editor_was_focused = false;
         let results_handle = self.results_editor.focus_handle(cx);
@@ -1297,11 +1300,11 @@ impl ProjectSearchView {
                 if is_new_search {
                     let range_to_select = match_ranges
                         .first()
-                        .clone()
                         .map(|range| editor.range_for_match(range));
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(range_to_select)
                     });
+                    editor.scroll(Point::default(), Some(Axis::Vertical), cx);
                 }
                 editor.highlight_background::<Self>(
                     match_ranges,
@@ -1629,7 +1632,7 @@ impl ProjectSearchBar {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -2094,11 +2097,12 @@ fn register_workspace_action_for_present_search<A: Action>(
 pub mod tests {
     use super::*;
     use editor::DisplayPoint;
-    use gpui::{Action, TestAppContext};
+    use gpui::{Action, TestAppContext, WindowHandle};
     use project::FakeFs;
     use semantic_index::semantic_index_settings::SemanticIndexSettings;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
+    use std::sync::Arc;
     use workspace::DeploySearch;
 
     #[gpui::test]
@@ -2120,15 +2124,7 @@ pub mod tests {
         let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
 
-        search_view
-            .update(cx, |search_view, cx| {
-                search_view
-                    .query_editor
-                    .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
-                search_view.search(cx);
-            })
-            .unwrap();
-        cx.background_executor.run_until_parked();
+        perform_search(search_view, "TWO", cx);
         search_view.update(cx, |search_view, cx| {
             assert_eq!(
                 search_view
@@ -2249,7 +2245,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.clone();
+        let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
@@ -2479,7 +2475,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.clone();
+        let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
@@ -3377,7 +3373,78 @@ pub mod tests {
             .unwrap();
     }
 
-    pub fn init_test(cx: &mut TestAppContext) {
+    #[gpui::test]
+    async fn test_scroll_search_results_to_top(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // We need many lines in the search results to be able to scroll the window
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "1.txt": "\n\n\n\n\n A \n\n\n\n\n",
+                "2.txt": "\n\n\n\n\n A \n\n\n\n\n",
+                "3.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "4.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "5.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "6.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "7.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "8.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "9.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "a.rs": "\n\n\n\n\n A \n\n\n\n\n",
+                "b.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "c.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "d.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "e.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "f.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "g.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "h.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "i.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "j.rs": "\n\n\n\n\n B \n\n\n\n\n",
+                "k.rs": "\n\n\n\n\n B \n\n\n\n\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
+        let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
+
+        // First search
+        perform_search(search_view, "A", cx);
+        search_view
+            .update(cx, |search_view, cx| {
+                search_view.results_editor.update(cx, |results_editor, cx| {
+                    // Results are correct and scrolled to the top
+                    assert_eq!(
+                        results_editor.display_text(cx).match_indices(" A ").count(),
+                        10
+                    );
+                    assert_eq!(results_editor.scroll_position(cx), Point::default());
+
+                    // Scroll results all the way down
+                    results_editor.scroll(Point::new(0., f32::MAX), Some(Axis::Vertical), cx);
+                });
+            })
+            .expect("unable to update search view");
+
+        // Second search
+        perform_search(search_view, "B", cx);
+        search_view
+            .update(cx, |search_view, cx| {
+                search_view.results_editor.update(cx, |results_editor, cx| {
+                    // Results are correct...
+                    assert_eq!(
+                        results_editor.display_text(cx).match_indices(" B ").count(),
+                        10
+                    );
+                    // ...and scrolled back to the top
+                    assert_eq!(results_editor.scroll_position(cx), Point::default());
+                });
+            })
+            .expect("unable to update search view");
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
@@ -3393,5 +3460,21 @@ pub mod tests {
             Project::init_settings(cx);
             super::init(cx);
         });
+    }
+
+    fn perform_search(
+        search_view: WindowHandle<ProjectSearchView>,
+        text: impl Into<Arc<str>>,
+        cx: &mut TestAppContext,
+    ) {
+        search_view
+            .update(cx, |search_view, cx| {
+                search_view
+                    .query_editor
+                    .update(cx, |query_editor, cx| query_editor.set_text(text, cx));
+                search_view.search(cx);
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
     }
 }

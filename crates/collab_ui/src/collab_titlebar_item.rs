@@ -406,7 +406,7 @@ impl CollabTitlebarItem {
                     )
                 })
                 .on_click({
-                    let host_peer_id = host.peer_id.clone();
+                    let host_peer_id = host.peer_id;
                     cx.listener(move |this, _, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
@@ -481,6 +481,7 @@ impl CollabTitlebarItem {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_collaborator(
         &self,
         user: &Arc<User>,
@@ -700,9 +701,9 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .action("Theme...", theme_selector::Toggle.boxed_clone())
                             .separator()
-                            .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
+                            .action("Share Feedback...", feedback::GiveFeedback.boxed_clone())
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -724,10 +725,10 @@ impl CollabTitlebarItem {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .action("Theme...", theme_selector::Toggle.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .separator()
-                            .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
+                            .action("Share Feedback...", feedback::GiveFeedback.boxed_clone())
                     })
                     .into()
                 })
