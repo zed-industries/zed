@@ -1,7 +1,32 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Based on the template in: https://docs.digitalocean.com/reference/api/spaces-api/
-set -ux
+bash -euo pipefail
+
+allowed_targets=("linux-deb" "macos")
+is_allowed_target() {
+    for val in "${allowed_targets[@]}"; do
+        if [[ "$1" == "$val" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [[ -n "${1:-}" ]]; then
+    if is_allowed_target "$1"; then
+        target="$1"
+    else
+        echo "Error: Target '$1' is not allowed"
+        echo "Usage: $0 [${allowed_targets[@]}]"
+        exit 1
+    fi
+else
+echo "Error: Target is not specified"
+echo "Usage: $0 [${allowed_targets[@]}]"
+exit 1
+fi
+echo "Uploading nightly for target: $target"
 
 # Step 1: Define the parameters for the Space you want to upload to.
 SPACE="zed-nightly-host" # Find your endpoint in the control panel, under Settings.
@@ -32,6 +57,19 @@ function uploadToSpaces
 
 sha=$(git rev-parse HEAD)
 echo ${sha} > target/latest-sha
-
-uploadToSpaces "target/release/Zed.dmg" "Zed.dmg"
-uploadToSpaces "target/latest-sha" "latest-sha"
+case "$target" in
+    macos)
+        uploadToSpaces "target/release/Zed.dmg" "Zed.dmg"
+        uploadToSpaces "target/latest-sha" "latest-sha"
+        ;;
+    linux-deb)
+        find target/release -type f -name "*.deb" -print0 | while IFS= read -r -d '' bundle_file; do
+            uploadToSpaces "$bundle_file" "$(basename "$bundle_file")"
+        done
+        uploadToSpaces "target/latest-sha" "latest-sha-linux-deb"
+        ;;
+    *)
+        echo "Error: Unknown target '$target'"
+        exit 1
+        ;;
+esac

@@ -281,7 +281,7 @@ impl Client for WaylandClient {
             CursorStyle::ResizeUp => "n-resize".to_string(),
             CursorStyle::ResizeDown => "s-resize".to_string(),
             CursorStyle::ResizeUpDown => "ns-resize".to_string(),
-            CursorStyle::DisappearingItem => "grabbing".to_string(), // todo!(linux) - couldn't find equivalent icon in linux
+            CursorStyle::DisappearingItem => "grabbing".to_string(), // TODO linux - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
             CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
             CursorStyle::DragLink => "dnd-link".to_string(),
