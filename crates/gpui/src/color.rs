@@ -247,7 +247,7 @@ pub fn transparent_black() -> Hsla {
     }
 }
 
-/// Opague grey in [`Hsla`], values will be clamped to the range [0, 1]
+/// Opaque grey in [`Hsla`], values will be clamped to the range [0, 1]
 pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
     Hsla {
         h: 0.,

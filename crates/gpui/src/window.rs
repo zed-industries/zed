@@ -1582,7 +1582,7 @@ impl<'a> WindowContext<'a> {
             unreachable!("Re-entrant window prompting is not supported by GPUI");
         };
 
-        let reciever = match &prompt_builder {
+        let receiver = match &prompt_builder {
             PromptBuilder::Default => self
                 .window
                 .platform_window
@@ -1597,7 +1597,7 @@ impl<'a> WindowContext<'a> {
 
         self.app.prompt_builder = Some(prompt_builder);
 
-        reciever
+        receiver
     }
 
     fn build_custom_prompt(
