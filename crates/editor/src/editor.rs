@@ -925,18 +925,15 @@ impl CompletionsMenu {
                         };
 
                         let max_completion_len = px(510.);
-                        let (
-                            inline_documentation_exists,
-                            completion_label,
-                            documentation_label,
-                        ) = Self::truncate_completion(
-                            &style,
-                            cx,
-                            mat,
-                            &mut completion.clone(),
-                            documentation,
-                            max_completion_len
-                        );
+                        let (inline_documentation_exists, completion_label, documentation_label) =
+                            Self::truncate_completion(
+                                &style,
+                                cx,
+                                mat,
+                                &mut completion.clone(),
+                                documentation,
+                                max_completion_len,
+                            );
                         let min_completion_len = match inline_documentation_exists {
                             true => max_completion_len,
                             false => px(190.),
@@ -1035,7 +1032,7 @@ impl CompletionsMenu {
         let mut variable_name_length_truncated: i32 = 0;
         if let Ok(ellipsis_width) =
             cx.text_system()
-                .layout_line("...", font_size, &[style.text.to_run("...".len())])
+                .layout_line("…", font_size, &[style.text.to_run("…".len())])
         {
             if let Ok(completion_layout_line) = completion_label.layout_line(font_size, cx) {
                 if let Ok(documentation_layout_line) =
@@ -1073,7 +1070,7 @@ impl CompletionsMenu {
                                         .chars()
                                         .take(documentation_truncation_index)
                                         .collect::<String>()
-                                        + "...";
+                                        + "…";
                                 }
                             } else {
                                 // truncate first part (and optionally second part too)
@@ -1092,7 +1089,7 @@ impl CompletionsMenu {
                                         .chars()
                                         .take(variable_name_truncation_index)
                                         .collect::<String>()
-                                        + "...";
+                                        + "…";
                                     completion_label =
                                         completion_label.with_text(completion_label_text.clone());
                                     if let Ok(new_completion_layout_line) =
@@ -1115,7 +1112,7 @@ impl CompletionsMenu {
                                                     .chars()
                                                     .take(documentation_truncation_index)
                                                     .collect::<String>()
-                                                    + "...";
+                                                    + "…";
                                             }
                                         }
                                     }
@@ -1150,7 +1147,7 @@ impl CompletionsMenu {
                                         .chars()
                                         .take(type_annotation_truncation_index)
                                         .collect::<String>()
-                                        + "...";
+                                        + "…";
                                 }
                             } else {
                                 // truncate first part (and optionally second part too)
@@ -1172,7 +1169,7 @@ impl CompletionsMenu {
                                         .chars()
                                         .take(variable_name_truncation_index)
                                         .collect::<String>()
-                                        + "..."
+                                        + "…"
                                         + second_part_text;
                                     completion_label =
                                         completion_label.with_text(completion_label_text.clone());
@@ -1191,7 +1188,7 @@ impl CompletionsMenu {
                                                     .chars()
                                                     .take(type_annotation_truncation_index)
                                                     .collect::<String>()
-                                                    + "...";
+                                                    + "…";
                                             }
                                         }
                                     }
