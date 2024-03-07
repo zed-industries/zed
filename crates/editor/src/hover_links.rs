@@ -1,7 +1,7 @@
 use crate::{
-    element::PointForPosition,
     hover_popover::{self, InlayHover},
-    Anchor, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId, SelectPhase,
+    Anchor, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId, PointForPosition,
+    SelectPhase,
 };
 use gpui::{px, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};

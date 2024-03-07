@@ -34,7 +34,6 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 
-mod editor_element;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
@@ -54,7 +53,7 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
-pub use element::{EditorElement, HighlightedRange, HighlightedRangeLine};
+pub use element::{EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition};
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;

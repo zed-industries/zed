@@ -607,11 +607,10 @@ mod tests {
     use super::*;
     use crate::{
         editor_tests::init_test,
-        element::PointForPosition,
         hover_links::update_inlay_link_and_hover_points,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
-        InlayId,
+        InlayId, PointForPosition,
     };
     use collections::BTreeSet;
     use gpui::{FontWeight, HighlightStyle, UnderlineStyle};
