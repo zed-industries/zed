@@ -911,6 +911,17 @@ pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize
     point
 }
 
+pub(crate) fn next_char(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let mut new_point = point;
+    if new_point.column() < map.line_len(new_point.row()) {
+        *new_point.column_mut() += 1;
+    } else if new_point < map.max_point() {
+        *new_point.row_mut() += 1;
+        *new_point.column_mut() = 0;
+    }
+    new_point
+}
+
 pub(crate) fn next_word_start(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -940,7 +951,7 @@ pub(crate) fn next_word_start(
     point
 }
 
-fn next_word_end(
+pub(crate) fn next_word_end(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     ignore_punctuation: bool,
@@ -948,14 +959,7 @@ fn next_word_end(
 ) -> DisplayPoint {
     let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
-        let mut new_point = point;
-        if new_point.column() < map.line_len(new_point.row()) {
-            *new_point.column_mut() += 1;
-        } else if new_point < map.max_point() {
-            *new_point.row_mut() += 1;
-            *new_point.column_mut() = 0;
-        }
-
+        let new_point = next_char(map, point);
         let new_point = movement::find_boundary_exclusive(
             map,
             new_point,
@@ -1077,7 +1081,7 @@ fn next_subword_start(
     point
 }
 
-fn next_subword_end(
+pub(crate) fn next_subword_end(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     ignore_punctuation: bool,
