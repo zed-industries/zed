@@ -1045,7 +1045,6 @@ mod test {
         );
     }
 
-
     #[gpui::test]
     async fn test_percent(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["%"]);

@@ -487,7 +487,7 @@ impl Vim {
                     } else {
                         FindRange::SingleLine
                     },
-                    smartcase: VimSettings::get_global(cx).use_smartcase_find
+                    smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -503,7 +503,7 @@ impl Vim {
                     } else {
                         FindRange::SingleLine
                     },
-                    smartcase: VimSettings::get_global(cx).use_smartcase_find
+                    smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
