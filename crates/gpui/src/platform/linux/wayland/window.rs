@@ -6,10 +6,12 @@ use std::sync::Arc;
 
 use blade_graphics as gpu;
 use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
+use collections::HashSet;
 use futures::channel::oneshot::Receiver;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
 };
+use wayland_backend::client::ObjectId;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
@@ -111,6 +113,7 @@ pub(crate) struct WaylandWindowState {
     pub(crate) callbacks: RefCell<Callbacks>,
     pub(crate) surface: Arc<wl_surface::WlSurface>,
     pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>,
+    pub(crate) outputs: RefCell<HashSet<ObjectId>>,
     viewport: Option<wp_viewport::WpViewport>,
 }
 
@@ -142,6 +145,7 @@ impl WaylandWindowState {
             surface: Arc::clone(&wl_surf),
             inner: RefCell::new(WaylandWindowInner::new(&wl_surf, bounds)),
             callbacks: RefCell::new(Callbacks::default()),
+            outputs: RefCell::new(HashSet::default()),
             toplevel,
             viewport,
         }
