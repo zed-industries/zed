@@ -598,6 +598,131 @@ impl EditorElement {
         cx.notify()
     }
 
+    fn layout_selections(
+        &self,
+        editor: &mut Editor,
+        start_anchor: Anchor,
+        end_anchor: Anchor,
+        snapshot: &EditorSnapshot,
+        start_row: u32,
+        end_row: u32,
+        cx: &mut ViewContext<Editor>,
+    ) -> (
+        Vec<(PlayerColor, Vec<SelectionLayout>)>,
+        BTreeMap<u32, bool>,
+        Option<DisplayPoint>,
+    ) {
+        let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
+        let mut active_rows = BTreeMap::new();
+        let mut newest_selection_head = None;
+
+        if editor.show_local_selections {
+            let mut local_selections: Vec<Selection<Point>> = editor
+                .selections
+                .disjoint_in_range(start_anchor..end_anchor, cx);
+            local_selections.extend(editor.selections.pending(cx));
+            let mut layouts = Vec::new();
+            let newest = editor.selections.newest(cx);
+            for selection in local_selections.drain(..) {
+                let is_empty = selection.start == selection.end;
+                let is_newest = selection == newest;
+
+                let layout = SelectionLayout::new(
+                    selection,
+                    editor.selections.line_mode,
+                    editor.cursor_shape,
+                    &snapshot.display_snapshot,
+                    is_newest,
+                    editor.leader_peer_id.is_none(),
+                    None,
+                );
+                if is_newest {
+                    newest_selection_head = Some(layout.head);
+                }
+
+                for row in cmp::max(layout.active_rows.start, start_row)
+                    ..=cmp::min(layout.active_rows.end, end_row)
+                {
+                    let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
+                    *contains_non_empty_selection |= !is_empty;
+                }
+                layouts.push(layout);
+            }
+
+            let player = if editor.read_only(cx) {
+                cx.theme().players().read_only()
+            } else {
+                self.style.local_player
+            };
+
+            selections.push((player, layouts));
+        }
+
+        if let Some(collaboration_hub) = &editor.collaboration_hub {
+            // When following someone, render the local selections in their color.
+            if let Some(leader_id) = editor.leader_peer_id {
+                if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id) {
+                    if let Some(participant_index) = collaboration_hub
+                        .user_participant_indices(cx)
+                        .get(&collaborator.user_id)
+                    {
+                        if let Some((local_selection_style, _)) = selections.first_mut() {
+                            *local_selection_style = cx
+                                .theme()
+                                .players()
+                                .color_for_participant(participant_index.0);
+                        }
+                    }
+                }
+            }
+
+            let mut remote_selections = HashMap::default();
+            for selection in snapshot.remote_selections_in_range(
+                &(start_anchor..end_anchor),
+                collaboration_hub.as_ref(),
+                cx,
+            ) {
+                let selection_style = if let Some(participant_index) = selection.participant_index {
+                    cx.theme()
+                        .players()
+                        .color_for_participant(participant_index.0)
+                } else {
+                    cx.theme().players().absent()
+                };
+
+                // Don't re-render the leader's selections, since the local selections
+                // match theirs.
+                if Some(selection.peer_id) == editor.leader_peer_id {
+                    continue;
+                }
+                let key = HoveredCursor {
+                    replica_id: selection.replica_id,
+                    selection_id: selection.selection.id,
+                };
+
+                let is_shown =
+                    editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
+
+                remote_selections
+                    .entry(selection.replica_id)
+                    .or_insert((selection_style, Vec::new()))
+                    .1
+                    .push(SelectionLayout::new(
+                        selection.selection,
+                        selection.line_mode,
+                        selection.cursor_shape,
+                        &snapshot.display_snapshot,
+                        false,
+                        false,
+                        if is_shown { selection.user_name } else { None },
+                    ));
+            }
+
+            selections.extend(remote_selections.into_values());
+        }
+        (selections, active_rows, newest_selection_head)
+    }
+
     fn layout_folds(
         &self,
         snapshot: &EditorSnapshot,
@@ -842,6 +967,54 @@ impl EditorElement {
         })
     }
 
+    fn layout_gutter_fold_indicators(
+        &self,
+        editor: &mut Editor,
+        fold_statuses: Vec<Option<(FoldStatus, u32, bool)>>,
+        line_height: Pixels,
+        gutter_dimensions: &GutterDimensions,
+        editor_view: View<Editor>,
+        gutter_settings: crate::editor_settings::Gutter,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_hitbox: &Hitbox,
+        cx: &mut ElementContext,
+    ) -> Vec<Option<AnyElement>> {
+        let mut indicators = editor.render_fold_indicators(
+            fold_statuses,
+            &self.style,
+            editor.gutter_hovered,
+            line_height,
+            gutter_dimensions.margin,
+            editor_view,
+        );
+
+        for (ix, fold_indicator) in indicators.iter_mut().enumerate() {
+            if let Some(fold_indicator) = fold_indicator {
+                debug_assert!(gutter_settings.folds);
+                let available_space = size(
+                    AvailableSpace::MinContent,
+                    AvailableSpace::Definite(line_height * 0.55),
+                );
+                let fold_indicator_size = fold_indicator.measure(available_space, cx);
+
+                let position = point(
+                    gutter_dimensions.width - gutter_dimensions.right_padding,
+                    ix as f32 * line_height - (scroll_pixel_position.y % line_height),
+                );
+                let centering_offset = point(
+                    (gutter_dimensions.right_padding + gutter_dimensions.margin
+                        - fold_indicator_size.width)
+                        / 2.,
+                    (line_height - fold_indicator_size.height) / 2.,
+                );
+                let origin = gutter_hitbox.origin + position + centering_offset;
+                fold_indicator.layout(origin, available_space, cx);
+            }
+        }
+
+        indicators
+    }
+
     //Folds contained in a hunk are ignored apart from shrinking visual size
     //If a fold contains any hunks then that fold line is marked as modified
     fn layout_git_gutters(
@@ -863,6 +1036,37 @@ impl EditorElement {
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
             .dedup()
             .collect()
+    }
+
+    fn layout_code_actions_indicator(
+        &self,
+        editor: &mut Editor,
+        active: bool,
+        line_height: Pixels,
+        newest_selection_head: DisplayPoint,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<AnyElement> {
+        let button = editor.render_code_actions_indicator(&self.style, active, cx)?;
+        cx.with_element_context(|cx| {
+            let mut button = button.into_any_element();
+            let available_space = size(
+                AvailableSpace::MinContent,
+                AvailableSpace::Definite(line_height),
+            );
+            let indicator_size = button.measure(available_space, cx);
+
+            let mut x = Pixels::ZERO;
+            let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
+            // Center indicator.
+            x += (gutter_dimensions.margin + gutter_dimensions.left_padding - indicator_size.width)
+                / 2.;
+            y += (line_height - indicator_size.height) / 2.;
+            button.layout(gutter_hitbox.origin + point(x, y), available_space, cx);
+            Some(button)
+        })
     }
 
     fn calculate_relative_line_numbers(
@@ -915,18 +1119,32 @@ impl EditorElement {
         relative_rows
     }
 
-    fn shape_line_numbers(
+    fn layout_line_numbers(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
-        newest_selection_head: DisplayPoint,
-        is_singleton: bool,
+        newest_selection_head: Option<DisplayPoint>,
+        editor: &Editor,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> (
         Vec<Option<ShapedLine>>,
         Vec<Option<(FoldStatus, BufferRow, bool)>>,
     ) {
+        let is_singleton = editor.is_singleton(cx);
+        let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
+            let newest = editor.selections.newest::<Point>(cx);
+            SelectionLayout::new(
+                newest,
+                editor.selections.line_mode,
+                editor.cursor_shape,
+                &snapshot.display_snapshot,
+                true,
+                true,
+                None,
+            )
+            .head
+        });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
         let include_line_numbers =
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
@@ -1067,7 +1285,6 @@ impl EditorElement {
         em_width: Pixels,
         text_x: Pixels,
         line_height: Pixels,
-        style: &EditorStyle,
         line_layouts: &[LineWithInvisibles],
         editor: &mut Editor,
         cx: &mut ElementContext,
@@ -1097,7 +1314,7 @@ impl EditorElement {
                                 .line
                                 .x_for_index(align_to.column() as usize)
                         } else {
-                            layout_line(align_to.row(), snapshot, style, cx)
+                            layout_line(align_to.row(), snapshot, &self.style, cx)
                                 .unwrap()
                                 .x_for_index(align_to.column() as usize)
                         };
@@ -1431,11 +1648,13 @@ impl EditorElement {
             }
         }
 
-        for fold_indicator in &mut layout.fold_indicators {
-            if let Some(fold_indicator) = fold_indicator {
-                fold_indicator.paint(cx);
+        cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+            for fold_indicator in &mut layout.fold_indicators {
+                if let Some(fold_indicator) = fold_indicator {
+                    fold_indicator.paint(cx);
+                }
             }
-        }
+        });
 
         if let Some(indicator) = layout.code_actions_indicator.as_mut() {
             indicator.paint(cx);
@@ -2666,10 +2885,6 @@ impl Element for EditorElement {
                     .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
             };
 
-            let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
-            let mut active_rows = BTreeMap::new();
-            let is_singleton = editor.is_singleton(cx);
-
             let highlighted_rows = editor.highlighted_rows();
             let highlighted_ranges = editor.background_highlights_in_range(
                 start_anchor..end_anchor,
@@ -2680,135 +2895,21 @@ impl Element for EditorElement {
             let redacted_ranges =
                 editor.redacted_ranges(start_anchor..end_anchor, &snapshot.display_snapshot, cx);
 
-            let mut newest_selection_head = None;
+            let (selections, active_rows, newest_selection_head) = self.layout_selections(
+                editor,
+                start_anchor,
+                end_anchor,
+                &snapshot,
+                start_row,
+                end_row,
+                cx,
+            );
 
-            if editor.show_local_selections {
-                let mut local_selections: Vec<Selection<Point>> = editor
-                    .selections
-                    .disjoint_in_range(start_anchor..end_anchor, cx);
-                local_selections.extend(editor.selections.pending(cx));
-                let mut layouts = Vec::new();
-                let newest = editor.selections.newest(cx);
-                for selection in local_selections.drain(..) {
-                    let is_empty = selection.start == selection.end;
-                    let is_newest = selection == newest;
-
-                    let layout = SelectionLayout::new(
-                        selection,
-                        editor.selections.line_mode,
-                        editor.cursor_shape,
-                        &snapshot.display_snapshot,
-                        is_newest,
-                        editor.leader_peer_id.is_none(),
-                        None,
-                    );
-                    if is_newest {
-                        newest_selection_head = Some(layout.head);
-                    }
-
-                    for row in cmp::max(layout.active_rows.start, start_row)
-                        ..=cmp::min(layout.active_rows.end, end_row)
-                    {
-                        let contains_non_empty_selection =
-                            active_rows.entry(row).or_insert(!is_empty);
-                        *contains_non_empty_selection |= !is_empty;
-                    }
-                    layouts.push(layout);
-                }
-
-                let player = if editor.read_only(cx) {
-                    cx.theme().players().read_only()
-                } else {
-                    style.local_player
-                };
-
-                selections.push((player, layouts));
-            }
-
-            if let Some(collaboration_hub) = &editor.collaboration_hub {
-                // When following someone, render the local selections in their color.
-                if let Some(leader_id) = editor.leader_peer_id {
-                    if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id)
-                    {
-                        if let Some(participant_index) = collaboration_hub
-                            .user_participant_indices(cx)
-                            .get(&collaborator.user_id)
-                        {
-                            if let Some((local_selection_style, _)) = selections.first_mut() {
-                                *local_selection_style = cx
-                                    .theme()
-                                    .players()
-                                    .color_for_participant(participant_index.0);
-                            }
-                        }
-                    }
-                }
-
-                let mut remote_selections = HashMap::default();
-                for selection in snapshot.remote_selections_in_range(
-                    &(start_anchor..end_anchor),
-                    collaboration_hub.as_ref(),
-                    cx,
-                ) {
-                    let selection_style =
-                        if let Some(participant_index) = selection.participant_index {
-                            cx.theme()
-                                .players()
-                                .color_for_participant(participant_index.0)
-                        } else {
-                            cx.theme().players().absent()
-                        };
-
-                    // Don't re-render the leader's selections, since the local selections
-                    // match theirs.
-                    if Some(selection.peer_id) == editor.leader_peer_id {
-                        continue;
-                    }
-                    let key = HoveredCursor {
-                        replica_id: selection.replica_id,
-                        selection_id: selection.selection.id,
-                    };
-
-                    let is_shown =
-                        editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
-
-                    remote_selections
-                        .entry(selection.replica_id)
-                        .or_insert((selection_style, Vec::new()))
-                        .1
-                        .push(SelectionLayout::new(
-                            selection.selection,
-                            selection.line_mode,
-                            selection.cursor_shape,
-                            &snapshot.display_snapshot,
-                            false,
-                            false,
-                            if is_shown { selection.user_name } else { None },
-                        ));
-                }
-
-                selections.extend(remote_selections.into_values());
-            }
-
-            let head_for_relative = newest_selection_head.unwrap_or_else(|| {
-                let newest = editor.selections.newest::<Point>(cx);
-                SelectionLayout::new(
-                    newest,
-                    editor.selections.line_mode,
-                    editor.cursor_shape,
-                    &snapshot.display_snapshot,
-                    true,
-                    true,
-                    None,
-                )
-                .head
-            });
-
-            let (line_numbers, fold_statuses) = self.shape_line_numbers(
+            let (line_numbers, fold_statuses) = self.layout_line_numbers(
                 start_row..end_row,
                 &active_rows,
-                head_for_relative,
-                is_singleton,
+                newest_selection_head,
+                editor,
                 &snapshot,
                 cx,
             );
@@ -2910,7 +3011,6 @@ impl Element for EditorElement {
                         em_width,
                         gutter_dimensions.width + gutter_dimensions.margin,
                         line_height,
-                        &style,
                         &line_layouts,
                         editor,
                         cx,
@@ -2943,33 +3043,16 @@ impl Element for EditorElement {
                     );
 
                     if gutter_settings.code_actions {
-                        if let Some(button) =
-                            editor.render_code_actions_indicator(&style, active, cx)
-                        {
-                            cx.with_element_context(|cx| {
-                                let mut button = button.into_any_element();
-                                let available_space = size(
-                                    AvailableSpace::MinContent,
-                                    AvailableSpace::Definite(line_height),
-                                );
-                                let indicator_size = button.measure(available_space, cx);
-
-                                let mut x = Pixels::ZERO;
-                                let mut y = newest_selection_head.row() as f32 * line_height
-                                    - scroll_pixel_position.y;
-                                // Center indicator.
-                                x += (gutter_dimensions.margin + gutter_dimensions.left_padding
-                                    - indicator_size.width)
-                                    / 2.;
-                                y += (line_height - indicator_size.height) / 2.;
-                                button.layout(
-                                    gutter_hitbox.origin + point(x, y),
-                                    available_space,
-                                    cx,
-                                );
-                                code_actions_indicator = Some(button);
-                            });
-                        }
+                        self.layout_code_actions_indicator(
+                            editor,
+                            active,
+                            line_height,
+                            newest_selection_head,
+                            scroll_pixel_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            cx,
+                        );
                     }
                 }
             }
@@ -3001,42 +3084,17 @@ impl Element for EditorElement {
             let fold_indicators = if gutter_settings.folds {
                 cx.with_element_context(|cx| {
                     cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
-                        let mut indicators = editor.render_fold_indicators(
+                        self.layout_gutter_fold_indicators(
+                            editor,
                             fold_statuses,
-                            &style,
-                            editor.gutter_hovered,
                             line_height,
-                            gutter_dimensions.margin,
+                            &gutter_dimensions,
                             editor_view,
-                        );
-
-                        for (ix, fold_indicator) in indicators.iter_mut().enumerate() {
-                            if let Some(fold_indicator) = fold_indicator {
-                                debug_assert!(gutter_settings.folds);
-                                let available_space = size(
-                                    AvailableSpace::MinContent,
-                                    AvailableSpace::Definite(line_height * 0.55),
-                                );
-                                let fold_indicator_size =
-                                    fold_indicator.measure(available_space, cx);
-
-                                let position = point(
-                                    gutter_dimensions.width - gutter_dimensions.right_padding,
-                                    ix as f32 * line_height
-                                        - (scroll_pixel_position.y % line_height),
-                                );
-                                let centering_offset = point(
-                                    (gutter_dimensions.right_padding + gutter_dimensions.margin
-                                        - fold_indicator_size.width)
-                                        / 2.,
-                                    (line_height - fold_indicator_size.height) / 2.,
-                                );
-                                let origin = gutter_hitbox.origin + position + centering_offset;
-                                fold_indicator.layout(origin, available_space, cx);
-                            }
-                        }
-
-                        indicators
+                            gutter_settings,
+                            scroll_pixel_position,
+                            &gutter_hitbox,
+                            cx,
+                        )
                     })
                 })
             } else {
@@ -3096,7 +3154,7 @@ impl Element for EditorElement {
                 gutter_dimensions,
                 content_origin,
                 scrollbar_layout,
-                is_singleton,
+                is_singleton: editor.is_singleton(cx),
                 max_row,
                 active_rows,
                 highlighted_rows,
@@ -3655,11 +3713,11 @@ mod tests {
             .update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(cx);
                 element
-                    .shape_line_numbers(
+                    .layout_line_numbers(
                         0..6,
                         &Default::default(),
-                        DisplayPoint::new(0, 0),
-                        false,
+                        Some(DisplayPoint::new(0, 0)),
+                        &editor,
                         &snapshot,
                         cx,
                     )
