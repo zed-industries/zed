@@ -200,14 +200,19 @@ impl WasmHost {
     }
 
     pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
+        self.writeable_path_from_extension(id, path)
+            .unwrap_or_else(|| path.to_path_buf())
+    }
+
+    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Option<PathBuf> {
         let path = path.strip_prefix(EXTENSION_WORK_DIR_PATH).unwrap_or(path);
         if path.is_relative() {
             let mut result = self.work_dir.clone();
             result.push(id.as_ref());
             result.extend(path);
-            result
+            Some(result)
         } else {
-            path.to_path_buf()
+            None
         }
     }
 }
@@ -248,8 +253,9 @@ impl WasmExtension {
 }
 
 impl WasmState {
-    pub fn path_from_extension(&self, path: &Path) -> PathBuf {
-        self.host.path_from_extension(&self.manifest.id, path)
+    pub fn writeable_path_from_extension(&self, path: &Path) -> Option<PathBuf> {
+        self.host
+            .writeable_path_from_extension(&self.manifest.id, path)
     }
 }
 
@@ -388,7 +394,9 @@ impl wit::ExtensionImports for WasmState {
 
             this.host.fs.create_dir(&extension_work_dir).await?;
 
-            let destination_path = this.path_from_extension(&path);
+            let destination_path = this
+                .writeable_path_from_extension(&path)
+                .ok_or_else(|| anyhow!("cannot write to path {:?}", path))?;
 
             let mut response = this
                 .host
