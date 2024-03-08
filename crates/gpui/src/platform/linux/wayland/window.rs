@@ -337,7 +337,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        // todo(linux)
+        self.0.toplevel.set_minimized();
     }
 
     fn zoom(&self) {
