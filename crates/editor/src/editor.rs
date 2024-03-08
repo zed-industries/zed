@@ -4934,13 +4934,16 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let selected_multi_buffer_rows = selections.iter().filter_map(|selection| {
+            let selected_multi_buffer_rows = selections.iter().map(|selection| {
                 let head = selection.head();
                 let tail = selection.tail();
                 let start = tail.to_point(&multi_buffer_snapshot).row;
                 let end = head.to_point(&multi_buffer_snapshot).row;
-                let multi_buffer_rows = if start > end { end..start } else { start..end };
-                Some(multi_buffer_rows)
+                if start > end {
+                    end..start
+                } else {
+                    start..end
+                }
             });
 
             let mut processed_buffer_rows =

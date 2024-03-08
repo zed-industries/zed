@@ -12,11 +12,20 @@ pub enum DiffHunkStatus {
     Removed,
 }
 
+/// A diff hunk, representing a range of consequent lines in a singleton buffer, associated with a generic range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk<T> {
+    /// E.g. a range in multibuffer, that has an excerpt added, singleton buffer for which has this diff hunk.
+    /// Consider a singleton buffer with 10 lines, all of them are modified — so a corresponding diff hunk would have a range 0..10.
+    /// And a multibuffer with the excerpt of lines 2-6 from the singleton buffer.
+    /// If the multibuffer is searched for diff hunks, the associated range would be multibuffer rows, corresponding to rows 2..6 from the singleton buffer.
+    /// But the hunk range would be 0..10, same for any other excerpts from the same singleton buffer.
     pub associated_range: Range<T>,
+    /// Singleton buffer ID this hunk belongs to.
     pub buffer_id: BufferId,
+    /// A consequent range of lines in the singleton buffer, that were changed and produced this diff hunk.
     pub buffer_range: Range<Anchor>,
+    /// Original singleton buffer text before the change, that was instead of the `buffer_range`.
     pub diff_base_byte_range: Range<usize>,
 }
 
