@@ -152,12 +152,12 @@ jobs:
       - name: Build Zed
         run: cargo build -p zed
 
-  bundle:
-    name: Bundle macOS app
+  bundle-mac:
+    name: Create a macOS bundle
     runs-on:
       - self-hosted
       - bundle
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [macos_tests]
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -212,12 +212,12 @@ jobs:
       - name: Generate license file
         run: script/generate-licenses
 
-      - name: Create app bundle
-        run: script/bundle
+      - name: Create macOS app bundle
+        run: script/bundle-mac
 
       - name: Upload app bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@v3
-        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
+        uses: actions/upload-artifact@v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
@@ -232,3 +232,81 @@ jobs:
           body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bundle-deb:
+    name: Create a *.deb Linux bundle
+    runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    needs: [linux_tests]
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Configure linux
+        shell: bash -euxo pipefail {0}
+        run: script/linux
+
+      - name: Determine version and release channel
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          set -eu
+
+          version=$(script/get-crate-version zed)
+          channel=$(cat crates/zed/RELEASE_CHANNEL)
+          echo "Publishing version: ${version} on release channel ${channel}"
+          echo "RELEASE_CHANNEL=${channel}" >> $GITHUB_ENV
+
+          expected_tag_name=""
+          case ${channel} in
+            stable)
+              expected_tag_name="v${version}";;
+            preview)
+              expected_tag_name="v${version}-pre";;
+            nightly)
+              expected_tag_name="v${version}-nightly";;
+            *)
+              echo "can't publish a release on channel ${channel}"
+              exit 1;;
+          esac
+          if [[ $GITHUB_REF_NAME != $expected_tag_name ]]; then
+            echo "invalid release tag ${GITHUB_REF_NAME}. expected ${expected_tag_name}"
+            exit 1
+          fi
+
+      # TODO linux : Find a way to add licenses to the final bundle
+      # - name: Generate license file
+      #   run: script/generate-licenses
+
+      - name: Create Linux *.deb bundle
+        run: script/bundle-linux
+
+      - name: Upload app bundle to workflow run if main branch or specific label
+        uses: actions/upload-artifact@v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.deb
+          path: target/release/*.deb
+
+      # TODO linux : make it stable enough to be uploaded as a release
+      # - uses: softprops/action-gh-release@v1
+      #   name: Upload app bundle to release
+      #   if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
+      #   with:
+      #     draft: true
+      #     prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+      #     files: target/release/Zed.dmg
+      #     body: ""
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3118,7 +3118,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
             ])
         });
-        view.duplicate_line(&DuplicateLine, cx);
+        view.duplicate_line(&DuplicateLine::default(), cx);
         assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -3142,13 +3142,63 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ])
         });
-        view.duplicate_line(&DuplicateLine, cx);
+        view.duplicate_line(&DuplicateLine::default(), cx);
         assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
         assert_eq!(
             view.selections.display_ranges(cx),
             vec![
                 DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
                 DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+            ]
+        );
+    });
+
+    // With `move_upwards` the selections stay in place, except for
+    // the lines inserted above them
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
+        build_editor(buffer, cx)
+    });
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+            ])
+        });
+        view.duplicate_line(&DuplicateLine { move_upwards: true }, cx);
+        assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+            ]
+        );
+    });
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
+        build_editor(buffer, cx)
+    });
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+            ])
+        });
+        view.duplicate_line(&DuplicateLine { move_upwards: true }, cx);
+        assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ]
         );
     });
@@ -5117,6 +5167,59 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                 Point::new(1, 1)..Point::new(1, 1),
                 Point::new(2, 1)..Point::new(2, 1)
             ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::language()),
+    ));
+
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
+            .with_language(language, cx)
+    });
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    _ = editor.update(cx, |editor, cx| {
+        editor.set_auto_replace_emoji_shortcode(true);
+
+        editor.handle_input("Hello ", cx);
+        editor.handle_input(":wave", cx);
+        assert_eq!(editor.text(cx), "Hello :wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋".unindent());
+
+        editor.handle_input(" :smile", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 :smile".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄".unindent());
+
+        editor.handle_input(":1:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+
+        // Ensure shortcode does not get replaced when it is part of a word
+        editor.handle_input(" Test:wave:", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:1: Test:wave:".unindent());
+
+        editor.set_auto_replace_emoji_shortcode(false);
+
+        // Ensure shortcode does not get replaced when auto replace is off
+        editor.handle_input(" :wave:", cx);
+        assert_eq!(
+            editor.text(cx),
+            "Hello 👋 😄:1: Test:wave: :wave:".unindent()
         );
     });
 }

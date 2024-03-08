@@ -235,19 +235,6 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         ));
     }
 
-    let operations = db
-        .transaction(|tx| {
-            let buffers = &buffers;
-            async move {
-                db.get_latest_operations_for_buffers([buffers[0].id, buffers[2].id], &tx)
-                    .await
-            }
-        })
-        .await
-        .unwrap();
-
-    assert!(operations.is_empty());
-
     update_buffer(
         buffers[0].channel_id,
         user_id,
@@ -299,57 +286,10 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     )
     .await;
 
-    let operations = db
-        .transaction(|tx| {
-            let buffers = &buffers;
-            async move {
-                db.get_latest_operations_for_buffers([buffers[1].id, buffers[2].id], &tx)
-                    .await
-            }
-        })
-        .await
-        .unwrap();
-    assert_operations(
-        &operations,
-        &[
-            (buffers[1].id, 1, &text_buffers[1]),
-            (buffers[2].id, 0, &text_buffers[2]),
-        ],
-    );
-
-    let operations = db
-        .transaction(|tx| {
-            let buffers = &buffers;
-            async move {
-                db.get_latest_operations_for_buffers([buffers[0].id, buffers[1].id], &tx)
-                    .await
-            }
-        })
-        .await
-        .unwrap();
-    assert_operations(
-        &operations,
-        &[
-            (buffers[0].id, 0, &text_buffers[0]),
-            (buffers[1].id, 1, &text_buffers[1]),
-        ],
-    );
-
-    let buffer_changes = db
-        .transaction(|tx| {
-            let buffers = &buffers;
-            let mut hash = HashMap::default();
-            hash.insert(buffers[0].id, buffers[0].channel_id);
-            hash.insert(buffers[1].id, buffers[1].channel_id);
-            hash.insert(buffers[2].id, buffers[2].channel_id);
-
-            async move { db.latest_channel_buffer_changes(&hash, &tx).await }
-        })
-        .await
-        .unwrap();
+    let channels_for_user = db.get_channels_for_user(user_id).await.unwrap();
 
     pretty_assertions::assert_eq!(
-        buffer_changes,
+        channels_for_user.latest_buffer_versions,
         [
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[0].channel_id.to_proto(),
@@ -361,8 +301,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
                 epoch: 1,
                 version: serialize_version(&text_buffers[1].version())
                     .into_iter()
-                    .filter(|vector| vector.replica_id
-                        == buffer_changes[1].version.first().unwrap().replica_id)
+                    .filter(|vector| vector.replica_id == text_buffers[1].replica_id() as u32)
                     .collect::<Vec<_>>(),
             },
             rpc::proto::ChannelBufferVersion {
@@ -387,31 +326,4 @@ async fn update_buffer(
     db.update_channel_buffer(channel_id, user_id, &operations)
         .await
         .unwrap();
-}
-
-fn assert_operations(
-    operations: &[buffer_operation::Model],
-    expected: &[(BufferId, i32, &text::Buffer)],
-) {
-    let actual = operations
-        .iter()
-        .map(|op| buffer_operation::Model {
-            buffer_id: op.buffer_id,
-            epoch: op.epoch,
-            lamport_timestamp: op.lamport_timestamp,
-            replica_id: op.replica_id,
-            value: vec![],
-        })
-        .collect::<Vec<_>>();
-    let expected = expected
-        .iter()
-        .map(|(buffer_id, epoch, buffer)| buffer_operation::Model {
-            buffer_id: *buffer_id,
-            epoch: *epoch,
-            lamport_timestamp: buffer.lamport_clock.value as i32 - 1,
-            replica_id: buffer.replica_id() as i32,
-            value: vec![],
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(actual, expected, "unexpected operations")
 }

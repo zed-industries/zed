@@ -8,6 +8,9 @@ pub struct Model {
     pub id: BufferId,
     pub epoch: i32,
     pub channel_id: ChannelId,
+    pub latest_operation_epoch: Option<i32>,
+    pub latest_operation_lamport_timestamp: Option<i32>,
+    pub latest_operation_replica_id: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

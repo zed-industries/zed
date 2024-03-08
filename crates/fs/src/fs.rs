@@ -43,6 +43,7 @@ use std::ffi::OsStr;
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
+    async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
     async fn create_file_with(
         &self,
@@ -122,6 +123,16 @@ pub struct RealFs;
 impl Fs for RealFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
         Ok(smol::fs::create_dir_all(path).await?)
+    }
+
+    async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
+        #[cfg(target_family = "unix")]
+        smol::fs::unix::symlink(target, path).await?;
+
+        #[cfg(target_family = "windows")]
+        Err(anyhow!("not supported yet on windows"))?;
+
+        Ok(())
     }
 
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
@@ -994,6 +1005,25 @@ impl Fs for FakeFs {
         Ok(())
     }
 
+    async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
+        let mut state = self.state.lock();
+        let file = Arc::new(Mutex::new(FakeFsEntry::Symlink { target }));
+        state
+            .write_path(path.as_ref(), move |e| match e {
+                btree_map::Entry::Vacant(e) => {
+                    e.insert(file);
+                    Ok(())
+                }
+                btree_map::Entry::Occupied(mut e) => {
+                    *e.get_mut() = file;
+                    Ok(())
+                }
+            })
+            .unwrap();
+        state.emit_event(&[path]);
+        Ok(())
+    }
+
     async fn create_file_with(
         &self,
         path: &Path,
@@ -1503,8 +1533,9 @@ mod tests {
             ]
         );
 
-        fs.insert_symlink("/root/dir2/link-to-dir3", "./dir3".into())
-            .await;
+        fs.create_symlink("/root/dir2/link-to-dir3".as_ref(), "./dir3".into())
+            .await
+            .unwrap();
 
         assert_eq!(
             fs.canonicalize("/root/dir2/link-to-dir3".as_ref())

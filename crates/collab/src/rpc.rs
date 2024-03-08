@@ -4,9 +4,9 @@ use crate::{
     auth::{self, Impersonator},
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
-        HostedProjectId, InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project,
-        ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
-        User, UserId,
+        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project, ProjectId,
+        RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId, User,
+        UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -67,7 +67,9 @@ use tracing::{field, info_span, instrument, Instrument};
 use util::SemanticVersion;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+// kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
@@ -1768,7 +1770,7 @@ async fn join_hosted_project(
         .db()
         .await
         .join_hosted_project(
-            HostedProjectId(request.id as i32),
+            ProjectId(request.project_id as i32),
             session.user_id,
             session.connection_id,
         )

@@ -460,14 +460,15 @@ impl InlayHintCache {
                                     if !old_kinds.contains(&cached_hint.kind)
                                         && new_kinds.contains(&cached_hint.kind)
                                     {
-                                        to_insert.push(Inlay::hint(
-                                            cached_hint_id.id(),
-                                            multi_buffer_snapshot.anchor_in_excerpt(
-                                                *excerpt_id,
-                                                cached_hint.position,
-                                            ),
-                                            &cached_hint,
-                                        ));
+                                        if let Some(anchor) = multi_buffer_snapshot
+                                            .anchor_in_excerpt(*excerpt_id, cached_hint.position)
+                                        {
+                                            to_insert.push(Inlay::hint(
+                                                cached_hint_id.id(),
+                                                anchor,
+                                                &cached_hint,
+                                            ));
+                                        }
                                     }
                                     excerpt_cache.next();
                                 }
@@ -483,12 +484,15 @@ impl InlayHintCache {
                 let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
                 if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                    to_insert.push(Inlay::hint(
-                        cached_hint_id.id(),
-                        multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position),
-                        &maybe_missed_cached_hint,
-                    ));
+                    if let Some(anchor) = multi_buffer_snapshot
+                        .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
+                    {
+                        to_insert.push(Inlay::hint(
+                            cached_hint_id.id(),
+                            anchor,
+                            &maybe_missed_cached_hint,
+                        ));
+                    }
                 }
             }
         }
@@ -1200,11 +1204,13 @@ fn apply_hint_update(
                 .allowed_hint_kinds
                 .contains(&new_hint.kind)
             {
-                let new_hint_position =
-                    multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position);
-                splice
-                    .to_insert
-                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
+                if let Some(new_hint_position) =
+                    multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
+                {
+                    splice
+                        .to_insert
+                        .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
+                }
             }
             let new_id = InlayId::Hint(new_inlay_id);
             cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
