@@ -1132,6 +1132,11 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
+    /// Sets the dock menu for this application. This will replace any existing dock menu.
+    pub fn set_dock_menu(&mut self, paths: Vec<&str>) {
+        self.platform.set_dock_menu(paths);
+    }
+
     /// Dispatch an action to the currently active window or global action handler
     /// See [action::Action] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {

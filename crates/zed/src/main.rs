@@ -260,6 +260,7 @@ fn main() {
         extensions_ui::init(cx);
 
         cx.set_menus(app_menus());
+        cx.set_dock_menu(vec!["hello", "bye"]);
         initialize_workspace(app_state.clone(), cx);
 
         // todo(linux): unblock this

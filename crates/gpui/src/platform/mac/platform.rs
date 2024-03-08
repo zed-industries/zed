@@ -58,6 +58,7 @@ use super::renderer;
 const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
+const DOCK_MENU_IVAR: &str = "dockMenu";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -76,6 +77,7 @@ unsafe fn build_classes() {
     APP_DELEGATE_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
         decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+        decl.add_ivar::<id>(DOCK_MENU_IVAR);
         decl.add_method(
             sel!(applicationDidFinishLaunching:),
             did_finish_launching as extern "C" fn(&mut Object, Sel, id),
@@ -141,11 +143,11 @@ unsafe fn build_classes() {
         // logic for showing recent workspaces on right click
         decl.add_method(
             sel!(openWorkspace:),
-            test as extern "C" fn(&Object, Sel, *mut Object),
+            test as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
             sel!(applicationDockMenu:),
-            application_dock_menu as extern "C" fn(&mut Object, Sel, *mut Object) -> *mut Object,
+            application_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
         );
         decl.register()
     }
@@ -160,20 +162,7 @@ extern "C" fn application_dock_menu(
     _cmd: Sel,
     _sender: *mut Object,
 ) -> *mut Object {
-    let menu = unsafe { NSMenu::new(nil).autorelease() };
-    let item = unsafe {
-        let item = NSMenuItem::alloc(nil)
-            .initWithTitle_action_keyEquivalent_(
-                ns_string("hello"),
-                sel!(openWorkspace:),
-                ns_string(""),
-            )
-            .autorelease();
-        item.setTarget_(this);
-        item
-    };
-    unsafe { menu.addItem_(item) };
-    menu
+    unsafe { *this.get_ivar::<id>(DOCK_MENU_IVAR) }
 }
 
 pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
@@ -798,6 +787,26 @@ impl Platform for MacPlatform {
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
             app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
+        }
+    }
+
+    fn set_dock_menu(&self, paths: Vec<&str>) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let menu = NSMenu::new(nil).autorelease();
+            for path in paths {
+                let item = NSMenuItem::alloc(nil)
+                    .initWithTitle_action_keyEquivalent_(
+                        ns_string(path),
+                        sel!(openWorkspace:),
+                        ns_string(""),
+                    )
+                    .autorelease();
+                item.setTarget_(app.delegate());
+                menu.addItem_(item);
+            }
+            // this needs to be changed if DOCK_MENU_IVAR is changed
+            let _: () = msg_send![app, setDockMenu:menu];
         }
     }
 
