@@ -17,18 +17,23 @@ use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::{
     core::{IUnknown, HRESULT, HSTRING, PCWSTR, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
-        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
-        Graphics::DirectComposition::DCompositionWaitForCompositorClock,
+        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE, WAIT_OBJECT_0, WPARAM},
+        Graphics::{
+            DirectComposition::DCompositionWaitForCompositorClock,
+            Gdi::{RedrawWindow, HRGN, RDW_INVALIDATE, RDW_UPDATENOW},
+        },
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
+            Ole::{OleInitialize, OleUninitialize},
+            Threading::{CreateEventW, GetCurrentThreadId, SetEvent, INFINITE},
             Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
@@ -40,11 +45,13 @@ use windows::{
                 FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
             },
             WindowsAndMessaging::{
-                DispatchMessageW, EnumThreadWindows, LoadImageW, PeekMessageW, PostQuitMessage,
-                SetCursor, SystemParametersInfoW, TranslateMessage, HCURSOR, IDC_ARROW, IDC_CROSS,
-                IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE,
-                LR_SHARED, MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
-                SW_SHOWDEFAULT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+                DispatchMessageW, EnumThreadWindows, LoadImageW, MsgWaitForMultipleObjects,
+                PeekMessageW, PostMessageW, PostQuitMessage, PostThreadMessageW, SetCursor,
+                SystemParametersInfoW, TranslateMessage, HCURSOR, HWND_BROADCAST, IDC_ARROW,
+                IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR,
+                LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
+                SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+                WM_PRINT, WM_QUIT, WM_SETTINGCHANGE,
             },
         },
     },
@@ -81,6 +88,7 @@ pub(crate) struct WindowsPlatformInner {
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub(crate) window_handle_values: RefCell<WindowHandleValues>,
+    pub raw_window_handles: RwLock<Vec<HWND>>,
     pub(crate) event: HANDLE,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
@@ -168,6 +176,7 @@ impl WindowsPlatform {
         let text_system = Arc::new(WindowsTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let window_handle_values = RefCell::new(HashSet::new());
+        let raw_window_handles = RwLock::new(Vec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
@@ -176,6 +185,7 @@ impl WindowsPlatform {
             text_system,
             callbacks,
             window_handle_values,
+            raw_window_handles,
             event,
             settings,
         });
@@ -250,36 +260,55 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        'a: loop {
-            let mut msg = MSG::default();
-            // will be 0 if woken up by self.inner.event or 1 if the compositor clock ticked
-            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
-            let wait_result =
-                unsafe { DCompositionWaitForCompositorClock(Some(&[self.inner.event]), INFINITE) };
-
-            // compositor clock ticked so we should draw a frame
-            if wait_result == 1 {
-                unsafe {
-                    invalidate_thread_windows(
-                        GetCurrentThreadId(),
-                        &self.inner.window_handle_values.borrow(),
+        let thread_id = unsafe { GetCurrentThreadId() };
+        let tick_event = unsafe { CreateEventW(None, false, false, None).unwrap() };
+        let thread = std::thread::spawn(move || unsafe {
+            loop {
+                DCompositionWaitForCompositorClock(None, INFINITE);
+                SetEvent(tick_event).expect(
+                    format!(
+                        "unable to trigger event: {}",
+                        std::io::Error::last_os_error()
                     )
-                };
+                    .as_str(),
+                );
+            }
+        });
+        'a: loop {
+            let event = unsafe {
+                MsgWaitForMultipleObjects(Some(&[tick_event]), false, INFINITE, QS_ALLINPUT)
+            };
+            match event.0 - WAIT_OBJECT_0.0 {
+                0 => {
+                    for handle in self.inner.raw_window_handles.read().iter() {
+                        unsafe {
+                            RedrawWindow(
+                                *handle,
+                                None,
+                                HRGN::default(),
+                                RDW_INVALIDATE | RDW_UPDATENOW,
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+            unsafe {
+                let mut msg = MSG::default();
 
-                while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool()
-                {
+                while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
                     if msg.message == WM_QUIT {
                         break 'a;
                     }
 
-                    if !self.run_immediate_msg_handlers(&msg) {
-                        unsafe { TranslateMessage(&msg) };
-                        unsafe { DispatchMessageW(&msg) };
-                    }
+                    // if !self.run_immediate_msg_handlers(&msg) {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                    // }
                 }
-            }
 
-            self.run_foreground_tasks();
+                self.run_foreground_tasks();
+            }
         }
 
         let mut callbacks = self.inner.callbacks.lock();
@@ -695,4 +724,18 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     }
 
     Ok(dialog)
+}
+
+fn send_draw_message(thread_id: u32) {
+    unsafe {
+        EnumThreadWindows(
+            thread_id,
+            Some(send_draw_message_callback),
+            LPARAM::default(),
+        )
+    };
+}
+
+unsafe extern "system" fn send_draw_message_callback(hwnd: HWND, _: LPARAM) -> BOOL {
+    RedrawWindow(hwnd, None, HRGN::default(), RDW_INVALIDATE | RDW_UPDATENOW)
 }

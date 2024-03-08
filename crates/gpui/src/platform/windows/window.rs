@@ -106,6 +106,7 @@ impl WindowsWindowInner {
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
     ) -> Self {
+        platform_inner.raw_window_handles.write().push(hwnd);
         let origin = Cell::new(Point::new((cs.x as f64).into(), (cs.y as f64).into()));
         let size = Cell::new(Size {
             width: (cs.cx as f64).into(),
@@ -237,7 +238,13 @@ impl WindowsWindowInner {
             WM_CHAR | WM_SYSCHAR => self.handle_char_msg(wparam),
             // These events are handled by the immediate handler
             WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => LRESULT(0),
-            _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
+            _ => {
+                if self.handle_immediate_msg(msg, wparam, lparam) {
+                    LRESULT(0)
+                } else {
+                    unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
+                }
+            } // _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
         }
     }
 
@@ -304,6 +311,14 @@ impl WindowsWindowInner {
         }
         let mut window_handles = self.platform_inner.window_handle_values.borrow_mut();
         window_handles.remove(&self.hwnd.0);
+        let index = self
+            .platform_inner
+            .raw_window_handles
+            .read()
+            .iter()
+            .position(|handle| *handle == self.hwnd)
+            .unwrap();
+        self.platform_inner.raw_window_handles.write().remove(index);
         if window_handles.is_empty() {
             self.platform_inner
                 .foreground_executor
