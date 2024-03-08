@@ -100,6 +100,7 @@ enum ExtensionOperation {
 #[derive(Copy, Clone)]
 pub enum Event {
     ExtensionsUpdated,
+    StartedReloading,
 }
 
 impl EventEmitter<Event> for ExtensionStore {}
@@ -148,6 +149,7 @@ pub fn init(
     let store = cx.new_model(move |cx| {
         ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
+            None,
             fs,
             http_client,
             node_runtime,
@@ -159,7 +161,7 @@ pub fn init(
 
     cx.on_action(|_: &ReloadExtensions, cx| {
         let store = cx.global::<GlobalExtensionStore>().0.clone();
-        store.update(cx, |store, _| drop(store.reload(None)));
+        store.update(cx, |store, cx| drop(store.reload(None, cx)));
     });
 
     cx.set_global(GlobalExtensionStore(store));
@@ -170,8 +172,10 @@ impl ExtensionStore {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         extensions_dir: PathBuf,
+        build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         node_runtime: Arc<dyn NodeRuntime>,
@@ -180,7 +184,7 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
-        let build_dir = extensions_dir.join("build");
+        let build_dir = build_dir.unwrap_or_else(|| extensions_dir.join("build"));
         let installed_dir = extensions_dir.join("installed");
         let index_path = extensions_dir.join("index.json");
 
@@ -226,7 +230,7 @@ impl ExtensionStore {
         // it must be asynchronously rebuilt.
         let mut extension_index = ExtensionIndex::default();
         let mut extension_index_needs_rebuild = true;
-        if let Some(index_content) = index_content.log_err() {
+        if let Some(index_content) = index_content.ok() {
             if let Some(index) = serde_json::from_str(&index_content).log_err() {
                 extension_index = index;
                 if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
@@ -243,7 +247,7 @@ impl ExtensionStore {
         // index needs to be rebuild, then enqueue
         let load_initial_extensions = this.extensions_updated(extension_index, cx);
         if extension_index_needs_rebuild {
-            let _ = this.reload(None);
+            let _ = this.reload(None, cx);
         }
 
         // Perform all extension loading in a single task to ensure that we
@@ -255,7 +259,7 @@ impl ExtensionStore {
 
                 let mut debounce_timer = cx
                     .background_executor()
-                    .timer(RELOAD_DEBOUNCE_DURATION)
+                    .spawn(futures::future::pending())
                     .fuse();
                 loop {
                     select_biased! {
@@ -271,7 +275,8 @@ impl ExtensionStore {
                             this.update(&mut cx, |this, _| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
-                            debounce_timer = cx.background_executor()
+                            debounce_timer = cx
+                                .background_executor()
                                 .timer(RELOAD_DEBOUNCE_DURATION)
                                 .fuse();
                         }
@@ -313,12 +318,17 @@ impl ExtensionStore {
         this
     }
 
-    fn reload(&mut self, modified_extension: Option<Arc<str>>) -> impl Future<Output = ()> {
+    fn reload(
+        &mut self,
+        modified_extension: Option<Arc<str>>,
+        cx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
         self.reload_tx
             .unbounded_send(modified_extension)
             .expect("reload task exited");
+        cx.emit(Event::StartedReloading);
         async move {
             rx.await.ok();
         }
@@ -444,7 +454,7 @@ impl ExtensionStore {
             archive
                 .unpack(extensions_dir.join(extension_id.as_ref()))
                 .await?;
-            this.update(&mut cx, |this, _| this.reload(Some(extension_id)))?
+            this.update(&mut cx, |this, cx| this.reload(Some(extension_id), cx))?
                 .await;
             anyhow::Ok(())
         })
@@ -483,7 +493,8 @@ impl ExtensionStore {
             )
             .await?;
 
-            this.update(&mut cx, |this, _| this.reload(None))?.await;
+            this.update(&mut cx, |this, cx| this.reload(None, cx))?
+                .await;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
@@ -493,7 +504,7 @@ impl ExtensionStore {
         &mut self,
         extension_source_path: PathBuf,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         let extensions_dir = self.extensions_dir();
         let fs = self.fs.clone();
         let builder = self.builder.clone();
@@ -560,11 +571,10 @@ impl ExtensionStore {
             fs.create_symlink(output_path, extension_source_path)
                 .await?;
 
-            this.update(&mut cx, |this, _| this.reload(Some(extension_id)))?
+            this.update(&mut cx, |this, cx| this.reload(None, cx))?
                 .await;
             Ok(())
         })
-        .detach_and_log_err(cx)
     }
 
     pub fn rebuild_dev_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
@@ -592,7 +602,7 @@ impl ExtensionStore {
             })?;
 
             if result.is_ok() {
-                this.update(&mut cx, |this, _| this.reload(Some(extension_id)))?
+                this.update(&mut cx, |this, cx| this.reload(Some(extension_id), cx))?
                     .await;
             }
 
@@ -664,9 +674,9 @@ impl ExtensionStore {
 
         log::info!(
             "extensions updated. loading {}, reloading {}, unloading {}",
-            extensions_to_unload.len() - reload_count,
+            extensions_to_load.len() - reload_count,
             reload_count,
-            extensions_to_load.len() - reload_count
+            extensions_to_unload.len() - reload_count
         );
 
         let themes_to_remove = old_index
@@ -839,7 +849,7 @@ impl ExtensionStore {
                             language_server_config.language.clone(),
                             Arc::new(ExtensionLspAdapter {
                                 extension: wasm_extension.clone(),
-                                work_dir: this.wasm_host.work_dir.join(manifest.id.as_ref()),
+                                host: this.wasm_host.clone(),
                                 config: wit::LanguageServerConfig {
                                     name: language_server_name.0.to_string(),
                                     language_name: language_server_config.language.to_string(),

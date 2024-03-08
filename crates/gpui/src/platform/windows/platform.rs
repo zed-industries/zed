@@ -5,6 +5,7 @@ use std::{
     cell::RefCell,
     collections::HashSet,
     ffi::{c_uint, c_void},
+    os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -13,7 +14,9 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use futures::channel::oneshot::Receiver;
+use copypasta::{ClipboardContext, ClipboardProvider};
+use futures::channel::oneshot::{self, Receiver};
+use itertools::Itertools;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
@@ -24,15 +27,17 @@ use windows::{
         Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
         Graphics::DirectComposition::DCompositionWaitForCompositorClock,
         System::{
+            Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
+            Ole::{OleInitialize, OleUninitialize},
+            Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
-            {
-                Ole::{OleInitialize, OleUninitialize},
-                Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
-            },
         },
         UI::{
             Input::KeyboardAndMouse::GetDoubleClickTime,
-            Shell::ShellExecuteW,
+            Shell::{
+                FileSaveDialog, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName,
+                ShellExecuteW, SIGDN_FILESYSPATH,
+            },
             WindowsAndMessaging::{
                 DispatchMessageW, EnumThreadWindows, LoadImageW, PeekMessageW, PostQuitMessage,
                 SetCursor, SystemParametersInfoW, TranslateMessage, HCURSOR, IDC_ARROW, IDC_CROSS,
@@ -341,9 +346,32 @@ impl Platform for WindowsPlatform {
         unimplemented!()
     }
 
-    // todo(windows)
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
-        unimplemented!()
+        let directory = directory.to_owned();
+        let (tx, rx) = oneshot::channel();
+        self.foreground_executor()
+            .spawn(async move {
+                unsafe {
+                    let Ok(dialog) = show_savefile_dialog(directory) else {
+                        let _ = tx.send(None);
+                        return;
+                    };
+                    let Ok(_) = dialog.Show(None) else {
+                        let _ = tx.send(None); // user cancel
+                        return;
+                    };
+                    if let Ok(shell_item) = dialog.GetResult() {
+                        if let Ok(file) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
+                            let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
+                            return;
+                        }
+                    }
+                    let _ = tx.send(None);
+                }
+            })
+            .detach();
+
+        rx
     }
 
     fn reveal_path(&self, path: &Path) {
@@ -493,14 +521,18 @@ impl Platform for WindowsPlatform {
         false
     }
 
-    // todo(windows)
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        unimplemented!()
+        let mut ctx = ClipboardContext::new().unwrap();
+        ctx.set_contents(item.text().to_owned()).unwrap();
     }
 
-    // todo(windows)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        unimplemented!()
+        let mut ctx = ClipboardContext::new().unwrap();
+        let content = ctx.get_contents().unwrap();
+        Some(ClipboardItem {
+            text: content,
+            metadata: None,
+        })
     }
 
     // todo(windows)
@@ -549,4 +581,27 @@ fn open_target(target: &str) {
             log::error!("Unable to open target: {}", std::io::Error::last_os_error());
         }
     }
+}
+
+unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
+    let dialog: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)?;
+    let bind_context = CreateBindCtx(0)?;
+    let Ok(full_path) = directory.canonicalize() else {
+        return Ok(dialog);
+    };
+    let dir_str = full_path.into_os_string();
+    if dir_str.is_empty() {
+        return Ok(dialog);
+    }
+    let dir_vec = dir_str.encode_wide().collect_vec();
+    let ret = SHCreateItemFromParsingName(PCWSTR::from_raw(dir_vec.as_ptr()), &bind_context)
+        .inspect_err(|e| log::error!("unable to create IShellItem: {}", e));
+    if ret.is_ok() {
+        let dir_shell_item: IShellItem = ret.unwrap();
+        let _ = dialog
+            .SetFolder(&dir_shell_item)
+            .inspect_err(|e| log::error!("unable to set folder for save file dialog: {}", e));
+    }
+
+    Ok(dialog)
 }

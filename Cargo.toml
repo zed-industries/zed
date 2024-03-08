@@ -201,6 +201,7 @@ bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
+cap-std = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = "4.4"
 clickhouse = { version = "0.11.6" }
@@ -329,9 +330,11 @@ features = [
     "Wdk_System_SystemServices",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_DirectComposition",
+    "Win32_UI_Controls",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_System_Com",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Time",
