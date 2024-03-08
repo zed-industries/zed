@@ -9384,7 +9384,7 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
 }
 
 struct ProjectLspAdapterDelegate {
-    project: Model<Project>,
+    project: WeakModel<Project>,
     worktree: worktree::Snapshot,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
@@ -9394,7 +9394,7 @@ struct ProjectLspAdapterDelegate {
 impl ProjectLspAdapterDelegate {
     fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
         Arc::new(Self {
-            project: cx.handle(),
+            project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
             fs: project.fs.clone(),
             http_client: project.client.http_client(),
@@ -9407,7 +9407,8 @@ impl ProjectLspAdapterDelegate {
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {
         self.project
-            .update(cx, |_, cx| cx.emit(Event::Notification(message.to_owned())));
+            .update(cx, |_, cx| cx.emit(Event::Notification(message.to_owned())))
+            .ok();
     }
 
     fn http_client(&self) -> Arc<dyn HttpClient> {

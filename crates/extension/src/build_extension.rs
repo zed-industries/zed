@@ -317,7 +317,10 @@ impl ExtensionBuilder {
 
         fs::remove_file(&cache_path).ok();
 
-        log::info!("downloading wasi adapter module");
+        log::info!(
+            "downloading wasi adapter module to {}",
+            cache_path.display()
+        );
         let mut response = self
             .http
             .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
@@ -357,6 +360,7 @@ impl ExtensionBuilder {
         fs::remove_dir_all(&wasi_sdk_dir).ok();
         fs::remove_dir_all(&tar_out_dir).ok();
 
+        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
         let body = BufReader::new(response.body_mut());
         let body = GzipDecoder::new(body);
