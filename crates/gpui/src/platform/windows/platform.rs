@@ -28,18 +28,15 @@ use windows::{
         Graphics::DirectComposition::DCompositionWaitForCompositorClock,
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
+            Ole::{OleInitialize, OleUninitialize},
             Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
-            {
-                Ole::{OleInitialize, OleUninitialize},
-                Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
-            },
         },
         UI::{
             Input::KeyboardAndMouse::GetDoubleClickTime,
             Shell::{
                 FileSaveDialog, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName,
-                ShellExecuteW, SIGDN_DESKTOPABSOLUTEPARSING,
+                ShellExecuteW, SIGDN_FILESYSPATH,
             },
             WindowsAndMessaging::{
                 DispatchMessageW, EnumThreadWindows, LoadImageW, PeekMessageW, PostQuitMessage,
@@ -364,7 +361,7 @@ impl Platform for WindowsPlatform {
                         return;
                     };
                     if let Ok(shell_item) = dialog.GetResult() {
-                        if let Ok(file) = shell_item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) {
+                        if let Ok(file) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
                             let _ = tx.send(Some(PathBuf::from(file.to_string().unwrap())));
                             return;
                         }
