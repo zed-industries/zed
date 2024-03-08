@@ -3865,7 +3865,6 @@ impl Render for Workspace {
                             }
                         }),
                     )
-                    .child(self.modal_layer.clone())
                     .child(
                         div()
                             .flex()
@@ -3914,6 +3913,7 @@ impl Render for Workspace {
                                 },
                             )),
                     )
+                    .child(self.modal_layer.clone())
                     .children(self.render_notifications(cx))
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
