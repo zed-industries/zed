@@ -195,7 +195,7 @@ impl WasmHost {
             .preopened_dir(current_dir_preopen, dir_perms, perms, ".")
             .preopened_dir(work_dir_preopen, dir_perms, perms, EXTENSION_WORK_DIR_PATH)
             .env("PWD", EXTENSION_WORK_DIR_PATH)
-            .env("RUST_BACKTRACE", "1")
+            .env("RUST_BACKTRACE", "full")
             .build())
     }
 

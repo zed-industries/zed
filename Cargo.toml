@@ -319,7 +319,8 @@ unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmparser = "0.121"
-wasmtime = "18.0"
+wasm-encoder = "0.41"
+wasmtime = { version = "18.0", default-features = false, features = ["async", "demangle", "runtime", "cranelift", "component-model"] }
 wasmtime-wasi = "18.0"
 which = "6.0.0"
 wit-component = "0.20"

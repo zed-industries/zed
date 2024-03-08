@@ -545,7 +545,7 @@ impl ExtensionStore {
                         builder
                             .compile_extension(
                                 &extension_source_path,
-                                CompileExtensionOptions { release: true },
+                                CompileExtensionOptions { release: false },
                             )
                             .await
                     }
