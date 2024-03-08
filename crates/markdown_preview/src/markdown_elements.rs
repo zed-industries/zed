@@ -1,8 +1,8 @@
 use gpui::{
     px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
 };
-use language::HighlightId;
-use std::{ops::Range, path::PathBuf};
+use language::{HighlightId, Language};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -66,7 +66,7 @@ pub enum ParsedMarkdownListItemType {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownCodeBlock {
     pub source_range: Range<usize>,
-    pub language: Option<String>,
+    pub language: Option<Arc<Language>>,
     pub contents: SharedString,
 }
 

@@ -5698,6 +5698,8 @@ dependencies = [
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-recursion 1.0.5",
  "editor",
  "gpui",
  "language",
