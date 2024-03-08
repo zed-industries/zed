@@ -12,6 +12,7 @@ use gpui::{AppContext, AsyncAppContext, Global};
 use itertools::Itertools;
 use language::{Bias, Point};
 use std::path::Path;
+use std::str::pattern::Pattern;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
@@ -21,77 +22,61 @@ use util::paths::{PathExt, PathLikeWithPosition};
 use util::ResultExt;
 use workspace::AppState;
 
-pub enum OpenRequest {
-    Paths {
-        paths: Vec<PathBuf>,
-    },
-    CliConnection {
-        connection: (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
-    },
-    JoinChannel {
-        channel_id: u64,
-    },
-    OpenChannelNotes {
-        channel_id: u64,
-        heading: Option<String>,
-    },
+#[derive(Default)]
+pub struct OpenDetails {
+    cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
+    open_paths: Vec<PathBuf>,
+    open_channel_notes: Vec<(u64, Option<String>)>,
+    join_channel: Option<u64>,
 }
 
 impl OpenRequest {
     pub fn parse(urls: Vec<String>, cx: &AppContext) -> Result<Self> {
-        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
-            Self::parse_cli_connection(server_name)
-        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url, cx)) {
-            Self::parse_zed_url(request_path)
-        } else {
-            Ok(Self::parse_file_urls(urls))
+        let mut this = Self::default();
+        for url in urls {
+            if let Some(server_name) = url.strip_prefix("zed-cli://") {
+                this.cli_connection = Some(connect_to_cli(server_name)?);
+            } else if let Some(file) = url.strip_prefix("file://") {
+                let decoded = urlencoding::decode_binary(url.as_bytes());
+                if let Some(path_buf) = PathBuf::try_from_bytes(decoded.as_ref()).log_err() {
+                    this.open_paths.push(path_buf)
+                }
+            } else if let Some(file) = url.strip_prefix("zed://file") {
+                let decoded = urlencoding::decode_binary(url.as_bytes());
+                if let Some(path_buf) = PathBuf::try_from_bytes(decoded.as_ref()).log_err() {
+                    this.open_paths.push(path_buf)
+                }
+            } else if let Some(request_path) = parse_zed_link(&url, cx) {
+                this.parse_request_path(request_path).log_err();
+            } else {
+                log::error!("unhandled url: {}", url);
+            }
         }
+
+        Ok(this)
     }
 
-    fn parse_cli_connection(server_name: &str) -> Result<OpenRequest> {
-        let connection = connect_to_cli(server_name)?;
-        Ok(OpenRequest::CliConnection { connection })
-    }
-
-    fn parse_zed_url(request_path: &str) -> Result<OpenRequest> {
+    fn parse_request_path(&mut self, request_path: &str) -> Result<OpenRequest> {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
                 if let Some(id_str) = slug.split('-').last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
-                            return Ok(OpenRequest::JoinChannel { channel_id });
+                            self.join_channel = Some(channel_id)
                         };
 
                         if let Some(heading) = next.strip_prefix("notes#") {
-                            return Ok(OpenRequest::OpenChannelNotes {
-                                channel_id,
-                                heading: Some([heading].into_iter().chain(parts).join("/")),
-                            });
+                            self.open_channel_notes
+                                .push((channel_id, Some(heading.to_string())));
                         } else if next == "notes" {
-                            return Ok(OpenRequest::OpenChannelNotes {
-                                channel_id,
-                                heading: None,
-                            });
+                            self.open_channel_notes.push((channel_id, None))
                         }
                     }
                 }
             }
         }
         Err(anyhow!("invalid zed url: {}", request_path))
-    }
-
-    fn parse_file_urls(urls: Vec<String>) -> OpenRequest {
-        let paths: Vec<_> = urls
-            .iter()
-            .flat_map(|url| url.strip_prefix("file://"))
-            .flat_map(|url| {
-                let decoded = urlencoding::decode_binary(url.as_bytes());
-                PathBuf::try_from_bytes(decoded.as_ref()).log_err()
-            })
-            .collect();
-
-        OpenRequest::Paths { paths }
     }
 }
 
