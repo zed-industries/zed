@@ -89,6 +89,9 @@ jobs:
       - name: cargo clippy
         run: cargo xtask clippy
 
+      - name: Install WASI dependencies
+        run: script/setup-wasm
+
       - name: Run tests
         uses: ./.github/actions/run_tests
 
