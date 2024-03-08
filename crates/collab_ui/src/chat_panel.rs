@@ -337,10 +337,6 @@ impl ChatPanel {
             v_flex()
                 .id(message_element_id)
                 .text_ui_xs()
-                .rounded_md()
-                .bg(cx.theme().colors().element_background)
-                .px_1()
-                .mt_1()
                 .child(
                     h_flex()
                         .gap_x_1()
