@@ -28,5 +28,7 @@ extend-ignore-re = [
     # crates/collab/src/api/events.rs
     "rename = \"sesssion_id\"",
     "doas",
+    # extensions/gleam/grammars
+    "_maybe_function_expresssion"
 ]
 check-filename = true
