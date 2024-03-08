@@ -1,22 +1,17 @@
 #![allow(rustdoc::private_intra_doc_links)]
 //! This is the place where everything editor-related is stored (data-wise) and displayed (ui-wise).
-//! The main point of interest in this crate is [`Editor`] type, which is used in every other Zed
-//! part as a user input element. It comes in different flavors: single line, multiline and a fixed
-//! height one.
+//! The main point of interest in this crate is [`Editor`] type, which is used in every other Zed part as a user input element.
+//! It comes in different flavors: single line, multiline and a fixed height one.
 //!
 //! Editor contains of multiple large submodules:
 //! * [`element`] — the place where all rendering happens
-//! * [`display_map`] - chunks up text in the editor into the logical blocks, establishes
-//!   coordinates and mapping between each of them. Contains all metadata related to text
-//!   transformations (folds, fake inlay text insertions, soft wraps, tab markup, etc.).
-//! * [`inlay_hint_cache`] - is a storage of inlay hints out of LSP requests, responsible for
-//!   querying LSP and updating `display_map`'s state accordingly.
+//! * [`display_map`] - chunks up text in the editor into the logical blocks, establishes coordinates and mapping between each of them.
+//!   Contains all metadata related to text transformations (folds, fake inlay text insertions, soft wraps, tab markup, etc.).
+//! * [`inlay_hint_cache`] - is a storage of inlay hints out of LSP requests, responsible for querying LSP and updating `display_map`'s state accordingly.
 //!
-//! All other submodules and structs are mostly concerned with holding editor data about the way it
-//! displays current buffer region(s).
+//! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
-//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and
-//! overrides its behaviour.
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
 pub mod actions;
 mod blink_manager;
 pub mod display_map;
@@ -41,104 +36,88 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+use ::git::diff::DiffHunk;
 pub(crate) use actions::*;
-use {
-    ::git::diff::DiffHunk,
-    aho_corasick::AhoCorasick,
-    anyhow::{anyhow, Context as _, Result},
-    blink_manager::BlinkManager,
-    client::{Collaborator, ParticipantIndex},
-    clock::ReplicaId,
-    collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque},
-    convert_case::{Case, Casing},
-    copilot::Copilot,
-    debounced_delay::DebouncedDelay,
-    display_map::*,
-    element::LineWithInvisibles,
-    futures::FutureExt,
-    fuzzy::{StringMatch, StringMatchCandidate},
-    git::diff_hunk_to_display,
-    gpui::{
-        div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-        AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
-        Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId,
-        FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-        MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled,
-        StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View,
-        ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
-    },
-    highlight_matching_bracket::refresh_matching_bracket_highlights,
-    hover_popover::{hide_hover, HoverState},
-    inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy},
-    itertools::Itertools,
-    language::{
-        char_kind,
-        language_settings::{self, all_language_settings, InlayHintSettings},
-        markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind,
-        CodeAction, CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind,
-        IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
-    },
+use aho_corasick::AhoCorasick;
+use anyhow::{anyhow, Context as _, Result};
+use blink_manager::BlinkManager;
+use client::{Collaborator, ParticipantIndex};
+use clock::ReplicaId;
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use convert_case::{Case, Casing};
+use copilot::Copilot;
+use debounced_delay::DebouncedDelay;
+pub use display_map::DisplayPoint;
+use display_map::*;
+pub use editor_settings::EditorSettings;
+use element::LineWithInvisibles;
+pub use element::{Cursor, EditorElement, HighlightedRange, HighlightedRangeLine};
+use futures::FutureExt;
+use fuzzy::{StringMatch, StringMatchCandidate};
+use git::diff_hunk_to_display;
+use gpui::{
+    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext
 };
-pub use {
-    display_map::DisplayPoint,
-    editor_settings::EditorSettings,
-    element::{Cursor, EditorElement, HighlightedRange, HighlightedRangeLine},
-    items::MAX_TAB_TITLE_LEN,
+use highlight_matching_bracket::refresh_matching_bracket_highlights;
+use hover_popover::{hide_hover, HoverState};
+use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
+pub use items::MAX_TAB_TITLE_LEN;
+use itertools::Itertools;
+use language::{char_kind, CharKind};
+use language::{
+    language_settings::{self, all_language_settings, InlayHintSettings},
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
+    CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
+    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
-use {
-    hover_links::{HoverLink, HoveredLinkState, InlayHighlight},
-    lsp::{DiagnosticSeverity, LanguageServerId},
-    mouse_context_menu::MouseContextMenu,
-    movement::TextLayoutDetails,
-    multi_buffer::ToOffsetUtf16,
-    ordered_float::OrderedFloat,
-    parking_lot::{Mutex, RwLock},
-    project::{
-        project_settings::{GitGutterSetting, ProjectSettings},
-        FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction,
-    },
-    rand::prelude::*,
-    rpc::proto::*,
-    scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide},
-    selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection},
-    serde::{Deserialize, Serialize},
-    settings::{Settings, SettingsStore},
-    smallvec::SmallVec,
-    snippet::Snippet,
-    std::{
-        any::TypeId,
-        borrow::Cow,
-        cmp::{self, Ordering, Reverse},
-        mem,
-        num::NonZeroU32,
-        ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
-        path::Path,
-        sync::Arc,
-        time::{Duration, Instant},
-    },
-    sum_tree::TreeMap,
-    text::{BufferId, OffsetUtf16, Rope},
-    theme::{
-        observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
-        ThemeColors, ThemeSettings,
-    },
-    ui::{
-        h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem,
-        Popover, Tooltip,
-    },
-    util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt},
-    workspace::{
-        searchable::SearchEvent, ItemNavHistory, SplitDirection, Toast, ViewId, Workspace,
-    },
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
+use lsp::{DiagnosticSeverity, LanguageServerId};
+use mouse_context_menu::MouseContextMenu;
+use movement::TextLayoutDetails;
+use multi_buffer::ToOffsetUtf16;
+pub use multi_buffer::{
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
+    ToPoint,
 };
-pub use {
-    multi_buffer::{
-        Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
-        ToOffset, ToPoint,
-    },
-    sum_tree::Bias,
+use ordered_float::OrderedFloat;
+use parking_lot::{Mutex, RwLock};
+use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::Item;
+use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
+use rand::prelude::*;
+use rpc::proto::*;
+use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
+use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsStore};
+use smallvec::SmallVec;
+use snippet::Snippet;
+use std::{
+    any::TypeId,
+    borrow::Cow,
+    cmp::{self, Ordering, Reverse},
+    mem,
+    num::NonZeroU32,
+    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
 };
+pub use sum_tree::Bias;
+use sum_tree::TreeMap;
+use text::{BufferId, OffsetUtf16, Rope};
+use theme::{
+    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
+    ThemeColors, ThemeSettings,
+};
+use ui::{
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
+    Tooltip,
+};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::Toast;
+use workspace::{searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace};
 
 use crate::hover_links::find_url;
 
@@ -952,7 +931,7 @@ impl CompletionsMenu {
                                             ..Default::default()
                                         });
                                     }
-
+                                    
                                     (range, highlight)
                                 },
                             ),
@@ -1034,8 +1013,7 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        // Remove all candidates where the query's start does not match the start of any word in the
-        // candidate
+        // Remove all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
                 matches.retain(|string_match| {
@@ -1065,8 +1043,8 @@ impl CompletionsMenu {
             // For the strong matches, we sort by the language-servers score first and for the weak
             // matches, we prefer our fuzzy finder first.
             //
-            // The thinking behind that: it's useless to take the sort_text the language-server
-            // gives us into account when it's obviously a bad match.
+            // The thinking behind that: it's useless to take the sort_text the language-server gives
+            // us into account when it's obviously a bad match.
 
             #[derive(PartialEq, Eq, PartialOrd, Ord)]
             enum MatchScore<'a> {
@@ -1211,8 +1189,7 @@ impl CodeActionsMenu {
                                     }
                                 }),
                             )
-                            // TASK: It would be good to make lsp_action.title a SharedString to
-                            // avoid allocating here.
+                            // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                             .child(SharedString::from(action.lsp_action.title.clone()))
                     })
                     .collect()
@@ -5037,8 +5014,8 @@ impl Editor {
 
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
         self.manipulate_text(cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word
-            // boundary https://github.com/rutrum/convert-case/issues/16
+            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            // https://github.com/rutrum/convert-case/issues/16
             text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
@@ -5059,8 +5036,8 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.manipulate_text(cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word
-            // boundary https://github.com/rutrum/convert-case/issues/16
+            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            // https://github.com/rutrum/convert-case/issues/16
             text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
@@ -6788,8 +6765,7 @@ impl Editor {
                 let first_selection = selections.iter().min_by_key(|s| s.id).unwrap();
                 let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
                 let mut next_selected_range = None;
-                // When we're iterating matches backwards, the oldest match will actually be the
-                // furthest one in the buffer.
+                // When we're iterating matches backwards, the oldest match will actually be the furthest one in the buffer.
                 let bytes_before_last_selection =
                     buffer.reversed_bytes_in_range(0..last_selection.start);
                 let bytes_after_first_selection =
@@ -7645,10 +7621,8 @@ impl Editor {
                                         workspace.open_project_item(pane, target.buffer.clone(), cx)
                                     });
                                 target_editor.update(cx, |target_editor, cx| {
-                                    // When selecting a definition in a different buffer, disable
-                                    // the nav history
-                                    // to avoid creating a history entry at the previous cursor
-                                    // location.
+                                    // When selecting a definition in a different buffer, disable the nav history
+                                    // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
                                     target_editor.change_selections(
                                         Some(Autoscroll::fit()),
@@ -7800,10 +7774,9 @@ impl Editor {
             let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
             let head_offset = text::ToOffset::to_offset(&head, &snapshot);
 
-            // LSP may return references that contain the item itself we requested
-            // `find_all_references` for (eg. rust-analyzer) So we will remove it from
-            // locations If there is only one reference, we will not do this filter
-            // cause it may make locations empty
+            // LSP may return references that contain the item itself we requested `find_all_references` for (eg. rust-analyzer)
+            // So we will remove it from locations
+            // If there is only one reference, we will not do this filter cause it may make locations empty
             if locations.len() > 1 {
                 cx.update(|cx| {
                     locations.retain(|location| {
@@ -8010,8 +7983,7 @@ impl Editor {
 
                     drop(buffer);
 
-                    // Position the selection in the rename editor so that it matches the current
-                    // selection.
+                    // Position the selection in the rename editor so that it matches the current selection.
                     this.show_local_selections = false;
                     let rename_editor = cx.new_view(|cx| {
                         let mut editor = Editor::single_line(cx);
@@ -8817,7 +8789,7 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x156A5F9EE, message), cx)
+                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
                     })
                 }
             }
@@ -8838,7 +8810,7 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x45A8978, message), cx)
+                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
                     })
                 }
             }
@@ -9064,8 +9036,7 @@ impl Editor {
                 unreachable!();
             }
         }
-        // We might still have a hunk that was not rendered (if there was a search hit on the last
-        // line)
+        // We might still have a hunk that was not rendered (if there was a search hit on the last line)
         push_region(start_row, end_row);
         results
     }
@@ -9410,8 +9381,7 @@ impl Editor {
     ) {
         let Some(project) = &self.project else { return };
 
-        // If None, we are either getting suggestions in a new, unsaved file, or in a file without
-        // an extension
+        // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
         let file_extension = self
             .buffer
             .read(cx)
@@ -9875,8 +9845,7 @@ impl EditorSnapshot {
         let gutter_settings = EditorSettings::get_global(cx).gutter;
 
         let line_gutter_width = if gutter_settings.line_numbers {
-            // Avoid flicker-like gutter resizes when the line number gains another digit and only
-            // resize the gutter on files with N*10^5 lines.
+            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
             max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
