@@ -476,7 +476,6 @@ impl ChatPanel {
                     .rounded_md()
                     .overflow_hidden()
                     .px_1p5()
-                    .px_1p5()
                     .py_0p5()
                     .when(!self.has_open_menu(message_id), |this| {
                         this.hover(|style| style.bg(cx.theme().colors().element_hover))
@@ -492,7 +491,7 @@ impl ChatPanel {
                     .when(
                         !is_continuation_from_previous || message.reply_to_message_id.is_some(),
                         |this| {
-                            this.mt_2().child(
+                            this.child(
                                 h_flex()
                                     .text_ui_sm()
                                     .child(
@@ -519,20 +518,10 @@ impl ChatPanel {
                                         ))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
-                                    )
-                                    .map(|el| {
-                                        el.child(self.render_popover_button(
-                                            &cx,
-                                            message_id,
-                                            can_delete_message,
-                                        ))
-                                    }),
+                                    ),
                             )
                         },
                     )
-                    .when(is_continuation_from_previous, |el| {
-                        el.child(self.render_popover_button(&cx, message_id, can_delete_message))
-                    })
                     .when(mentioning_you || replied_to_you, |this| this.my_0p5())
                     .map(|el| {
                         let text = self.markdown_data.entry(message.id).or_insert_with(|| {
