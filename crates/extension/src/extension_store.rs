@@ -172,6 +172,7 @@ impl ExtensionStore {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
