@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use copypasta::ClipboardContext;
+use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
