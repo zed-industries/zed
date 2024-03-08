@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::{
-    core::{HSTRING, PCWSTR},
+    core::{HSTRING, PCWSTR, HRESULT, IUnknown, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
@@ -24,6 +24,7 @@ use windows::{
                 Ole::{OleInitialize, OleUninitialize},
                 Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
             },
+            Com::{CoCreateInstance, CLSCTX_ALL},
         },
         UI::{
             Input::KeyboardAndMouse::GetDoubleClickTime,
@@ -338,10 +339,6 @@ impl Platform for WindowsPlatform {
         let (tx, rx) = oneshot::channel();
 
         self.foreground_executor().spawn(async move {
-            // initialize COM
-            let hr = unsafe { CoInitializeEx(Some(std::ptr::null_mut()), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-            if hr.is_err() { panic!("CoInitializeEx failed: {:?}", hr); }
-
             let tx = Cell::new(Some(tx));
 
             // create file open dialog
@@ -374,9 +371,6 @@ impl Platform for WindowsPlatform {
                     if let Some(tx) = tx.take() {
                         tx.send(None).unwrap();
                     }
-                    unsafe {
-                        CoUninitialize();
-                    }
                     return;
                 }
             }
@@ -400,12 +394,6 @@ impl Platform for WindowsPlatform {
                     tx.send(Some(paths)).unwrap();
                 }
             }
-
-            // uninitialize COM
-            unsafe {
-                CoUninitialize();
-            }
-
         }).detach();
 
         rx
