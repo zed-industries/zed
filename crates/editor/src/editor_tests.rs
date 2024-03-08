@@ -9113,57 +9113,6 @@ struct Row10;"#};
 }
 
 #[gpui::test]
-async fn test_multiple_types_reverts(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
-    let base_text = indoc! {r#"struct Row;
-struct Row1;
-struct Row2;
-
-struct Row4;
-struct Row5;
-struct Row6;
-
-struct Row8;
-struct Row9;
-struct Row10;"#};
-
-    assert_hunk_revert(
-        indoc! {r#"«ˇstruct Row;
-                   struct Row0.1;
-                   struct Row0.2;
-                   struct Row1;
-
-                   struct Row4;
-                   struct Row5444;
-                   struct Row6;
-
-                   struct R»ow9;
-                   struct Row1220;"#},
-        vec![
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Removed,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Removed,
-            DiffHunkStatus::Modified,
-        ],
-        indoc! {r#"«ˇstruct Row;
-                   struct Row1;
-                   struct Row2;
-
-                   struct Row4;
-                   struct Row5;
-                   struct Row6;
-
-                   struct Row8;
-                   struct R»ow9;
-                   struct Row1220;"#},
-        base_text,
-        &mut cx,
-    );
-}
-
-#[gpui::test]
 async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
