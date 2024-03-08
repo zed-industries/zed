@@ -54,10 +54,6 @@ echo "Compiling zed binaries"
 cargo build ${build_flag} --package ${zed_crate} --package cli
 
 echo "Creating application bundle"
-# TODO linux
-# Here, hacks to make `cargo bundle` run work, but macOS does not need these
-# Most probably, needs https://github.com/zed-industries/cargo-bundle/commit/9e185bd44d968d8039192220603494555afdbb4f from the upstream.
-cp "target/${target_dir}/Zed" "target/${target_dir}/zed"
 pushd crates/${zed_crate}
     channel=$(<RELEASE_CHANNEL)
     cp Cargo.toml Cargo.toml.backup
@@ -96,7 +92,7 @@ pushd target/
     dpkg-deb -x "${bundle_path}" bundle/
     dpkg-deb --control "${bundle_path}" bundle/DEBIAN
     mkdir -p bundle/usr/local/bin/
-    mv bundle/usr/bin/zed "bundle/usr/local/bin/zed-$channel"
+    mv bundle/usr/bin/Zed "bundle/usr/local/bin/zed-$channel"
     cp "${target_dir}/cli" "bundle/usr/local/bin/cli-$channel"
     ln -s "/usr/local/bin/cli-$channel" "bundle/usr/local/bin/zed"
     rm -rf bundle/usr/bin/
