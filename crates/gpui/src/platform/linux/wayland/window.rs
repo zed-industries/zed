@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,9 +21,8 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, ContentMask, Corners, DrawOrder, Hsla, LayerId, Modifiers, Pixels,
-    PlatformDisplay, PlatformInput, Point, Primitive, PromptLevel, ScaledPixels, Shadow, Size,
-    StackingOrder, ViewId, WindowAppearance, WindowBounds, WindowOptions,
+    px, size, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
+    WindowAppearance, WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
