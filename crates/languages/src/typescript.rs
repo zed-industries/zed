@@ -254,12 +254,14 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let nodePath = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
+
         json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
                 "run": "onType",
-                "nodePath": null,
+                "nodePath": nodePath,
                 "workingDirectory": {"mode": "auto"},
                 "workspaceFolder": {
                     "uri": workspace_root,
