@@ -628,14 +628,18 @@ impl ChatPanel {
                     })
                     .when_some(message_id, |el, message_id| {
                         el.child(
-                            IconButton::new(("reply", message_id), IconName::ReplyArrow).on_click(
-                                cx.listener(move |this, _, cx| {
-                                    this.message_editor.update(cx, |editor, cx| {
-                                        editor.set_reply_to_message_id(message_id);
-                                        editor.focus_handle(cx).focus(cx);
-                                    })
-                                }),
-                            ),
+                            div()
+                                .id("reply")
+                                .child(
+                                    IconButton::new(("reply", message_id), IconName::ReplyArrow)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.message_editor.update(cx, |editor, cx| {
+                                                editor.set_reply_to_message_id(message_id);
+                                                editor.focus_handle(cx).focus(cx);
+                                            })
+                                        })),
+                                )
+                                .tooltip(|cx| Tooltip::text("Reply", cx)),
                         )
                     }),
             )
@@ -660,19 +664,24 @@ impl ChatPanel {
                         let this = cx.view().clone();
 
                         el.child(
-                            popover_menu(("menu", message_id))
-                                .trigger(IconButton::new(
-                                    ("trigger", message_id),
-                                    IconName::Ellipsis,
-                                ))
-                                .menu(move |cx| {
-                                    Some(Self::render_message_menu(
-                                        &this,
-                                        message_id,
-                                        can_delete_message,
-                                        cx,
-                                    ))
-                                }),
+                            div()
+                                .id("more")
+                                .child(
+                                    popover_menu(("menu", message_id))
+                                        .trigger(IconButton::new(
+                                            ("trigger", message_id),
+                                            IconName::Ellipsis,
+                                        ))
+                                        .menu(move |cx| {
+                                            Some(Self::render_message_menu(
+                                                &this,
+                                                message_id,
+                                                can_delete_message,
+                                                cx,
+                                            ))
+                                        }),
+                                )
+                                .tooltip(|cx| Tooltip::text("More", cx)),
                         )
                     }),
             )
