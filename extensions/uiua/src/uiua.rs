@@ -14,7 +14,7 @@ impl zed::Extension for UiuaExtension {
     ) -> Result<zed::Command> {
         let path = worktree
             .which("uiua")
-            .ok_or_else(|| format!("uiua is not installed"))?;
+            .ok_or_else(|| "uiua is not installed".to_string())?;
 
         Ok(zed::Command {
             command: path,
