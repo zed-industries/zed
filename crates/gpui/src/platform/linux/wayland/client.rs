@@ -273,8 +273,8 @@ impl Client for WaylandClient {
             CursorStyle::IBeam => "text".to_string(),
             CursorStyle::Crosshair => "crosshair".to_string(),
             CursorStyle::ClosedHand => "grabbing".to_string(),
-            CursorStyle::OpenHand => "openhand".to_string(),
-            CursorStyle::PointingHand => "hand".to_string(),
+            CursorStyle::OpenHand => "grab".to_string(),
+            CursorStyle::PointingHand => "pointer".to_string(),
             CursorStyle::ResizeLeft => "w-resize".to_string(),
             CursorStyle::ResizeRight => "e-resize".to_string(),
             CursorStyle::ResizeLeftRight => "ew-resize".to_string(),
@@ -284,8 +284,8 @@ impl Client for WaylandClient {
             CursorStyle::DisappearingItem => "grabbing".to_string(), // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
             CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
-            CursorStyle::DragLink => "dnd-link".to_string(),
-            CursorStyle::DragCopy => "dnd-copy".to_string(),
+            CursorStyle::DragLink => "alias".to_string(),
+            CursorStyle::DragCopy => "copy".to_string(),
             CursorStyle::ContextualMenu => "context-menu".to_string(),
         };
 
