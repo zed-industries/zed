@@ -11,9 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
-#[cfg(target_os = "macos")]
-use fsevent::StreamFlags;
-use futures::{future, StreamExt};
+use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
@@ -184,7 +182,6 @@ fn main() {
         );
 
         load_user_themes_in_background(fs.clone(), cx);
-        #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
@@ -470,7 +467,6 @@ fn init_paths() {
     std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
     std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
     std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
-    #[cfg(target_os = "linux")]
     std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
 }
 
@@ -976,9 +972,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-// todo(linux): Port fsevents to linux
 /// Spawns a background task to watch the themes directory for changes.
-#[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
@@ -986,17 +980,14 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
             .await;
 
-        while let Some(events) = events.next().await {
-            for event in events {
-                if event.flags.contains(StreamFlags::ITEM_REMOVED) {
-                    // Theme was removed, don't need to reload.
-                    // We may want to remove the theme from the registry, in this case.
-                } else {
+        while let Some(paths) = events.next().await {
+            for path in paths {
+                if fs.metadata(&path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&event.path, fs.clone())
+                            .load_user_theme(&path, fs.clone())
                             .await
                             .log_err()
                         {

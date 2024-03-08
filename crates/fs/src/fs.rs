@@ -13,7 +13,7 @@ use repository::GitRepository;
 use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::io::Write;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::{
     io,
     path::{Component, Path, PathBuf},
@@ -318,13 +318,16 @@ impl Fs for RealFs {
         &self,
         path: &Path,
         latency: Duration,
-    ) -> Pin<Box<dyn Send + Stream<Item = Vec<Event>>>> {
+    ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
         use fsevent::EventStream;
 
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
         std::thread::spawn(move || {
-            stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
+            stream.run(move |events| {
+                smol::block_on(tx.send(events.into_iter().map(|event| event.path).collect()))
+                    .is_ok()
+            });
         });
 
         Box::pin(rx.chain(futures::stream::once(async move {
