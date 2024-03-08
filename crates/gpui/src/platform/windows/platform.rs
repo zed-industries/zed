@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
+use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::Receiver;
 use parking_lot::Mutex;
 use time::UtcOffset;
@@ -493,14 +494,18 @@ impl Platform for WindowsPlatform {
         false
     }
 
-    // todo(windows)
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        unimplemented!()
+        let mut ctx = ClipboardContext::new().unwrap();
+        ctx.set_contents(item.text().to_owned()).unwrap();
     }
 
-    // todo(windows)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        unimplemented!()
+        let mut ctx = ClipboardContext::new().unwrap();
+        let content = ctx.get_contents().unwrap();
+        Some(ClipboardItem {
+            text: content,
+            metadata: None,
+        })
     }
 
     // todo(windows)

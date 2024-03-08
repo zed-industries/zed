@@ -103,6 +103,7 @@ blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
 cosmic-text = "0.10.0"
+copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 open = "5.0.1"
@@ -116,7 +117,6 @@ xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 as-raw-xcb-connection = "1"
 calloop = "0.12.4"
 calloop-wayland-source = "0.2.0"
-copypasta = "0.10.1"
 oo7 = "0.3.0"
 
 [target.'cfg(windows)'.dependencies]
