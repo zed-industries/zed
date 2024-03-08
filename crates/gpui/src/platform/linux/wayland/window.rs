@@ -164,20 +164,22 @@ impl WaylandWindowState {
     }
 
     pub fn set_size_and_scale(&self, width: i32, height: i32, scale: f32) {
-        let mut inner = self.inner.borrow_mut();
-        if width == inner.bounds.size.width
-            && height == inner.bounds.size.height
-            && scale == inner.scale
         {
-            return;
+            let mut inner = self.inner.borrow_mut();
+            if width == inner.bounds.size.width
+                && height == inner.bounds.size.height
+                && scale == inner.scale
+            {
+                return;
+            }
+            inner.scale = scale;
+            inner.bounds.size.width = width;
+            inner.bounds.size.height = height;
+            inner.renderer.update_drawable_size(size(
+                width as f64 * scale as f64,
+                height as f64 * scale as f64,
+            ));
         }
-        inner.scale = scale;
-        inner.bounds.size.width = width;
-        inner.bounds.size.height = height;
-        inner.renderer.update_drawable_size(size(
-            width as f64 * scale as f64,
-            height as f64 * scale as f64,
-        ));
 
         if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
             fun(
@@ -206,7 +208,7 @@ impl WaylandWindowState {
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
         let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(mut fun) = callbacks.fullscreen.take() {
+        if let Some(ref mut fun) = callbacks.fullscreen {
             fun(fullscreen)
         }
         self.inner.borrow_mut().fullscreen = fullscreen;
