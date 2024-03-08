@@ -1215,6 +1215,7 @@ impl CodeActionsMenu {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
@@ -3114,7 +3115,7 @@ impl Editor {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
                     self.inlay_hint_cache.clear();
-                    self.splice_inlay_hints(
+                    self.splice_inlays(
                         self.visible_inlay_hints(cx)
                             .iter()
                             .map(|inlay| inlay.id)
@@ -3136,7 +3137,7 @@ impl Editor {
                         to_remove,
                         to_insert,
                     })) => {
-                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        self.splice_inlays(to_remove, to_insert, cx);
                         return;
                     }
                     ControlFlow::Break(None) => return,
@@ -3149,7 +3150,7 @@ impl Editor {
                     to_insert,
                 }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
                 {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                    self.splice_inlays(to_remove, to_insert, cx);
                 }
                 return;
             }
@@ -3172,7 +3173,7 @@ impl Editor {
             ignore_debounce,
             cx,
         ) {
-            self.splice_inlay_hints(to_remove, to_insert, cx);
+            self.splice_inlays(to_remove, to_insert, cx);
         }
     }
 
@@ -3180,9 +3181,7 @@ impl Editor {
         self.display_map
             .read(cx)
             .current_inlays()
-            .filter(move |inlay| {
-                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
-            })
+            .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
             .cloned()
             .collect()
     }
@@ -3253,7 +3252,7 @@ impl Editor {
         }
     }
 
-    fn splice_inlay_hints(
+    fn splice_inlays(
         &self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -4161,7 +4160,10 @@ impl Editor {
     }
 
     fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
-        self.copilot_state = Default::default();
+        if let Some(old_suggestion) = self.copilot_state.suggestion.take() {
+            self.splice_inlays(vec![old_suggestion.id], Vec::new(), cx);
+        }
+        self.copilot_state = CopilotState::default();
         self.discard_copilot_suggestion(cx);
     }
 
