@@ -4909,12 +4909,13 @@ impl Editor {
     }
 
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
-        let mut revert_changes: Vec<(Range<u32>, Arc<str>)> = Vec::new();
+        let mut revert_changes =
+            HashMap::<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>::default();
+        let selections = self.selections.disjoint_anchors();
 
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let selections = self.selections.disjoint_anchors();
-            let selected_buffer_rows = selections.into_iter().filter_map(|selection| {
+            let selected_buffer_rows = selections.iter().filter_map(|selection| {
                 let head = selection.head();
                 let tail = selection.tail();
                 if head.buffer_id != tail.buffer_id {
@@ -4927,14 +4928,12 @@ impl Editor {
                 Some((buffer, multi_buffer_rows))
             });
 
-            let mut processed_buffer_rows = HashSet::default();
+            let mut processed_multi_buffer_rows = HashSet::default();
             for (buffer, selected_multi_buffer_rows) in selected_buffer_rows {
                 let query_rows =
                     selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
-                        // TODO kb this does not cut off the hunk in the multibuffer:
-                        // if excerpt is 1-4 lines long and the hunk is 1-10, we have to do something.
                         for hunk in
                             multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone())
                         {
@@ -4954,24 +4953,30 @@ impl Editor {
                                     || selected_multi_buffer_rows.end == hunk.associated_range.start
                             };
                             if related_to_selection {
-                                for row in hunk.associated_range.start..hunk.associated_range.end {
-                                    if !processed_buffer_rows.insert(row) {
-                                        return;
-                                    }
+                                if !processed_multi_buffer_rows
+                                    .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                                {
+                                    return;
                                 }
 
-                                if let Err(i) = revert_changes.binary_search_by(|probe| {
+                                let buffer_snapshot = buffer.snapshot();
+                                let buffer_revert_changes =
+                                    revert_changes.entry(buffer.remote_id()).or_default();
+                                if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
                                     probe
                                         .0
                                         .start
-                                        .cmp(&hunk.associated_range.start)
-                                        .then(probe.0.end.cmp(&hunk.associated_range.end))
+                                        .cmp(&hunk.buffer_range.start, &buffer_snapshot)
+                                        .then(
+                                            probe
+                                                .0
+                                                .end
+                                                .cmp(&hunk.buffer_range.end, &buffer_snapshot),
+                                        )
                                         .then(probe.1.as_ref().cmp(original_text))
                                 }) {
-                                    revert_changes.insert(
-                                        i,
-                                        (hunk.associated_range, Arc::from(original_text)),
-                                    );
+                                    buffer_revert_changes
+                                        .insert(i, (hunk.buffer_range, Arc::from(original_text)));
                                 }
                             }
                         }
@@ -4982,15 +4987,14 @@ impl Editor {
 
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
-                editor.edit(
-                    dbg!(revert_changes).into_iter().map(|(buffer_row, text)| {
-                        (
-                            Point::new(buffer_row.start, 0)..Point::new(buffer_row.end, 0),
-                            text,
-                        )
-                    }),
-                    cx,
-                );
+                let multi_buffer = editor.buffer();
+                for (buffer_id, buffer_revert_ranges) in revert_changes {
+                    if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit(buffer_revert_ranges, None, cx);
+                        });
+                    }
+                }
                 editor.change_selections(None, cx, |selections| selections.refresh());
             });
         }

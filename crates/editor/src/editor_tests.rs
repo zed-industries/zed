@@ -9170,8 +9170,6 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     });
     cx.executor().run_until_parked();
 
-    let expected_initial_multibuffer_text =
-        "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n";
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
@@ -9213,20 +9211,32 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         multibuffer
     });
 
+    let expected_initial_multibuffer_text =
+        "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n";
     let (editor, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
         editor.select_all(&SelectAll, cx);
-    });
-    cx.executor().run_until_parked();
-    editor.update(cx, |editor, cx| {
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
     cx.executor().run_until_parked();
+    // `SelectAll` captures two different buffers, which is not supported for reverting currently
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
+        });
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    });
+    // Now, when all ranges selected belong to buffer_1, the revert should succeed,
+    // but not affect buffer_2 and its related excerpts.
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.text(cx),
-            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\naaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n"
         );
     });
     buffer_1.update(cx, |buffer, _| {
@@ -9238,7 +9248,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     buffer_2.update(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
-            "aaaa\nbbbb\ncccc\n\nffff\ngggg\n\njjjj\nllll\nmmmm\nnnnn\n\nqqqq\nrrrr\n\nuuuu"
+            "XlllXmmmX\nnnXn\noXoo\nXpppXqqqX\nrrXr\nsXss\nXtttXuuuX"
         );
     });
 }
