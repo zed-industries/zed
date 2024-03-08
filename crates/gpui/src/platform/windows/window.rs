@@ -1,6 +1,4 @@
 #![deny(unsafe_op_in_unsafe_fn)]
-// todo(windows): remove
-#![allow(unused_variables)]
 
 use std::{
     any::Any,
@@ -14,6 +12,7 @@ use std::{
     sync::{Arc, Once},
 };
 
+use ::util::ResultExt;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -28,6 +27,7 @@ use windows::{
         System::{Com::*, Ole::*, SystemServices::*},
         UI::{
             Controls::*,
+            HiDpi::*,
             Input::{Ime::*, KeyboardAndMouse::*},
             Shell::*,
             WindowsAndMessaging::*,
@@ -48,6 +48,7 @@ pub(crate) struct WindowsWindowInner {
     callbacks: RefCell<Callbacks>,
     platform_inner: Rc<WindowsPlatformInner>,
     handle: AnyWindowHandle,
+    scale_factor: f32,
 }
 
 impl WindowsWindowInner {
@@ -110,7 +111,46 @@ impl WindowsWindowInner {
             callbacks,
             platform_inner,
             handle,
+            scale_factor: 1.0,
         }
+    }
+
+    fn is_maximized(&self) -> bool {
+        let mut placement = WINDOWPLACEMENT::default();
+        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+        if unsafe { GetWindowPlacement(self.hwnd, &mut placement) }.is_ok() {
+            return placement.showCmd == SW_SHOWMAXIMIZED.0 as u32;
+        }
+        return false;
+    }
+
+    fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
+        let top_and_bottom_borders = 2;
+        let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
+        let title_bar_size = unsafe {
+            GetThemePartSize(
+                theme,
+                HDC::default(),
+                WP_CAPTION.0,
+                CS_ACTIVE.0,
+                None,
+                TS_TRUE,
+            )
+        }?;
+        unsafe { CloseThemeData(theme) }?;
+
+        let mut height =
+            (title_bar_size.cy as f32 * self.scale_factor).round() as i32 + top_and_bottom_borders;
+
+        if self.is_maximized() {
+            let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+            height += unsafe { (GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2) as i32 };
+        }
+
+        let mut rect = RECT::default();
+        unsafe { GetClientRect(self.hwnd, &mut rect) }?;
+        rect.bottom = rect.top + height;
+        Ok(rect)
     }
 
     fn is_virtual_key_pressed(&self, vkey: VIRTUAL_KEY) -> bool {
@@ -136,12 +176,30 @@ impl WindowsWindowInner {
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
+            WM_ACTIVATE => self.handle_activate_msg(msg, wparam, lparam),
+            WM_CREATE => self.handle_create_msg(lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
+            WM_NCCALCSIZE => self.handle_calc_client_size(msg, wparam, lparam),
+            WM_DPICHANGED => self.handle_dpi_changed_msg(msg, wparam, lparam),
+            WM_NCHITTEST => self.handle_hit_test_msg(msg, wparam, lparam),
             WM_PAINT => self.handle_paint_msg(),
             WM_CLOSE => self.handle_close_msg(msg, wparam, lparam),
             WM_DESTROY => self.handle_destroy_msg(),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(lparam, wparam),
+            WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(msg, wparam, lparam),
+            WM_NCLBUTTONDOWN => {
+                self.handle_nc_mouse_down_msg(MouseButton::Left, msg, wparam, lparam)
+            }
+            WM_NCRBUTTONDOWN => {
+                self.handle_nc_mouse_down_msg(MouseButton::Right, msg, wparam, lparam)
+            }
+            WM_NCMBUTTONDOWN => {
+                self.handle_nc_mouse_down_msg(MouseButton::Middle, msg, wparam, lparam)
+            }
+            WM_NCLBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Left, msg, wparam, lparam),
+            WM_NCRBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Right, msg, wparam, lparam),
+            WM_NCMBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Middle, msg, wparam, lparam),
             WM_LBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Left, lparam),
             WM_RBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Right, lparam),
             WM_MBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Middle, lparam),
@@ -224,7 +282,7 @@ impl WindowsWindowInner {
 
     fn handle_paint_msg(&self) -> LRESULT {
         let mut paint_struct = PAINTSTRUCT::default();
-        let hdc = unsafe { BeginPaint(self.hwnd, &mut paint_struct) };
+        let _hdc = unsafe { BeginPaint(self.hwnd, &mut paint_struct) };
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(request_frame) = callbacks.request_frame.as_mut() {
             request_frame();
@@ -291,7 +349,7 @@ impl WindowsWindowInner {
                 pressed_button,
                 modifiers: self.current_modifiers(),
             };
-            if callback(PlatformInput::MouseMove(event)) {
+            if callback(PlatformInput::MouseMove(event)).default_prevented {
                 return LRESULT(0);
             }
         }
@@ -417,7 +475,7 @@ impl WindowsWindowInner {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         };
-        if func(PlatformInput::KeyDown(event)) {
+        if func(PlatformInput::KeyDown(event)).default_prevented {
             self.invalidate_client_area();
             return LRESULT(0);
         }
@@ -434,14 +492,14 @@ impl WindowsWindowInner {
             return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
         };
         let event = KeyUpEvent { keystroke };
-        if func(PlatformInput::KeyUp(event)) {
+        if func(PlatformInput::KeyUp(event)).default_prevented {
             self.invalidate_client_area();
             return LRESULT(0);
         }
         unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) }
     }
 
-    fn handle_keydown_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    fn handle_keydown_msg(&self, _msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let Some(keystroke) = self.parse_keydown_msg_keystroke(wparam) else {
             return LRESULT(1);
         };
@@ -452,14 +510,14 @@ impl WindowsWindowInner {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         };
-        if func(PlatformInput::KeyDown(event)) {
+        if func(PlatformInput::KeyDown(event)).default_prevented {
             self.invalidate_client_area();
             return LRESULT(0);
         }
         LRESULT(1)
     }
 
-    fn handle_keyup_msg(&self, message: u32, wparam: WPARAM) -> LRESULT {
+    fn handle_keyup_msg(&self, _msg: u32, wparam: WPARAM) -> LRESULT {
         let Some(keystroke) = self.parse_keydown_msg_keystroke(wparam) else {
             return LRESULT(1);
         };
@@ -467,14 +525,14 @@ impl WindowsWindowInner {
             return LRESULT(1);
         };
         let event = KeyUpEvent { keystroke };
-        if func(PlatformInput::KeyUp(event)) {
+        if func(PlatformInput::KeyUp(event)).default_prevented {
             self.invalidate_client_area();
             return LRESULT(0);
         }
         LRESULT(1)
     }
 
-    fn handle_char_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    fn handle_char_msg(&self, _msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let Some(keystroke) = self.parse_char_msg_keystroke(wparam) else {
             return LRESULT(1);
         };
@@ -487,7 +545,7 @@ impl WindowsWindowInner {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         };
-        if func(PlatformInput::KeyDown(event)) {
+        if func(PlatformInput::KeyDown(event)).default_prevented {
             self.invalidate_client_area();
             return LRESULT(0);
         }
@@ -515,7 +573,7 @@ impl WindowsWindowInner {
                 modifiers: self.current_modifiers(),
                 click_count: 1,
             };
-            if callback(PlatformInput::MouseDown(event)) {
+            if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return LRESULT(0);
             }
         }
@@ -533,7 +591,7 @@ impl WindowsWindowInner {
                 modifiers: self.current_modifiers(),
                 click_count: 1,
             };
-            if callback(PlatformInput::MouseUp(event)) {
+            if callback(PlatformInput::MouseUp(event)).default_prevented {
                 return LRESULT(0);
             }
         }
@@ -578,7 +636,7 @@ impl WindowsWindowInner {
                 modifiers: self.current_modifiers(),
                 touch_phase: TouchPhase::Moved,
             };
-            if callback(PlatformInput::ScrollWheel(event)) {
+            if callback(PlatformInput::ScrollWheel(event)).default_prevented {
                 return LRESULT(0);
             }
         }
@@ -685,12 +743,237 @@ impl WindowsWindowInner {
         };
         func(input);
     }
+
+    /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
+    fn handle_calc_client_size(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if wparam.0 == 0 {
+            return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        }
+
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+
+        let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, dpi) };
+        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+
+        // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
+        let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+        let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
+
+        requested_client_rect[0].right -= frame_x + padding;
+        requested_client_rect[0].left += frame_x + padding;
+        requested_client_rect[0].bottom -= frame_y + padding;
+
+        LRESULT(0)
+    }
+
+    fn handle_activate_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
+            unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
+        }
+        return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+    }
+
+    fn handle_create_msg(&self, _lparam: LPARAM) -> LRESULT {
+        let mut size_rect = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut size_rect).log_err() };
+        let width = size_rect.right - size_rect.left;
+        let height = size_rect.bottom - size_rect.top;
+
+        self.size.set(Size {
+            width: GlobalPixels::from(width as f64),
+            height: GlobalPixels::from(height as f64),
+        });
+
+        // Inform the application of the frame change to force redrawing with the new
+        // client area that is extended into the title bar
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                HWND::default(),
+                size_rect.left,
+                size_rect.top,
+                width,
+                height,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+            )
+            .log_err()
+        };
+        LRESULT(0)
+    }
+
+    fn handle_dpi_changed_msg(&self, _msg: u32, _wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
+        LRESULT(1)
+    }
+
+    fn handle_hit_test_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        // default handler for resize areas
+        let hit = unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        if matches!(
+            hit.0 as u32,
+            HTNOWHERE
+                | HTRIGHT
+                | HTLEFT
+                | HTTOPLEFT
+                | HTTOP
+                | HTTOPRIGHT
+                | HTBOTTOMRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+        ) {
+            return hit;
+        }
+
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+
+        let mut cursor_point = POINT {
+            x: lparam.signed_loword().into(),
+            y: lparam.signed_hiword().into(),
+        };
+        unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
+        if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
+            return LRESULT(HTTOP as _);
+        }
+
+        let titlebar_rect = self.get_titlebar_rect();
+        if let Ok(titlebar_rect) = titlebar_rect {
+            if cursor_point.y < titlebar_rect.bottom {
+                let caption_btn_width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, dpi) };
+                if cursor_point.x >= titlebar_rect.right - caption_btn_width {
+                    return LRESULT(HTCLOSE as _);
+                } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
+                    return LRESULT(HTMAXBUTTON as _);
+                } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 3 {
+                    return LRESULT(HTMINBUTTON as _);
+                }
+
+                return LRESULT(HTCAPTION as _);
+            }
+        }
+
+        LRESULT(HTCLIENT as _)
+    }
+
+    fn handle_nc_mouse_move_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let mut cursor_point = POINT {
+            x: lparam.signed_loword().into(),
+            y: lparam.signed_hiword().into(),
+        };
+        unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
+        let x = Pixels::from(cursor_point.x as f32);
+        let y = Pixels::from(cursor_point.y as f32);
+        self.mouse_position.set(Point { x, y });
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(callback) = callbacks.input.as_mut() {
+            let event = MouseMoveEvent {
+                position: Point { x, y },
+                pressed_button: None,
+                modifiers: self.current_modifiers(),
+            };
+            if callback(PlatformInput::MouseMove(event)).default_prevented {
+                return LRESULT(0);
+            }
+        }
+        drop(callbacks);
+        unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
+    }
+
+    fn handle_nc_mouse_down_msg(
+        &self,
+        button: MouseButton,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(callback) = callbacks.input.as_mut() {
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
+            let x = Pixels::from(cursor_point.x as f32);
+            let y = Pixels::from(cursor_point.y as f32);
+            let event = MouseDownEvent {
+                button: button.clone(),
+                position: Point { x, y },
+                modifiers: self.current_modifiers(),
+                click_count: 1,
+            };
+            if callback(PlatformInput::MouseDown(event)).default_prevented {
+                return LRESULT(0);
+            }
+        }
+        drop(callbacks);
+
+        match wparam.0 as u32 {
+            // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
+            HTMINBUTTON | HTMAXBUTTON | HTCLOSE => LRESULT(0),
+            _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
+        }
+    }
+
+    fn handle_nc_mouse_up_msg(
+        &self,
+        button: MouseButton,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(callback) = callbacks.input.as_mut() {
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
+            let x = Pixels::from(cursor_point.x as f32);
+            let y = Pixels::from(cursor_point.y as f32);
+            let event = MouseUpEvent {
+                button,
+                position: Point { x, y },
+                modifiers: self.current_modifiers(),
+                click_count: 1,
+            };
+            if callback(PlatformInput::MouseUp(event)).default_prevented {
+                return LRESULT(0);
+            }
+        }
+        drop(callbacks);
+
+        if button == MouseButton::Left {
+            match wparam.0 as u32 {
+                HTMINBUTTON => unsafe {
+                    ShowWindowAsync(self.hwnd, SW_MINIMIZE);
+                    return LRESULT(0);
+                },
+                HTMAXBUTTON => unsafe {
+                    if self.is_maximized() {
+                        ShowWindowAsync(self.hwnd, SW_NORMAL);
+                    } else {
+                        ShowWindowAsync(self.hwnd, SW_MAXIMIZE);
+                    }
+                    return LRESULT(0);
+                },
+                HTCLOSE => unsafe {
+                    PostMessageW(self.hwnd, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                        .log_err();
+                    return LRESULT(0);
+                },
+                _ => {}
+            };
+        }
+
+        unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
+    }
 }
 
 #[derive(Default)]
 struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
-    input: Option<Box<dyn FnMut(crate::PlatformInput) -> bool>>,
+    input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen: Option<Box<dyn FnMut(bool)>>,
@@ -718,7 +1001,6 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Self {
-        let dwexstyle = WINDOW_EX_STYLE::default();
         let classname = register_wnd_class();
         let windowname = HSTRING::from(
             options
@@ -728,7 +1010,7 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let dwstyle = WS_OVERLAPPEDWINDOW & !WS_VISIBLE;
+        let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
         let x = options.bounds.origin.x.0 as i32;
         let y = options.bounds.origin.y.0 as i32;
         let nwidth = options.bounds.size.width.0 as i32;
@@ -744,7 +1026,7 @@ impl WindowsWindow {
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
             CreateWindowExW(
-                dwexstyle,
+                WS_EX_APPWINDOW,
                 classname,
                 &windowname,
                 dwstyle,
@@ -785,7 +1067,7 @@ impl WindowsWindow {
     }
 
     fn maximize(&self) {
-        unsafe { ShowWindow(self.inner.hwnd, SW_MAXIMIZE) };
+        unsafe { ShowWindowAsync(self.inner.hwnd, SW_MAXIMIZE) };
     }
 }
 
@@ -826,6 +1108,10 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
+    fn is_maximized(&self) -> bool {
+        self.inner.is_maximized()
+    }
+
     // todo(windows)
     fn content_size(&self) -> Size<Pixels> {
         let size = self.inner.size.get();
@@ -837,12 +1123,12 @@ impl PlatformWindow for WindowsWindow {
 
     // todo(windows)
     fn scale_factor(&self) -> f32 {
-        1.0
+        self.inner.scale_factor
     }
 
-    // todo(windows)
     fn titlebar_height(&self) -> Pixels {
-        20.0.into()
+        let titlebar_rect = self.inner.get_titlebar_rect().unwrap();
+        ((titlebar_rect.bottom - titlebar_rect.top) as f64).into()
     }
 
     // todo(windows)
@@ -952,8 +1238,9 @@ impl PlatformWindow for WindowsWindow {
         Some(done_rx)
     }
 
-    // todo(windows)
-    fn activate(&self) {}
+    fn activate(&self) {
+        unsafe { ShowWindowAsync(self.inner.hwnd, SW_NORMAL) };
+    }
 
     // todo(windows)
     fn set_title(&mut self, title: &str) {
@@ -963,16 +1250,18 @@ impl PlatformWindow for WindowsWindow {
     }
 
     // todo(windows)
-    fn set_edited(&mut self, edited: bool) {}
+    fn set_edited(&mut self, _edited: bool) {}
 
     // todo(windows)
     fn show_character_palette(&self) {}
 
-    // todo(windows)
-    fn minimize(&self) {}
+    fn minimize(&self) {
+        unsafe { ShowWindowAsync(self.inner.hwnd, SW_MINIMIZE) };
+    }
 
-    // todo(windows)
-    fn zoom(&self) {}
+    fn zoom(&self) {
+        unsafe { ShowWindowAsync(self.inner.hwnd, SW_MAXIMIZE) };
+    }
 
     // todo(windows)
     fn toggle_fullscreen(&self) {}
@@ -988,7 +1277,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     // todo(windows)
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
         self.inner.callbacks.borrow_mut().input = Some(callback);
     }
 
@@ -1028,7 +1317,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     // todo(windows)
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
+    fn is_topmost_for_position(&self, _position: Point<Pixels>) -> bool {
         true
     }
 
@@ -1046,6 +1335,7 @@ impl PlatformWindow for WindowsWindow {
 #[implement(IDropTarget)]
 struct WindowsDragDropHandler(pub Rc<WindowsWindowInner>);
 
+#[allow(non_snake_case)]
 impl IDropTarget_Impl for WindowsDragDropHandler {
     fn DragEnter(
         &self,
@@ -1159,6 +1449,7 @@ fn register_wnd_class() -> PCWSTR {
             lpfnWndProc: Some(wnd_proc),
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
+            style: CS_HREDRAW | CS_VREDRAW,
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };
@@ -1213,28 +1504,6 @@ pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowInner>>
         inner.upgrade()
     } else {
         None
-    }
-}
-
-unsafe fn get_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX) -> isize {
-    #[cfg(target_pointer_width = "64")]
-    unsafe {
-        GetWindowLongPtrW(hwnd, nindex)
-    }
-    #[cfg(target_pointer_width = "32")]
-    unsafe {
-        GetWindowLongW(hwnd, nindex) as isize
-    }
-}
-
-unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: isize) -> isize {
-    #[cfg(target_pointer_width = "64")]
-    unsafe {
-        SetWindowLongPtrW(hwnd, nindex, dwnewlong)
-    }
-    #[cfg(target_pointer_width = "32")]
-    unsafe {
-        SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
     }
 }
 
