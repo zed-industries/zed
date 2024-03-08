@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 pub use language::*;
 use log::warn;
-use lsp::{CodeActionKind, LanguageServerBinary};
+use lsp::LanguageServerBinary;
 use smol::fs::{self};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{
@@ -195,17 +195,6 @@ impl LspAdapter for JavaLspAdapter {
         }
 
         None
-    }
-
-    // TODO: code actions don't work
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        Some(vec![
-            CodeActionKind::EMPTY,
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::REFACTOR,
-            CodeActionKind::REFACTOR_EXTRACT,
-            CodeActionKind::SOURCE,
-        ])
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
