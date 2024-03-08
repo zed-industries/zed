@@ -1,0 +1,5 @@
+name = "Comment"
+grammar = "comment"
+path_suffixes = []
+line_comments = []
+brackets = []

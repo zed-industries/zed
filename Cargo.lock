@@ -5289,6 +5289,7 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-c-sharp",
  "tree-sitter-clojure",
+ "tree-sitter-comment",
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-dart",
@@ -10416,6 +10417,15 @@ dependencies = [
 name = "tree-sitter-clojure"
 version = "0.0.9"
 source = "git+https://github.com/prcastro/tree-sitter-clojure?branch=update-ts#38b4f8d264248b2fd09575fbce66f7c22e8929d5"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-comment"
+version = "0.1.0"
+source = "git+https://github.com/stsewd/tree-sitter-comment#aefcc2813392eb6ffe509aa0fc8b4e9b57413ee1"
 dependencies = [
  "cc",
  "tree-sitter",

@@ -76,6 +76,7 @@ pub fn init(
         ("dockerfile", tree_sitter_dockerfile::language()),
         ("elixir", tree_sitter_elixir::language()),
         ("elm", tree_sitter_elm::language()),
+        ("comment", tree_sitter_comment::language()),
         (
             "embedded_template",
             tree_sitter_embedded_template::language(),
@@ -168,6 +169,7 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
     );
+    language!("comment");
     language!("bash");
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
