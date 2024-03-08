@@ -45,7 +45,9 @@ pub fn init(cx: &mut AppContext) {
                         let extension_path = prompt.await.log_err()??.pop()?;
                         store
                             .update(&mut cx, |store, cx| {
-                                store.install_dev_extension(extension_path, cx);
+                                store
+                                    .install_dev_extension(extension_path, cx)
+                                    .detach_and_log_err(cx)
                             })
                             .ok()?;
                         Some(())
@@ -93,9 +95,8 @@ impl ExtensionsPage {
             let subscriptions = [
                 cx.observe(&store, |_, _, cx| cx.notify()),
                 cx.subscribe(&store, |this, _, event, cx| match event {
-                    extension::Event::ExtensionsUpdated => {
-                        this.fetch_extensions_debounced(cx);
-                    }
+                    extension::Event::ExtensionsUpdated => this.fetch_extensions_debounced(cx),
+                    _ => {}
                 }),
             ];
 

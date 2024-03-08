@@ -1,11 +1,10 @@
 use crate::{
-    build_extension::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionIndexThemeEntry,
     ExtensionManifest, ExtensionStore, GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use fs::{FakeFs, Fs};
+use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, TestAppContext};
 use language::{
@@ -13,6 +12,7 @@ use language::{
     LanguageServerName,
 };
 use node_runtime::FakeNodeRuntime;
+use parking_lot::Mutex;
 use project::Project;
 use serde_json::json;
 use settings::SettingsStore;
@@ -22,7 +22,18 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::http::{self, FakeHttpClient, Response};
+use util::{
+    http::{FakeHttpClient, Response},
+    test::temp_tree,
+};
+
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
+}
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
@@ -248,6 +259,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
+            None,
             fs.clone(),
             http_client.clone(),
             node_runtime.clone(),
@@ -335,7 +347,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         },
     );
 
-    let _ = store.update(cx, |store, _| store.reload(None));
+    let _ = store.update(cx, |store, cx| store.reload(None, cx));
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
     store.read_with(cx, |store, _| {
@@ -365,6 +377,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let store = cx.new_model(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
+            None,
             fs.clone(),
             http_client.clone(),
             node_runtime.clone(),
@@ -422,6 +435,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
 
     let root_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -431,32 +445,19 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let cache_dir = root_dir.join("target");
     let gleam_extension_dir = root_dir.join("extensions").join("gleam");
 
-    cx.executor().allow_parking();
-    ExtensionBuilder::new(cache_dir, http::client())
-        .compile_extension(
-            &gleam_extension_dir,
-            CompileExtensionOptions { release: false },
-        )
-        .await
-        .unwrap();
-    cx.executor().forbid_parking();
+    let fs = Arc::new(RealFs);
+    let extensions_dir = temp_tree(json!({
+        "installed": {},
+        "work": {}
+    }));
+    let project_dir = temp_tree(json!({
+        "test.gleam": ""
+    }));
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/the-extension-dir", json!({ "installed": {} }))
-        .await;
-    fs.insert_tree_from_real_fs("/the-extension-dir/installed/gleam", gleam_extension_dir)
-        .await;
+    let extensions_dir = extensions_dir.path().canonicalize().unwrap();
+    let project_dir = project_dir.path().canonicalize().unwrap();
 
-    fs.insert_tree(
-        "/the-project-dir",
-        json!({
-            ".tool-versions": "rust 1.73.0",
-            "test.gleam": ""
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/the-project-dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
@@ -464,55 +465,76 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     let mut status_updates = language_registry.language_server_binary_statuses();
 
-    let http_client = FakeHttpClient::create({
-        move |request| async move {
-            match request.uri().to_string().as_str() {
-                "https://api.github.com/repos/gleam-lang/gleam/releases" => Ok(Response::new(
-                    json!([
-                        {
-                            "tag_name": "v1.2.3",
-                            "prerelease": false,
-                            "tarball_url": "",
-                            "zipball_url": "",
-                            "assets": [
-                                {
-                                    "name": "gleam-v1.2.3-aarch64-apple-darwin.tar.gz",
-                                    "browser_download_url": "http://example.com/the-download"
-                                }
-                            ]
-                        }
-                    ])
-                    .to_string()
-                    .into(),
-                )),
+    struct FakeLanguageServerVersion {
+        version: String,
+        binary_contents: String,
+        http_request_count: usize,
+    }
 
-                "http://example.com/the-download" => {
+    let language_server_version = Arc::new(Mutex::new(FakeLanguageServerVersion {
+        version: "v1.2.3".into(),
+        binary_contents: "the-binary-contents".into(),
+        http_request_count: 0,
+    }));
+
+    let http_client = FakeHttpClient::create({
+        let language_server_version = language_server_version.clone();
+        move |request| {
+            let language_server_version = language_server_version.clone();
+            async move {
+                language_server_version.lock().http_request_count += 1;
+                let version = language_server_version.lock().version.clone();
+                let binary_contents = language_server_version.lock().binary_contents.clone();
+
+                let github_releases_uri = "https://api.github.com/repos/gleam-lang/gleam/releases";
+                let asset_download_uri =
+                    format!("https://fake-download.example.com/gleam-{version}");
+
+                let uri = request.uri().to_string();
+                if uri == github_releases_uri {
+                    Ok(Response::new(
+                        json!([
+                            {
+                                "tag_name": version,
+                                "prerelease": false,
+                                "tarball_url": "",
+                                "zipball_url": "",
+                                "assets": [
+                                    {
+                                        "name": format!("gleam-{version}-aarch64-apple-darwin.tar.gz"),
+                                        "browser_download_url": asset_download_uri
+                                    }
+                                ]
+                            }
+                        ])
+                        .to_string()
+                        .into(),
+                    ))
+                } else if uri == asset_download_uri {
                     let mut bytes = Vec::<u8>::new();
                     let mut archive = async_tar::Builder::new(&mut bytes);
                     let mut header = async_tar::Header::new_gnu();
-                    let content = "the-gleam-binary-contents".as_bytes();
-                    header.set_size(content.len() as u64);
+                    header.set_size(binary_contents.len() as u64);
                     archive
-                        .append_data(&mut header, "gleam", content)
+                        .append_data(&mut header, "gleam", binary_contents.as_bytes())
                         .await
                         .unwrap();
                     archive.into_inner().await.unwrap();
-
                     let mut gzipped_bytes = Vec::new();
                     let mut encoder = GzipEncoder::new(BufReader::new(bytes.as_slice()));
                     encoder.read_to_end(&mut gzipped_bytes).await.unwrap();
-
                     Ok(Response::new(gzipped_bytes.into()))
+                } else {
+                    Ok(Response::builder().status(404).body("not found".into())?)
                 }
-
-                _ => Ok(Response::builder().status(404).body("not found".into())?),
             }
         }
     });
 
-    let _store = cx.new_model(|cx| {
+    let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(
-            PathBuf::from("/the-extension-dir"),
+            extensions_dir.clone(),
+            Some(cache_dir),
             fs.clone(),
             http_client.clone(),
             node_runtime,
@@ -522,17 +544,35 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         )
     });
 
-    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
+    // Ensure that debounces fire.
+    let mut events = cx.events(&extension_store);
+    let executor = cx.executor();
+    let _task = cx.executor().spawn(async move {
+        while let Some(event) = events.next().await {
+            match event {
+                crate::Event::StartedReloading => {
+                    executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
+                }
+                _ => (),
+            }
+        }
+    });
+
+    extension_store
+        .update(cx, |store, cx| {
+            store.install_dev_extension(gleam_extension_dir.clone(), cx)
+        })
+        .await
+        .unwrap();
 
     let mut fake_servers = language_registry.fake_language_servers("Gleam");
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-project-dir/test.gleam", cx)
+            project.open_local_buffer(project_dir.join("test.gleam"), cx)
         })
         .await
         .unwrap();
-
     project.update(cx, |project, cx| {
         project.set_language_for_buffer(
             &buffer,
@@ -548,20 +588,16 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     });
 
     let fake_server = fake_servers.next().await.unwrap();
+    let expected_server_path = extensions_dir.join("work/gleam/gleam-v1.2.3/gleam");
+    let expected_binary_contents = language_server_version.lock().binary_contents.clone();
 
-    assert_eq!(
-        fs.load("/the-extension-dir/work/gleam/gleam-v1.2.3/gleam".as_ref())
-            .await
-            .unwrap(),
-        "the-gleam-binary-contents"
-    );
-
-    assert_eq!(
-        fake_server.binary.path,
-        PathBuf::from("/the-extension-dir/work/gleam/gleam-v1.2.3/gleam")
-    );
+    assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
-
+    assert_eq!(
+        fs.load(&expected_server_path).await.unwrap(),
+        expected_binary_contents
+    );
+    assert_eq!(language_server_version.lock().http_request_count, 2);
     assert_eq!(
         [
             status_updates.next().await.unwrap(),
@@ -583,6 +619,51 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             )
         ]
     );
+
+    // Simulate a new version of the language server being released
+    language_server_version.lock().version = "v2.0.0".into();
+    language_server_version.lock().binary_contents = "the-new-binary-contents".into();
+    language_server_version.lock().http_request_count = 0;
+
+    // Start a new instance of the language server.
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx)
+    });
+
+    // The extension has cached the binary path, and does not attempt
+    // to reinstall it.
+    let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(fake_server.binary.path, expected_server_path);
+    assert_eq!(
+        fs.load(&expected_server_path).await.unwrap(),
+        expected_binary_contents
+    );
+    assert_eq!(language_server_version.lock().http_request_count, 0);
+
+    // Reload the extension, clearing its cache.
+    // Start a new instance of the language server.
+    extension_store
+        .update(cx, |store, cx| store.reload(Some("gleam".into()), cx))
+        .await;
+
+    cx.executor().run_until_parked();
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx)
+    });
+
+    // The extension re-fetches the latest version of the language server.
+    let fake_server = fake_servers.next().await.unwrap();
+    let new_expected_server_path = extensions_dir.join("work/gleam/gleam-v2.0.0/gleam");
+    let expected_binary_contents = language_server_version.lock().binary_contents.clone();
+    assert_eq!(fake_server.binary.path, new_expected_server_path);
+    assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
+    assert_eq!(
+        fs.load(&new_expected_server_path).await.unwrap(),
+        expected_binary_contents
+    );
+
+    // The old language server directory has been cleaned up.
+    assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
 }
 
 fn init_test(cx: &mut TestAppContext) {

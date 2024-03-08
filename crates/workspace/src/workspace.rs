@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, HostedProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -4462,7 +4462,7 @@ pub fn create_and_open_local_file(
 }
 
 pub fn join_hosted_project(
-    hosted_project_id: HostedProjectId,
+    hosted_project_id: ProjectId,
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {

@@ -50,6 +50,12 @@ pub enum Relation {
     Collaborators,
     #[sea_orm(has_many = "super::language_server::Entity")]
     LanguageServers,
+    #[sea_orm(
+        belongs_to = "super::hosted_project::Entity",
+        from = "Column::HostedProjectId",
+        to = "super::hosted_project::Column::Id"
+    )]
+    HostedProject,
 }
 
 impl Related<super::user::Entity> for Entity {
@@ -79,6 +85,12 @@ impl Related<super::project_collaborator::Entity> for Entity {
 impl Related<super::language_server::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::LanguageServers.def()
+    }
+}
+
+impl Related<super::hosted_project::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::HostedProject.def()
     }
 }
 
