@@ -1493,10 +1493,20 @@ impl<'a> WindowContext<'a> {
             })
             .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
 
-        self.window
+        let mut actions = self
+            .window
             .rendered_frame
             .dispatch_tree
-            .available_actions(node_id)
+            .available_actions(node_id);
+        for action_type in self.global_action_listeners.keys() {
+            if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
+                let action = self.actions.build_action_type(action_type).ok();
+                if let Some(action) = action {
+                    actions.insert(ix, action);
+                }
+            }
+        }
+        actions
     }
 
     /// Returns key bindings that invoke the given action on the currently focused element.
