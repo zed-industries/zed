@@ -24,7 +24,7 @@ use windows::{
     core::{IUnknown, HRESULT, HSTRING, PCWSTR, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
-        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE, WAIT_OBJECT_0, WPARAM},
+        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE, WAIT_OBJECT_0},
         Graphics::{
             DirectComposition::DCompositionWaitForCompositorClock,
             Gdi::{RedrawWindow, HRGN, RDW_INVALIDATE, RDW_UPDATENOW},
@@ -32,9 +32,7 @@ use windows::{
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
-            Ole::{OleInitialize, OleUninitialize},
             Threading::{CreateEventW, GetCurrentThreadId, SetEvent, INFINITE},
-            Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
         UI::{
@@ -46,12 +44,11 @@ use windows::{
             },
             WindowsAndMessaging::{
                 DispatchMessageW, EnumThreadWindows, LoadImageW, MsgWaitForMultipleObjects,
-                PeekMessageW, PostMessageW, PostQuitMessage, PostThreadMessageW, SetCursor,
-                SystemParametersInfoW, TranslateMessage, HCURSOR, HWND_BROADCAST, IDC_ARROW,
-                IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR,
-                LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT, SPI_GETWHEELSCROLLCHARS,
-                SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-                WM_PRINT, WM_QUIT, WM_SETTINGCHANGE,
+                PeekMessageW, PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage,
+                HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
+                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
+                SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
             },
         },
     },
@@ -197,6 +194,19 @@ impl WindowsPlatform {
             runnable.run();
         }
     }
+
+    fn redraw_all(&self) {
+        for handle in self.inner.raw_window_handles.read().iter() {
+            unsafe {
+                RedrawWindow(
+                    *handle,
+                    None,
+                    HRGN::default(),
+                    RDW_INVALIDATE | RDW_UPDATENOW,
+                );
+            }
+        }
+    }
 }
 
 unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -261,22 +271,8 @@ impl Platform for WindowsPlatform {
                 )
             };
             match event.0 - WAIT_OBJECT_0.0 {
-                0 => {
-                    for handle in self.inner.raw_window_handles.read().iter() {
-                        unsafe {
-                            RedrawWindow(
-                                *handle,
-                                None,
-                                HRGN::default(),
-                                RDW_INVALIDATE | RDW_UPDATENOW,
-                            );
-                        }
-                    }
-                }
-                1 => {
-                    println!("Events: {}", self.inner.main_receiver.len());
-                    self.run_foreground_tasks();
-                }
+                0 => self.redraw_all(),
+                1 => self.run_foreground_tasks(),
                 _ => unsafe {
                     let mut msg = MSG::default();
 
@@ -284,30 +280,11 @@ impl Platform for WindowsPlatform {
                         if msg.message == WM_QUIT {
                             break 'a;
                         }
-
-                        // if !self.run_immediate_msg_handlers(&msg) {
                         TranslateMessage(&msg);
                         DispatchMessageW(&msg);
-                        // }
                     }
                 },
             }
-            // unsafe {
-            //     let mut msg = MSG::default();
-
-            //     while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
-            //         if msg.message == WM_QUIT {
-            //             break 'a;
-            //         }
-
-            //         // if !self.run_immediate_msg_handlers(&msg) {
-            //         TranslateMessage(&msg);
-            //         DispatchMessageW(&msg);
-            //         // }
-            //     }
-
-            //     self.run_foreground_tasks();
-            // }
         }
 
         let mut callbacks = self.inner.callbacks.lock();
@@ -723,18 +700,4 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     }
 
     Ok(dialog)
-}
-
-fn send_draw_message(thread_id: u32) {
-    unsafe {
-        EnumThreadWindows(
-            thread_id,
-            Some(send_draw_message_callback),
-            LPARAM::default(),
-        )
-    };
-}
-
-unsafe extern "system" fn send_draw_message_callback(hwnd: HWND, _: LPARAM) -> BOOL {
-    RedrawWindow(hwnd, None, HRGN::default(), RDW_INVALIDATE | RDW_UPDATENOW)
 }
