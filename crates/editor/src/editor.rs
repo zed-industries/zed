@@ -4912,25 +4912,32 @@ impl Editor {
         let mut revert_changes: Vec<(Range<u32>, Arc<str>)> = Vec::new();
 
         self.buffer.update(cx, |multi_buffer, cx| {
-            let snapshot = multi_buffer.snapshot(cx);
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
             let selections = self.selections.disjoint_anchors();
             let selected_buffer_rows = selections.into_iter().filter_map(|selection| {
+                let head = selection.head();
                 let tail = selection.tail();
+                if head.buffer_id != tail.buffer_id {
+                    return None;
+                }
                 let buffer = multi_buffer.buffer(tail.buffer_id?)?;
-                let start = tail.to_point(&snapshot).row;
-                let end = selection.head().to_point(&snapshot).row;
-                let buffer_range = if start > end { end..start } else { start..end };
-                Some((buffer, buffer_range))
+                let start = tail.to_point(&multi_buffer_snapshot).row;
+                let end = head.to_point(&multi_buffer_snapshot).row;
+                let multi_buffer_rows = if start > end { end..start } else { start..end };
+                Some((buffer, multi_buffer_rows))
             });
 
             let mut processed_buffer_rows = HashSet::default();
-            for (buffer, selected_rows) in selected_buffer_rows {
-                let query_rows = selected_rows.start..selected_rows.end + 1;
+            for (buffer, selected_multi_buffer_rows) in selected_buffer_rows {
+                let query_rows =
+                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
                 buffer.update(cx, |buffer, _| {
                     if let Some(diff_base) = buffer.diff_base() {
                         // TODO kb this does not cut off the hunk in the multibuffer:
                         // if excerpt is 1-4 lines long and the hunk is 1-10, we have to do something.
-                        for hunk in snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+                        for hunk in
+                            multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone())
+                        {
                             let Some(original_text) =
                                 diff_base.get(hunk.diff_base_byte_range.clone())
                             else {
@@ -4939,15 +4946,15 @@ impl Editor {
                             // TODO kb comment about selected_rows being exclusive, and `git_diff_hunks_in_range` using inclusive ranges logic
                             let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
                             let related_to_selection = if allow_adjacent {
-                                hunk.buffer_range.overlaps(&query_rows)
-                                    || hunk.buffer_range.start == query_rows.end
-                                    || hunk.buffer_range.end == query_rows.start
+                                hunk.associated_range.overlaps(&query_rows)
+                                    || hunk.associated_range.start == query_rows.end
+                                    || hunk.associated_range.end == query_rows.start
                             } else {
-                                hunk.buffer_range.overlaps(&selected_rows)
-                                    || selected_rows.end == hunk.buffer_range.start
+                                hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                                    || selected_multi_buffer_rows.end == hunk.associated_range.start
                             };
                             if related_to_selection {
-                                for row in hunk.buffer_range.start..hunk.buffer_range.end {
+                                for row in hunk.associated_range.start..hunk.associated_range.end {
                                     if !processed_buffer_rows.insert(row) {
                                         return;
                                     }
@@ -4957,12 +4964,14 @@ impl Editor {
                                     probe
                                         .0
                                         .start
-                                        .cmp(&hunk.buffer_range.start)
-                                        .then(probe.0.end.cmp(&hunk.buffer_range.end))
+                                        .cmp(&hunk.associated_range.start)
+                                        .then(probe.0.end.cmp(&hunk.associated_range.end))
                                         .then(probe.1.as_ref().cmp(original_text))
                                 }) {
-                                    revert_changes
-                                        .insert(i, (hunk.buffer_range, Arc::from(original_text)));
+                                    revert_changes.insert(
+                                        i,
+                                        (hunk.associated_range, Arc::from(original_text)),
+                                    );
                                 }
                             }
                         }

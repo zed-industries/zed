@@ -3186,19 +3186,20 @@ impl MultiBufferSnapshot {
                 .map(move |hunk| {
                     let start = multibuffer_start.row
                         + hunk
-                            .buffer_range
+                            .associated_range
                             .start
                             .saturating_sub(excerpt_start_point.row);
                     let end = multibuffer_start.row
                         + hunk
-                            .buffer_range
+                            .associated_range
                             .end
                             .min(excerpt_end_point.row + 1)
                             .saturating_sub(excerpt_start_point.row);
 
                     DiffHunk {
-                        buffer_range: start..end,
+                        associated_range: start..end,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                        buffer_range: hunk.buffer_range.clone(),
                     }
                 });
 
@@ -3257,18 +3258,22 @@ impl MultiBufferSnapshot {
                         0..1
                     } else {
                         let start = multibuffer_start.row
-                            + hunk.buffer_range.start.saturating_sub(excerpt_rows.start);
+                            + hunk
+                                .associated_range
+                                .start
+                                .saturating_sub(excerpt_rows.start);
                         let end = multibuffer_start.row
                             + hunk
-                                .buffer_range
+                                .associated_range
                                 .end
                                 .min(excerpt_rows.end + 1)
                                 .saturating_sub(excerpt_rows.start);
                         start..end
                     };
                     DiffHunk {
-                        buffer_range,
+                        associated_range: buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                        buffer_range: hunk.buffer_range.clone(),
                     }
                 });
 

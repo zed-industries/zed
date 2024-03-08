@@ -9435,7 +9435,7 @@ fn assert_hunk_revert(
     });
     cx.executor().run_until_parked();
 
-    cx.update_editor(|editor, cx| {
+    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
         let snapshot = editor
             .buffer()
             .read(cx)
@@ -9447,10 +9447,11 @@ fn assert_hunk_revert(
             .git_diff_hunks_in_row_range(0..u32::MAX)
             .map(|hunk| hunk.status())
             .collect::<Vec<_>>();
-        assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+        reverted_hunk_statuses
     });
     cx.executor().run_until_parked();
     cx.assert_editor_state(expected_reverted_text_with_selections);
+    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 }
