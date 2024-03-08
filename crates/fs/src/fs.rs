@@ -381,9 +381,10 @@ impl Fs for RealFs {
             .configure(Config::default().with_poll_interval(latency))
             .unwrap();
 
-        watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .unwrap();
+        match watcher.watch(path, notify::RecursiveMode::Recursive) {
+            Ok(_) => {}
+            Err(err) => log::error!("watch error: {}", err),
+        };
 
         Box::pin(rx)
     }
