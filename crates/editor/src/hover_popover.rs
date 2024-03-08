@@ -504,9 +504,10 @@ impl InfoPopover {
             .overflow_y_scroll()
             .max_w(max_size.width)
             .max_h(max_size.height)
-            // Prevent a mouse move on the popover from being propagated to the editor,
+            // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,
@@ -568,6 +569,7 @@ impl DiagnosticPopover {
 
         div()
             .id("diagnostic")
+            .block()
             .elevation_2(cx)
             .overflow_y_scroll()
             .px_2()

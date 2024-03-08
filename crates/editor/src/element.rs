@@ -1871,98 +1871,95 @@ impl EditorElement {
         }
     }
 
-    fn paint_overlays(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
-        // todo!("overlays");
-        // let start_row = layout.visible_display_row_range.start;
-        // if let Some((position, mut context_menu)) = layout.context_menu.take() {
-        //     let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-        //     let context_menu_size = context_menu.measure(available_space, cx);
+    fn layout_hover_popovers(
+        &self,
+        snapshot: &EditorSnapshot,
+        hitbox: &Hitbox,
+        text_hitbox: &Hitbox,
+        visible_display_row_range: Range<u32>,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        em_width: Pixels,
+        cx: &mut ElementContext,
+    ) {
+        let max_size = size(
+            (120. * em_width) // Default size
+                .min(hitbox.size.width / 2.) // Shrink to half of the editor width
+                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+            (16. * line_height) // Default size
+                .min(hitbox.size.height / 2.) // Shrink to half of the editor height
+                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+        );
 
-        //     let cursor_row_layout =
-        //         &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
-        //     let x = cursor_row_layout.x_for_index(position.column() as usize)
-        //         - layout.position_map.scroll_position.x;
-        //     let y = (position.row() + 1) as f32 * layout.position_map.line_height
-        //         - layout.position_map.scroll_position.y;
-        //     let mut list_origin = content_origin + point(x, y);
-        //     let list_width = context_menu_size.width;
-        //     let list_height = context_menu_size.height;
+        let hover_popovers = self.editor.update(cx, |editor, cx| {
+            editor.hover_state.render(
+                &snapshot,
+                &self.style,
+                visible_display_row_range.clone(),
+                max_size,
+                editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            )
+        });
+        let Some((position, mut hover_popovers)) = hover_popovers else {
+            return;
+        };
 
-        //     // Snap the right edge of the list to the right edge of the window if
-        //     // its horizontal bounds overflow.
-        //     if list_origin.x + list_width > cx.viewport_size().width {
-        //         list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
-        //     }
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-        //     if list_origin.y + list_height > text_bounds.lower_right().y {
-        //         list_origin.y -= layout.position_map.line_height + list_height;
-        //     }
+        // This is safe because we check on layout whether the required row is available
+        let hovered_row_layout =
+            &line_layouts[(position.row() - visible_display_row_range.start) as usize].line;
 
-        //     cx.break_content_mask(|cx| context_menu.draw(list_origin, available_space, cx));
-        // }
+        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
+        // height. This is the size we will use to decide whether to render popovers above or below
+        // the hovered line.
+        let first_size = hover_popovers[0].measure(available_space, cx);
+        let height_to_reserve = first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * line_height;
 
-        // if let Some((position, mut hover_popovers)) = layout.hover_popovers.take() {
-        //     let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+        // Compute Hovered Point
+        let x =
+            hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
+        let y = position.row() as f32 * line_height - scroll_pixel_position.y;
+        let hovered_point = content_origin + point(x, y);
 
-        //     // This is safe because we check on layout whether the required row is available
-        //     let hovered_row_layout =
-        //         &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
+        if hovered_point.y - height_to_reserve > Pixels::ZERO {
+            // There is enough space above. Render popovers above the hovered point
+            let mut current_y = hovered_point.y;
+            for mut hover_popover in hover_popovers {
+                let size = hover_popover.measure(available_space, cx);
+                let mut popover_origin = point(hovered_point.x, current_y - size.height);
 
-        //     // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-        //     // height. This is the size we will use to decide whether to render popovers above or below
-        //     // the hovered line.
-        //     let first_size = hover_popovers[0].measure(available_space, cx);
-        //     let height_to_reserve =
-        //         first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * layout.position_map.line_height;
+                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
+                if x_out_of_bounds < Pixels::ZERO {
+                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                }
 
-        //     // Compute Hovered Point
-        //     let x = hovered_row_layout.x_for_index(position.column() as usize)
-        //         - layout.position_map.scroll_position.x;
-        //     let y = position.row() as f32 * layout.position_map.line_height
-        //         - layout.position_map.scroll_position.y;
-        //     let hovered_point = content_origin + point(x, y);
+                cx.defer_draw(hover_popover, popover_origin, 2);
 
-        //     if hovered_point.y - height_to_reserve > Pixels::ZERO {
-        //         // There is enough space above. Render popovers above the hovered point
-        //         let mut current_y = hovered_point.y;
-        //         for mut hover_popover in hover_popovers {
-        //             let size = hover_popover.measure(available_space, cx);
-        //             let mut popover_origin = point(hovered_point.x, current_y - size.height);
+                current_y = popover_origin.y - HOVER_POPOVER_GAP;
+            }
+        } else {
+            // There is not enough space above. Render popovers below the hovered point
+            let mut current_y = hovered_point.y + line_height;
+            for mut hover_popover in hover_popovers {
+                let size = hover_popover.measure(available_space, cx);
+                let mut popover_origin = point(hovered_point.x, current_y);
 
-        //             let x_out_of_bounds =
-        //                 text_bounds.upper_right().x - (popover_origin.x + size.width);
-        //             if x_out_of_bounds < Pixels::ZERO {
-        //                 popover_origin.x = popover_origin.x + x_out_of_bounds;
-        //             }
+                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
+                if x_out_of_bounds < Pixels::ZERO {
+                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                }
 
-        //             if cx.was_top_layer(&popover_origin, cx.stacking_order()) {
-        //                 cx.break_content_mask(|cx| {
-        //                     hover_popover.draw(popover_origin, available_space, cx)
-        //                 });
-        //             }
+                cx.defer_draw(hover_popover, popover_origin, 2);
 
-        //             current_y = popover_origin.y - HOVER_POPOVER_GAP;
-        //         }
-        //     } else {
-        //         // There is not enough space above. Render popovers below the hovered point
-        //         let mut current_y = hovered_point.y + layout.position_map.line_height;
-        //         for mut hover_popover in hover_popovers {
-        //             let size = hover_popover.measure(available_space, cx);
-        //             let mut popover_origin = point(hovered_point.x, current_y);
+                current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+            }
+        }
 
-        //             let x_out_of_bounds =
-        //                 text_bounds.upper_right().x - (popover_origin.x + size.width);
-        //             if x_out_of_bounds < Pixels::ZERO {
-        //                 popover_origin.x = popover_origin.x + x_out_of_bounds;
-        //             }
-
-        //             hover_popover.draw(popover_origin, available_space, cx);
-
-        //             current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
-        //         }
-        //     }
-        // }
-
+        // todo!("right click menu")
         // if let Some(mouse_context_menu) = self.editor.read(cx).mouse_context_menu.as_ref() {
         //     let element = overlay()
         //         .position(mouse_context_menu.position)
@@ -3109,27 +3106,19 @@ impl Element for EditorElement {
                     }
                 }
 
-                let visible_rows = start_row..start_row + line_layouts.len() as u32;
-                let max_size = size(
-                    (120. * em_width) // Default size
-                        .min(bounds.size.width / 2.) // Shrink to half of the editor width
-                        .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
-                    (16. * line_height) // Default size
-                        .min(bounds.size.height / 2.) // Shrink to half of the editor height
-                        .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
-                );
-
                 if !context_menu_visible {
-                    // todo!("hover popovers")
-                    // self.layout_hover_state();
-                    // editor.hover_state.render(
-                    //     &snapshot,
-                    //     &style,
-                    //     visible_rows,
-                    //     max_size,
-                    //     editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                    //     cx,
-                    // )
+                    self.layout_hover_popovers(
+                        &snapshot,
+                        &hitbox,
+                        &text_hitbox,
+                        start_row..end_row,
+                        content_origin,
+                        scroll_pixel_position,
+                        &line_layouts,
+                        line_height,
+                        em_width,
+                        cx,
+                    );
                 };
 
                 let fold_indicators = if gutter_settings.folds {
@@ -3261,7 +3250,6 @@ impl Element for EditorElement {
                     });
                 }
 
-                self.paint_overlays(layout, cx);
                 self.paint_scrollbar(layout, cx);
             });
         })

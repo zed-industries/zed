@@ -448,7 +448,7 @@ impl Element for InteractiveText {
                         let hitbox = hitbox.clone();
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
                         cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
+                            if phase == DispatchPhase::Bubble && dbg!(hitbox.is_hovered(cx)) {
                                 if let Some(mouse_up_index) =
                                     text_state.index_for_position(bounds, event.position)
                                 {
@@ -481,22 +481,25 @@ impl Element for InteractiveText {
                     }
                 }
 
-                if let Some(hover_listener) = self.hover_listener.take() {
+                cx.on_mouse_event({
+                    let mut hover_listener = self.hover_listener.take();
                     let hitbox = hitbox.clone();
                     let text_state = text_state.clone();
                     let hovered_index = interactive_state.hovered_index.clone();
-                    cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                    move |event: &MouseMoveEvent, phase, cx| {
                         if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                             let current = hovered_index.get();
                             let updated = text_state.index_for_position(bounds, event.position);
                             if current != updated {
                                 hovered_index.set(updated);
-                                hover_listener(updated, event.clone(), cx);
+                                if let Some(hover_listener) = hover_listener.as_ref() {
+                                    hover_listener(updated, event.clone(), cx);
+                                }
                                 cx.refresh();
                             }
                         }
-                    });
-                }
+                    }
+                });
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let hitbox = hitbox.clone();
