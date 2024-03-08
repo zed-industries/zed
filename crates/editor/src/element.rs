@@ -2893,7 +2893,7 @@ impl Element for EditorElement {
                     .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
                     .collect::<SmallVec<[_; 2]>>();
 
-                let hitbox = cx.insert_hitbox(bounds, true);
+                let hitbox = cx.insert_hitbox(bounds, false);
                 let gutter_hitbox = cx.insert_hitbox(
                     Bounds {
                         origin: bounds.origin,
@@ -3113,7 +3113,7 @@ impl Element for EditorElement {
                     }
                 }
 
-                if !context_menu_visible {
+                if !context_menu_visible && !cx.has_active_drag() {
                     self.layout_hover_popovers(
                         &snapshot,
                         &hitbox,
