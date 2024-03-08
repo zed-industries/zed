@@ -300,9 +300,31 @@ impl ChatPanel {
     fn render_replied_to_message(
         &mut self,
         message_id: Option<ChannelMessageId>,
-        reply_to_message: &ChannelMessage,
+        reply_to_message: &Option<ChannelMessage>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let reply_to_message = match reply_to_message {
+            None => {
+                return div().child(
+                    h_flex()
+                        .text_ui_xs()
+                        .my_0p5()
+                        .px_0p5()
+                        .gap_x_1()
+                        .rounded_md()
+                        .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
+                        .when(reply_to_message.is_none(), |el| {
+                            el.child(
+                                Label::new("Message has been deleted...")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
+            }
+            Some(val) => val,
+        };
+
         let user_being_replied_to = reply_to_message.sender.clone();
 
         let body_element_id: ElementId = match message_id {
@@ -452,7 +474,7 @@ impl ChatPanel {
                     .when(!self.has_open_menu(message_id), |this| {
                         this.hover(|style| style.bg(cx.theme().colors().element_hover))
                     })
-                    .when_some(reply_to_message.clone(), |el, reply_to_message| {
+                    .when(message.reply_to_message_id.is_some(), |el| {
                         el.child(self.render_replied_to_message(
                             Some(message.id),
                             &reply_to_message,
@@ -460,68 +482,50 @@ impl ChatPanel {
                         ))
                         .when(is_continuation_from_previous, |this| this.mt_2())
                     })
-                    .when(!is_continuation_from_previous, |this| {
-                        this.mt_2().child(
-                            h_flex()
-                                .text_ui_sm()
-                                .child(div().absolute().child(
-                                    Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
-                                ))
-                                .child(
-                                    div()
-                                        .pl(cx.rem_size() + px(6.0))
-                                        .pr(px(8.0))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(Label::new(message.sender.github_login.clone())),
-                                )
-                                .child(
-                                    Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
-                                        message.timestamp,
-                                        self.local_timezone,
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                )
-                                .map(|el| {
-                                    el.child(self.render_popover_button(
-                                        &cx,
-                                        message_id,
-                                        can_delete_message,
-                                    ))
-                                }),
-                        )
-                    })
-                    .when(is_continuation_from_previous, |el| {
-                        el.child(self.render_popover_button(&cx, message_id, can_delete_message))
-                    })
                     .when(
-                        message.reply_to_message_id.is_some() && reply_to_message.is_none(),
+                        !is_continuation_from_previous || message.reply_to_message_id.is_some(),
                         |this| {
-                            const MESSAGE_DELETED: &str = "Message has been deleted";
-
-                            let body_text = StyledText::new(MESSAGE_DELETED).with_highlights(
-                                &cx.text_style(),
-                                vec![(
-                                    0..MESSAGE_DELETED.len(),
-                                    HighlightStyle {
-                                        font_style: Some(FontStyle::Italic),
-                                        ..Default::default()
-                                    },
-                                )],
-                            );
-
-                            this.child(
-                                div()
-                                    .border_l_2()
-                                    .text_ui_xs()
-                                    .border_color(cx.theme().colors().border)
-                                    .px_1()
-                                    .py_0p5()
-                                    .child(body_text),
+                            this.mt_2().child(
+                                h_flex()
+                                    .text_ui_sm()
+                                    .child(
+                                        div().absolute().child(
+                                            Avatar::new(message.sender.avatar_uri.clone())
+                                                .size(rems(1.)),
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .pl(cx.rem_size() + px(6.0))
+                                            .pr(px(8.0))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(
+                                                Label::new(message.sender.github_login.clone())
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    )
+                                    .child(
+                                        Label::new(time_format::format_localized_timestamp(
+                                            OffsetDateTime::now_utc(),
+                                            message.timestamp,
+                                            self.local_timezone,
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                    .map(|el| {
+                                        el.child(self.render_popover_button(
+                                            &cx,
+                                            message_id,
+                                            can_delete_message,
+                                        ))
+                                    }),
                             )
                         },
                     )
+                    .when(is_continuation_from_previous, |el| {
+                        el.child(self.render_popover_button(&cx, message_id, can_delete_message))
+                    })
                     .when(mentioning_you || replied_to_you, |this| this.my_0p5())
                     .map(|el| {
                         let text = self.markdown_data.entry(message.id).or_insert_with(|| {
@@ -531,7 +535,11 @@ impl ChatPanel {
                                 &message,
                             )
                         });
-                        el.child(
+                        el.when(replied_to_you, |el| {
+                            el.mt_1p5()
+                                .when(is_continuation_from_previous, |el| el.mt_2())
+                        })
+                        .child(
                             v_flex()
                                 .w_full()
                                 .text_ui_sm()
