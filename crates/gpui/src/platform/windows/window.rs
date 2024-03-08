@@ -6,6 +6,7 @@ use std::{
     any::Any,
     cell::{Cell, RefCell},
     ffi::c_void,
+    iter::once,
     num::NonZeroIsize,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -14,7 +15,8 @@ use std::{
 };
 
 use blade_graphics as gpu;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot::{self, Receiver};
+use itertools::Itertools;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use smallvec::SmallVec;
 use windows::{
@@ -33,6 +35,10 @@ use windows::{
             },
         },
         UI::{
+            Controls::{
+                TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
+                TD_INFORMATION_ICON, TD_WARNING_ICON,
+            },
             Input::KeyboardAndMouse::{
                 GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
                 VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
@@ -778,7 +784,6 @@ impl PlatformWindow for WindowsWindow {
         self.inner.input_handler.take()
     }
 
-    // todo(windows)
     fn prompt(
         &self,
         level: PromptLevel,
@@ -786,7 +791,72 @@ impl PlatformWindow for WindowsWindow {
         detail: Option<&str>,
         answers: &[&str],
     ) -> Option<Receiver<usize>> {
-        unimplemented!()
+        let (done_tx, done_rx) = oneshot::channel();
+        let msg = msg.to_string();
+        let detail_string = match detail {
+            Some(info) => Some(info.to_string()),
+            None => None,
+        };
+        let answers = answers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let handle = self.inner.hwnd;
+        self.inner
+            .platform_inner
+            .foreground_executor
+            .spawn(async move {
+                unsafe {
+                    let mut config;
+                    config = std::mem::zeroed::<TASKDIALOGCONFIG>();
+                    config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
+                    config.hwndParent = handle;
+                    let title;
+                    let main_icon;
+                    match level {
+                        crate::PromptLevel::Info => {
+                            title = windows::core::w!("Info");
+                            main_icon = TD_INFORMATION_ICON;
+                        }
+                        crate::PromptLevel::Warning => {
+                            title = windows::core::w!("Warning");
+                            main_icon = TD_WARNING_ICON;
+                        }
+                        crate::PromptLevel::Critical => {
+                            title = windows::core::w!("Critical");
+                            main_icon = TD_ERROR_ICON;
+                        }
+                    };
+                    config.pszWindowTitle = title;
+                    config.Anonymous1.pszMainIcon = main_icon;
+                    let instruction = msg.encode_utf16().chain(once(0)).collect_vec();
+                    config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
+                    let hints_encoded;
+                    if let Some(ref hints) = detail_string {
+                        hints_encoded = hints.encode_utf16().chain(once(0)).collect_vec();
+                        config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
+                    };
+                    let mut buttons = Vec::new();
+                    let mut btn_encoded = Vec::new();
+                    for (index, btn_string) in answers.iter().enumerate() {
+                        let encoded = btn_string.encode_utf16().chain(once(0)).collect_vec();
+                        buttons.push(TASKDIALOG_BUTTON {
+                            nButtonID: index as _,
+                            pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
+                        });
+                        btn_encoded.push(encoded);
+                    }
+                    config.cButtons = buttons.len() as _;
+                    config.pButtons = buttons.as_ptr();
+
+                    config.pfCallback = None;
+                    let mut res = std::mem::zeroed();
+                    let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
+                        .inspect_err(|e| log::error!("unable to create task dialog: {}", e));
+
+                    let _ = done_tx.send(res as usize);
+                }
+            })
+            .detach();
+
+        Some(done_rx)
     }
 
     // todo(windows)
