@@ -41,24 +41,6 @@ mod prompts;
 pub use element_cx::*;
 pub use prompts::*;
 
-/// A global stacking order, which is created by stacking successive z-index values.
-/// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Debug, Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
-pub struct StackingOrder(SmallVec<[StackingContext; 64]>);
-
-/// A single entry in a primitive's z-index stacking order
-#[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
-pub struct StackingContext {
-    pub(crate) z_index: u16,
-    pub(crate) id: u16,
-}
-
-impl std::fmt::Debug for StackingContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{{}.{}}} ", self.z_index, self.id)
-    }
-}
-
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
