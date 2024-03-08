@@ -407,11 +407,12 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
 
 #[cfg(test)]
 mod test {
-    use gpui::TestAppContext;
+    use gpui::{KeyBinding, TestAppContext};
     use indoc::indoc;
     use settings::SettingsStore;
 
     use crate::{
+        motion,
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
         VimSettings,
@@ -1020,6 +1021,48 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_f_and_t_smartcase(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_smartcase_find = Some(true);
+            });
+        });
+
+        cx.assert_binding(
+            ["f", "p"],
+            indoc! {"ˇfmt.Println(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["shift-f", "p"],
+            indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["t", "p"],
+            indoc! {"ˇfmt.Println(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmtˇ.Println(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["shift-t", "p"],
+            indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.Pˇrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_percent(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["%"]);
         cx.assert_all("ˇconsole.logˇ(ˇvaˇrˇ)ˇ;").await;
@@ -1044,5 +1087,74 @@ mod test {
         // try to exceed the final line.
         cx.simulate_shared_keystrokes(["4", "$"]).await;
         cx.assert_shared_state("aa\nbb\ncˇc").await;
+    }
+
+    #[gpui::test]
+    async fn test_subword_motions(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|cx| {
+            cx.bind_keys(vec![
+                KeyBinding::new(
+                    "w",
+                    motion::NextSubwordStart {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+                KeyBinding::new(
+                    "b",
+                    motion::PreviousSubwordStart {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+                KeyBinding::new(
+                    "e",
+                    motion::NextSubwordEnd {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+                KeyBinding::new(
+                    "g e",
+                    motion::PreviousSubwordEnd {
+                        ignore_punctuation: false,
+                    },
+                    Some("Editor && VimControl && !VimWaiting && !menu"),
+                ),
+            ]);
+        });
+
+        cx.assert_binding_normal(
+            ["w"],
+            indoc! {"ˇassert_binding"},
+            indoc! {"assert_ˇbinding"},
+        );
+        // Special case: In 'cw', 'w' acts like 'e'
+        cx.assert_binding(
+            ["c", "w"],
+            indoc! {"ˇassert_binding"},
+            Mode::Normal,
+            indoc! {"ˇ_binding"},
+            Mode::Insert,
+        );
+
+        cx.assert_binding_normal(
+            ["e"],
+            indoc! {"ˇassert_binding"},
+            indoc! {"asserˇt_binding"},
+        );
+
+        cx.assert_binding_normal(
+            ["b"],
+            indoc! {"assert_ˇbinding"},
+            indoc! {"ˇassert_binding"},
+        );
+
+        cx.assert_binding_normal(
+            ["g", "e"],
+            indoc! {"assert_bindinˇg"},
+            indoc! {"asserˇt_binding"},
+        );
     }
 }

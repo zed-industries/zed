@@ -12,8 +12,7 @@ mod project_tests;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use client::{
-    proto, Client, Collaborator, HostedProjectId, PendingEntitySubscription, TypedEnvelope,
-    UserStore,
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
@@ -175,7 +174,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
-    hosted_project_id: Option<HostedProjectId>,
+    hosted_project_id: Option<ProjectId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -780,29 +779,31 @@ impl Project {
     }
 
     pub async fn hosted(
-        _hosted_project_id: HostedProjectId,
-        _user_store: Model<UserStore>,
-        _client: Arc<Client>,
-        _languages: Arc<LanguageRegistry>,
-        _fs: Arc<dyn Fs>,
-        _cx: AsyncAppContext,
+        remote_id: ProjectId,
+        user_store: Model<UserStore>,
+        client: Arc<Client>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
-        // let response = client
-        //     .request_envelope(proto::JoinHostedProject {
-        //         id: hosted_project_id.0,
-        //     })
-        //     .await?;
-        // Self::from_join_project_response(
-        //     response,
-        //     Some(hosted_project_id),
-        //     client,
-        //     user_store,
-        //     languages,
-        //     fs,
-        //     cx,
-        // )
-        // .await
-        Err(anyhow!("disabled"))
+        client.authenticate_and_connect(true, &cx).await?;
+
+        let subscription = client.subscribe_to_entity(remote_id.0)?;
+        let response = client
+            .request_envelope(proto::JoinHostedProject {
+                project_id: remote_id.0,
+            })
+            .await?;
+        Self::from_join_project_response(
+            response,
+            subscription,
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -1050,7 +1051,7 @@ impl Project {
         }
     }
 
-    pub fn hosted_project_id(&self) -> Option<HostedProjectId> {
+    pub fn hosted_project_id(&self) -> Option<ProjectId> {
         self.hosted_project_id
     }
 

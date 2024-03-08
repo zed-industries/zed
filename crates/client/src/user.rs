@@ -25,7 +25,7 @@ impl std::fmt::Display for ChannelId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct HostedProjectId(pub u64);
+pub struct ProjectId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParticipantIndex(pub u32);
