@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -eu
+
+WASI_ADAPTER_URL="https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm"
+WASI_SDK_URL="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-21/wasi-sdk-21.0-macos.tar.gz"
+
+echo "Downloading WASI adapter: $WASI_ADAPTER_URL"
+curl -L $WASI_ADAPTER_URL -o target/wasi_snapshot_preview1.reactor.wasm
+
+echo "Downloading WASI SDK: $WASI_SDK_URL"
+mkdir -p target/wasi-sdk.archive
+curl -L $WASI_SDK_URL | tar -xz - -C target/wasi-sdk.archive
+rm -rf target/wasi-sdk/
+mv -f target/wasi-sdk.archive/wasi-sdk-21.0/ target/wasi-sdk
