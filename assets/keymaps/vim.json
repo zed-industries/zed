@@ -353,7 +353,9 @@
       "> >": "vim::Indent",
       "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
-      "ctrl-pageup": "pane::ActivatePrevItem"
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "[ x": "editor::SelectLargerSyntaxNode",
+      "] x": "editor::SelectSmallerSyntaxNode"
     }
   },
   {

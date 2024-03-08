@@ -2788,7 +2788,13 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn anchor_in_excerpt(&self, excerpt_id: ExcerptId, text_anchor: text::Anchor) -> Anchor {
+    /// Returns an anchor for the given excerpt and text anchor,
+    /// returns None if the excerpt_id is no longer valid.
+    pub fn anchor_in_excerpt(
+        &self,
+        excerpt_id: ExcerptId,
+        text_anchor: text::Anchor,
+    ) -> Option<Anchor> {
         let locator = self.excerpt_locator_for_id(excerpt_id);
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
         cursor.seek(locator, Bias::Left, &());
@@ -2796,14 +2802,14 @@ impl MultiBufferSnapshot {
             if excerpt.id == excerpt_id {
                 let text_anchor = excerpt.clip_anchor(text_anchor);
                 drop(cursor);
-                return Anchor {
+                return Some(Anchor {
                     buffer_id: Some(excerpt.buffer_id),
                     excerpt_id,
                     text_anchor,
-                };
+                });
             }
         }
-        panic!("excerpt not found");
+        None
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
@@ -3283,13 +3289,15 @@ impl MultiBufferSnapshot {
             outline
                 .items
                 .into_iter()
-                .map(|item| OutlineItem {
-                    depth: item.depth,
-                    range: self.anchor_in_excerpt(*excerpt_id, item.range.start)
-                        ..self.anchor_in_excerpt(*excerpt_id, item.range.end),
-                    text: item.text,
-                    highlight_ranges: item.highlight_ranges,
-                    name_ranges: item.name_ranges,
+                .flat_map(|item| {
+                    Some(OutlineItem {
+                        depth: item.depth,
+                        range: self.anchor_in_excerpt(*excerpt_id, item.range.start)?
+                            ..self.anchor_in_excerpt(*excerpt_id, item.range.end)?,
+                        text: item.text,
+                        highlight_ranges: item.highlight_ranges,
+                        name_ranges: item.name_ranges,
+                    })
                 })
                 .collect(),
         ))
@@ -3310,13 +3318,15 @@ impl MultiBufferSnapshot {
                 .symbols_containing(anchor.text_anchor, theme)
                 .into_iter()
                 .flatten()
-                .map(|item| OutlineItem {
-                    depth: item.depth,
-                    range: self.anchor_in_excerpt(excerpt_id, item.range.start)
-                        ..self.anchor_in_excerpt(excerpt_id, item.range.end),
-                    text: item.text,
-                    highlight_ranges: item.highlight_ranges,
-                    name_ranges: item.name_ranges,
+                .flat_map(|item| {
+                    Some(OutlineItem {
+                        depth: item.depth,
+                        range: self.anchor_in_excerpt(excerpt_id, item.range.start)?
+                            ..self.anchor_in_excerpt(excerpt_id, item.range.end)?,
+                        text: item.text,
+                        highlight_ranges: item.highlight_ranges,
+                        name_ranges: item.name_ranges,
+                    })
                 })
                 .collect(),
         ))

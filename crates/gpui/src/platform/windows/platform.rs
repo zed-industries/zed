@@ -1,4 +1,4 @@
-// todo!("windows"): remove
+// todo(windows): remove
 #![allow(unused_variables)]
 
 use std::{
@@ -263,40 +263,40 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn restart(&self) {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn activate(&self, ignoring_other_apps: bool) {}
 
-    // todo!("windows")
+    // todo(windows)
     fn hide(&self) {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn hide_other_apps(&self) {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn unhide_other_apps(&self) {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         vec![Rc::new(WindowsDisplay::new())]
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn display(&self, id: crate::DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         Some(Rc::new(WindowsDisplay::new()))
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn active_window(&self) -> Option<AnyWindowHandle> {
         unimplemented!()
     }
@@ -309,7 +309,7 @@ impl Platform for WindowsPlatform {
         Box::new(WindowsWindow::new(self.inner.clone(), handle, options))
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn window_appearance(&self) -> WindowAppearance {
         WindowAppearance::Dark
     }
@@ -326,17 +326,17 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.inner.callbacks.lock().open_urls = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
         unimplemented!()
     }
@@ -379,7 +379,7 @@ impl Platform for WindowsPlatform {
         self.inner.callbacks.lock().event = Some(callback);
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
@@ -423,7 +423,7 @@ impl Platform for WindowsPlatform {
         })
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn app_path(&self) -> Result<PathBuf> {
         Err(anyhow!("not yet implemented"))
     }
@@ -452,7 +452,7 @@ impl Platform for WindowsPlatform {
         Duration::from_millis(millis as _)
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow!("not yet implemented"))
     }
@@ -483,32 +483,32 @@ impl Platform for WindowsPlatform {
         let _ = unsafe { SetCursor(HCURSOR(handle.unwrap().0)) };
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn should_auto_hide_scrollbars(&self) -> bool {
         false
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn write_to_clipboard(&self, item: ClipboardItem) {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         unimplemented!()
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         Task::Ready(Some(Err(anyhow!("not implemented yet."))))
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         Task::Ready(Some(Err(anyhow!("not implemented yet."))))
     }
 
-    // todo!("windows")
+    // todo(windows)
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         Task::Ready(Some(Err(anyhow!("not implemented yet."))))
     }

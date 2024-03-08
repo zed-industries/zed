@@ -294,18 +294,19 @@ fn show_hover(
             let hover_popover = match hover_result {
                 Some(hover_result) if !hover_result.is_empty() => {
                     // Create symbol range of anchors for highlighting and filtering of future requests.
-                    let range = if let Some(range) = hover_result.range {
-                        let start = snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id, range.start);
-                        let end = snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id, range.end);
+                    let range = hover_result
+                        .range
+                        .and_then(|range| {
+                            let start = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, range.start)?;
+                            let end = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, range.end)?;
 
-                        start..end
-                    } else {
-                        anchor..anchor
-                    };
+                            Some(start..end)
+                        })
+                        .unwrap_or_else(|| anchor..anchor);
 
                     let language_registry =
                         project.update(&mut cx, |p, _| p.languages().clone())?;

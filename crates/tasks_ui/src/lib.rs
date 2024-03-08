@@ -93,7 +93,8 @@ fn task_context(
                     .buffer
                     .read(cx)
                     .file()
-                    .map(|file| file.path().to_string_lossy().to_string());
+                    .and_then(|file| file.as_local())
+                    .map(|file| file.abs_path(cx).to_string_lossy().to_string());
                 let worktree_id = location
                     .buffer
                     .read(cx)
@@ -113,9 +114,12 @@ fn task_context(
                         .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
                 });
 
+                let selected_text = buffer.read(cx).chars_for_range(selection_range).collect();
+
                 let mut env = HashMap::from_iter([
                     ("ZED_ROW".into(), row.to_string()),
                     ("ZED_COLUMN".into(), column.to_string()),
+                    ("ZED_SELECTED_TEXT".into(), selected_text),
                 ]);
                 if let Some(path) = current_file {
                     env.insert("ZED_FILE".into(), path);
@@ -316,10 +320,11 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
-                        ("ZED_FILE".into(), "rust/b.rs".into()),
+                        ("ZED_FILE".into(), "/dir/rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "1".into()),
+                        ("ZED_SELECTED_TEXT".into(), "".into())
                     ])
                 }
             );
@@ -332,11 +337,12 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
-                        ("ZED_FILE".into(), "rust/b.rs".into()),
+                        ("ZED_FILE".into(), "/dir/rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_SYMBOL".into(), "this_is_a_rust_file".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "15".into()),
+                        ("ZED_SELECTED_TEXT".into(), "is_i".into()),
                     ])
                 }
             );
@@ -348,11 +354,12 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     env: HashMap::from_iter([
-                        ("ZED_FILE".into(), "a.ts".into()),
+                        ("ZED_FILE".into(), "/dir/a.ts".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_SYMBOL".into(), "this_is_a_test".into()),
                         ("ZED_ROW".into(), "1".into()),
                         ("ZED_COLUMN".into(), "1".into()),
+                        ("ZED_SELECTED_TEXT".into(), "".into()),
                     ])
                 }
             );

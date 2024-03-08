@@ -2199,6 +2199,7 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "axum-extra",
+ "base64 0.13.1",
  "call",
  "channel",
  "chrono",
@@ -2252,6 +2253,7 @@ dependencies = [
  "settings",
  "sha2 0.10.7",
  "sqlx",
+ "subtle",
  "telemetry_events",
  "text",
  "theme",
@@ -2281,6 +2283,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "emojis",
  "extensions_ui",
  "feedback",
  "futures 0.3.28",
@@ -3261,6 +3264,7 @@ dependencies = [
  "copilot",
  "ctor",
  "db",
+ "emojis",
  "env_logger",
  "futures 0.3.28",
  "fuzzy",
@@ -3327,6 +3331,15 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "emojis"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee61eb945bff65ee7d19d157d39c67c33290ff0742907413fd5eefd29edc979"
+dependencies = [
+ "phf",
 ]
 
 [[package]]
@@ -3523,19 +3536,24 @@ dependencies = [
  "wasmparser",
  "wasmtime",
  "wasmtime-wasi",
+ "wit-component 0.20.3",
 ]
 
 [[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "extension",
+ "fuzzy",
  "gpui",
  "settings",
+ "smallvec",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -6814,6 +6832,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "phf"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ade2d8b8f33c7333b51bcf0428d37e217e9f32192ae4772156f65063b8ce03dc"
+dependencies = [
+ "phf_shared",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90fcb95eef784c2ac79119d1dd819e162b5da872ce6f3c3abe1e8ca1c082f72b"
+dependencies = [
+ "siphasher 0.3.11",
+]
+
+[[package]]
 name = "picker"
 version = "0.1.0"
 dependencies = [
@@ -8803,6 +8839,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b8de496cf83d4ed58b6be86c3a275b8602f6ffe98d3024a869e124147a9a3ac"
 
 [[package]]
+name = "siphasher"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9444,7 +9486,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c536faaff1a10837cfe373142583f6e27d81e96beba339147e77b67c9f260ff"
 dependencies = [
  "float-cmp",
- "siphasher",
+ "siphasher 0.2.3",
 ]
 
 [[package]]
@@ -10921,7 +10963,7 @@ dependencies = [
  "roxmltree 0.14.1",
  "rustybuzz 0.3.0",
  "simplecss",
- "siphasher",
+ "siphasher 0.2.3",
  "svgtypes",
  "ttf-parser 0.12.3",
  "unicode-bidi",
@@ -12279,7 +12321,7 @@ dependencies = [
  "heck 0.4.1",
  "wasm-metadata",
  "wit-bindgen-core",
- "wit-component",
+ "wit-component 0.21.0",
 ]
 
 [[package]]
@@ -12294,6 +12336,25 @@ dependencies = [
  "syn 2.0.48",
  "wit-bindgen-core",
  "wit-bindgen-rust",
+]
+
+[[package]]
+name = "wit-component"
+version = "0.20.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4436190e87b4e539807bcdcf5b817e79d2e29e16bc5ddb6445413fe3d1f5716"
+dependencies = [
+ "anyhow",
+ "bitflags 2.4.2",
+ "indexmap 2.0.0",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "wasm-encoder 0.41.2",
+ "wasm-metadata",
+ "wasmparser",
+ "wit-parser 0.13.2",
 ]
 
 [[package]]

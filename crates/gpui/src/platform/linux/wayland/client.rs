@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +13,7 @@ use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_callback::WlCallback;
+use wayland_client::protocol::wl_output;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
 use wayland_client::{
     delegate_noop,
@@ -55,6 +57,7 @@ pub(crate) struct WaylandClientStateInner {
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
+    outputs: Vec<(wl_output::WlOutput, Rc<RefCell<OutputState>>)>,
     platform_inner: Rc<LinuxPlatformInner>,
     keymap_state: Option<xkb::State>,
     repeat: KeyRepeat,
@@ -94,6 +97,7 @@ pub(crate) struct WaylandClient {
 }
 
 const WL_SEAT_VERSION: u32 = 4;
+const WL_OUTPUT_VERSION: u32 = 2;
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
@@ -101,16 +105,29 @@ impl WaylandClient {
 
         let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
         let qh = event_queue.handle();
+        let mut outputs = Vec::new();
 
         globals.contents().with_list(|list| {
             for global in list {
-                if global.interface == "wl_seat" {
-                    globals.registry().bind::<wl_seat::WlSeat, _, _>(
-                        global.name,
-                        WL_SEAT_VERSION,
-                        &qh,
-                        (),
-                    );
+                match &global.interface[..] {
+                    "wl_seat" => {
+                        globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                            global.name,
+                            WL_SEAT_VERSION,
+                            &qh,
+                            (),
+                        );
+                    }
+                    "wl_output" => outputs.push((
+                        globals.registry().bind::<wl_output::WlOutput, _, _>(
+                            global.name,
+                            WL_OUTPUT_VERSION,
+                            &qh,
+                            (),
+                        ),
+                        Rc::new(RefCell::new(OutputState::default())),
+                    )),
+                    _ => {}
                 }
             }
         });
@@ -119,9 +136,12 @@ impl WaylandClient {
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: globals.bind(&qh, 1..=1, ()).unwrap(),
+            compositor: globals
+                .bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ())
+                .unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
+            outputs,
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -291,16 +311,24 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let mut state = state.client_state_inner.borrow_mut();
         match event {
             wl_registry::Event::Global {
                 name,
                 interface,
                 version: _,
-            } => {
-                if interface.as_str() == "wl_seat" {
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
+            } => match &interface[..] {
+                "wl_seat" => {
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, WL_SEAT_VERSION, qh, ());
                 }
-            }
+                "wl_output" => {
+                    state.outputs.push((
+                        registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ()),
+                        Rc::new(RefCell::new(OutputState::default())),
+                    ));
+                }
+                _ => {}
+            },
             wl_registry::Event::GlobalRemove { name: _ } => {}
             _ => {}
         }
@@ -308,7 +336,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 }
 
 delegate_noop!(WaylandClientState: ignore wl_compositor::WlCompositor);
-delegate_noop!(WaylandClientState: ignore wl_surface::WlSurface);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
@@ -335,6 +362,124 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
                     window.1.surface.commit();
                 }
             }
+        }
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        surface: &wl_surface::WlSurface,
+        event: <wl_surface::WlSurface as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+
+        // We use `WpFractionalScale` instead to set the scale if it's available
+        // or give up on scaling if `WlSurface::set_buffer_scale` isn't available
+        if state.fractional_scale_manager.is_some()
+            || state.compositor.version() < wl_surface::REQ_SET_BUFFER_SCALE_SINCE
+        {
+            return;
+        }
+
+        let Some(window) = state
+            .windows
+            .iter()
+            .map(|(_, state)| state)
+            .find(|state| &*state.surface == surface)
+        else {
+            return;
+        };
+
+        let mut outputs = window.outputs.borrow_mut();
+
+        match event {
+            wl_surface::Event::Enter { output } => {
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                    return;
+                }
+                let mut scale = 1;
+                for global_output in &state.outputs {
+                    if output == global_output.0 {
+                        outputs.insert(output.id());
+                        scale = scale.max(global_output.1.borrow().scale.get());
+                    } else if outputs.contains(&global_output.0.id()) {
+                        scale = scale.max(global_output.1.borrow().scale.get());
+                    }
+                }
+                window.rescale(scale as f32);
+                window.surface.set_buffer_scale(scale as i32);
+                window.surface.commit();
+            }
+            wl_surface::Event::Leave { output } => {
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if surface.version() >= 6 {
+                    return;
+                }
+
+                outputs.remove(&output.id());
+
+                let mut scale = 1;
+                for global_output in &state.outputs {
+                    if outputs.contains(&global_output.0.id()) {
+                        scale = scale.max(global_output.1.borrow().scale.get());
+                    }
+                }
+                window.rescale(scale as f32);
+                window.surface.set_buffer_scale(scale as i32);
+                window.surface.commit();
+            }
+            wl_surface::Event::PreferredBufferScale { factor } => {
+                window.rescale(factor as f32);
+                surface.set_buffer_scale(factor);
+                window.surface.commit();
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OutputState {
+    scale: NonZeroU32,
+}
+
+impl Default for OutputState {
+    fn default() -> Self {
+        Self {
+            scale: NonZeroU32::new(1).unwrap(),
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        output: &wl_output::WlOutput,
+        event: <wl_output::WlOutput as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+        let mut output_state = state
+            .outputs
+            .iter_mut()
+            .find(|(o, _)| o == output)
+            .map(|(_, state)| state)
+            .unwrap()
+            .borrow_mut();
+        match event {
+            wl_output::Event::Scale { factor } => {
+                if factor > 0 {
+                    output_state.scale = NonZeroU32::new(factor as u32).unwrap();
+                }
+            }
+            _ => {}
         }
     }
 }

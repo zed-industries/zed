@@ -1,5 +1,5 @@
 use anyhow::Result;
-use editor::Editor;
+use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
     EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
@@ -334,8 +334,13 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.set_text(query, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.set_text(query, cx);
+            let editor_offset = editor.buffer().read(cx).len(cx);
+            editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+                s.select_ranges(Some(editor_offset..editor_offset))
+            });
+        });
     }
 
     fn scroll_to_item_index(&mut self, ix: usize) {

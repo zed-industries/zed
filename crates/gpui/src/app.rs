@@ -28,14 +28,14 @@ use util::{
     ResultExt,
 };
 
-use crate::WindowAppearance;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
+    PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
+    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -242,6 +242,7 @@ pub struct AppContext {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
+    pub(crate) prompt_builder: Option<PromptBuilder>,
 }
 
 impl AppContext {
@@ -301,6 +302,7 @@ impl AppContext {
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
+                prompt_builder: Some(PromptBuilder::Default),
             }),
         });
 
@@ -1206,6 +1208,23 @@ impl AppContext {
     /// Is there currently something being dragged?
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
+    }
+
+    /// Set the prompt renderer for GPUI. This will replace the default or platform specific
+    /// prompts with this custom implementation.
+    pub fn set_prompt_builder(
+        &mut self,
+        renderer: impl Fn(
+                PromptLevel,
+                &str,
+                Option<&str>,
+                &[&str],
+                PromptHandle,
+                &mut WindowContext,
+            ) -> RenderablePromptHandle
+            + 'static,
+    ) {
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
 }
 

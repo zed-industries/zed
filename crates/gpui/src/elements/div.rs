@@ -499,7 +499,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Assign this elements
+    /// Assign this element an ID, so that it can be used with interactivity
     fn id(mut self, id: impl Into<ElementId>) -> Stateful<Self> {
         self.interactivity().element_id = Some(id.into());
 

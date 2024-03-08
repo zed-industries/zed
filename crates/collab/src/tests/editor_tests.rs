@@ -17,6 +17,7 @@ use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
+use project::SERVER_PROGRESS_DEBOUNCE_TIMEOUT;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -865,6 +866,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             },
         )),
     });
+    executor.advance_clock(SERVER_PROGRESS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, _| {
@@ -898,6 +900,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             },
         )),
     });
+    executor.advance_clock(SERVER_PROGRESS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, _| {

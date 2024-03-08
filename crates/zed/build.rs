@@ -45,7 +45,7 @@ fn main() {
     }
 
     if std::env::var("CARGO_CFG_TARGET_ENV").ok() == Some("msvc".to_string()) {
-        // todo!("windows"): This is to avoid stack overflow. Remove it when solved.
+        // todo(windows): This is to avoid stack overflow. Remove it when solved.
         println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
 
         let manifest = std::path::Path::new("resources/windows/manifest.xml");

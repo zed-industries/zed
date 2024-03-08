@@ -430,7 +430,6 @@ impl ChatPanel {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
-        let this = cx.view().clone();
 
         let mentioning_you = message
             .mentions
@@ -467,11 +466,15 @@ impl ChatPanel {
             .relative()
             .child(
                 div()
+                    .group("")
                     .bg(background)
                     .rounded_md()
                     .overflow_hidden()
                     .px_1()
                     .py_0p5()
+                    .when(!self.has_open_menu(message_id), |this| {
+                        this.hover(|style| style.bg(cx.theme().colors().element_hover))
+                    })
                     .when(!is_continuation_from_previous, |this| {
                         this.mt_2().child(
                             h_flex()
@@ -494,8 +497,18 @@ impl ChatPanel {
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                                ),
+                                )
+                                .map(|el| {
+                                    el.child(self.render_popover_button(
+                                        &cx,
+                                        message_id,
+                                        can_delete_message,
+                                    ))
+                                }),
                         )
+                    })
+                    .when(is_continuation_from_previous, |el| {
+                        el.child(self.render_popover_button(&cx, message_id, can_delete_message))
                     })
                     .when(
                         message.reply_to_message_id.is_some() && reply_to_message.is_none(),
@@ -545,37 +558,11 @@ impl ChatPanel {
                                 .w_full()
                                 .text_ui_sm()
                                 .id(element_id)
-                                .group("")
-                                .child(text.element("body".into(), cx))
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .z_index(1)
-                                        .right_0()
-                                        .w_6()
-                                        .bg(background)
-                                        .when(!self.has_open_menu(message_id), |el| {
-                                            el.visible_on_hover("")
-                                        })
-                                        .when_some(message_id, |el, message_id| {
-                                            el.child(
-                                                popover_menu(("menu", message_id))
-                                                    .trigger(IconButton::new(
-                                                        ("trigger", message_id),
-                                                        IconName::Ellipsis,
-                                                    ))
-                                                    .menu(move |cx| {
-                                                        Some(Self::render_message_menu(
-                                                            &this,
-                                                            message_id,
-                                                            can_delete_message,
-                                                            cx,
-                                                        ))
-                                                    }),
-                                            )
-                                        }),
-                                ),
+                                .child(text.element("body".into(), cx)),
                         )
+                        .when(self.has_open_menu(message_id), |el| {
+                            el.bg(cx.theme().colors().element_selected)
+                        })
                     }),
             )
             .when(
@@ -607,6 +594,39 @@ impl ChatPanel {
             Some((id, _)) => Some(*id) == message_id,
             None => false,
         }
+    }
+
+    fn render_popover_button(
+        &self,
+        cx: &ViewContext<Self>,
+        message_id: Option<u64>,
+        can_delete_message: bool,
+    ) -> Div {
+        div()
+            .absolute()
+            .z_index(1)
+            .right_0()
+            .w_6()
+            .bg(cx.theme().colors().element_hover)
+            .when(!self.has_open_menu(message_id), |el| {
+                el.visible_on_hover("")
+            })
+            .when_some(message_id, |el, message_id| {
+                let chat_panel_view = cx.view().clone();
+
+                el.child(
+                    popover_menu(("menu", message_id))
+                        .trigger(IconButton::new(("trigger", message_id), IconName::Ellipsis))
+                        .menu(move |cx| {
+                            Some(Self::render_message_menu(
+                                &chat_panel_view,
+                                message_id,
+                                can_delete_message,
+                                cx,
+                            ))
+                        }),
+                )
+            })
     }
 
     fn render_message_menu(

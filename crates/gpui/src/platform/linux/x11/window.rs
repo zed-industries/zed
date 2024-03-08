@@ -399,15 +399,14 @@ impl PlatformWindow for X11Window {
         self.0.inner.borrow_mut().input_handler.take()
     }
 
-    // todo(linux)
     fn prompt(
         &self,
         _level: PromptLevel,
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
-    ) -> futures::channel::oneshot::Receiver<usize> {
-        unimplemented!()
+    ) -> Option<futures::channel::oneshot::Receiver<usize>> {
+        None
     }
 
     fn activate(&self) {
