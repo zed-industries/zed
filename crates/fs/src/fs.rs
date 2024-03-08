@@ -13,7 +13,7 @@ use repository::GitRepository;
 use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::{
     io,
     path::{Component, Path, PathBuf},
@@ -340,7 +340,9 @@ impl Fs for RealFs {
         _latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
         use notify::{event::EventKind, Watcher};
-        std::thread::yield_now();
+        // todo(linux): This spawns two threads, while the macOS impl
+        // only spawns one. Can we use a OnceLock or some such to make
+        // this better
 
         let (tx, rx) = smol::channel::unbounded();
 
@@ -388,14 +390,13 @@ impl Fs for RealFs {
         })
         .expect("Could not start file watcher");
 
-        dbg!(path.parent().unwrap().is_dir());
-
         parent_watcher
             .watch(
-                dbg!(path.parent()).unwrap_or(path),
-                notify::RecursiveMode::Recursive,
+                path.parent()
+                    .expect("Watching root is probably not what you want"),
+                notify::RecursiveMode::NonRecursive,
             )
-            .expect("Could not start file watcher");
+            .expect("Could not start watcher on parent directory");
 
         Box::pin(rx.chain(futures::stream::once(async move {
             drop(parent_watcher);
