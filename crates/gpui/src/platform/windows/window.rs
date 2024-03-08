@@ -68,25 +68,6 @@ use crate::{
     WindowAppearance, WindowParams, WindowsDisplay, WindowsPlatformInner,
 };
 
-#[derive(PartialEq)]
-pub(crate) enum CallbackResult {
-    /// handled by system or user callback
-    Handled {
-        /// `true` if user callback handled event
-        by_callback: bool,
-    },
-    Unhandled,
-}
-
-impl CallbackResult {
-    pub fn is_handled(&self) -> bool {
-        match self {
-            Self::Handled { by_callback: _ } => true,
-            _ => false,
-        }
-    }
-}
-
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     origin: Cell<Point<GlobalPixels>>,
@@ -183,15 +164,6 @@ impl WindowsWindowInner {
         unsafe { InvalidateRect(self.hwnd, None, FALSE) };
     }
 
-    /// returns true if message is handled and should not dispatch
-    pub(crate) fn handle_immediate_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
-        match msg {
-            WM_KEYDOWN | WM_SYSKEYDOWN => self.handle_keydown_msg(wparam).is_handled(),
-            WM_KEYUP | WM_SYSKEYUP => self.handle_keyup_msg(wparam).is_handled(),
-            _ => false,
-        }
-    }
-
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
@@ -235,16 +207,8 @@ impl WindowsWindowInner {
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(wparam, lparam),
-            WM_CHAR | WM_SYSCHAR => self.handle_char_msg(wparam),
-            // These events are handled by the immediate handler
-            WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => LRESULT(0),
-            _ => {
-                if self.handle_immediate_msg(msg, wparam, lparam) {
-                    LRESULT(0)
-                } else {
-                    unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
-                }
-            } // _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
+            WM_KEYDOWN | WM_CHAR => self.handle_keydown_msg(msg, wparam, lparam),
+            _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
         }
     }
 
@@ -363,39 +327,6 @@ impl WindowsWindowInner {
     fn parse_key_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
         let vk_code = wparam.loword();
 
-        // 0-9 https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-        if vk_code >= 0x30 && vk_code <= 0x39 {
-            let modifiers = self.current_modifiers();
-
-            if modifiers.shift {
-                return None;
-            }
-
-            let digit_char = (b'0' + ((vk_code - 0x30) as u8)) as char;
-            return Some(Keystroke {
-                modifiers,
-                key: digit_char.to_string(),
-                ime_key: Some(digit_char.to_string()),
-            });
-        }
-
-        // A-Z https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-        if vk_code >= 0x41 && vk_code <= 0x5A {
-            let offset = (vk_code - 0x41) as u8;
-            let alpha_char = (b'a' + offset) as char;
-            let alpha_char_upper = (b'A' + offset) as char;
-            let modifiers = self.current_modifiers();
-            return Some(Keystroke {
-                modifiers,
-                key: alpha_char.to_string(),
-                ime_key: Some(if modifiers.shift {
-                    alpha_char_upper.to_string()
-                } else {
-                    alpha_char.to_string()
-                }),
-            });
-        }
-
         if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
             let offset = vk_code - VK_F1.0;
             return Some(Keystroke {
@@ -406,109 +337,82 @@ impl WindowsWindowInner {
         }
 
         let key = match VIRTUAL_KEY(vk_code) {
-            VK_SPACE => Some(("space", Some(" "))),
-            VK_TAB => Some(("tab", Some("\t"))),
-            VK_BACK => Some(("backspace", None)),
-            VK_RETURN => Some(("enter", None)),
-            VK_UP => Some(("up", None)),
-            VK_DOWN => Some(("down", None)),
-            VK_RIGHT => Some(("right", None)),
-            VK_LEFT => Some(("left", None)),
-            VK_HOME => Some(("home", None)),
-            VK_END => Some(("end", None)),
-            VK_PRIOR => Some(("pageup", None)),
-            VK_NEXT => Some(("pagedown", None)),
-            VK_ESCAPE => Some(("escape", None)),
-            VK_INSERT => Some(("insert", None)),
+            VK_BACK => Some("backspace"),
+            VK_RETURN => Some("enter"),
+            VK_TAB => Some("tab"),
+            VK_UP => Some("up"),
+            VK_DOWN => Some("down"),
+            VK_RIGHT => Some("right"),
+            VK_LEFT => Some("left"),
+            VK_HOME => Some("home"),
+            VK_END => Some("end"),
+            VK_PRIOR => Some("pageup"),
+            VK_NEXT => Some("pagedown"),
+            VK_ESCAPE => Some("escape"),
+            VK_INSERT => Some("insert"),
             _ => None,
         };
 
-        if let Some((key, ime_key)) = key {
+        if let Some(key) = key {
             Some(Keystroke {
                 modifiers: self.current_modifiers(),
                 key: key.to_string(),
-                ime_key: ime_key.map(|k| k.to_string()),
+                ime_key: None,
             })
         } else {
             None
         }
     }
 
-    fn handle_keydown_msg(&self, wparam: WPARAM) -> CallbackResult {
+    fn parse_char_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
+        let src = [wparam.0 as u16];
+        let Ok(first_char) = char::decode_utf16(src)
+            .map(|r| r.map_err(|e| e.unpaired_surrogate()))
+            .collect::<Vec<_>>()[0]
+        else {
+            return None;
+        };
+        if first_char.is_control() {
+            return None;
+        }
+        Some(Keystroke {
+            modifiers: self.current_modifiers(),
+            key: first_char.to_lowercase().to_string(),
+            ime_key: Some(first_char.to_string()),
+        })
+    }
+
+    fn handle_keydown_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_key_msg_keystroke(wparam);
+        let keystroke = {
+            if message == WM_KEYDOWN {
+                self.parse_key_msg_keystroke(wparam)
+            } else {
+                self.parse_char_msg_keystroke(wparam)
+            }
+        };
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
                 let ime_key = keystroke.ime_key.clone();
                 let event = KeyDownEvent {
                     keystroke,
-                    is_held: true,
+                    is_held: lparam.0 & (0x1 << 30) > 0,
                 };
 
                 if callback(PlatformInput::KeyDown(event)) {
-                    CallbackResult::Handled { by_callback: true }
-                } else if let Some(mut input_handler) = self.input_handler.take() {
+                    return LRESULT(0);
+                }
+                if let Some(mut input_handler) = self.input_handler.take() {
                     if let Some(ime_key) = ime_key {
                         input_handler.replace_text_in_range(None, &ime_key);
+                        return LRESULT(0);
                     }
                     self.input_handler.set(Some(input_handler));
-                    CallbackResult::Handled { by_callback: true }
-                } else {
-                    CallbackResult::Handled { by_callback: false }
                 }
-            } else {
-                CallbackResult::Handled { by_callback: false }
-            }
-        } else {
-            CallbackResult::Unhandled
-        }
-    }
-
-    fn handle_keyup_msg(&self, wparam: WPARAM) -> CallbackResult {
-        let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_key_msg_keystroke(wparam);
-        if let Some(keystroke) = keystroke {
-            if let Some(callback) = callbacks.input.as_mut() {
-                let event = KeyUpEvent { keystroke };
-                let by_callback = callback(PlatformInput::KeyUp(event));
-                CallbackResult::Handled { by_callback }
-            } else {
-                CallbackResult::Handled { by_callback: false }
-            }
-        } else {
-            CallbackResult::Unhandled
-        }
-    }
-
-    fn handle_char_msg(&self, wparam: WPARAM) -> LRESULT {
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(callback) = callbacks.input.as_mut() {
-            let modifiers = self.current_modifiers();
-            let msg_char = wparam.0 as u8 as char;
-            let keystroke = Keystroke {
-                modifiers,
-                key: msg_char.to_string(),
-                ime_key: Some(msg_char.to_string()),
-            };
-            let ime_key = keystroke.ime_key.clone();
-            let event = KeyDownEvent {
-                keystroke,
-                is_held: false,
-            };
-
-            if callback(PlatformInput::KeyDown(event)) {
-                return LRESULT(0);
-            }
-
-            if let Some(mut input_handler) = self.input_handler.take() {
-                if let Some(ime_key) = ime_key {
-                    input_handler.replace_text_in_range(None, &ime_key);
-                }
-                self.input_handler.set(Some(input_handler));
-                return LRESULT(0);
             }
         }
-        return LRESULT(1);
+        self.redraw_now();
+        LRESULT(1)
     }
 
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
@@ -598,6 +502,17 @@ impl WindowsWindowInner {
             return;
         };
         func(input);
+    }
+
+    fn redraw_now(&self) {
+        unsafe {
+            RedrawWindow(
+                self.hwnd,
+                None,
+                HRGN::default(),
+                RDW_INVALIDATE | RDW_UPDATENOW,
+            );
+        }
     }
 }
 

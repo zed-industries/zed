@@ -192,30 +192,6 @@ impl WindowsPlatform {
         Self { inner }
     }
 
-    /// runs message handlers that should be processed before dispatching to prevent translating unnecessary messages
-    /// returns true if message is handled and should not dispatch
-    fn run_immediate_msg_handlers(&self, msg: &MSG) -> bool {
-        if msg.message == WM_SETTINGCHANGE {
-            self.inner.settings.borrow_mut().update_all();
-            return true;
-        }
-
-        if !self
-            .inner
-            .window_handle_values
-            .borrow()
-            .contains(&msg.hwnd.0)
-        {
-            return false;
-        }
-
-        if let Some(inner) = try_get_window_inner(msg.hwnd) {
-            inner.handle_immediate_msg(msg.message, msg.wParam, msg.lParam)
-        } else {
-            false
-        }
-    }
-
     fn run_foreground_tasks(&self) {
         for runnable in self.inner.main_receiver.drain() {
             runnable.run();
@@ -260,8 +236,9 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let thread_id = unsafe { GetCurrentThreadId() };
         let tick_event = unsafe { CreateEventW(None, false, false, None).unwrap() };
+        let dispatch_event = self.inner.event;
+        let thread_id = unsafe { GetCurrentThreadId() };
         let thread = std::thread::spawn(move || unsafe {
             loop {
                 DCompositionWaitForCompositorClock(None, INFINITE);
@@ -276,7 +253,12 @@ impl Platform for WindowsPlatform {
         });
         'a: loop {
             let event = unsafe {
-                MsgWaitForMultipleObjects(Some(&[tick_event]), false, INFINITE, QS_ALLINPUT)
+                MsgWaitForMultipleObjects(
+                    Some(&[tick_event, dispatch_event]),
+                    false,
+                    INFINITE,
+                    QS_ALLINPUT,
+                )
             };
             match event.0 - WAIT_OBJECT_0.0 {
                 0 => {
@@ -291,24 +273,41 @@ impl Platform for WindowsPlatform {
                         }
                     }
                 }
-                _ => {}
-            }
-            unsafe {
-                let mut msg = MSG::default();
-
-                while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
-                    if msg.message == WM_QUIT {
-                        break 'a;
-                    }
-
-                    // if !self.run_immediate_msg_handlers(&msg) {
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                    // }
+                1 => {
+                    println!("Events: {}", self.inner.main_receiver.len());
+                    self.run_foreground_tasks();
                 }
+                _ => unsafe {
+                    let mut msg = MSG::default();
 
-                self.run_foreground_tasks();
+                    while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+                        if msg.message == WM_QUIT {
+                            break 'a;
+                        }
+
+                        // if !self.run_immediate_msg_handlers(&msg) {
+                        TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                        // }
+                    }
+                },
             }
+            // unsafe {
+            //     let mut msg = MSG::default();
+
+            //     while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+            //         if msg.message == WM_QUIT {
+            //             break 'a;
+            //         }
+
+            //         // if !self.run_immediate_msg_handlers(&msg) {
+            //         TranslateMessage(&msg);
+            //         DispatchMessageW(&msg);
+            //         // }
+            //     }
+
+            //     self.run_foreground_tasks();
+            // }
         }
 
         let mut callbacks = self.inner.callbacks.lock();
