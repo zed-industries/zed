@@ -12,7 +12,7 @@ use std::{
     process::{Command, Stdio},
     sync::Arc,
 };
-use util::http::{AsyncBody, HttpClient};
+use util::http::{self, AsyncBody, HttpClient};
 use wit_component::ComponentEncoder;
 
 /// Currently, we compile with Rust's `wasm32-wasi` target, which works with WASI `preview1`.
@@ -59,8 +59,11 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf, http: Arc<dyn HttpClient>) -> Self {
-        Self { cache_dir, http }
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir,
+            http: http::client(),
+        }
     }
 
     pub async fn compile_extension(

@@ -573,19 +573,6 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         })
         .await
         .unwrap();
-    project.update(cx, |project, cx| {
-        project.set_language_for_buffer(
-            &buffer,
-            Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Gleam".into(),
-                    ..Default::default()
-                },
-                None,
-            )),
-            cx,
-        )
-    });
 
     let fake_server = fake_servers.next().await.unwrap();
     let expected_server_path = extensions_dir.join("work/gleam/gleam-v1.2.3/gleam");
