@@ -4915,7 +4915,7 @@ impl Editor {
 
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let selected_buffer_rows = selections.iter().filter_map(|selection| {
+            let selected_multi_buffer_rows = selections.iter().filter_map(|selection| {
                 let head = selection.head();
                 let tail = selection.tail();
                 if head.buffer_id != tail.buffer_id {
@@ -4929,7 +4929,7 @@ impl Editor {
             });
 
             let mut processed_multi_buffer_rows = HashSet::default();
-            for (buffer, selected_multi_buffer_rows) in selected_buffer_rows {
+            for (buffer, selected_multi_buffer_rows) in selected_multi_buffer_rows {
                 let query_rows =
                     selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
                 buffer.update(cx, |buffer, _| {
@@ -4942,13 +4942,17 @@ impl Editor {
                             else {
                                 return;
                             };
-                            // TODO kb comment about selected_rows being exclusive, and `git_diff_hunks_in_range` using inclusive ranges logic
+
+                            // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+                            // when the caret is just above or just below the deleted hunk.
                             let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
                             let related_to_selection = if allow_adjacent {
                                 hunk.associated_range.overlaps(&query_rows)
                                     || hunk.associated_range.start == query_rows.end
                                     || hunk.associated_range.end == query_rows.start
                             } else {
+                                // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                                // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
                                 hunk.associated_range.overlaps(&selected_multi_buffer_rows)
                                     || selected_multi_buffer_rows.end == hunk.associated_range.start
                             };
