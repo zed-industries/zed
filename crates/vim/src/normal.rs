@@ -1021,6 +1021,48 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_f_and_t_smartcase(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_smartcase_find = Some(true);
+            });
+        });
+
+        cx.assert_binding(
+            ["f", "p"],
+            indoc! {"ˇfmt.Println(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["shift-f", "p"],
+            indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.ˇPrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["t", "p"],
+            indoc! {"ˇfmt.Println(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmtˇ.Println(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+
+        cx.assert_binding(
+            ["shift-t", "p"],
+            indoc! {"fmt.Printlnˇ(\"Hello, World!\")"},
+            Mode::Normal,
+            indoc! {"fmt.Pˇrintln(\"Hello, World!\")"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_percent(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["%"]);
         cx.assert_all("ˇconsole.logˇ(ˇvaˇrˇ)ˇ;").await;

@@ -172,7 +172,9 @@ Some vim settings are available to modify the default vim behavior:
     // "on_yank": use system clipboard for yank operations
     "use_system_clipboard": "always",
     // Enable multi-line find for `f` and `t` motions
-    "use_multiline_find": false
+    "use_multiline_find": false,
+    // Enable smartcase find for `f` and `t` motions
+    "use_smartcase_find": false
   }
 }
 ```
