@@ -76,7 +76,6 @@ tree-sitter-scheme.workspace = true
 tree-sitter-svelte.workspace = true
 tree-sitter-toml.workspace = true
 tree-sitter-typescript.workspace = true
-tree-sitter-uiua.workspace = true
 tree-sitter-vue.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-zig.workspace = true

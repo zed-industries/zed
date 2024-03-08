@@ -72,7 +72,7 @@ use std::{
     cmp::{self, Ordering},
     convert::TryInto,
     env,
-    ffi::OsString,
+    ffi::OsStr,
     hash::Hash,
     mem,
     num::NonZeroU32,
@@ -9390,6 +9390,7 @@ struct ProjectLspAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
+    shell_env: Mutex<Option<HashMap<String, String>>>,
 }
 
 impl ProjectLspAdapterDelegate {
@@ -9400,7 +9401,20 @@ impl ProjectLspAdapterDelegate {
             fs: project.fs.clone(),
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
+            shell_env: Default::default(),
         })
+    }
+
+    async fn load_shell_env(&self) {
+        let worktree_abs_path = self.worktree.abs_path();
+        let shell_env = load_shell_environment(&worktree_abs_path)
+            .await
+            .with_context(|| {
+                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
+            })
+            .log_err()
+            .unwrap_or_default();
+        *self.shell_env.lock() = Some(shell_env);
     }
 }
 
@@ -9416,32 +9430,20 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
-    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)> {
+    async fn shell_env(&self) -> HashMap<String, String> {
+        self.load_shell_env().await;
+        self.shell_env.lock().as_ref().cloned().unwrap_or_default()
+    }
+
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-
-        let shell_env = load_shell_environment(&worktree_abs_path)
-            .await
-            .with_context(|| {
-                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
-            })
-            .log_err();
-
-        if let Some(shell_env) = shell_env {
-            let shell_path = shell_env.get("PATH");
-            match which::which_in(&command, shell_path, &worktree_abs_path) {
-                Ok(command_path) => Some((command_path, shell_env)),
-                Err(error) => {
-                    log::warn!(
-                        "failed to determine path for command {:?} in shell PATH {:?}: {error}",
-                        command.to_string_lossy(),
-                        shell_path.map(String::as_str).unwrap_or("")
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        }
+        self.load_shell_env().await;
+        let shell_path = self
+            .shell_env
+            .lock()
+            .as_ref()
+            .and_then(|shell_env| shell_env.get("PATH").cloned());
+        which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
     }
 
     fn update_status(

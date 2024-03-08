@@ -92,7 +92,10 @@ members = [
     "crates/workspace",
     "crates/zed",
     "crates/zed_actions",
+
     "extensions/gleam",
+    "extensions/uiua",
+
     "tooling/xtask",
 ]
 default-members = ["crates/zed"]
@@ -308,7 +311,6 @@ tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev =
 tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "bd60db7d3d06f89b6ec3b287c9a6e9190b5564bd" }
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-uiua = { git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "21dc2db39494585bf29a3f86d5add6e9d11a22ba" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
@@ -317,7 +319,8 @@ unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmparser = "0.121"
-wasmtime = "18.0"
+wasm-encoder = "0.41"
+wasmtime = { version = "18.0", default-features = false, features = ["async", "demangle", "runtime", "cranelift", "component-model"] }
 wasmtime-wasi = "18.0"
 which = "6.0.0"
 wit-component = "0.20"
