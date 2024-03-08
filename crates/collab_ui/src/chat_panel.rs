@@ -518,11 +518,7 @@ impl ChatPanel {
                                 &message,
                             )
                         });
-                        el.when(replied_to_you, |el| {
-                            el.mt_1p5()
-                                .when(is_continuation_from_previous, |el| el.mt_2())
-                        })
-                        .child(
+                        el.child(
                             v_flex()
                                 .w_full()
                                 .text_ui_sm()
