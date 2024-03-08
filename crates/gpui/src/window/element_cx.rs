@@ -351,18 +351,19 @@ impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
         self.window.draw_phase = DrawPhase::Layout;
 
-        if self.window.prompt.is_some() {
-            todo!("implement prompts");
-        }
-
         // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
-        let available_space = self.window.viewport_size.map(Into::into);
-        root_element.layout(Point::default(), available_space, self);
+        root_element.layout(Point::default(), self.window.viewport_size.into(), self);
 
+        let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
-        if let Some(active_drag) = self.app.active_drag.take() {
+        if let Some(prompt) = self.window.prompt.take() {
+            let mut element = prompt.view.any_view().into_any();
+            element.layout(Point::default(), self.window.viewport_size.into(), self);
+            prompt_element = Some(element);
+            self.window.prompt = Some(prompt);
+        } else if let Some(active_drag) = self.app.active_drag.take() {
             let mut element = active_drag.view.clone().into_any();
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.layout(offset, AvailableSpace::min_size(), self);
@@ -390,7 +391,9 @@ impl<'a> ElementContext<'a> {
         self.window.draw_phase = DrawPhase::Paint;
         root_element.paint(self);
 
-        if let Some(mut drag_element) = active_drag_element {
+        if let Some(mut prompt_element) = prompt_element {
+            prompt_element.paint(self)
+        } else if let Some(mut drag_element) = active_drag_element {
             drag_element.paint(self);
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self);
