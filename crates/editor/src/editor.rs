@@ -4195,13 +4195,13 @@ impl Editor {
     }
 
     pub fn render_fold_indicators(
-        &self,
+        &mut self,
         fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
         _style: &EditorStyle,
         gutter_hovered: bool,
         _line_height: Pixels,
         _gutter_margin: Pixels,
-        editor_view: View<Editor>,
+        cx: &mut ViewContext<Self>,
     ) -> Vec<Option<AnyElement>> {
         fold_data
             .iter()
@@ -4211,19 +4211,14 @@ impl Editor {
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
                             IconButton::new(ix, ui::IconName::ChevronDown)
-                                .on_click({
-                                    let view = editor_view.clone();
-                                    move |_e, cx| {
-                                        view.update(cx, |editor, cx| match fold_status {
-                                            FoldStatus::Folded => {
-                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                            }
-                                            FoldStatus::Foldable => {
-                                                editor.fold_at(&FoldAt { buffer_row }, cx);
-                                            }
-                                        })
+                                .on_click(cx.listener(move |this, _e, cx| match fold_status {
+                                    FoldStatus::Folded => {
+                                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
                                     }
-                                })
+                                    FoldStatus::Foldable => {
+                                        this.fold_at(&FoldAt { buffer_row }, cx);
+                                    }
+                                }))
                                 .icon_color(ui::Color::Muted)
                                 .icon_size(ui::IconSize::Small)
                                 .selected(fold_status == FoldStatus::Folded)
@@ -9047,7 +9042,7 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        cx: &mut ViewContext<Self>,
+        cx: &WindowContext,
     ) -> Vec<Range<DisplayPoint>> {
         display_snapshot
             .buffer_snapshot
@@ -9818,7 +9813,7 @@ impl EditorSnapshot {
         self.is_focused
     }
 
-    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&Arc<str>> {
+    pub fn placeholder_text(&self) -> Option<&Arc<str>> {
         self.placeholder_text.as_ref()
     }
 

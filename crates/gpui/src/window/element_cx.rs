@@ -86,6 +86,7 @@ pub(crate) struct DeferredDraw {
     priority: usize,
     parent_node: DispatchNodeId,
     element_id_stack: GlobalElementId,
+    text_style_stack: Vec<TextStyleRefinement>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     layout_range: Range<AfterLayoutIndex>,
@@ -405,6 +406,7 @@ impl<'a> ElementContext<'a> {
         for deferred_draw_ix in deferred_draw_indices {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
             self.window.element_id_stack = deferred_draw.element_id_stack.clone();
+            self.window.text_style_stack = deferred_draw.text_style_stack.clone();
             self.window
                 .next_frame
                 .dispatch_tree
@@ -500,6 +502,7 @@ impl<'a> ElementContext<'a> {
                 .map(|deferred_draw| DeferredDraw {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
+                    text_style_stack: deferred_draw.text_style_stack.clone(),
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -565,9 +568,9 @@ impl<'a> ElementContext<'a> {
         F: FnOnce(&mut Self) -> R,
     {
         if let Some(style) = style {
-            self.push_text_style(style);
+            self.window.text_style_stack.push(style);
             let result = f(self);
-            self.pop_text_style();
+            self.window.text_style_stack.pop();
             result
         } else {
             f(self)
@@ -798,7 +801,7 @@ impl<'a> ElementContext<'a> {
         absolute_offset: Point<Pixels>,
         priority: usize,
     ) {
-        let window = &mut self.window;
+        let window = &mut self.cx.window;
         assert_eq!(
             window.draw_phase,
             DrawPhase::Layout,
@@ -808,6 +811,7 @@ impl<'a> ElementContext<'a> {
         window.next_frame.deferred_draws.push(DeferredDraw {
             parent_node,
             element_id_stack: window.element_id_stack.clone(),
+            text_style_stack: window.text_style_stack.clone(),
             priority,
             element: Some(element),
             absolute_offset,

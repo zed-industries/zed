@@ -5,14 +5,16 @@ use crate::{
     Hsla, KeyBinding, KeyDownEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model,
     ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
-    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext,
-    WeakView, WindowAppearance, WindowBounds, WindowOptions, WindowTextSystem,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
+    WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use parking_lot::RwLock;
+use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
@@ -255,6 +257,7 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
+    pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -458,6 +461,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
+            text_style_stack: Vec::new(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -598,6 +602,15 @@ impl<'a> WindowContext<'a> {
     /// Accessor for the text system.
     pub fn text_system(&self) -> &Arc<WindowTextSystem> {
         &self.window.text_system
+    }
+
+    /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
+    pub fn text_style(&self) -> TextStyle {
+        let mut style = TextStyle::default();
+        for refinement in &self.window.text_style_stack {
+            style.refine(refinement);
+        }
+        style
     }
 
     /// Dispatch the given action on the currently focused element.

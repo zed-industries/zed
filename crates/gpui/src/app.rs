@@ -20,7 +20,6 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
 pub use model_context::*;
-use refineable::Refineable;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{
@@ -34,8 +33,8 @@ use crate::{
     DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
     PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
+    WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -221,7 +220,6 @@ pub struct AppContext {
     pub(crate) svg_renderer: SvgRenderer,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
-    pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -283,7 +281,6 @@ impl AppContext {
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_source,
                 image_cache: ImageCache::new(http_client),
-                text_style_stack: Vec::new(),
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -834,15 +831,6 @@ impl AppContext {
         &self.text_system
     }
 
-    /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
-    pub fn text_style(&self) -> TextStyle {
-        let mut style = TextStyle::default();
-        for refinement in &self.text_style_stack {
-            style.refine(refinement);
-        }
-        style
-    }
-
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
@@ -1024,14 +1012,6 @@ impl AppContext {
             subscription
         }
         inner(&mut self.keystroke_observers, Box::new(f))
-    }
-
-    pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
-        self.text_style_stack.push(text_style);
-    }
-
-    pub(crate) fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
     }
 
     /// Register key bindings.
