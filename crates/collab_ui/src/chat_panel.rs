@@ -358,7 +358,7 @@ impl ChatPanel {
                 )
                 .child(
                     div().overflow_y_hidden().child(
-                        Label::new(message_being_replied_to.body.replace("\n", " "))
+                        Label::new(message_being_replied_to.body.replace('\n', " "))
                             .size(LabelSize::XSmall)
                             .color(Color::Default),
                     ),
