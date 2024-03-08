@@ -38,6 +38,10 @@ macro_rules! messages {
                     }
                 }
 
+                fn into_payload(self) -> envelope::Payload {
+                    envelope::Payload::$name(self)
+                }
+
                 fn from_envelope(envelope: Envelope) -> Option<Self> {
                     if let Some(envelope::Payload::$name(msg)) = envelope.payload {
                         Some(msg)

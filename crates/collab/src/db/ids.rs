@@ -1,5 +1,5 @@
 use crate::Result;
-use rpc::proto;
+use rpc::{proto, ConnectionId};
 use sea_orm::{entity::prelude::*, DbErr};
 use serde::{Deserialize, Serialize};
 
@@ -266,4 +266,9 @@ impl Into<i32> for ChannelVisibility {
         let proto: proto::ChannelVisibility = self.into();
         proto.into()
     }
+}
+
+pub enum ProjectLocation {
+    Remote(ConnectionId),
+    Hosted(HostedProjectId),
 }

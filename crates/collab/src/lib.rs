@@ -3,6 +3,7 @@ pub mod auth;
 pub mod db;
 pub mod env;
 pub mod executor;
+pub mod hosted;
 pub mod rpc;
 
 #[cfg(test)]

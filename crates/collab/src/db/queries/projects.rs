@@ -912,12 +912,28 @@ impl Database {
     }
 
     /// Returns the host connection for a read-only request to join a shared project.
-    pub async fn host_for_read_only_project_request(
+    pub async fn location_for_read_only_project_request(
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-    ) -> Result<ConnectionId> {
-        let room_id = self.room_id_for_project(project_id).await?;
+    ) -> Result<ProjectLocation> {
+        let project = self
+            .transaction(|tx| async move {
+                Ok(project::Entity::find_by_id(project_id)
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("project {} not found", project_id))?)
+            })
+            .await?;
+
+        if let Some(hosted_project_id) = project.hosted_project_id {
+            return Ok(ProjectLocation::Hosted(hosted_project_id));
+        };
+
+        let Some(room_id) = project.room_id else {
+            return Err(anyhow!("project not in room"))?;
+        };
+
         self.room_transaction(room_id, |tx| async move {
             let current_participant = room_participant::Entity::find()
                 .filter(room_participant::Column::RoomId.eq(room_id))
@@ -943,7 +959,7 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("failed to read project host"))?;
 
-            Ok(host.connection())
+            Ok(ProjectLocation::Remote(host.connection()))
         })
         .await
         .map(|guard| guard.into_inner())
@@ -1097,7 +1113,7 @@ impl Database {
                 .ok_or_else(|| anyhow!("project {} not found", project_id))?;
             Ok(project
                 .room_id
-                .ok_or_else(|| anyhow!("project not in room"))?)
+                .ok_or_else(|| anyhow!("project is not in a room"))?)
         })
         .await
     }

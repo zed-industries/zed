@@ -5,10 +5,11 @@ use crate::{
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
         InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project, ProjectId,
-        RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId, User,
-        UserId,
+        ProjectLocation, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId,
+        ServerId, User, UserId,
     },
     executor::Executor,
+    hosted::ProjectRequest,
     AppState, Error, Result,
 };
 use anyhow::anyhow;
@@ -75,17 +76,17 @@ const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
 
-type MessageHandler =
+pub(crate) type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
 
-struct Response<R> {
+pub(crate) struct Response<R> {
     peer: Arc<Peer>,
     receipt: Receipt<R>,
     responded: Arc<AtomicBool>,
 }
 
 impl<R: RequestMessage> Response<R> {
-    fn send(self, payload: R::Response) -> Result<()> {
+    pub(crate) fn send(self, payload: R::Response) -> Result<()> {
         self.responded.store(true, SeqCst);
         self.peer.respond(self.receipt, payload)?;
         Ok(())
@@ -93,18 +94,18 @@ impl<R: RequestMessage> Response<R> {
 }
 
 #[derive(Clone)]
-struct Session {
-    user_id: UserId,
-    connection_id: ConnectionId,
-    db: Arc<tokio::sync::Mutex<DbHandle>>,
-    peer: Arc<Peer>,
-    connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
-    live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+pub(crate) struct Session {
+    pub(crate) user_id: UserId,
+    pub(crate) connection_id: ConnectionId,
+    pub(crate) db: Arc<tokio::sync::Mutex<DbHandle>>,
+    pub(crate) peer: Arc<Peer>,
+    pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
+    pub(crate) live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     _executor: Executor,
 }
 
 impl Session {
-    async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
+    pub(crate) async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
@@ -113,7 +114,7 @@ impl Session {
         guard
     }
 
-    async fn connection_pool(&self) -> ConnectionPoolGuard<'_> {
+    pub(crate) async fn connection_pool(&self) -> ConnectionPoolGuard<'_> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.connection_pool.lock();
@@ -133,7 +134,7 @@ impl fmt::Debug for Session {
     }
 }
 
-struct DbHandle(Arc<Database>);
+pub(crate) struct DbHandle(Arc<Database>);
 
 impl Deref for DbHandle {
     type Target = Database;
@@ -1933,20 +1934,30 @@ async fn forward_read_only_project_request<T>(
     session: Session,
 ) -> Result<()>
 where
-    T: EntityMessage + RequestMessage,
+    T: ProjectRequest,
 {
     let project_id = ProjectId::from_proto(request.remote_entity_id());
-    let host_connection_id = session
+    let location = session
         .db()
         .await
-        .host_for_read_only_project_request(project_id, session.connection_id)
+        .location_for_read_only_project_request(project_id, session.connection_id)
         .await?;
-    let payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request)
-        .await?;
-    response.send(payload)?;
-    Ok(())
+
+    match location {
+        ProjectLocation::Remote(connection_id) => {
+            let payload = session
+                .peer
+                .forward_request(session.connection_id, connection_id, request)
+                .await?;
+            response.send(payload)?;
+            Ok(())
+        }
+        ProjectLocation::Hosted(hosted_project_id) => {
+            request
+                .handle_hosted_project_request(hosted_project_id, response, session)
+                .await
+        }
+    }
 }
 
 /// forward a project request to the host. These requests are disallowed
