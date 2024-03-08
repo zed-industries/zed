@@ -35,12 +35,28 @@ impl Cursor {
     }
 
     pub fn set_icon(&mut self, wl_pointer: &WlPointer, cursor_icon_name: String) {
+        let mut cursor_icon_name = cursor_icon_name.clone();
         if self.current_icon_name != cursor_icon_name {
             if self.theme.is_ok() {
+                let mut buffer: Option<&CursorImageBuffer>;
+
                 if let Some(cursor) = self.theme.as_mut().unwrap().get_cursor(&cursor_icon_name) {
-                    let buffer: &CursorImageBuffer = &cursor[0];
-                    let (width, height) = buffer.dimensions();
-                    let (hot_x, hot_y) = buffer.hotspot();
+                    buffer = Some(&cursor[0]);
+                } else if let Some(cursor) = self.theme.as_mut().unwrap().get_cursor("default") {
+                    buffer = Some(&cursor[0]);
+                    cursor_icon_name = "default".to_string();
+                    log::warn!(
+                        "Linux: Wayland: Unable to get cursor icon: {}. Using default cursor icon",
+                        cursor_icon_name
+                    );
+                } else {
+                    buffer = None;
+                    log::warn!("Linux: Wayland: Unable to get default cursor too!");
+                }
+
+                if buffer.is_some(){
+                    let (width, height) = buffer.unwrap().dimensions();
+                    let (hot_x, hot_y) = buffer.unwrap().hotspot();
 
                     wl_pointer.set_cursor(
                         self.serial_id,
@@ -48,16 +64,11 @@ impl Cursor {
                         hot_x as i32,
                         hot_y as i32,
                     );
-                    self.surface.attach(Some(&buffer), 0, 0);
+                    self.surface.attach(Some(&buffer.unwrap()), 0, 0);
                     self.surface.damage(0, 0, width as i32, height as i32);
                     self.surface.commit();
 
                     self.current_icon_name = cursor_icon_name;
-                } else {
-                    log::warn!(
-                        "Linux: Wayland: Unable to get cursor icon: {}",
-                        cursor_icon_name
-                    );
                 }
             } else {
                 log::warn!("Linux: Wayland: Unable to load cursor themes");
