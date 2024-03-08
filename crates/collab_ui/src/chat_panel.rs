@@ -326,12 +326,7 @@ impl ChatPanel {
         };
 
         let user_being_replied_to = reply_to_message.sender.clone();
-
-        let body_element_id: ElementId = match message_id {
-            Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message", id).into(),
-            Some(ChannelMessageId::Pending(id)) => ("reply-to-pending-message", id).into(), // This should never happen
-            None => ("composing-reply").into(),
-        };
+        let message_being_replied_to = reply_to_message.clone();
 
         let message_element_id: ElementId = match message_id {
             Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message-container", id).into(),
@@ -343,17 +338,6 @@ impl ChatPanel {
 
         let current_channel_id = self.channel_id(cx);
         let reply_to_message_id = reply_to_message.id;
-
-        let reply_to_message_body = self
-            .markdown_data
-            .entry(reply_to_message.id)
-            .or_insert_with(|| {
-                Self::render_markdown_with_mentions(
-                    &self.languages,
-                    self.client.id(),
-                    reply_to_message,
-                )
-            });
 
         div().child(
             h_flex()
@@ -373,9 +357,11 @@ impl ChatPanel {
                     ),
                 )
                 .child(
-                    div()
-                        .overflow_y_hidden()
-                        .child(reply_to_message_body.element(body_element_id, cx)),
+                    div().overflow_y_hidden().child(
+                        Label::new(message_being_replied_to.body.replace("\n", " "))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    ),
                 )
                 .cursor(CursorStyle::PointingHand)
                 .tooltip(|cx| Tooltip::text("Go to message", cx))
