@@ -8,9 +8,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
-    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle,
-    FontWeight, HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    ListOffset, ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
