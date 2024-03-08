@@ -12938,7 +12938,6 @@ dependencies = [
  "gpui",
  "install_cli",
  "isahc",
- "itertools 0.11.0",
  "journal",
  "language",
  "language_selector",

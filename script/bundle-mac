@@ -179,7 +179,7 @@ fi
 # Note: The app identifier for our development builds is the same as the app identifier for nightly.
 cp crates/${zed_crate}/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
 
-if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
+if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_USERNAME:-}" && -n "${APPLE_NOTARIZATION_PASSWORD:-}" ]]; then
     echo "Signing bundle with Apple-issued certificate"
     security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
     security default-keychain -s zed.keychain
