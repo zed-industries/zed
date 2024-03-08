@@ -224,7 +224,7 @@ impl DispatchTree {
 
     fn move_node(&mut self, source: &mut DispatchNode) {
         self.push_node();
-        if let Some(context) = source.context.take() {
+        if let Some(context) = source.context.clone() {
             self.set_key_context(context);
         }
         if let Some(focus_id) = source.focus_id {
