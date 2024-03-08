@@ -25,15 +25,7 @@ use futures::{
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
-use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element,
-    ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
-    GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke, LayoutId, ManagedView,
-    Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render,
-    SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext, WindowHandle, WindowOptions,
-};
+use gpui::*;
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -4793,10 +4785,6 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
     Some(size((width as f64).into(), (height as f64).into()))
 }
 
-pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
-    (1.75 * cx.rem_size()).max(px(32.))
-}
-
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
@@ -4810,7 +4798,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(titlebar_height(cx))
+            .top(cx.titlebar_height())
             .size_full()
             .flex()
             .items_center()

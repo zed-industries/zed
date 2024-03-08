@@ -29,7 +29,7 @@ use crate::{
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
-    input: Option<Box<dyn FnMut(crate::PlatformInput) -> bool>>,
+    input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen: Option<Box<dyn FnMut(bool)>>,
@@ -237,7 +237,7 @@ impl WaylandWindowState {
 
     pub fn handle_input(&self, input: PlatformInput) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if fun(input.clone()) {
+            if !fun(input.clone()).propagate {
                 return;
             }
         }
@@ -276,6 +276,11 @@ impl HasDisplayHandle for WaylandWindow {
 impl PlatformWindow for WaylandWindow {
     // todo(linux)
     fn bounds(&self) -> Bounds<GlobalPixels> {
+        unimplemented!()
+    }
+
+    // todo(linux)
+    fn is_maximized(&self) -> bool {
         unimplemented!()
     }
 
@@ -378,7 +383,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
         self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
