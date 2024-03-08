@@ -303,6 +303,8 @@ impl ChatPanel {
         reply_to_message: &ChannelMessage,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let user_being_replied_to = reply_to_message.sender.clone();
+
         let body_element_id: ElementId = match message_id {
             Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message", id).into(),
             Some(ChannelMessageId::Pending(id)) => ("reply-to-pending-message", id).into(), // This should never happen
@@ -331,52 +333,27 @@ impl ChatPanel {
                 )
             });
 
-        const REPLY_TO_PREFIX: &str = "Reply to @";
-
-        div().flex_grow().child(
-            v_flex()
+        div().child(
+            h_flex()
                 .id(message_element_id)
                 .text_ui_xs()
+                .my_0p5()
+                .px_0p5()
+                .gap_x_1()
+                .rounded_md()
+                .hover(|style| style.bg(cx.theme().colors().element_background))
+                .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
                 .child(
-                    h_flex()
-                        .gap_x_1()
-                        .items_center()
-                        .justify_start()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .child(
-                            StyledText::new(format!(
-                                "{}{}",
-                                REPLY_TO_PREFIX,
-                                reply_to_message.sender.github_login.clone()
-                            ))
-                            .with_highlights(
-                                &cx.text_style(),
-                                vec![(
-                                    (REPLY_TO_PREFIX.len() - 1)
-                                        ..(reply_to_message.sender.github_login.len()
-                                            + REPLY_TO_PREFIX.len()),
-                                    HighlightStyle {
-                                        font_weight: Some(FontWeight::BOLD),
-                                        ..Default::default()
-                                    },
-                                )],
-                            ),
-                        ),
+                    div().font_weight(FontWeight::SEMIBOLD).child(
+                        Label::new(format!("@{}", user_being_replied_to.github_login))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    ),
                 )
                 .child(
                     div()
-                        .border_l_2()
-                        .border_color(cx.theme().colors().border)
-                        .px_1()
-                        .py_0p5()
-                        .mb_1()
-                        .child(
-                            div()
-                                .overflow_hidden()
-                                .max_h_12()
-                                .child(reply_to_message_body.element(body_element_id, cx)),
-                        ),
+                        .overflow_y_hidden()
+                        .child(reply_to_message_body.element(body_element_id, cx)),
                 )
                 .cursor(CursorStyle::PointingHand)
                 .tooltip(|cx| Tooltip::text("Go to message", cx))
@@ -470,10 +447,18 @@ impl ChatPanel {
                     .bg(background)
                     .rounded_md()
                     .overflow_hidden()
-                    .px_1()
+                    .px_1p5()
                     .py_0p5()
                     .when(!self.has_open_menu(message_id), |this| {
                         this.hover(|style| style.bg(cx.theme().colors().element_hover))
+                    })
+                    .when_some(reply_to_message.clone(), |el, reply_to_message| {
+                        el.child(self.render_replied_to_message(
+                            Some(message.id),
+                            &reply_to_message,
+                            cx,
+                        ))
+                        .when(is_continuation_from_previous, |this| this.mt_2())
                     })
                     .when(!is_continuation_from_previous, |this| {
                         this.mt_2().child(
@@ -537,13 +522,6 @@ impl ChatPanel {
                             )
                         },
                     )
-                    .when_some(reply_to_message, |el, reply_to_message| {
-                        el.child(self.render_replied_to_message(
-                            Some(message.id),
-                            &reply_to_message,
-                            cx,
-                        ))
-                    })
                     .when(mentioning_you || replied_to_you, |this| this.my_0p5())
                     .map(|el| {
                         let text = self.markdown_data.entry(message.id).or_insert_with(|| {
@@ -864,6 +842,8 @@ impl Render for ChatPanel {
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {
+                    let user_being_replied_to = reply_message.sender.clone();
+
                     el.child(
                         h_flex()
                             .when(!self.is_scrolled_to_bottom, |el| {
@@ -877,18 +857,24 @@ impl Render for ChatPanel {
                             .bg(cx.theme().colors().background)
                             .child(
                                 div().flex_shrink().overflow_hidden().child(
-                                    self.render_replied_to_message(None, &reply_message, cx),
+                                    h_flex()
+                                        .child(Label::new("Replying to ").size(LabelSize::Small))
+                                        .child(
+                                            div().font_weight(FontWeight::BOLD).child(
+                                                Label::new(format!(
+                                                    "@{}",
+                                                    user_being_replied_to.github_login.clone()
+                                                ))
+                                                .size(LabelSize::Small),
+                                            ),
+                                        ),
                                 ),
                             )
                             .child(
                                 IconButton::new("close-reply-preview", IconName::Close)
                                     .shape(ui::IconButtonShape::Square)
                                     .tooltip(|cx| {
-                                        Tooltip::for_action(
-                                            "Close reply preview",
-                                            &CloseReplyPreview,
-                                            cx,
-                                        )
+                                        Tooltip::for_action("Close reply", &CloseReplyPreview, cx)
                                     })
                                     .on_click(cx.listener(move |_, _, cx| {
                                         cx.dispatch_action(CloseReplyPreview.boxed_clone())
