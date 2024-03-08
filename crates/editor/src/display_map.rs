@@ -1,6 +1,3 @@
-// todo!("remove warnings")
-#![allow(unused)]
-
 //! This module defines where the text should be displayed in an [`Editor`][Editor].
 //!
 //! Not literally though - rendering, layout and all that jazz is a responsibility of [`EditorElement`][EditorElement].

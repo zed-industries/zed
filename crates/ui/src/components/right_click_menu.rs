@@ -146,7 +146,6 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         cx: &mut ElementContext,
     ) -> Hitbox {
         cx.with_element_id(Some(self.id.clone()), |cx| {
-            // todo!("occlude child bounds instead?")
             let hitbox = cx.insert_hitbox(bounds, false);
 
             if let Some(child) = before_layout.child_element.as_mut() {
