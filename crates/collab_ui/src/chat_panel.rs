@@ -349,6 +349,7 @@ impl ChatPanel {
                 .rounded_md()
                 .hover(|style| style.bg(cx.theme().colors().element_background))
                 .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
+                .child(Avatar::new(user_being_replied_to.avatar_uri.clone()).size(rems(0.7)))
                 .child(
                     div().font_weight(FontWeight::SEMIBOLD).child(
                         Label::new(format!("@{}", user_being_replied_to.github_login))
