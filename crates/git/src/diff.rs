@@ -1,6 +1,6 @@
 use std::{iter, ops::Range};
 use sum_tree::SumTree;
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point};
+use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
@@ -15,6 +15,7 @@ pub enum DiffHunkStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk<T> {
     pub associated_range: Range<T>,
+    pub buffer_id: BufferId,
     pub buffer_range: Range<Anchor>,
     pub diff_base_byte_range: Range<usize>,
 }
@@ -151,6 +152,7 @@ impl BufferDiff {
                 associated_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: buffer.anchor_before(start_point)..buffer.anchor_after(end_point),
+                buffer_id: buffer.remote_id(),
             })
         })
     }
@@ -181,6 +183,7 @@ impl BufferDiff {
                 associated_range: range.start.row..end_row,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
+                buffer_id: hunk.buffer_id,
             })
         })
     }
@@ -301,6 +304,7 @@ impl BufferDiff {
             associated_range: buffer_range.clone(),
             buffer_range,
             diff_base_byte_range,
+            buffer_id: buffer.remote_id(),
         }
     }
 }

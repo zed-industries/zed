@@ -9118,13 +9118,44 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
 
     let cols = 4;
     let rows = 10;
-    // revert first character in each row, creating one large diff hunk per buffer
-    let is_first_char = |offset: usize| offset % cols == 0;
-    let sample_text_1 = sample_text(rows, 4, 'a');
+    let sample_text_1 = sample_text(rows, cols, 'a');
     assert_eq!(
         sample_text_1,
         "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
     );
+    let sample_text_2 = sample_text(rows, cols, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let sample_text_3 = sample_text(rows, cols, 'v');
+    assert_eq!(
+        sample_text_3,
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+    );
+
+    fn diff_every_buffer_row(
+        buffer: &Model<Buffer>,
+        sample_text: String,
+        cols: usize,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // revert first character in each row, creating one large diff hunk per buffer
+        let is_first_char = |offset: usize| offset % cols == 0;
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                sample_text
+                    .chars()
+                    .enumerate()
+                    .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
+                    .collect::<String>(),
+                cx,
+            );
+            buffer.set_diff_base(Some(sample_text), cx);
+        });
+        cx.executor().run_until_parked();
+    }
+
     let buffer_1 = cx.new_model(|cx| {
         Buffer::new(
             0,
@@ -9132,24 +9163,8 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             sample_text_1.clone(),
         )
     });
-    buffer_1.update(cx, |buffer, cx| {
-        buffer.set_text(
-            sample_text_1
-                .chars()
-                .enumerate()
-                .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
-                .collect::<String>(),
-            cx,
-        );
-        buffer.set_diff_base(Some(sample_text_1), cx);
-    });
-    cx.executor().run_until_parked();
+    diff_every_buffer_row(&buffer_1, sample_text_1.clone(), cols, cx);
 
-    let sample_text_2 = sample_text(rows, 4, 'l');
-    assert_eq!(
-        sample_text_2,
-        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
-    );
     let buffer_2 = cx.new_model(|cx| {
         Buffer::new(
             1,
@@ -9157,18 +9172,16 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             sample_text_2.clone(),
         )
     });
-    buffer_2.update(cx, |buffer, cx| {
-        buffer.set_text(
-            sample_text_2
-                .chars()
-                .enumerate()
-                .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
-                .collect::<String>(),
-            cx,
-        );
-        buffer.set_diff_base(Some(sample_text_2), cx);
+    diff_every_buffer_row(&buffer_2, sample_text_2.clone(), cols, cx);
+
+    let buffer_3 = cx.new_model(|cx| {
+        Buffer::new(
+            2,
+            BufferId::new(cx.entity_id().as_u64() + 2).unwrap(),
+            sample_text_3.clone(),
+        )
     });
-    cx.executor().run_until_parked();
+    diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
 
     let multibuffer = cx.new_model(|cx| {
         let mut multibuffer = MultiBuffer::new(0, ReadWrite);
@@ -9208,23 +9221,51 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             ],
             cx,
         );
+        multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
         multibuffer
     });
 
-    let expected_initial_multibuffer_text =
-        "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n";
     let (editor, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
     editor.update(cx, |editor, cx| {
-        assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
+        assert_eq!(editor.text(cx), "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n\nXvvvXwwwX\nxxXx\nyXyy\n\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X\n");
         editor.select_all(&SelectAll, cx);
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
     cx.executor().run_until_parked();
-    // `SelectAll` captures two different buffers, which is not supported for reverting currently
+    // When all ranges are selected, all buffer hunks are reverted.
     editor.update(cx, |editor, cx| {
-        assert_eq!(editor.text(cx), expected_initial_multibuffer_text);
+        assert_eq!(editor.text(cx), "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nllll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu\n\n\nvvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}\n\n");
+    });
+    buffer_1.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_1);
+    });
+    buffer_2.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_2);
+    });
+    buffer_3.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_3);
     });
 
+    diff_every_buffer_row(&buffer_1, sample_text_1.clone(), cols, cx);
+    diff_every_buffer_row(&buffer_2, sample_text_2.clone(), cols, cx);
+    diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
     editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| {
             s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
@@ -9236,19 +9277,22 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.text(cx),
-            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n"
+            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nXlllXmmmX\nnnXn\noXoo\nXpppXqqqX\nrrXr\nsXss\nXtttXuuuX\n\n\nXvvvXwwwX\nxxXx\nyXyy\nXzzzX{{{X\n||X|\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X\n\n"
         );
     });
     buffer_1.update(cx, |buffer, _| {
-        assert_eq!(
-            buffer.text(),
-            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
-        );
+        assert_eq!(buffer.text(), sample_text_1);
     });
     buffer_2.update(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
             "XlllXmmmX\nnnXn\noXoo\nXpppXqqqX\nrrXr\nsXss\nXtttXuuuX"
+        );
+    });
+    buffer_3.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "XvvvXwwwX\nxxXx\nyXyy\nXzzzX{{{X\n||X|\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X"
         );
     });
 }

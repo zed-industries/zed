@@ -3200,6 +3200,7 @@ impl MultiBufferSnapshot {
                         associated_range: start..end,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         buffer_range: hunk.buffer_range.clone(),
+                        buffer_id: hunk.buffer_id,
                     }
                 });
 
@@ -3274,6 +3275,7 @@ impl MultiBufferSnapshot {
                         associated_range: buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         buffer_range: hunk.buffer_range.clone(),
+                        buffer_id: hunk.buffer_id,
                     }
                 });
 
