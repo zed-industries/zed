@@ -1536,6 +1536,157 @@ impl EditorElement {
         )
     }
 
+    fn layout_context_menu(
+        &self,
+        line_height: Pixels,
+        hitbox: &Hitbox,
+        text_hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        start_row: u32,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_layouts: &[LineWithInvisibles],
+        newest_selection_head: DisplayPoint,
+        cx: &mut ElementContext,
+    ) -> bool {
+        let max_height = cmp::min(
+            12. * line_height,
+            cmp::max(3. * line_height, (hitbox.size.height - line_height) / 2.),
+        );
+        let Some((position, mut context_menu)) = self.editor.update(cx, |editor, cx| {
+            if editor.context_menu_visible() {
+                editor.render_context_menu(newest_selection_head, &self.style, max_height, cx)
+            } else {
+                None
+            }
+        }) else {
+            return false;
+        };
+
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+        let context_menu_size = context_menu.measure(available_space, cx);
+
+        let cursor_row_layout = &line_layouts[(position.row() - start_row) as usize].line;
+        let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
+        let y = (position.row() + 1) as f32 * line_height - scroll_pixel_position.y;
+        let mut list_origin = content_origin + point(x, y);
+        let list_width = context_menu_size.width;
+        let list_height = context_menu_size.height;
+
+        // Snap the right edge of the list to the right edge of the window if
+        // its horizontal bounds overflow.
+        if list_origin.x + list_width > cx.viewport_size().width {
+            list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
+        }
+
+        if list_origin.y + list_height > text_hitbox.lower_right().y {
+            list_origin.y -= line_height + list_height;
+        }
+
+        cx.defer_draw(context_menu, list_origin, 1);
+        true
+    }
+
+    fn layout_mouse_context_menu(&self, cx: &mut ElementContext) -> Option<AnyElement> {
+        let mouse_context_menu = self.editor.read(cx).mouse_context_menu.as_ref()?;
+        let mut element = overlay()
+            .position(mouse_context_menu.position)
+            .child(mouse_context_menu.context_menu.clone())
+            .anchor(AnchorCorner::TopLeft)
+            .snap_to_window()
+            .into_any();
+        element.layout(gpui::Point::default(), AvailableSpace::min_size(), cx);
+        Some(element)
+    }
+
+    fn layout_hover_popovers(
+        &self,
+        snapshot: &EditorSnapshot,
+        hitbox: &Hitbox,
+        text_hitbox: &Hitbox,
+        visible_display_row_range: Range<u32>,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        em_width: Pixels,
+        cx: &mut ElementContext,
+    ) {
+        let max_size = size(
+            (120. * em_width) // Default size
+                .min(hitbox.size.width / 2.) // Shrink to half of the editor width
+                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+            (16. * line_height) // Default size
+                .min(hitbox.size.height / 2.) // Shrink to half of the editor height
+                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+        );
+
+        let hover_popovers = self.editor.update(cx, |editor, cx| {
+            editor.hover_state.render(
+                &snapshot,
+                &self.style,
+                visible_display_row_range.clone(),
+                max_size,
+                editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            )
+        });
+        let Some((position, mut hover_popovers)) = hover_popovers else {
+            return;
+        };
+
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+
+        // This is safe because we check on layout whether the required row is available
+        let hovered_row_layout =
+            &line_layouts[(position.row() - visible_display_row_range.start) as usize].line;
+
+        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
+        // height. This is the size we will use to decide whether to render popovers above or below
+        // the hovered line.
+        let first_size = hover_popovers[0].measure(available_space, cx);
+        let height_to_reserve = first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * line_height;
+
+        // Compute Hovered Point
+        let x =
+            hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
+        let y = position.row() as f32 * line_height - scroll_pixel_position.y;
+        let hovered_point = content_origin + point(x, y);
+
+        if hovered_point.y - height_to_reserve > Pixels::ZERO {
+            // There is enough space above. Render popovers above the hovered point
+            let mut current_y = hovered_point.y;
+            for mut hover_popover in hover_popovers {
+                let size = hover_popover.measure(available_space, cx);
+                let mut popover_origin = point(hovered_point.x, current_y - size.height);
+
+                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
+                if x_out_of_bounds < Pixels::ZERO {
+                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                }
+
+                cx.defer_draw(hover_popover, popover_origin, 2);
+
+                current_y = popover_origin.y - HOVER_POPOVER_GAP;
+            }
+        } else {
+            // There is not enough space above. Render popovers below the hovered point
+            let mut current_y = hovered_point.y + line_height;
+            for mut hover_popover in hover_popovers {
+                let size = hover_popover.measure(available_space, cx);
+                let mut popover_origin = point(hovered_point.x, current_y);
+
+                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
+                if x_out_of_bounds < Pixels::ZERO {
+                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                }
+
+                cx.defer_draw(hover_popover, popover_origin, 2);
+
+                current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+            }
+        }
+    }
+
     fn paint_background(&self, layout: &EditorLayout, cx: &mut ElementContext) {
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
@@ -1869,113 +2020,6 @@ impl EditorElement {
                 cx,
             );
         }
-    }
-
-    fn layout_hover_popovers(
-        &self,
-        snapshot: &EditorSnapshot,
-        hitbox: &Hitbox,
-        text_hitbox: &Hitbox,
-        visible_display_row_range: Range<u32>,
-        content_origin: gpui::Point<Pixels>,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        line_layouts: &[LineWithInvisibles],
-        line_height: Pixels,
-        em_width: Pixels,
-        cx: &mut ElementContext,
-    ) {
-        let max_size = size(
-            (120. * em_width) // Default size
-                .min(hitbox.size.width / 2.) // Shrink to half of the editor width
-                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
-            (16. * line_height) // Default size
-                .min(hitbox.size.height / 2.) // Shrink to half of the editor height
-                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
-        );
-
-        let hover_popovers = self.editor.update(cx, |editor, cx| {
-            editor.hover_state.render(
-                &snapshot,
-                &self.style,
-                visible_display_row_range.clone(),
-                max_size,
-                editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                cx,
-            )
-        });
-        let Some((position, mut hover_popovers)) = hover_popovers else {
-            return;
-        };
-
-        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-
-        // This is safe because we check on layout whether the required row is available
-        let hovered_row_layout =
-            &line_layouts[(position.row() - visible_display_row_range.start) as usize].line;
-
-        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-        // height. This is the size we will use to decide whether to render popovers above or below
-        // the hovered line.
-        let first_size = hover_popovers[0].measure(available_space, cx);
-        let height_to_reserve = first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * line_height;
-
-        // Compute Hovered Point
-        let x =
-            hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = position.row() as f32 * line_height - scroll_pixel_position.y;
-        let hovered_point = content_origin + point(x, y);
-
-        if hovered_point.y - height_to_reserve > Pixels::ZERO {
-            // There is enough space above. Render popovers above the hovered point
-            let mut current_y = hovered_point.y;
-            for mut hover_popover in hover_popovers {
-                let size = hover_popover.measure(available_space, cx);
-                let mut popover_origin = point(hovered_point.x, current_y - size.height);
-
-                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
-                if x_out_of_bounds < Pixels::ZERO {
-                    popover_origin.x = popover_origin.x + x_out_of_bounds;
-                }
-
-                cx.defer_draw(hover_popover, popover_origin, 2);
-
-                current_y = popover_origin.y - HOVER_POPOVER_GAP;
-            }
-        } else {
-            // There is not enough space above. Render popovers below the hovered point
-            let mut current_y = hovered_point.y + line_height;
-            for mut hover_popover in hover_popovers {
-                let size = hover_popover.measure(available_space, cx);
-                let mut popover_origin = point(hovered_point.x, current_y);
-
-                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
-                if x_out_of_bounds < Pixels::ZERO {
-                    popover_origin.x = popover_origin.x + x_out_of_bounds;
-                }
-
-                cx.defer_draw(hover_popover, popover_origin, 2);
-
-                current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
-            }
-        }
-
-        // todo!("right click menu")
-        // if let Some(mouse_context_menu) = self.editor.read(cx).mouse_context_menu.as_ref() {
-        //     let element = overlay()
-        //         .position(mouse_context_menu.position)
-        //         .child(mouse_context_menu.context_menu.clone())
-        //         .anchor(AnchorCorner::TopLeft)
-        //         .snap_to_window();
-        //     element.into_any().draw(
-        //         gpui::Point::default(),
-        //         size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-        //         cx,
-        //     );
-        // }
-    }
-
-    fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
-        bounds.upper_right().x - self.style.scrollbar_width
     }
 
     fn paint_scrollbar(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
@@ -2373,6 +2417,12 @@ impl EditorElement {
         }
     }
 
+    fn paint_mouse_context_menu(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        if let Some(mouse_context_menu) = layout.mouse_context_menu.as_mut() {
+            mouse_context_menu.paint(cx);
+        }
+    }
+
     fn paint_scroll_wheel_listener(&mut self, layout: &EditorLayout, cx: &mut ElementContext) {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -2494,6 +2544,10 @@ impl EditorElement {
         });
     }
 
+    fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
+        bounds.upper_right().x - self.style.scrollbar_width
+    }
+
     fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
         let style = &self.style;
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
@@ -2519,56 +2573,6 @@ impl EditorElement {
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
-    }
-
-    fn layout_context_menu(
-        &self,
-        line_height: Pixels,
-        hitbox: &Hitbox,
-        text_hitbox: &Hitbox,
-        content_origin: gpui::Point<Pixels>,
-        start_row: u32,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        line_layouts: &[LineWithInvisibles],
-        newest_selection_head: DisplayPoint,
-        cx: &mut ElementContext,
-    ) -> bool {
-        let max_height = cmp::min(
-            12. * line_height,
-            cmp::max(3. * line_height, (hitbox.size.height - line_height) / 2.),
-        );
-        let Some((position, mut context_menu)) = self.editor.update(cx, |editor, cx| {
-            if editor.context_menu_visible() {
-                editor.render_context_menu(newest_selection_head, &self.style, max_height, cx)
-            } else {
-                None
-            }
-        }) else {
-            return false;
-        };
-
-        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-        let context_menu_size = context_menu.measure(available_space, cx);
-
-        let cursor_row_layout = &line_layouts[(position.row() - start_row) as usize].line;
-        let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = (position.row() + 1) as f32 * line_height - scroll_pixel_position.y;
-        let mut list_origin = content_origin + point(x, y);
-        let list_width = context_menu_size.width;
-        let list_height = context_menu_size.height;
-
-        // Snap the right edge of the list to the right edge of the window if
-        // its horizontal bounds overflow.
-        if list_origin.x + list_width > cx.viewport_size().width {
-            list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
-        }
-
-        if list_origin.y + list_height > text_hitbox.lower_right().y {
-            list_origin.y -= line_height + list_height;
-        }
-
-        cx.defer_draw(context_menu, list_origin, 1);
-        true
     }
 }
 
@@ -3119,7 +3123,9 @@ impl Element for EditorElement {
                         em_width,
                         cx,
                     );
-                };
+                }
+
+                let mouse_context_menu = self.layout_mouse_context_menu(cx);
 
                 let fold_indicators = if gutter_settings.folds {
                     cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
@@ -3201,6 +3207,7 @@ impl Element for EditorElement {
                     blocks,
                     cursors,
                     selections,
+                    mouse_context_menu,
                     code_actions_indicator,
                     fold_indicators,
                     tab_invisible,
@@ -3251,6 +3258,7 @@ impl Element for EditorElement {
                 }
 
                 self.paint_scrollbar(layout, cx);
+                self.paint_mouse_context_menu(layout, cx);
             });
         })
     }
@@ -3291,6 +3299,7 @@ pub struct EditorLayout {
     max_row: u32,
     code_actions_indicator: Option<AnyElement>,
     fold_indicators: Vec<Option<AnyElement>>,
+    mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
 }
