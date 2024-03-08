@@ -46,20 +46,20 @@ impl DisplayDiffHunk {
 }
 
 pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayDiffHunk {
-    let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
-    let hunk_start_point_sub = Point::new(hunk.buffer_range.start.saturating_sub(1), 0);
+    let hunk_start_point = Point::new(hunk.associated_range.start, 0);
+    let hunk_start_point_sub = Point::new(hunk.associated_range.start.saturating_sub(1), 0);
     let hunk_end_point_sub = Point::new(
-        hunk.buffer_range
+        hunk.associated_range
             .end
             .saturating_sub(1)
-            .max(hunk.buffer_range.start),
+            .max(hunk.associated_range.start),
         0,
     );
 
     let is_removal = hunk.status() == DiffHunkStatus::Removed;
 
-    let folds_start = Point::new(hunk.buffer_range.start.saturating_sub(2), 0);
-    let folds_end = Point::new(hunk.buffer_range.end + 2, 0);
+    let folds_start = Point::new(hunk.associated_range.start.saturating_sub(2), 0);
+    let folds_end = Point::new(hunk.associated_range.end + 2, 0);
     let folds_range = folds_start..folds_end;
 
     let containing_fold = snapshot.folds_in_range(folds_range).find(|fold| {
@@ -79,7 +79,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     } else {
         let start = hunk_start_point.to_display_point(snapshot).row();
 
-        let hunk_end_row = hunk.buffer_range.end.max(hunk.buffer_range.start);
+        let hunk_end_row = hunk.associated_range.end.max(hunk.associated_range.start);
         let hunk_end_point = Point::new(hunk_end_row, 0);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range(0..12)
-                .map(|hunk| (hunk.status(), hunk.buffer_range))
+                .map(|hunk| (hunk.status(), hunk.associated_range))
                 .collect::<Vec<_>>(),
             &expected,
         );
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(
             snapshot
                 .git_diff_hunks_in_range_rev(0..12)
-                .map(|hunk| (hunk.status(), hunk.buffer_range))
+                .map(|hunk| (hunk.status(), hunk.associated_range))
                 .collect::<Vec<_>>(),
             expected
                 .iter()

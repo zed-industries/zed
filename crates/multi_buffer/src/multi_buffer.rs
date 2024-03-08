@@ -3186,19 +3186,21 @@ impl MultiBufferSnapshot {
                 .map(move |hunk| {
                     let start = multibuffer_start.row
                         + hunk
-                            .buffer_range
+                            .associated_range
                             .start
                             .saturating_sub(excerpt_start_point.row);
                     let end = multibuffer_start.row
                         + hunk
-                            .buffer_range
+                            .associated_range
                             .end
                             .min(excerpt_end_point.row + 1)
                             .saturating_sub(excerpt_start_point.row);
 
                     DiffHunk {
-                        buffer_range: start..end,
+                        associated_range: start..end,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                        buffer_range: hunk.buffer_range.clone(),
+                        buffer_id: hunk.buffer_id,
                     }
                 });
 
@@ -3215,52 +3217,65 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = DiffHunk<u32>> + '_ {
         let mut cursor = self.excerpts.cursor::<Point>();
 
-        cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+        cursor.seek(&Point::new(row_range.start, 0), Bias::Left, &());
 
         std::iter::from_fn(move || {
             let excerpt = cursor.item()?;
             let multibuffer_start = *cursor.start();
             let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
-            if multibuffer_start.row >= row_range.end {
-                return None;
-            }
-
             let mut buffer_start = excerpt.range.context.start;
             let mut buffer_end = excerpt.range.context.end;
-            let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
-            let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
 
-            if row_range.start > multibuffer_start.row {
-                let buffer_start_point =
-                    excerpt_start_point + Point::new(row_range.start - multibuffer_start.row, 0);
-                buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
-            }
+            let excerpt_rows = match multibuffer_start.row.cmp(&row_range.end) {
+                cmp::Ordering::Less => {
+                    let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
+                    let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
 
-            if row_range.end < multibuffer_end.row {
-                let buffer_end_point =
-                    excerpt_start_point + Point::new(row_range.end - multibuffer_start.row, 0);
-                buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
-            }
+                    if row_range.start > multibuffer_start.row {
+                        let buffer_start_point = excerpt_start_point
+                            + Point::new(row_range.start - multibuffer_start.row, 0);
+                        buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
+                    }
+
+                    if row_range.end < multibuffer_end.row {
+                        let buffer_end_point = excerpt_start_point
+                            + Point::new(row_range.end - multibuffer_start.row, 0);
+                        buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
+                    }
+                    excerpt_start_point.row..excerpt_end_point.row
+                }
+                cmp::Ordering::Equal if row_range.end == 0 => {
+                    buffer_end = buffer_start;
+                    0..0
+                }
+                cmp::Ordering::Greater | cmp::Ordering::Equal => return None,
+            };
 
             let buffer_hunks = excerpt
                 .buffer
                 .git_diff_hunks_intersecting_range(buffer_start..buffer_end)
                 .map(move |hunk| {
-                    let start = multibuffer_start.row
-                        + hunk
-                            .buffer_range
-                            .start
-                            .saturating_sub(excerpt_start_point.row);
-                    let end = multibuffer_start.row
-                        + hunk
-                            .buffer_range
-                            .end
-                            .min(excerpt_end_point.row + 1)
-                            .saturating_sub(excerpt_start_point.row);
-
+                    let buffer_range = if excerpt_rows.start == 0 && excerpt_rows.end == 0 {
+                        0..1
+                    } else {
+                        let start = multibuffer_start.row
+                            + hunk
+                                .associated_range
+                                .start
+                                .saturating_sub(excerpt_rows.start);
+                        let end = multibuffer_start.row
+                            + hunk
+                                .associated_range
+                                .end
+                                .min(excerpt_rows.end + 1)
+                                .saturating_sub(excerpt_rows.start);
+                        start..end
+                    };
                     DiffHunk {
-                        buffer_range: start..end,
+                        associated_range: buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                        buffer_range: hunk.buffer_range.clone(),
+                        buffer_id: hunk.buffer_id,
                     }
                 });
 

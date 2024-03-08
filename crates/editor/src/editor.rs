@@ -36,7 +36,7 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use ::git::diff::DiffHunk;
+use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -4906,6 +4906,105 @@ impl Editor {
             let mut seen = HashSet::default();
             lines.retain(|line| seen.insert(*line));
         })
+    }
+
+    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
+        let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.buffer().update(cx, |multi_buffer, cx| {
+                    for (buffer_id, buffer_revert_ranges) in revert_changes {
+                        if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(buffer_revert_ranges, None, cx);
+                            });
+                        }
+                    }
+                });
+                editor.change_selections(None, cx, |selections| selections.refresh());
+            });
+        }
+    }
+
+    fn gather_revert_changes(
+        &mut self,
+        selections: &[Selection<Anchor>],
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>> {
+        let mut revert_changes = HashMap::default();
+        self.buffer.update(cx, |multi_buffer, cx| {
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let selected_multi_buffer_rows = selections.iter().map(|selection| {
+                let head = selection.head();
+                let tail = selection.tail();
+                let start = tail.to_point(&multi_buffer_snapshot).row;
+                let end = head.to_point(&multi_buffer_snapshot).row;
+                if start > end {
+                    end..start
+                } else {
+                    start..end
+                }
+            });
+
+            let mut processed_buffer_rows =
+                HashMap::<BufferId, HashSet<Range<text::Anchor>>>::default();
+            for selected_multi_buffer_rows in selected_multi_buffer_rows {
+                let query_rows =
+                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+                for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+                    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+                    // when the caret is just above or just below the deleted hunk.
+                    let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                    let related_to_selection = if allow_adjacent {
+                        hunk.associated_range.overlaps(&query_rows)
+                            || hunk.associated_range.start == query_rows.end
+                            || hunk.associated_range.end == query_rows.start
+                    } else {
+                        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                        // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+                        hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                            || selected_multi_buffer_rows.end == hunk.associated_range.start
+                    };
+                    if related_to_selection {
+                        if !processed_buffer_rows
+                            .entry(hunk.buffer_id)
+                            .or_default()
+                            .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                        {
+                            continue;
+                        }
+                        Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
+                    }
+                }
+            }
+        });
+        revert_changes
+    }
+
+    fn prepare_revert_change(
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>,
+        multi_buffer: &MultiBuffer,
+        hunk: &DiffHunk<u32>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
+        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
+        let original_text = buffer.diff_base()?.get(hunk.diff_base_byte_range.clone())?;
+        let buffer_snapshot = buffer.snapshot();
+        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
+        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
+            probe
+                .0
+                .start
+                .cmp(&hunk.buffer_range.start, &buffer_snapshot)
+                .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
+                .then(probe.1.as_ref().cmp(original_text))
+        }) {
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), Arc::from(original_text)));
+            Some(())
+        } else {
+            None
+        }
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
