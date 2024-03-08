@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -7,9 +7,10 @@ pub use language::*;
 use log::warn;
 use lsp::LanguageServerBinary;
 use smol::fs::{self};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{
     async_maybe,
+    fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
     ResultExt,
 };
@@ -58,29 +59,37 @@ impl LspAdapter for JavaLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
+
             archive.unpack(container_dir.clone()).await?;
 
-            // todo!("windows")
+            // TODO: windows
             #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &binary_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
+            fs::set_permissions(
+                &binary_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+
+            remove_matching(&container_dir, |entry| entry != dir_path).await;
+        }
+
+        let mut config = match consts::OS {
+            "macos" => "config_mac".to_string(),
+            "linux" => "config_linux".to_string(),
+            "windows" => "config_win".to_string(),
+            other => bail!("running on unsupported os: {other}"),
+        };
+
+        if consts::OS != "windows" && consts::ARCH == "aarch64" {
+            config += "_arm";
         }
 
         Ok(LanguageServerBinary {
             path: binary_path,
+            arguments: vec!["-configuration".into(), container_dir.join(config).into()],
             env: None,
-            arguments: vec![
-                "-configuration".into(),
-                container_dir.join("config_mac").into(),
-            ],
         })
     }
 
