@@ -39,6 +39,7 @@ util.workspace = true
 wasmtime = { workspace = true, features = ["async"] }
 wasmtime-wasi.workspace = true
 wasmparser.workspace = true
+wit-component.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

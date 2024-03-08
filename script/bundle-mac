@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euxo pipefail
 
 build_flag="--release"
 target_dir="release"
@@ -19,7 +19,7 @@ APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
 help_info() {
   echo "
 Usage: ${0##*/} [options] [bundle_name]
-Build the application bundle.
+Build the application bundle for macOS.
 
 Options:
   -d    Compile in debug mode
@@ -81,8 +81,10 @@ done
 
 shift $((OPTIND-1))
 
-if [ "$1" ]; then
-    bundle_name=$1
+if [[ $# -gt 0 ]]; then
+    if [ "$1" ]; then
+        bundle_name=$1
+    fi
 fi
 
 export ZED_BUNDLE=true
@@ -92,8 +94,6 @@ cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
 if [ "$cargo_bundle_version" != "cargo-bundle v0.6.0-zed" ]; then
     cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
 fi
-
-rustup target add wasm32-wasi
 
 # Deal with versions of macOS that don't include libstdc++ headers
 export CXXFLAGS="-stdlib=libc++"
@@ -208,7 +208,7 @@ else
     echo "====== WARNING ======"
 
     # NOTE: if you need to test universal links you have a few paths forward:
-    # - create a PR and tag it with the `run-build-dmg` label, and download the .dmg file from there.
+    # - create a PR and tag it with the `run-bundling` label, and download the .dmg file from there.
     # - get a signing key for the MQ55VZLNZQ team from Nathan.
     # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
     # then comment out this line.

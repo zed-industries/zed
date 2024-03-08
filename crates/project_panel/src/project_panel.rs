@@ -40,7 +40,7 @@ const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 pub struct ProjectPanel {
     project: Model<Project>,
     fs: Arc<dyn Fs>,
-    list: UniformListScrollHandle,
+    scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
@@ -224,7 +224,7 @@ impl ProjectPanel {
             let mut this = Self {
                 project: project.clone(),
                 fs: workspace.app_state().fs.clone(),
-                list: UniformListScrollHandle::new(),
+                scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
@@ -864,7 +864,7 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            self.list.scroll_to_item(index);
+            self.scroll_handle.scroll_to_item(index);
             cx.notify();
         }
     }
@@ -1426,9 +1426,11 @@ impl ProjectPanel {
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                            div().h_full().w_full().child(editor.clone())
+                            h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            div().child(Label::new(file_name).color(filename_text_color))
+                            div()
+                                .h_6()
+                                .child(Label::new(file_name).color(filename_text_color))
                         }
                         .ml_1(),
                     )
@@ -1565,7 +1567,7 @@ impl Render for ProjectPanel {
                         },
                     )
                     .size_full()
-                    .track_scroll(self.list.clone()),
+                    .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     overlay()

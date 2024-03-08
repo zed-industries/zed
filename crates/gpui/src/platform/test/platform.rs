@@ -121,12 +121,12 @@ impl Platform for TestPlatform {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         #[cfg(target_os = "linux")]
-        return Arc::new(crate::platform::test::TestTextSystem {});
+        return Arc::new(crate::platform::linux::LinuxTextSystem::new());
 
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        // todo("windows")
+        // todo(windows)
         #[cfg(target_os = "windows")]
         unimplemented!()
     }

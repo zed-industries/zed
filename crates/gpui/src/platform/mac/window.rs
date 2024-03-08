@@ -840,7 +840,7 @@ impl PlatformWindow for MacWindow {
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
+    ) -> Option<oneshot::Receiver<usize>> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
         // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
@@ -913,7 +913,7 @@ impl PlatformWindow for MacWindow {
                 })
                 .detach();
 
-            done_rx
+            Some(done_rx)
         }
     }
 
