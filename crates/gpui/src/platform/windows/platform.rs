@@ -24,19 +24,21 @@ use windows::{
         Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
         Graphics::DirectComposition::DCompositionWaitForCompositorClock,
         System::{
-            Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
+            {
+                Ole::{OleInitialize, OleUninitialize},
+                Threading::{CreateEventW, GetCurrentThreadId, INFINITE},
+            },
         },
         UI::{
             Input::KeyboardAndMouse::GetDoubleClickTime,
             Shell::ShellExecuteW,
             WindowsAndMessaging::{
-                DispatchMessageW, EnumThreadWindows, LoadImageW, MsgWaitForMultipleObjects,
-                PeekMessageW, PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage,
-                HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
-                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
-                SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+                DispatchMessageW, EnumThreadWindows, LoadImageW, PeekMessageW, PostQuitMessage,
+                SetCursor, SystemParametersInfoW, TranslateMessage, HCURSOR, IDC_ARROW, IDC_CROSS,
+                IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE,
+                LR_SHARED, MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
+                SW_SHOWDEFAULT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
             },
         },
     },
@@ -147,6 +149,9 @@ impl WindowsPlatformSystemSettings {
 
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
+        unsafe {
+            OleInitialize(None).expect("unable to initialize Windows OLE");
+        }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, event));
@@ -515,6 +520,14 @@ impl Platform for WindowsPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+}
+
+impl Drop for WindowsPlatform {
+    fn drop(&mut self) {
+        unsafe {
+            OleUninitialize();
+        }
     }
 }
 

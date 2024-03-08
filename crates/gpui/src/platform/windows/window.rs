@@ -7,20 +7,30 @@ use std::{
     cell::{Cell, RefCell},
     ffi::c_void,
     num::NonZeroIsize,
+    path::PathBuf,
     rc::{Rc, Weak},
+    str::FromStr,
     sync::{Arc, Once},
 };
 
 use blade_graphics as gpu;
 use futures::channel::oneshot::Receiver;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use smallvec::SmallVec;
 use windows::{
-    core::{w, HSTRING, PCWSTR},
+    core::{implement, w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, MAX_PATH, POINTL, S_OK, WPARAM},
         Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
-        System::SystemServices::{
-            MK_LBUTTON, MK_MBUTTON, MK_RBUTTON, MK_XBUTTON1, MK_XBUTTON2, MODIFIERKEYS_FLAGS,
+        System::{
+            Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
+            Ole::{
+                IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
+                CF_HDROP, DROPEFFECT, DROPEFFECT_LINK, DROPEFFECT_NONE,
+            },
+            SystemServices::{
+                MK_LBUTTON, MK_MBUTTON, MK_RBUTTON, MK_XBUTTON1, MK_XBUTTON2, MODIFIERKEYS_FLAGS,
+            },
         },
         UI::{
             Input::KeyboardAndMouse::{
@@ -28,6 +38,7 @@ use windows::{
                 VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
                 VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
             },
+            Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, LoadCursorW, PostQuitMessage,
                 RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
@@ -559,6 +570,14 @@ impl WindowsWindowInner {
         }
         LRESULT(1)
     }
+
+    fn handle_drag_drop(&self, input: PlatformInput) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        let Some(ref mut func) = callbacks.input else {
+            return;
+        };
+        func(input);
+    }
 }
 
 #[derive(Default)]
@@ -576,6 +595,7 @@ struct Callbacks {
 
 pub(crate) struct WindowsWindow {
     inner: Rc<WindowsWindowInner>,
+    drag_drop_handler: IDropTarget,
 }
 
 struct WindowCreateContext {
@@ -640,8 +660,19 @@ impl WindowsWindow {
                 lpparam,
             )
         };
+        let drag_drop_handler = {
+            let inner = context.inner.as_ref().unwrap();
+            let handler = WindowsDragDropHandler(Rc::clone(inner));
+            let drag_drop_handler: IDropTarget = handler.into();
+            unsafe {
+                RegisterDragDrop(inner.hwnd, &drag_drop_handler)
+                    .expect("unable to register drag-drop event")
+            };
+            drag_drop_handler
+        };
         let wnd = Self {
             inner: context.inner.unwrap(),
+            drag_drop_handler,
         };
         platform_inner.window_handles.borrow_mut().insert(handle);
         match options.bounds {
@@ -676,6 +707,14 @@ impl HasDisplayHandle for WindowsWindow {
         &self,
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
         unimplemented!()
+    }
+}
+
+impl Drop for WindowsWindow {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = RevokeDragDrop(self.inner.hwnd);
+        }
     }
 }
 
@@ -836,6 +875,113 @@ impl PlatformWindow for WindowsWindow {
     }
 }
 
+#[implement(IDropTarget)]
+struct WindowsDragDropHandler(pub Rc<WindowsWindowInner>);
+
+impl IDropTarget_Impl for WindowsDragDropHandler {
+    fn DragEnter(
+        &self,
+        pdataobj: Option<&IDataObject>,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
+        pt: &POINTL,
+        pdweffect: *mut DROPEFFECT,
+    ) -> windows::core::Result<()> {
+        unsafe {
+            let Some(idata_obj) = pdataobj else {
+                log::info!("no dragging file or directory detected");
+                return Ok(());
+            };
+            let config = FORMATETC {
+                cfFormat: CF_HDROP.0,
+                ptd: std::ptr::null_mut() as _,
+                dwAspect: DVASPECT_CONTENT.0,
+                lindex: -1,
+                tymed: TYMED_HGLOBAL.0 as _,
+            };
+            let mut paths = SmallVec::<[PathBuf; 2]>::new();
+            if idata_obj.QueryGetData(&config as _) == S_OK {
+                *pdweffect = DROPEFFECT_LINK;
+                let Ok(mut idata) = idata_obj.GetData(&config as _) else {
+                    return Ok(());
+                };
+                if idata.u.hGlobal.is_invalid() {
+                    return Ok(());
+                }
+                let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
+                for file_index in 0..file_count {
+                    let mut buffer = [0u16; MAX_PATH as _];
+                    let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
+                    let ret = DragQueryFileW(*hdrop, file_index, Some(&mut buffer));
+                    if ret == 0 {
+                        log::error!("unable to read file name");
+                        continue;
+                    }
+                    if let Ok(file_name) = String::from_utf16(&buffer[0..filename_length]) {
+                        if let Ok(path) = PathBuf::from_str(&file_name) {
+                            paths.push(path);
+                        }
+                    }
+                }
+                ReleaseStgMedium(&mut idata);
+                let input = PlatformInput::FileDrop(crate::FileDropEvent::Entered {
+                    position: Point {
+                        x: Pixels(pt.x as _),
+                        y: Pixels(pt.y as _),
+                    },
+                    paths: crate::ExternalPaths(paths),
+                });
+                self.0.handle_drag_drop(input);
+            } else {
+                *pdweffect = DROPEFFECT_NONE;
+            }
+        }
+        Ok(())
+    }
+
+    fn DragOver(
+        &self,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
+        pt: &POINTL,
+        _pdweffect: *mut DROPEFFECT,
+    ) -> windows::core::Result<()> {
+        let input = PlatformInput::FileDrop(crate::FileDropEvent::Pending {
+            position: Point {
+                x: Pixels(pt.x as _),
+                y: Pixels(pt.y as _),
+            },
+        });
+        self.0.handle_drag_drop(input);
+
+        Ok(())
+    }
+
+    fn DragLeave(&self) -> windows::core::Result<()> {
+        let input = PlatformInput::FileDrop(crate::FileDropEvent::Exited);
+        self.0.handle_drag_drop(input);
+
+        Ok(())
+    }
+
+    fn Drop(
+        &self,
+        _pdataobj: Option<&IDataObject>,
+        _grfkeystate: MODIFIERKEYS_FLAGS,
+        pt: &POINTL,
+        _pdweffect: *mut DROPEFFECT,
+    ) -> windows::core::Result<()> {
+        let input = PlatformInput::FileDrop(crate::FileDropEvent::Submit {
+            position: Point {
+                x: Pixels(pt.x as _),
+                y: Pixels(pt.y as _),
+            },
+        });
+        self.0.handle_drag_drop(input);
+
+        Ok(())
+    }
+}
+
 fn register_wnd_class() -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
@@ -923,3 +1069,6 @@ unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: 
         SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
     }
 }
+
+// https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
+const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
