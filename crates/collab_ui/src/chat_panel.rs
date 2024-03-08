@@ -609,13 +609,18 @@ impl ChatPanel {
                             div()
                                 .id("reply")
                                 .child(
-                                    IconButton::new(("reply", message_id), IconName::ReplyArrow)
-                                        .on_click(cx.listener(move |this, _, cx| {
+                                    IconButton::new(
+                                        ("reply", message_id),
+                                        IconName::ReplyArrowLeft,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, cx| {
                                             this.message_editor.update(cx, |editor, cx| {
                                                 editor.set_reply_to_message_id(message_id);
                                                 editor.focus_handle(cx).focus(cx);
                                             })
-                                        })),
+                                        },
+                                    )),
                                 )
                                 .tooltip(|cx| Tooltip::text("Reply", cx)),
                         )
