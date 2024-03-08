@@ -54,7 +54,6 @@ go_to_line.workspace = true
 gpui.workspace = true
 install_cli.workspace = true
 isahc.workspace = true
-itertools.workspace = true
 journal.workspace = true
 language.workspace = true
 language_selector.workspace = true

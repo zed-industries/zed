@@ -36,7 +36,7 @@ use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write},
     panic,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -55,7 +55,8 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, IsOnlyInstance, OpenListener, OpenRequest,
+    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
+    OpenListener, OpenRequest,
 };
 
 #[global_allocator]
@@ -330,7 +331,6 @@ fn handle_open_request(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> bool {
-    dbg!(&request);
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
@@ -340,22 +340,23 @@ fn handle_open_request(
 
     let mut task = None;
     if !request.open_paths.is_empty() {
-        let open_task = workspace::open_paths(&request.open_paths, app_state.clone(), None, cx);
-        task = Some(cx.spawn(|_| async move {
-            if let Some((_window, results)) = open_task.await.log_err() {
-                for result in results.into_iter().flatten() {
-                    if let Err(err) = result {
-                        log::error!("Error opening path: {err}",);
-                    }
+        let app_state = app_state.clone();
+        task = Some(cx.spawn(|mut cx| async move {
+            let (_window, results) =
+                open_paths_with_positions(&request.open_paths, app_state, &mut cx).await?;
+            for result in results.into_iter().flatten() {
+                if let Err(err) = result {
+                    log::error!("Error opening path: {err}",);
                 }
             }
+            anyhow::Ok(())
         }));
     }
 
     if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
         cx.spawn(|mut cx| async move {
             if let Some(task) = task {
-                task.await;
+                task.await?;
             }
             let client = app_state.client.clone();
             // we continue even if authentication fails as join_channel/ open channel notes will
@@ -397,7 +398,7 @@ fn handle_open_request(
         true
     } else {
         if let Some(task) = task {
-            task.detach()
+            task.detach_and_log_err(cx)
         }
         false
     }
