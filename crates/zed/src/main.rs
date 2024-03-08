@@ -13,7 +13,7 @@ use env_logger::Builder;
 use fs::RealFs;
 #[cfg(target_os = "macos")]
 use fsevent::StreamFlags;
-use futures::StreamExt;
+use futures::{future, StreamExt};
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
@@ -48,7 +48,7 @@ use util::{
     async_maybe,
     http::{HttpClient, HttpClientWithUrl},
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
-    ResultExt,
+    ResultExt, TryFutureExt,
 };
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -325,68 +325,82 @@ fn main() {
     });
 }
 
-fn open_paths_and_log_errs(paths: &[PathBuf], app_state: Arc<AppState>, cx: &mut AppContext) {
-    let task = workspace::open_paths(&paths, app_state, None, cx);
-    cx.spawn(|_| async move {
-        if let Some((_window, results)) = task.await.log_err() {
-            for result in results.into_iter().flatten() {
-                if let Err(err) = result {
-                    log::error!("Error opening path: {err}",);
-                }
-            }
-        }
-    })
-    .detach();
-}
-
 fn handle_open_request(
     request: OpenRequest,
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> bool {
-    let mut triggered_authentication = false;
-    match request {
-        OpenRequest::Paths { paths } => open_paths_and_log_errs(&paths, app_state, cx),
-        OpenRequest::CliConnection { connection } => {
-            let app_state = app_state.clone();
-            cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
-                .detach();
-        }
-        OpenRequest::JoinChannel { channel_id } => {
-            triggered_authentication = true;
-            cx.spawn(|cx| async move {
-                // ignore errors here, we'll show a generic "not signed in"
-                let _ = authenticate(app_state.client.clone(), &cx).await;
-                cx.update(|cx| {
-                    workspace::join_channel(client::ChannelId(channel_id), app_state, None, cx)
-                })?
-                .await?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        }
-        OpenRequest::OpenChannelNotes {
-            channel_id,
-            heading,
-        } => {
-            triggered_authentication = true;
-            let client = app_state.client.clone();
-            cx.spawn(|mut cx| async move {
-                // ignore errors here, we'll show a generic "not signed in"
-                let _ = authenticate(client, &cx).await;
-                let workspace_window =
-                    workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                let workspace = workspace_window.root_view(&cx)?;
-                cx.update_window(workspace_window.into(), |_, cx| {
-                    ChannelView::open(client::ChannelId(channel_id), heading, workspace, cx)
-                })?
-                .await?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        }
+    dbg!(&request);
+    if let Some(connection) = request.cli_connection {
+        let app_state = app_state.clone();
+        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
+            .detach();
+        return false;
     }
-    triggered_authentication
+
+    let mut task = None;
+    if !request.open_paths.is_empty() {
+        let open_task = workspace::open_paths(&request.open_paths, app_state.clone(), None, cx);
+        task = Some(cx.spawn(|_| async move {
+            if let Some((_window, results)) = open_task.await.log_err() {
+                for result in results.into_iter().flatten() {
+                    if let Err(err) = result {
+                        log::error!("Error opening path: {err}",);
+                    }
+                }
+            }
+        }));
+    }
+
+    if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
+        cx.spawn(|mut cx| async move {
+            if let Some(task) = task {
+                task.await;
+            }
+            let client = app_state.client.clone();
+            // we continue even if authentication fails as join_channel/ open channel notes will
+            // show a visible error message.
+            authenticate(client, &cx).await.log_err();
+
+            if let Some(channel_id) = request.join_channel {
+                cx.update(|cx| {
+                    workspace::join_channel(
+                        client::ChannelId(channel_id),
+                        app_state.clone(),
+                        None,
+                        cx,
+                    )
+                })?
+                .await?;
+            }
+
+            let workspace_window =
+                workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+            let workspace = workspace_window.root_view(&cx)?;
+
+            let mut promises = Vec::new();
+            for (channel_id, heading) in request.open_channel_notes {
+                promises.push(cx.update_window(workspace_window.into(), |_, cx| {
+                    ChannelView::open(
+                        client::ChannelId(channel_id),
+                        heading,
+                        workspace.clone(),
+                        cx,
+                    )
+                    .log_err()
+                })?)
+            }
+            future::join_all(promises).await;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+        true
+    } else {
+        if let Some(task) = task {
+            task.detach()
+        }
+        false
+    }
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
@@ -888,7 +902,9 @@ fn collect_url_args(cx: &AppContext) -> Vec<String> {
         .filter_map(|arg| match std::fs::canonicalize(Path::new(&arg)) {
             Ok(path) => Some(format!("file://{}", path.to_string_lossy())),
             Err(error) => {
-                if let Some(_) = parse_zed_link(&arg, cx) {
+                if arg.starts_with("file://") {
+                    Some(arg)
+                } else if let Some(_) = parse_zed_link(&arg, cx) {
                     Some(arg)
                 } else {
                     log::error!("error parsing path argument: {}", error);

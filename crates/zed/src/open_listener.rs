@@ -12,7 +12,6 @@ use gpui::{AppContext, AsyncAppContext, Global};
 use itertools::Itertools;
 use language::{Bias, Point};
 use std::path::Path;
-use std::str::pattern::Pattern;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
@@ -22,12 +21,12 @@ use util::paths::{PathExt, PathLikeWithPosition};
 use util::ResultExt;
 use workspace::AppState;
 
-#[derive(Default)]
-pub struct OpenDetails {
-    cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
-    open_paths: Vec<PathBuf>,
-    open_channel_notes: Vec<(u64, Option<String>)>,
-    join_channel: Option<u64>,
+#[derive(Default, Debug)]
+pub struct OpenRequest {
+    pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
+    pub open_paths: Vec<PathBuf>,
+    pub open_channel_notes: Vec<(u64, Option<String>)>,
+    pub join_channel: Option<u64>,
 }
 
 impl OpenRequest {
@@ -37,12 +36,12 @@ impl OpenRequest {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
             } else if let Some(file) = url.strip_prefix("file://") {
-                let decoded = urlencoding::decode_binary(url.as_bytes());
+                let decoded = urlencoding::decode_binary(file.as_bytes());
                 if let Some(path_buf) = PathBuf::try_from_bytes(decoded.as_ref()).log_err() {
                     this.open_paths.push(path_buf)
                 }
             } else if let Some(file) = url.strip_prefix("zed://file") {
-                let decoded = urlencoding::decode_binary(url.as_bytes());
+                let decoded = urlencoding::decode_binary(file.as_bytes());
                 if let Some(path_buf) = PathBuf::try_from_bytes(decoded.as_ref()).log_err() {
                     this.open_paths.push(path_buf)
                 }
@@ -56,21 +55,25 @@ impl OpenRequest {
         Ok(this)
     }
 
-    fn parse_request_path(&mut self, request_path: &str) -> Result<OpenRequest> {
+    fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
                 if let Some(id_str) = slug.split('-').last() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
-                            self.join_channel = Some(channel_id)
+                            self.join_channel = Some(channel_id);
+                            return Ok(());
                         };
 
                         if let Some(heading) = next.strip_prefix("notes#") {
                             self.open_channel_notes
                                 .push((channel_id, Some(heading.to_string())));
-                        } else if next == "notes" {
-                            self.open_channel_notes.push((channel_id, None))
+                            return Ok(());
+                        }
+                        if next == "notes" {
+                            self.open_channel_notes.push((channel_id, None));
+                            return Ok(());
                         }
                     }
                 }
