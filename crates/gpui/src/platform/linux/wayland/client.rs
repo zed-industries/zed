@@ -520,15 +520,18 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         if let xdg_toplevel::Event::Configure {
             width,
             height,
-            states: _states,
+            states,
         } = event
         {
-            if width == 0 || height == 0 {
-                return;
-            }
+            // todo!(linux): according to the protocol, if either of these are 0,
+            // "the client should decide its own window dimension", what should it be?
+            let width = if width != 0 { width } else { 500 };
+            let height = if height != 0 { height } else { 500 };
+            let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
             for window in &state.windows {
                 if window.1.toplevel.id() == xdg_toplevel.id() {
                     window.1.resize(width, height);
+                    window.1.set_fullscreen(fullscreen);
                     window.1.surface.commit();
                     return;
                 }

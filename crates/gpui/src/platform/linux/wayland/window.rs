@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,8 +21,9 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, size, Bounds, ContentMask, Corners, DrawOrder, Hsla, LayerId, Modifiers, Pixels,
+    PlatformDisplay, PlatformInput, Point, Primitive, PromptLevel, ScaledPixels, Shadow, Size,
+    StackingOrder, ViewId, WindowAppearance, WindowBounds, WindowOptions,
 };
 
 #[derive(Default)]
@@ -42,6 +43,7 @@ struct WaylandWindowInner {
     renderer: BladeRenderer,
     bounds: Bounds<i32>,
     scale: f32,
+    fullscreen: bool,
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
 }
@@ -100,6 +102,7 @@ impl WaylandWindowInner {
             renderer: BladeRenderer::new(gpu, extent),
             bounds,
             scale: 1.0,
+            fullscreen: false,
             input_handler: None,
 
             // On wayland, decorations are by default provided by the client
@@ -199,6 +202,14 @@ impl WaylandWindowState {
     pub fn rescale(&self, scale: f32) {
         let bounds = self.inner.borrow_mut().bounds;
         self.set_size_and_scale(bounds.size.width, bounds.size.height, scale)
+    }
+
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut fun) = callbacks.fullscreen.take() {
+            fun(fullscreen)
+        }
+        self.inner.borrow_mut().fullscreen = fullscreen;
     }
 
     /// Notifies the window of the state of the decorations.
@@ -352,7 +363,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn toggle_full_screen(&self) {
-        // todo(linux)
+        if !self.0.inner.borrow_mut().fullscreen {
+            self.0.toplevel.set_fullscreen(None);
+        } else {
+            self.0.toplevel.unset_fullscreen();
+        }
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -372,7 +387,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        // todo(linux)
+        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
