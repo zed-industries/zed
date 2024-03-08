@@ -98,17 +98,6 @@ impl LspAdapter for JavaLspAdapter {
         }
     }
 
-    // TODO: code actions don't work
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        Some(vec![
-            CodeActionKind::EMPTY,
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::REFACTOR,
-            CodeActionKind::REFACTOR_EXTRACT,
-            CodeActionKind::SOURCE,
-        ])
-    }
-
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
@@ -119,10 +108,6 @@ impl LspAdapter for JavaLspAdapter {
                 binary.arguments = vec!["--help".into()];
                 binary
             })
-    }
-
-    fn disk_based_diagnostic_sources(&self) -> Vec<String> {
-        vec!["java".into()]
     }
 
     async fn label_for_completion(
@@ -210,6 +195,21 @@ impl LspAdapter for JavaLspAdapter {
         }
 
         None
+    }
+
+    // TODO: code actions don't work
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::EMPTY,
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::REFACTOR,
+            CodeActionKind::REFACTOR_EXTRACT,
+            CodeActionKind::SOURCE,
+        ])
+    }
+
+    fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+        vec!["java".into()]
     }
 }
 
