@@ -273,6 +273,26 @@ impl wit::HostWorktree for WasmState {
             .map_err(|error| error.to_string()))
     }
 
+    async fn shell_env(
+        &mut self,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> wasmtime::Result<wit::EnvVars> {
+        let delegate = self.table.get(&delegate)?;
+        Ok(delegate.shell_env().await.into_iter().collect())
+    }
+
+    async fn which(
+        &mut self,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        binary_name: String,
+    ) -> wasmtime::Result<Option<String>> {
+        let delegate = self.table.get(&delegate)?;
+        Ok(delegate
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().to_string()))
+    }
+
     fn drop(&mut self, _worktree: Resource<wit::Worktree>) -> Result<()> {
         // we only ever hand out borrows of worktrees
         Ok(())

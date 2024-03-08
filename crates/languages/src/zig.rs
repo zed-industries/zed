@@ -7,7 +7,6 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
 use std::env::consts::{ARCH, OS};
-use std::ffi::OsString;
 use std::{any::Any, path::PathBuf};
 use util::async_maybe;
 use util::github::latest_github_release;
@@ -45,7 +44,8 @@ impl LspAdapter for ZlsAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let (path, env) = delegate.which_command(OsString::from("zls")).await?;
+        let env = delegate.shell_env().await;
+        let path = delegate.which("zls".as_ref()).await?;
         Some(LanguageServerBinary {
             path,
             arguments: vec![],

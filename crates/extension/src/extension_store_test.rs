@@ -7,10 +7,7 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, TestAppContext};
-use language::{
-    Language, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus,
-    LanguageServerName,
-};
+use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::Project;
