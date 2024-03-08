@@ -9,7 +9,9 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
+use crate::{
+    convert_task_env, SpawnInTerminal, Task, TaskAliasMap, TaskContext, TaskId, TaskSource,
+};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// A single config file entry with the deserialized task definition.
@@ -22,6 +24,9 @@ struct StaticTask {
 impl Task for StaticTask {
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         let TaskContext { cwd, env } = cx;
+        let alias_map = self.definition.alias_map.clone();
+        let env = convert_task_env(&alias_map.unwrap_or_default(), env);
+
         let cwd = self
             .definition
             .cwd
@@ -84,6 +89,9 @@ pub(crate) struct Definition {
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
+    /// Whether to map environment variable names to different IDEs
+    #[serde(default)]
+    pub alias_map: Option<TaskAliasMap>,
 }
 
 /// A group of Tasks defined in a JSON file.

@@ -5,7 +5,7 @@ use gpui::{AppContext, ViewContext, WindowContext};
 use language::Point;
 use modal::TasksModal;
 use project::{Location, WorktreeId};
-use task::{Task, TaskContext};
+use task::{Task, TaskContext, TaskEnvVariables};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -117,19 +117,19 @@ fn task_context(
                 let selected_text = buffer.read(cx).chars_for_range(selection_range).collect();
 
                 let mut env = HashMap::from_iter([
-                    ("ZED_ROW".into(), row.to_string()),
-                    ("ZED_COLUMN".into(), column.to_string()),
-                    ("ZED_SELECTED_TEXT".into(), selected_text),
+                    (TaskEnvVariables::Row, row.to_string()),
+                    (TaskEnvVariables::Column, column.to_string()),
+                    (TaskEnvVariables::SelectedText, selected_text),
                 ]);
                 if let Some(path) = current_file {
-                    env.insert("ZED_FILE".into(), path);
+                    env.insert(TaskEnvVariables::ActiveFile, path);
                 }
                 if let Some(worktree_path) = worktree_path {
-                    env.insert("ZED_WORKTREE_ROOT".into(), worktree_path);
+                    env.insert(TaskEnvVariables::WorktreeRoot, worktree_path);
                 }
                 if let Some(language_context) = context {
                     if let Some(symbol) = language_context.symbol {
-                        env.insert("ZED_SYMBOL".into(), symbol);
+                        env.insert(TaskEnvVariables::ActiveSymbol, symbol);
                     }
                 }
 

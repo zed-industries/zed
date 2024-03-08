@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
+use crate::{
+    convert_task_env, SpawnInTerminal, Task, TaskAliasMap, TaskContext, TaskId, TaskSource,
+};
 use gpui::{AppContext, Context, Model};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
@@ -45,7 +47,7 @@ impl Task for OneshotTask {
             command: self.id().0.clone(),
             args: vec![],
             cwd,
-            env,
+            env: convert_task_env(&TaskAliasMap::default(), env),
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
         })

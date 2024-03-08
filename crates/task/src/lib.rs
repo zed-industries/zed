@@ -6,7 +6,10 @@ pub mod static_source;
 
 use collections::HashMap;
 use gpui::ModelContext;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
+use std::default;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -36,13 +39,62 @@ pub struct SpawnInTerminal {
     pub allow_concurrent_runs: bool,
 }
 
+/// Represents a type of environment variable for a task
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub enum TaskEnvVariables {
+    /// The row the cursor is on in the active file of the editor
+    Row,
+    /// The Column the cursor is on in the active file of the editor
+    Column,
+    /// The active file within the editor
+    ActiveFile,
+    /// Selected text in the editor
+    SelectedText,
+    /// The path to the worktree
+    WorktreeRoot,
+    /// The active function a user in is
+    ActiveSymbol,
+}
+
+/// Represents the alias map of a task's environment variables
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub enum TaskAliasMap {
+    /// Map to vscode env variable names
+    #[default]
+    VSCode,
+}
+
+/// Converts a task context's env into one accepted by the SpawnedTask
+pub fn convert_task_env(
+    alias_map: &TaskAliasMap,
+    env: HashMap<TaskEnvVariables, String>,
+) -> HashMap<String, String> {
+    env.into_iter()
+        .map(|(env_var_name, value)| {
+            (
+                match alias_map {
+                    TaskAliasMap::VSCode => match env_var_name {
+                        TaskEnvVariables::Row => "lineNumber".into(),
+                        TaskEnvVariables::Column => "lineColumn".into(),
+                        TaskEnvVariables::ActiveFile => "file".into(),
+                        TaskEnvVariables::SelectedText => "selectedText".into(),
+                        TaskEnvVariables::WorktreeRoot => "workspaceFolder".into(),
+                        TaskEnvVariables::ActiveSymbol => "function".into(),
+                    },
+                },
+                value,
+            )
+        })
+        .collect()
+}
+
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,
     /// Additional environment variables associated with a given task.
-    pub env: HashMap<String, String>,
+    pub env: HashMap<TaskEnvVariables, String>,
 }
 
 /// Represents a short lived recipe of a task, whose main purpose
