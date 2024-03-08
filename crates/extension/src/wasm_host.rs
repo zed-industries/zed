@@ -148,13 +148,15 @@ impl WasmHost {
             let (mut extension, instance) =
                 wit::Extension::instantiate_async(&mut store, &component, &this.linker)
                     .await
-                    .context("failed to instantiate wasm component")?;
+                    .context("failed to instantiate wasm extension")?;
+            extension
+                .call_init_extension(&mut store)
+                .await
+                .context("failed to initialize wasm extension")?;
 
             let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
             executor
                 .spawn(async move {
-                    extension.call_init_extension(&mut store).await.unwrap();
-
                     let _instance = instance;
                     while let Some(call) = rx.next().await {
                         (call)(&mut extension, &mut store).await;
