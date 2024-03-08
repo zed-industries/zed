@@ -227,10 +227,10 @@ impl DispatchTree {
         if let Some(context) = source.context.take() {
             self.set_key_context(context);
         }
-        if let Some(focus_id) = source.focus_id.take() {
+        if let Some(focus_id) = source.focus_id {
             self.set_focus_id(focus_id);
         }
-        if let Some(view_id) = source.view_id.take() {
+        if let Some(view_id) = source.view_id {
             self.set_view_id(view_id);
         }
 
