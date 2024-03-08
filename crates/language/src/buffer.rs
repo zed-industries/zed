@@ -110,6 +110,7 @@ pub struct Buffer {
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
+    has_conflict: bool,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -698,6 +699,7 @@ impl Buffer {
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
+            has_conflict: false,
         }
     }
 
@@ -788,6 +790,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
+        self.has_conflict = false;
         self.file_fingerprint = fingerprint;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
@@ -819,7 +822,7 @@ impl Buffer {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
-
+                    this.has_conflict = false;
                     this.did_reload(
                         this.version(),
                         this.as_rope().fingerprint(),
@@ -828,6 +831,15 @@ impl Buffer {
                         cx,
                     );
                 } else {
+                    if !diff.edits.is_empty()
+                        || this
+                            .edits_since::<usize>(&diff.base_version)
+                            .next()
+                            .is_some()
+                    {
+                        this.has_conflict = true;
+                    }
+
                     this.did_reload(
                         prev_version,
                         Rope::text_fingerprint(&new_text),
@@ -1518,16 +1530,21 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
+    fn changed_since_saved_version(&self) -> bool {
+        self.edits_since::<usize>(&self.saved_version)
+            .next()
+            .is_some()
+    }
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.file_fingerprint != self.as_rope().fingerprint()
+        (self.has_conflict || self.changed_since_saved_version())
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        self.file_fingerprint != self.as_rope().fingerprint()
+        (self.has_conflict || self.changed_since_saved_version())
             && self
                 .file
                 .as_ref()

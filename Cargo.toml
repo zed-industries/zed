@@ -201,6 +201,7 @@ bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
+cap-std = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = "4.4"
 clickhouse = { version = "0.11.6" }
@@ -279,7 +280,6 @@ tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir"
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-erlang = "0.4.0"
-tree-sitter-gitcommit = { git = "https://github.com/gbprod/tree-sitter-gitcommit" }
 tree-sitter-gleam = { git = "https://github.com/gleam-lang/tree-sitter-gleam", rev = "58b7cac8fc14c92b0677c542610d8738c373fa81" }
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
@@ -326,16 +326,21 @@ sys-locale = "0.3.1"
 [workspace.dependencies.windows]
 version = "0.53.0"
 features = [
+    "implement",
     "Wdk_System_SystemServices",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_DirectComposition",
+    "Win32_UI_Controls",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_System_Com",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Time",
     "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Threading",
     "Win32_System_DataExchange",
     "Win32_System_Ole",
@@ -400,7 +405,6 @@ non_canonical_clone_impl = "allow"
 non_canonical_partial_ord_impl = "allow"
 reversed_empty_ranges = "allow"
 single_range_in_vec_init = "allow"
-suspicious_to_owned = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]

@@ -5,7 +5,10 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use fs::Fs;
 use futures::{
-    channel::{mpsc::UnboundedSender, oneshot},
+    channel::{
+        mpsc::{self, UnboundedSender},
+        oneshot,
+    },
     future::BoxFuture,
     io::BufReader,
     Future, FutureExt, StreamExt as _,
@@ -14,7 +17,8 @@ use gpui::BackgroundExecutor;
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LspAdapterDelegate};
 use node_runtime::NodeRuntime;
 use std::{
-    path::PathBuf,
+    env,
+    path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use util::{http::HttpClient, SemanticVersion};
@@ -22,7 +26,7 @@ use wasmtime::{
     component::{Component, Linker, Resource, ResourceTable},
     Engine, Store,
 };
-use wasmtime_wasi::preview2::{command as wasi_command, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::preview2::{self as wasi, WasiCtx};
 
 pub mod wit {
     wasmtime::component::bindgen!({
@@ -49,6 +53,7 @@ pub(crate) struct WasmHost {
 #[derive(Clone)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
+    pub(crate) manifest: Arc<ExtensionManifest>,
     #[allow(unused)]
     zed_api_version: SemanticVersion,
 }
@@ -56,7 +61,7 @@ pub struct WasmExtension {
 pub(crate) struct WasmState {
     manifest: Arc<ExtensionManifest>,
     table: ResourceTable,
-    ctx: WasiCtx,
+    ctx: wasi::WasiCtx,
     host: Arc<WasmHost>,
 }
 
@@ -66,6 +71,8 @@ type ExtensionCall = Box<
 >;
 
 static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+
+const EXTENSION_WORK_DIR_PATH: &str = "/zed/work";
 
 impl WasmHost {
     pub fn new(
@@ -84,8 +91,8 @@ impl WasmHost {
             })
             .clone();
         let mut linker = Linker::new(&engine);
-        wasi_command::add_to_linker(&mut linker).unwrap();
-        wit::Extension::add_to_linker(&mut linker, |state: &mut WasmState| state).unwrap();
+        wasi::command::add_to_linker(&mut linker).unwrap();
+        wit::Extension::add_to_linker(&mut linker, wasi_view).unwrap();
         Arc::new(Self {
             engine,
             linker: Arc::new(linker),
@@ -112,22 +119,14 @@ impl WasmHost {
             for part in wasmparser::Parser::new(0).parse_all(&wasm_bytes) {
                 if let wasmparser::Payload::CustomSection(s) = part? {
                     if s.name() == "zed:api-version" {
-                        if s.data().len() != 6 {
+                        zed_api_version = parse_extension_version(s.data());
+                        if zed_api_version.is_none() {
                             bail!(
                                 "extension {} has invalid zed:api-version section: {:?}",
                                 manifest.id,
                                 s.data()
                             );
                         }
-
-                        let major = u16::from_be_bytes(s.data()[0..2].try_into().unwrap()) as _;
-                        let minor = u16::from_be_bytes(s.data()[2..4].try_into().unwrap()) as _;
-                        let patch = u16::from_be_bytes(s.data()[4..6].try_into().unwrap()) as _;
-                        zed_api_version = Some(SemanticVersion {
-                            major,
-                            minor,
-                            patch,
-                        })
                     }
                 }
             }
@@ -139,35 +138,94 @@ impl WasmHost {
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
-                    manifest,
+                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    manifest: manifest.clone(),
                     table: ResourceTable::new(),
-                    ctx: WasiCtxBuilder::new()
-                        .inherit_stdio()
-                        .env("RUST_BACKTRACE", "1")
-                        .build(),
                     host: this.clone(),
                 },
             );
+
             let (mut extension, instance) =
                 wit::Extension::instantiate_async(&mut store, &component, &this.linker)
                     .await
-                    .context("failed to instantiate wasm component")?;
-            let (tx, mut rx) = futures::channel::mpsc::unbounded::<ExtensionCall>();
+                    .context("failed to instantiate wasm extension")?;
+            extension
+                .call_init_extension(&mut store)
+                .await
+                .context("failed to initialize wasm extension")?;
+
+            let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
             executor
                 .spawn(async move {
-                    extension.call_init_extension(&mut store).await.unwrap();
-
                     let _instance = instance;
                     while let Some(call) = rx.next().await {
                         (call)(&mut extension, &mut store).await;
                     }
                 })
                 .detach();
+
             Ok(WasmExtension {
+                manifest,
                 tx,
                 zed_api_version,
             })
         }
+    }
+
+    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<WasiCtx> {
+        use cap_std::{ambient_authority, fs::Dir};
+
+        let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
+        self.fs
+            .create_dir(&extension_work_dir)
+            .await
+            .context("failed to create extension work dir")?;
+
+        let work_dir_preopen = Dir::open_ambient_dir(extension_work_dir, ambient_authority())
+            .context("failed to preopen extension work directory")?;
+        let current_dir_preopen = work_dir_preopen
+            .try_clone()
+            .context("failed to preopen extension current directory")?;
+
+        let perms = wasi::FilePerms::all();
+        let dir_perms = wasi::DirPerms::all();
+
+        Ok(wasi::WasiCtxBuilder::new()
+            .inherit_stdio()
+            .preopened_dir(current_dir_preopen, dir_perms, perms, ".")
+            .preopened_dir(work_dir_preopen, dir_perms, perms, EXTENSION_WORK_DIR_PATH)
+            .env("PWD", EXTENSION_WORK_DIR_PATH)
+            .env("RUST_BACKTRACE", "1")
+            .build())
+    }
+
+    pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
+        self.writeable_path_from_extension(id, path)
+            .unwrap_or_else(|| path.to_path_buf())
+    }
+
+    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Option<PathBuf> {
+        let path = path.strip_prefix(EXTENSION_WORK_DIR_PATH).unwrap_or(path);
+        if path.is_relative() {
+            let mut result = self.work_dir.clone();
+            result.push(id.as_ref());
+            result.extend(path);
+            Some(result)
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_extension_version(data: &[u8]) -> Option<SemanticVersion> {
+    if data.len() == 6 {
+        Some(SemanticVersion {
+            major: u16::from_be_bytes([data[0], data[1]]) as _,
+            minor: u16::from_be_bytes([data[2], data[3]]) as _,
+            patch: u16::from_be_bytes([data[4], data[5]]) as _,
+        })
+    } else {
+        None
     }
 }
 
@@ -194,6 +252,13 @@ impl WasmExtension {
     }
 }
 
+impl WasmState {
+    pub fn writeable_path_from_extension(&self, path: &Path) -> Option<PathBuf> {
+        self.host
+            .writeable_path_from_extension(&self.manifest.id, path)
+    }
+}
+
 #[async_trait]
 impl wit::HostWorktree for WasmState {
     async fn read_text_file(
@@ -201,7 +266,7 @@ impl wit::HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        let delegate = self.table().get(&delegate)?;
+        let delegate = self.table.get(&delegate)?;
         Ok(delegate
             .read_text_file(path.into())
             .await
@@ -269,13 +334,13 @@ impl wit::ExtensionImports for WasmState {
 
     async fn current_platform(&mut self) -> Result<(wit::Os, wit::Architecture)> {
         Ok((
-            match std::env::consts::OS {
+            match env::consts::OS {
                 "macos" => wit::Os::Mac,
                 "linux" => wit::Os::Linux,
                 "windows" => wit::Os::Windows,
                 _ => panic!("unsupported os"),
             },
-            match std::env::consts::ARCH {
+            match env::consts::ARCH {
                 "aarch64" => wit::Architecture::Aarch64,
                 "x86" => wit::Architecture::X86,
                 "x86_64" => wit::Architecture::X8664,
@@ -314,18 +379,24 @@ impl wit::ExtensionImports for WasmState {
     async fn download_file(
         &mut self,
         url: String,
-        filename: String,
+        path: String,
         file_type: wit::DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
+        let path = PathBuf::from(path);
+
         async fn inner(
             this: &mut WasmState,
             url: String,
-            filename: String,
+            path: PathBuf,
             file_type: wit::DownloadedFileType,
         ) -> anyhow::Result<()> {
-            this.host.fs.create_dir(&this.host.work_dir).await?;
-            let container_dir = this.host.work_dir.join(this.manifest.id.as_ref());
-            let destination_path = container_dir.join(&filename);
+            let extension_work_dir = this.host.work_dir.join(this.manifest.id.as_ref());
+
+            this.host.fs.create_dir(&extension_work_dir).await?;
+
+            let destination_path = this
+                .writeable_path_from_extension(&path)
+                .ok_or_else(|| anyhow!("cannot write to path {:?}", path))?;
 
             let mut response = this
                 .host
@@ -367,19 +438,24 @@ impl wit::ExtensionImports for WasmState {
                         .await?;
                 }
                 wit::DownloadedFileType::Zip => {
-                    let zip_filename = format!("{filename}.zip");
+                    let file_name = destination_path
+                        .file_name()
+                        .ok_or_else(|| anyhow!("invalid download path"))?
+                        .to_string_lossy();
+                    let zip_filename = format!("{file_name}.zip");
                     let mut zip_path = destination_path.clone();
                     zip_path.set_file_name(zip_filename);
+
                     futures::pin_mut!(body);
                     this.host.fs.create_file_with(&zip_path, body).await?;
 
                     let unzip_status = std::process::Command::new("unzip")
-                        .current_dir(&container_dir)
+                        .current_dir(&extension_work_dir)
                         .arg(&zip_path)
                         .output()?
                         .status;
                     if !unzip_status.success() {
-                        Err(anyhow!("failed to unzip {filename} archive"))?;
+                        Err(anyhow!("failed to unzip {} archive", path.display()))?;
                     }
                 }
             }
@@ -387,19 +463,23 @@ impl wit::ExtensionImports for WasmState {
             Ok(())
         }
 
-        Ok(inner(self, url, filename, file_type)
+        Ok(inner(self, url, path, file_type)
             .await
             .map(|_| ())
             .map_err(|err| err.to_string()))
     }
 }
 
-impl WasiView for WasmState {
+fn wasi_view(state: &mut WasmState) -> &mut WasmState {
+    state
+}
+
+impl wasi::WasiView for WasmState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 
-    fn ctx(&mut self) -> &mut WasiCtx {
+    fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
     }
 }

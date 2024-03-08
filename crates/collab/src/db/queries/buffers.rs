@@ -558,6 +558,17 @@ impl Database {
         lamport_timestamp: i32,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
+        buffer::Entity::update(buffer::ActiveModel {
+            id: ActiveValue::Unchanged(buffer_id),
+            epoch: ActiveValue::Unchanged(epoch),
+            latest_operation_epoch: ActiveValue::Set(Some(epoch)),
+            latest_operation_replica_id: ActiveValue::Set(Some(replica_id)),
+            latest_operation_lamport_timestamp: ActiveValue::Set(Some(lamport_timestamp)),
+            channel_id: ActiveValue::NotSet,
+        })
+        .exec(tx)
+        .await?;
+
         use observed_buffer_edits::Column;
         observed_buffer_edits::Entity::insert(observed_buffer_edits::ActiveModel {
             user_id: ActiveValue::Set(user_id),
@@ -711,7 +722,10 @@ impl Database {
         buffer::ActiveModel {
             id: ActiveValue::Unchanged(buffer.id),
             epoch: ActiveValue::Set(epoch),
-            ..Default::default()
+            latest_operation_epoch: ActiveValue::NotSet,
+            latest_operation_replica_id: ActiveValue::NotSet,
+            latest_operation_lamport_timestamp: ActiveValue::NotSet,
+            channel_id: ActiveValue::NotSet,
         }
         .save(tx)
         .await?;
@@ -745,30 +759,6 @@ impl Database {
         .await
     }
 
-    pub async fn latest_channel_buffer_changes(
-        &self,
-        channel_ids_by_buffer_id: &HashMap<BufferId, ChannelId>,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<proto::ChannelBufferVersion>> {
-        let latest_operations = self
-            .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), tx)
-            .await?;
-
-        Ok(latest_operations
-            .iter()
-            .flat_map(|op| {
-                Some(proto::ChannelBufferVersion {
-                    channel_id: channel_ids_by_buffer_id.get(&op.buffer_id)?.to_proto(),
-                    epoch: op.epoch as u64,
-                    version: vec![proto::VectorClockEntry {
-                        replica_id: op.replica_id as u32,
-                        timestamp: op.lamport_timestamp as u32,
-                    }],
-                })
-            })
-            .collect())
-    }
-
     pub async fn observed_channel_buffer_changes(
         &self,
         channel_ids_by_buffer_id: &HashMap<BufferId, ChannelId>,
@@ -797,55 +787,6 @@ impl Database {
                 })
             })
             .collect())
-    }
-
-    /// Returns the latest operations for the buffers with the specified IDs.
-    pub async fn get_latest_operations_for_buffers(
-        &self,
-        buffer_ids: impl IntoIterator<Item = BufferId>,
-        tx: &DatabaseTransaction,
-    ) -> Result<Vec<buffer_operation::Model>> {
-        let mut values = String::new();
-        for id in buffer_ids {
-            if !values.is_empty() {
-                values.push_str(", ");
-            }
-            write!(&mut values, "({})", id).unwrap();
-        }
-
-        if values.is_empty() {
-            return Ok(Vec::default());
-        }
-
-        let sql = format!(
-            r#"
-            SELECT
-                *
-            FROM
-            (
-                SELECT
-                    *,
-                    row_number() OVER (
-                        PARTITION BY buffer_id
-                        ORDER BY
-                            epoch DESC,
-                            lamport_timestamp DESC,
-                            replica_id DESC
-                    ) as row_number
-                FROM buffer_operations
-                WHERE
-                    buffer_id in ({values})
-            ) AS last_operations
-            WHERE
-                row_number = 1
-            "#,
-        );
-
-        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-        Ok(buffer_operation::Entity::find()
-            .from_raw_sql(stmt)
-            .all(tx)
-            .await?)
     }
 }
 
