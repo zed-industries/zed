@@ -161,10 +161,17 @@ impl WaylandWindowState {
     }
 
     pub fn set_size_and_scale(&self, width: i32, height: i32, scale: f32) {
-        self.inner.borrow_mut().scale = scale;
-        self.inner.borrow_mut().bounds.size.width = width;
-        self.inner.borrow_mut().bounds.size.height = height;
-        self.inner.borrow_mut().renderer.update_drawable_size(size(
+        let mut inner = self.inner.borrow_mut();
+        if width == inner.bounds.size.width
+            && height == inner.bounds.size.height
+            && scale == inner.scale
+        {
+            return;
+        }
+        inner.scale = scale;
+        inner.bounds.size.width = width;
+        inner.bounds.size.height = height;
+        inner.renderer.update_drawable_size(size(
             width as f64 * scale as f64,
             height as f64 * scale as f64,
         ));
