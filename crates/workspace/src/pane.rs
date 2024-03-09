@@ -166,6 +166,7 @@ pub struct Pane {
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
+    preview_item_id: Option<EntityId>,
     last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
@@ -260,6 +261,7 @@ impl Pane {
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
+            preview_item_id: None,
             last_focused_view_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -502,6 +504,7 @@ impl Pane {
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
+        allow_preview: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
@@ -522,8 +525,17 @@ impl Pane {
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
+            if allow_preview {
+                if let Some(preview_item_id) = self.preview_item_id {
+                    self.items.retain(|item| item.item_id() != preview_item_id);
+                }
+            }
+
             let new_item = build_item(cx);
             self.add_item(new_item.clone(), true, focus_item, None, cx);
+            if allow_preview {
+                self.preview_item_id = Some(new_item.item_id());
+            }
             new_item
         }
     }
@@ -1297,12 +1309,16 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
+        let is_preview = self
+            .preview_item_id
+            .map(|id| id == item.item_id())
+            .unwrap_or(false);
 
         let label = item.tab_content(
             TabContentParams {
                 detail: Some(detail),
                 selected: is_active,
-                preview: false,
+                preview: is_preview,
             },
             cx,
         );

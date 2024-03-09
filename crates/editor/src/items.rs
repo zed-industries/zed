@@ -632,7 +632,11 @@ impl Item for Editor {
 
         h_flex()
             .gap_2()
-            .child(Label::new(self.title(cx).to_string()).color(label_color))
+            .child(
+                Label::new(self.title(cx).to_string())
+                    .color(label_color)
+                    .strikethrough(params.preview),
+            )
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
