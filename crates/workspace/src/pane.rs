@@ -522,6 +522,16 @@ impl Pane {
         }
 
         if let Some((index, existing_item)) = existing_item {
+            // If the item is already open, and the item is a preview item
+            // and we are not allowing items to open as preview, mark the item as persistent.
+            if let Some(preview_item_id) = self.preview_item_id {
+                if let Some(tab) = self.items.get(index) {
+                    if tab.item_id() == preview_item_id && !allow_preview {
+                        self.preview_item_id = None;
+                    }
+                }
+            }
+
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
