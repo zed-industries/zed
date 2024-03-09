@@ -821,9 +821,9 @@ impl<'a> ElementContext<'a> {
         });
     }
 
-    /// Creates a new painting layer for the specified bounds. This is typically used
-    /// for performance reasons when you know all of your primitives are located on the same
-    /// plane.
+    /// Creates a new painting layer for the specified bounds. A "layer" is a batch
+    /// of geometry that are non-overlapping and have the same draw order. This is typically used
+    /// for performance reasons.
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
