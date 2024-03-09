@@ -1450,10 +1450,11 @@ impl ProjectPanel {
                                 if event.down.modifiers.command {
                                     this.split_entry(entry_id, cx);
                                 } else {
+                                    let click_count = event.up.click_count;
                                     this.open_entry(
                                         entry_id,
-                                        event.up.click_count > 1,
-                                        event.down.modifiers.alt, // TODO: actually do this on double click
+                                        click_count > 1,
+                                        click_count == 1,
                                         cx,
                                     );
                                 }
