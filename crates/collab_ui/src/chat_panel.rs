@@ -1000,7 +1000,7 @@ impl Render for ChatPanel {
                         .border_t_1()
                         .border_color(cx.theme().colors().border)
                         .bg(cx.theme().colors().background)
-                        .child("Close edit message")
+                        .child("Editing message")
                         .child(
                             IconButton::new("cancel-edit-message", IconName::Close)
                                 .shape(ui::IconButtonShape::Square)
