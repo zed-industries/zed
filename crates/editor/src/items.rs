@@ -635,7 +635,7 @@ impl Item for Editor {
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
-                    .strikethrough(params.preview),
+                    .italic(params.preview),
             )
             .when_some(description, |this, description| {
                 this.child(
