@@ -368,12 +368,7 @@ impl Fs for RealFs {
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.ok() {
-                    if event
-                        .paths
-                        .into_iter()
-                        .find(|path| **path == watched_path)
-                        .is_some()
-                    {
+                    if event.paths.into_iter().any(|path| *path == watched_path) {
                         match event.kind {
                             EventKind::Create(_) => {
                                 file_watcher

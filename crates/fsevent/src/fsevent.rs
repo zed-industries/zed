@@ -1,3 +1,5 @@
+#![cfg(target_os = "macos")]
+
 use bitflags::bitflags;
 use fsevent_sys::{self as fs, core_foundation as cf};
 use parking_lot::Mutex;
