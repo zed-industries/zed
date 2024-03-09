@@ -556,12 +556,10 @@ impl<'a> ElementContext<'a> {
         window
             .text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-
-        for operation in &window.rendered_frame.scene.paint_operations
-            [range.start.scene_index..range.end.scene_index]
-        {
-            window.next_frame.scene.replay(operation.clone());
-        }
+        window.next_frame.scene.replay(
+            range.start.scene_index..range.end.scene_index,
+            &window.rendered_frame.scene,
+        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -821,6 +819,29 @@ impl<'a> ElementContext<'a> {
             layout_range: AfterLayoutIndex::default()..AfterLayoutIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
         });
+    }
+
+    /// Creates a new painting layer for the specified bounds. This is typically used
+    /// for performance reasons when you know all of your primitives are located on the same
+    /// plane.
+    pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        let clipped_bounds = bounds.intersect(&content_mask.bounds);
+        if !clipped_bounds.is_empty() {
+            self.window
+                .next_frame
+                .scene
+                .push_layer(clipped_bounds.scale(scale_factor));
+        }
+
+        let result = f(self);
+
+        if !clipped_bounds.is_empty() {
+            self.window.next_frame.scene.pop_layer();
+        }
+
+        result
     }
 
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.

@@ -3,9 +3,9 @@
 
 use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, IsZero, Pixels, Point, ScaledPixels,
+    Hsla, Pixels, Point, ScaledPixels,
 };
-use std::{fmt::Debug, iter::Peekable, slice};
+use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
@@ -16,6 +16,7 @@ pub(crate) type DrawOrder = u32;
 pub(crate) struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels, ()>,
+    layer_stack: Vec<DrawOrder>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) quads: Vec<Quad>,
     pub(crate) paths: Vec<Path<ScaledPixels>>,
@@ -29,6 +30,7 @@ impl Scene {
     pub fn clear(&mut self) {
         self.paint_operations.clear();
         self.primitive_bounds.clear();
+        self.layer_stack.clear();
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
@@ -46,7 +48,19 @@ impl Scene {
         self.paint_operations.len()
     }
 
-    pub(crate) fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+    pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        let order = self.primitive_bounds.insert(bounds, ());
+        self.layer_stack.push(order);
+        self.paint_operations
+            .push(PaintOperation::StartLayer(bounds));
+    }
+
+    pub fn pop_layer(&mut self) {
+        self.layer_stack.pop();
+        self.paint_operations.push(PaintOperation::EndLayer);
+    }
+
+    pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
@@ -56,7 +70,11 @@ impl Scene {
             return;
         }
 
-        let order = self.primitive_bounds.insert(clipped_bounds, ());
+        let order = self
+            .layer_stack
+            .last()
+            .copied()
+            .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds, ()));
         match &mut primitive {
             Primitive::Shadow(shadow) => {
                 shadow.order = order;
@@ -92,11 +110,13 @@ impl Scene {
             .push(PaintOperation::Primitive(primitive));
     }
 
-    pub(crate) fn replay(&mut self, operation: PaintOperation) {
-        match operation {
-            PaintOperation::Primitive(primitive) => self.insert_primitive(primitive),
-            PaintOperation::StartLayer(bounds) => todo!(),
-            PaintOperation::EndLayer => todo!(),
+    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        for operation in &prev_scene.paint_operations[range] {
+            match operation {
+                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
+                PaintOperation::EndLayer => self.pop_layer(),
+            }
         }
     }
 
@@ -149,10 +169,9 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
-#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
-    StartLayer(Bounds<Pixels>),
+    StartLayer(Bounds<ScaledPixels>),
     EndLayer,
 }
 

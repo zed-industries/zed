@@ -1173,6 +1173,11 @@ where
 ///
 /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
 impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
+    /// Checks if the bounds represent an empty area.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
     pub fn is_empty(&self) -> bool {
         self.size.width <= T::default() || self.size.height <= T::default()
     }
