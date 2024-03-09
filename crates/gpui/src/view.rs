@@ -203,7 +203,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
+    pub(crate) request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
     cache: bool,
 }
 

@@ -70,8 +70,6 @@ spec:
           ports:
             - containerPort: 8080
               protocol: TCP
-            - containerPort: 6669
-              protocol: TCP
           livenessProbe:
             httpGet:
               path: /healthz

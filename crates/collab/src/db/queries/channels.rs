@@ -1,5 +1,8 @@
 use super::*;
-use rpc::{proto::channel_member::Kind, ErrorCode, ErrorCodeExt};
+use rpc::{
+    proto::{channel_member::Kind, ChannelBufferVersion, VectorClockEntry},
+    ErrorCode, ErrorCodeExt,
+};
 use sea_orm::TryGetableMany;
 
 impl Database {
@@ -625,6 +628,7 @@ impl Database {
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
 
         let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut latest_buffer_versions: Vec<ChannelBufferVersion> = vec![];
         let mut rows = buffer::Entity::find()
             .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
             .stream(tx)
@@ -632,12 +636,23 @@ impl Database {
         while let Some(row) = rows.next().await {
             let row = row?;
             channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+            latest_buffer_versions.push(ChannelBufferVersion {
+                channel_id: row.channel_id.0 as u64,
+                epoch: row.latest_operation_epoch.unwrap_or_default() as u64,
+                version: if let Some((latest_lamport_timestamp, latest_replica_id)) = row
+                    .latest_operation_lamport_timestamp
+                    .zip(row.latest_operation_replica_id)
+                {
+                    vec![VectorClockEntry {
+                        timestamp: latest_lamport_timestamp as u32,
+                        replica_id: latest_replica_id as u32,
+                    }]
+                } else {
+                    vec![]
+                },
+            });
         }
         drop(rows);
-
-        let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, tx)
-            .await?;
 
         let latest_channel_messages = self.latest_channel_messages(&channel_ids, tx).await?;
 

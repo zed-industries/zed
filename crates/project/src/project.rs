@@ -12,8 +12,7 @@ mod project_tests;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use client::{
-    proto, Client, Collaborator, HostedProjectId, PendingEntitySubscription, TypedEnvelope,
-    UserStore,
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
@@ -73,7 +72,7 @@ use std::{
     cmp::{self, Ordering},
     convert::TryInto,
     env,
-    ffi::OsString,
+    ffi::OsStr,
     hash::Hash,
     mem,
     num::NonZeroU32,
@@ -111,6 +110,7 @@ pub use task_inventory::{Inventory, TaskSourceKind};
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub trait Item {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -121,6 +121,9 @@ pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
+    pending_language_server_update: Option<BufferOrderedMessage>,
+    flush_language_server_update: Option<Task<()>>,
+
     languages: Arc<LanguageRegistry>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
@@ -171,7 +174,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
-    hosted_project_id: Option<HostedProjectId>,
+    hosted_project_id: Option<ProjectId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -185,6 +188,7 @@ struct LspBufferSnapshot {
 }
 
 /// Message ordered with respect to buffer operations
+#[derive(Debug)]
 enum BufferOrderedMessage {
     Operation {
         buffer_id: BufferId,
@@ -562,6 +566,8 @@ impl Project {
             Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
+                flush_language_server_update: None,
+                pending_language_server_update: None,
                 collaborators: Default::default(),
                 next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffers: Default::default(),
@@ -674,6 +680,8 @@ impl Project {
             let mut this = Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
+                pending_language_server_update: None,
+                flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
                 next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffer: watch::channel(),
@@ -771,29 +779,31 @@ impl Project {
     }
 
     pub async fn hosted(
-        _hosted_project_id: HostedProjectId,
-        _user_store: Model<UserStore>,
-        _client: Arc<Client>,
-        _languages: Arc<LanguageRegistry>,
-        _fs: Arc<dyn Fs>,
-        _cx: AsyncAppContext,
+        remote_id: ProjectId,
+        user_store: Model<UserStore>,
+        client: Arc<Client>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
-        // let response = client
-        //     .request_envelope(proto::JoinHostedProject {
-        //         id: hosted_project_id.0,
-        //     })
-        //     .await?;
-        // Self::from_join_project_response(
-        //     response,
-        //     Some(hosted_project_id),
-        //     client,
-        //     user_store,
-        //     languages,
-        //     fs,
-        //     cx,
-        // )
-        // .await
-        Err(anyhow!("disabled"))
+        client.authenticate_and_connect(true, &cx).await?;
+
+        let subscription = client.subscribe_to_entity(remote_id.0)?;
+        let response = client
+            .request_envelope(proto::JoinHostedProject {
+                project_id: remote_id.0,
+            })
+            .await?;
+        Self::from_join_project_response(
+            response,
+            subscription,
+            client,
+            user_store,
+            languages,
+            fs,
+            cx,
+        )
+        .await
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -1041,7 +1051,7 @@ impl Project {
         }
     }
 
-    pub fn hosted_project_id(&self) -> Option<HostedProjectId> {
+    pub fn hosted_project_id(&self) -> Option<ProjectId> {
         self.hosted_project_id
     }
 
@@ -1544,8 +1554,7 @@ impl Project {
                 )
             })
             .collect();
-        self.buffer_ordered_messages_tx
-            .unbounded_send(BufferOrderedMessage::Resync)
+        self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
         cx.notify();
         Ok(())
@@ -2336,12 +2345,11 @@ impl Project {
 
         match event {
             BufferEvent::Operation(operation) => {
-                self.buffer_ordered_messages_tx
-                    .unbounded_send(BufferOrderedMessage::Operation {
-                        buffer_id: buffer.read(cx).remote_id(),
-                        operation: language::proto::serialize_operation(operation),
-                    })
-                    .ok();
+                self.enqueue_buffer_ordered_message(BufferOrderedMessage::Operation {
+                    buffer_id: buffer.read(cx).remote_id(),
+                    operation: language::proto::serialize_operation(operation),
+                })
+                .ok();
             }
 
             BufferEvent::Edited { .. } => {
@@ -2488,8 +2496,7 @@ impl Project {
                                             language_server_id,
                                             cx,
                                         );
-                                        this.buffer_ordered_messages_tx
-                                            .unbounded_send(
+                                        this.enqueue_buffer_ordered_message(
                                                 BufferOrderedMessage::LanguageServerUpdate {
                                                     language_server_id,
                                                     message:proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(Default::default())
@@ -3663,6 +3670,40 @@ impl Project {
         .detach();
     }
 
+    fn enqueue_language_server_progress(
+        &mut self,
+        message: BufferOrderedMessage,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.pending_language_server_update.replace(message);
+        self.flush_language_server_update.get_or_insert_with(|| {
+            cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .timer(SERVER_PROGRESS_DEBOUNCE_TIMEOUT)
+                    .await;
+                this.update(&mut cx, |this, _| {
+                    this.flush_language_server_update.take();
+                    if let Some(update) = this.pending_language_server_update.take() {
+                        this.enqueue_buffer_ordered_message(update).ok();
+                    }
+                })
+                .ok();
+            })
+        });
+    }
+
+    fn enqueue_buffer_ordered_message(&mut self, message: BufferOrderedMessage) -> Result<()> {
+        if let Some(pending_message) = self.pending_language_server_update.take() {
+            self.flush_language_server_update.take();
+            self.buffer_ordered_messages_tx
+                .unbounded_send(pending_message)
+                .map_err(|e| anyhow!(e))?;
+        }
+        self.buffer_ordered_messages_tx
+            .unbounded_send(message)
+            .map_err(|e| anyhow!(e))
+    }
+
     fn on_lsp_progress(
         &mut self,
         progress: lsp::ProgressParams,
@@ -3700,8 +3741,7 @@ impl Project {
                 if is_disk_based_diagnostics_progress {
                     language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(language_server_id, cx);
-                    self.buffer_ordered_messages_tx
-                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(Default::default())
                         })
@@ -3717,8 +3757,8 @@ impl Project {
                         },
                         cx,
                     );
-                    self.buffer_ordered_messages_tx
-                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                    self.enqueue_buffer_ordered_message(
+                        BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message: proto::update_language_server::Variant::WorkStart(
                                 proto::LspWorkStart {
@@ -3727,8 +3767,9 @@ impl Project {
                                     percentage: report.percentage,
                                 },
                             ),
-                        })
-                        .ok();
+                        },
+                    )
+                    .ok();
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
@@ -3743,8 +3784,8 @@ impl Project {
                         },
                         cx,
                     );
-                    self.buffer_ordered_messages_tx
-                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                    self.enqueue_language_server_progress(
+                        BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message: proto::update_language_server::Variant::WorkProgress(
                                 proto::LspWorkProgress {
@@ -3753,8 +3794,9 @@ impl Project {
                                     percentage: report.percentage,
                                 },
                             ),
-                        })
-                        .ok();
+                        },
+                        cx,
+                    );
                 }
             }
             lsp::WorkDoneProgress::End(_) => {
@@ -3763,25 +3805,27 @@ impl Project {
                 if is_disk_based_diagnostics_progress {
                     language_server_status.has_pending_diagnostic_updates = false;
                     self.disk_based_diagnostics_finished(language_server_id, cx);
-                    self.buffer_ordered_messages_tx
-                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                    self.enqueue_buffer_ordered_message(
+                        BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message:
                                 proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
                                     Default::default(),
                                 ),
-                        })
-                        .ok();
+                        },
+                    )
+                    .ok();
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                    self.buffer_ordered_messages_tx
-                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                    self.enqueue_buffer_ordered_message(
+                        BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message: proto::update_language_server::Variant::WorkEnd(
                                 proto::LspWorkEnd { token },
                             ),
-                        })
-                        .ok();
+                        },
+                    )
+                    .ok();
                 }
             }
         }
@@ -4383,7 +4427,6 @@ impl Project {
                                     project_transaction.0.extend(new.0);
                                 }
 
-                                // TODO kb here too:
                                 if let Some(command) = action.lsp_action.command {
                                     project.update(&mut cx, |this, _| {
                                         this.last_workspace_edits_by_language_server
@@ -6745,24 +6788,30 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
-        if worktree.read(cx).is_local() {
-            cx.subscribe(worktree, |this, worktree, event, cx| match event {
+        cx.subscribe(worktree, |this, worktree, event, cx| {
+            let is_local = worktree.read(cx).is_local();
+            match event {
                 worktree::Event::UpdatedEntries(changes) => {
-                    this.update_local_worktree_buffers(&worktree, changes, cx);
-                    this.update_local_worktree_language_servers(&worktree, changes, cx);
-                    this.update_local_worktree_settings(&worktree, changes, cx);
-                    this.update_prettier_settings(&worktree, changes, cx);
+                    if is_local {
+                        this.update_local_worktree_buffers(&worktree, changes, cx);
+                        this.update_local_worktree_language_servers(&worktree, changes, cx);
+                        this.update_local_worktree_settings(&worktree, changes, cx);
+                        this.update_prettier_settings(&worktree, changes, cx);
+                    }
+
                     cx.emit(Event::WorktreeUpdatedEntries(
                         worktree.read(cx).id(),
                         changes.clone(),
                     ));
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
-                    this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                    if is_local {
+                        this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                    }
                 }
-            })
-            .detach();
-        }
+            }
+        })
+        .detach();
 
         let push_strong_handle = {
             let worktree = worktree.read(cx);
@@ -7386,8 +7435,7 @@ impl Project {
             if is_host {
                 this.opened_buffers
                     .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
-                this.buffer_ordered_messages_tx
-                    .unbounded_send(BufferOrderedMessage::Resync)
+                this.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
                     .unwrap();
             }
 
@@ -9336,22 +9384,36 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
 }
 
 struct ProjectLspAdapterDelegate {
-    project: Model<Project>,
+    project: WeakModel<Project>,
     worktree: worktree::Snapshot,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
+    shell_env: Mutex<Option<HashMap<String, String>>>,
 }
 
 impl ProjectLspAdapterDelegate {
     fn new(project: &Project, worktree: &Model<Worktree>, cx: &ModelContext<Project>) -> Arc<Self> {
         Arc::new(Self {
-            project: cx.handle(),
+            project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
             fs: project.fs.clone(),
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
+            shell_env: Default::default(),
         })
+    }
+
+    async fn load_shell_env(&self) {
+        let worktree_abs_path = self.worktree.abs_path();
+        let shell_env = load_shell_environment(&worktree_abs_path)
+            .await
+            .with_context(|| {
+                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
+            })
+            .log_err()
+            .unwrap_or_default();
+        *self.shell_env.lock() = Some(shell_env);
     }
 }
 
@@ -9359,39 +9421,28 @@ impl ProjectLspAdapterDelegate {
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {
         self.project
-            .update(cx, |_, cx| cx.emit(Event::Notification(message.to_owned())));
+            .update(cx, |_, cx| cx.emit(Event::Notification(message.to_owned())))
+            .ok();
     }
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
-    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)> {
+    async fn shell_env(&self) -> HashMap<String, String> {
+        self.load_shell_env().await;
+        self.shell_env.lock().as_ref().cloned().unwrap_or_default()
+    }
+
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-
-        let shell_env = load_shell_environment(&worktree_abs_path)
-            .await
-            .with_context(|| {
-                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
-            })
-            .log_err();
-
-        if let Some(shell_env) = shell_env {
-            let shell_path = shell_env.get("PATH");
-            match which::which_in(&command, shell_path, &worktree_abs_path) {
-                Ok(command_path) => Some((command_path, shell_env)),
-                Err(error) => {
-                    log::warn!(
-                        "failed to determine path for command {:?} in shell PATH {:?}: {error}",
-                        command.to_string_lossy(),
-                        shell_path.map(String::as_str).unwrap_or("")
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        }
+        self.load_shell_env().await;
+        let shell_path = self
+            .shell_env
+            .lock()
+            .as_ref()
+            .and_then(|shell_env| shell_env.get("PATH").cloned());
+        which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
     }
 
     fn update_status(

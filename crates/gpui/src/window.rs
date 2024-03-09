@@ -35,7 +35,10 @@ use std::{
 use util::{measure, ResultExt};
 
 mod element_cx;
+mod prompts;
+
 pub use element_cx::*;
+pub use prompts::*;
 
 const ACTIVE_DRAG_Z_INDEX: u16 = 1;
 
@@ -280,6 +283,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    prompt: Option<RenderablePromptHandle>,
 }
 
 #[derive(Default, Debug)]
@@ -473,6 +477,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            prompt: None,
         }
     }
     fn new_focus_listener(
@@ -960,6 +965,7 @@ impl<'a> WindowContext<'a> {
         }
 
         let root_view = self.window.root_view.take().unwrap();
+        let mut prompt = self.window.prompt.take();
         self.with_element_context(|cx| {
             cx.with_z_index(0, |cx| {
                 cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
@@ -978,10 +984,24 @@ impl<'a> WindowContext<'a> {
                     }
 
                     let available_space = cx.window.viewport_size.map(Into::into);
-                    root_view.draw(Point::default(), available_space, cx);
+
+                    let origin = Point::default();
+                    cx.paint_view(root_view.entity_id(), |cx| {
+                        cx.with_absolute_element_offset(origin, |cx| {
+                            let (layout_id, mut rendered_element) =
+                                (root_view.request_layout)(&root_view, cx);
+                            cx.compute_layout(layout_id, available_space);
+                            rendered_element.paint(cx);
+
+                            if let Some(prompt) = &mut prompt {
+                                prompt.paint(cx).draw(origin, available_space, cx)
+                            }
+                        });
+                    });
                 })
             })
         });
+        self.window.prompt = prompt;
 
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_element_context(|cx| {
@@ -1551,15 +1571,48 @@ impl<'a> WindowContext<'a> {
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
     pub fn prompt(
-        &self,
+        &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
-        self.window
-            .platform_window
-            .prompt(level, message, detail, answers)
+        let prompt_builder = self.app.prompt_builder.take();
+        let Some(prompt_builder) = prompt_builder else {
+            unreachable!("Re-entrant window prompting is not supported by GPUI");
+        };
+
+        let receiver = match &prompt_builder {
+            PromptBuilder::Default => self
+                .window
+                .platform_window
+                .prompt(level, message, detail, answers)
+                .unwrap_or_else(|| {
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+                }),
+            PromptBuilder::Custom(_) => {
+                self.build_custom_prompt(&prompt_builder, level, message, detail, answers)
+            }
+        };
+
+        self.app.prompt_builder = Some(prompt_builder);
+
+        receiver
+    }
+
+    fn build_custom_prompt(
+        &mut self,
+        prompt_builder: &PromptBuilder,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        let (sender, receiver) = oneshot::channel();
+        let handle = PromptHandle::new(sender);
+        let handle = (prompt_builder)(level, message, detail, answers, handle, self);
+        self.window.prompt = Some(handle);
+        receiver
     }
 
     /// Returns all available actions for the focused element.

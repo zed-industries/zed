@@ -2413,7 +2413,9 @@ impl ConversationEditor {
                 .read(cx)
                 .messages(cx)
                 .map(|message| BlockProperties {
-                    position: buffer.anchor_in_excerpt(excerpt_id, message.anchor),
+                    position: buffer
+                        .anchor_in_excerpt(excerpt_id, message.anchor)
+                        .unwrap(),
                     height: 2,
                     style: BlockStyle::Sticky,
                     render: Arc::new({

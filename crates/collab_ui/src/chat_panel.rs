@@ -9,8 +9,8 @@ use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
     CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle,
-    FontWeight, HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    FontWeight, HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, Stateful,
+    StyledText, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -436,13 +436,13 @@ impl ChatPanel {
         let _is_pending = message.is_pending();
 
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
-        let can_modify_message = belongs_to_user || is_admin;
+        let can_delete_message = belongs_to_user || is_admin;
+        let can_edit_message = belongs_to_user;
 
         let element_id: ElementId = match message.id {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
-        let this = cx.view().clone();
 
         let mentioning_you = message
             .mentions
@@ -477,15 +477,25 @@ impl ChatPanel {
         v_flex()
             .w_full()
             .relative()
+            .group("")
+            .when(!is_continuation_from_previous, |this| this.pt_2())
+            .child(
+                self.render_popover_buttons(&cx, message_id, can_delete_message, can_edit_message)
+                    .neg_mt_2p5(),
+            )
             .child(
                 div()
+                    .group("")
                     .bg(background)
                     .rounded_md()
                     .overflow_hidden()
-                    .px_1()
+                    .px_1p5()
                     .py_0p5()
+                    .when(!self.has_open_menu(message_id), |this| {
+                        this.hover(|style| style.bg(cx.theme().colors().element_hover))
+                    })
                     .when(!is_continuation_from_previous, |this| {
-                        this.mt_2().child(
+                        this.child(
                             h_flex()
                                 .text_ui_sm()
                                 .child(div().absolute().child(
@@ -557,37 +567,11 @@ impl ChatPanel {
                                 .w_full()
                                 .text_ui_sm()
                                 .id(element_id)
-                                .group("")
-                                .child(text.element("body".into(), cx))
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .z_index(1)
-                                        .right_0()
-                                        .w_6()
-                                        .bg(background)
-                                        .when(!self.has_open_menu(message_id), |el| {
-                                            el.visible_on_hover("")
-                                        })
-                                        .when_some(message_id, |el, message_id| {
-                                            el.child(
-                                                popover_menu(("menu", message_id))
-                                                    .trigger(IconButton::new(
-                                                        ("trigger", message_id),
-                                                        IconName::Ellipsis,
-                                                    ))
-                                                    .menu(move |cx| {
-                                                        Some(Self::render_message_menu(
-                                                            &this,
-                                                            message_id,
-                                                            can_modify_message,
-                                                            cx,
-                                                        ))
-                                                    }),
-                                            )
-                                        }),
-                                ),
+                                .child(text.element("body".into(), cx)),
                         )
+                        .when(self.has_open_menu(message_id), |el| {
+                            el.bg(cx.theme().colors().element_selected)
+                        })
                     }),
             )
             .when(
@@ -621,25 +605,135 @@ impl ChatPanel {
         }
     }
 
+    fn render_popover_button(&self, cx: &ViewContext<Self>, child: Stateful<Div>) -> Div {
+        div()
+            .w_6()
+            .bg(cx.theme().colors().element_background)
+            .hover(|style| style.bg(cx.theme().colors().element_hover).rounded_md())
+            .child(child)
+    }
+
+    fn render_popover_buttons(
+        &self,
+        cx: &ViewContext<Self>,
+        message_id: Option<u64>,
+        can_delete_message: bool,
+        can_edit_message: bool,
+    ) -> Div {
+        h_flex()
+            .absolute()
+            .right_2()
+            .z_index(1)
+            .overflow_hidden()
+            .rounded_md()
+            .border_color(cx.theme().colors().element_selected)
+            .border_1()
+            .when(!self.has_open_menu(message_id), |el| {
+                el.visible_on_hover("")
+            })
+            .bg(cx.theme().colors().element_background)
+            .when_some(message_id, |el, message_id| {
+                el.child(
+                    self.render_popover_button(
+                        cx,
+                        div()
+                            .id("reply")
+                            .child(
+                                IconButton::new(("reply", message_id), IconName::ReplyArrow)
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.message_editor.update(cx, |editor, cx| {
+                                            editor.set_reply_to_message_id(message_id);
+                                            editor.focus_handle(cx).focus(cx);
+                                        })
+                                    })),
+                            )
+                            .tooltip(|cx| Tooltip::text("Reply", cx)),
+                    ),
+                )
+            })
+            .when_some(message_id, |el, message_id| {
+                el.when(can_edit_message, |el| {
+                    el.child(
+                        self.render_popover_button(
+                            cx,
+                            div()
+                                .id("edit")
+                                .child(
+                                    IconButton::new(("edit", message_id), IconName::Pencil)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.message_editor.update(cx, |editor, cx| {
+                                                let message = this
+                                                    .active_chat()
+                                                    .map(|active_chat| {
+                                                        active_chat
+                                                            .read(cx)
+                                                            .find_loaded_message(message_id)
+                                                    })
+                                                    .flatten()
+                                                    .cloned();
+
+                                                if let Some(message) = message {
+                                                    let buffer = editor
+                                                        .editor
+                                                        .read(cx)
+                                                        .buffer()
+                                                        .read(cx)
+                                                        .as_singleton()
+                                                        .expect("message editor must be singleton");
+
+                                                    buffer.update(cx, |buffer, cx| {
+                                                        buffer.set_text(message.body.clone(), cx)
+                                                    });
+
+                                                    editor.set_edit_message_id(message_id);
+                                                    editor.focus_handle(cx).focus(cx);
+                                                }
+                                            })
+                                        })),
+                                )
+                                .tooltip(|cx| Tooltip::text("Edit", cx)),
+                        ),
+                    )
+                })
+            })
+            .when_some(message_id, |el, message_id| {
+                let this = cx.view().clone();
+
+                el.child(
+                    self.render_popover_button(
+                        cx,
+                        div()
+                            .child(
+                                popover_menu(("menu", message_id))
+                                    .trigger(IconButton::new(
+                                        ("trigger", message_id),
+                                        IconName::Ellipsis,
+                                    ))
+                                    .menu(move |cx| {
+                                        Some(Self::render_message_menu(
+                                            &this,
+                                            message_id,
+                                            can_delete_message,
+                                            cx,
+                                        ))
+                                    }),
+                            )
+                            .id("more")
+                            .tooltip(|cx| Tooltip::text("More", cx)),
+                    ),
+                )
+            })
+    }
+
     fn render_message_menu(
         this: &View<Self>,
         message_id: u64,
-        can_modify_message: bool,
+        can_delete_message: bool,
         cx: &mut WindowContext,
     ) -> View<ContextMenu> {
         let menu = {
             ContextMenu::build(cx, move |menu, cx| {
                 menu.entry(
-                    "Reply to message",
-                    None,
-                    cx.handler_for(&this, move |this, cx| {
-                        this.message_editor.update(cx, |editor, cx| {
-                            editor.set_reply_to_message_id(message_id);
-                            editor.focus_handle(cx).focus(cx);
-                        })
-                    }),
-                )
-                .entry(
                     "Copy message text",
                     None,
                     cx.handler_for(&this, move |this, cx| {
@@ -651,41 +745,7 @@ impl ChatPanel {
                         }
                     }),
                 )
-                .when(can_modify_message, |menu| {
-                    menu.entry(
-                        "Edit message",
-                        None,
-                        cx.handler_for(&this, move |this, cx| {
-                            let message = this
-                                .active_chat()
-                                .map(|active_chat| {
-                                    active_chat.read(cx).find_loaded_message(message_id)
-                                })
-                                .flatten()
-                                .cloned();
-
-                            if let Some(message) = message {
-                                this.message_editor.update(cx, |editor, cx| {
-                                    let buffer = editor
-                                        .editor
-                                        .read(cx)
-                                        .buffer()
-                                        .read(cx)
-                                        .as_singleton()
-                                        .expect("message editor must be singleton");
-
-                                    buffer.update(cx, |buffer, cx| {
-                                        buffer.set_text(message.body.clone(), cx)
-                                    });
-
-                                    editor.set_edit_message_id(message_id);
-                                    editor.focus_handle(cx).focus(cx);
-                                })
-                            }
-                        }),
-                    )
-                })
-                .when(can_modify_message, |menu| {
+                .when(can_delete_message, |menu| {
                     menu.entry(
                         "Delete message",
                         None,

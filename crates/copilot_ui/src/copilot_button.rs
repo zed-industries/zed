@@ -149,7 +149,7 @@ impl CopilotButton {
     pub fn build_copilot_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
 
-        return ContextMenu::build(cx, move |mut menu, cx| {
+        ContextMenu::build(cx, move |mut menu, cx| {
             if let Some(language) = self.language.clone() {
                 let fs = fs.clone();
                 let language_enabled =
@@ -216,7 +216,7 @@ impl CopilotButton {
                 .boxed_clone(),
             )
             .action("Sign Out", SignOut.boxed_clone())
-        });
+        })
     }
 
     pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {

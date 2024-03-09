@@ -7,7 +7,7 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
     ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
-    Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -74,6 +74,7 @@ pub struct UniformList {
 /// This should be stored in your view and passed to the uniform_list on each frame.
 #[derive(Clone, Default)]
 pub struct UniformListScrollHandle {
+    base_handle: ScrollHandle,
     deferred_scroll_to_item: Rc<RefCell<Option<usize>>>,
 }
 
@@ -81,6 +82,7 @@ impl UniformListScrollHandle {
     /// Create a new scroll handle to bind to a uniform list.
     pub fn new() -> Self {
         Self {
+            base_handle: ScrollHandle::new(),
             deferred_scroll_to_item: Rc::new(RefCell::new(None)),
         }
     }
@@ -299,6 +301,7 @@ impl UniformList {
 
     /// Track and render scroll state of this list with reference to the given scroll handle.
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
+        self.interactivity.scroll_handle = Some(handle.base_handle.clone());
         self.scroll_handle = Some(handle);
         self
     }

@@ -36,7 +36,7 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use ::git::diff::DiffHunk;
+use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -60,9 +60,9 @@ use gpui::{
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakView, WhiteSpace, WindowContext,
+    ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -249,7 +249,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewFile, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -258,7 +258,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -425,6 +425,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -929,6 +930,15 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
+
+                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                                        highlight.strikethrough = Some(StrikethroughStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        });
+                                        highlight.color = Some(cx.theme().colors().text_muted);
+                                    }
+
                                     (range, highlight)
                                 },
                             ),
@@ -1214,6 +1224,7 @@ impl CodeActionsMenu {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
@@ -1539,6 +1550,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1827,6 +1839,10 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
+        self.auto_replace_emoji_shortcode = auto_replace;
     }
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
@@ -2505,6 +2521,47 @@ impl Editor {
                 }
             }
 
+            if self.auto_replace_emoji_shortcode
+                && selection.is_empty()
+                && text.as_ref().ends_with(':')
+            {
+                if let Some(possible_emoji_short_code) =
+                    Self::find_possible_emoji_shortcode_at_position(&snapshot, selection.start)
+                {
+                    if !possible_emoji_short_code.is_empty() {
+                        if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_short_code) {
+                            let emoji_shortcode_start = Point::new(
+                                selection.start.row,
+                                selection.start.column - possible_emoji_short_code.len() as u32 - 1,
+                            );
+
+                            // Remove shortcode from buffer
+                            edits.push((
+                                emoji_shortcode_start..selection.start,
+                                "".to_string().into(),
+                            ));
+                            new_selections.push((
+                                Selection {
+                                    id: selection.id,
+                                    start: snapshot.anchor_after(emoji_shortcode_start),
+                                    end: snapshot.anchor_before(selection.start),
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                                0,
+                            ));
+
+                            // Insert emoji
+                            let selection_start_anchor = snapshot.anchor_after(selection.start);
+                            new_selections.push((selection.map(|_| selection_start_anchor), 0));
+                            edits.push((selection.start..selection.end, emoji.to_string().into()));
+
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
@@ -2586,6 +2643,32 @@ impl Editor {
                 this.refresh_copilot_suggestions(true, cx);
             }
         });
+    }
+
+    fn find_possible_emoji_shortcode_at_position(
+        snapshot: &MultiBufferSnapshot,
+        position: Point,
+    ) -> Option<String> {
+        let mut chars = Vec::new();
+        let mut found_colon = false;
+        for char in snapshot.reversed_chars_at(position).take(100) {
+            // Found a possible emoji shortcode in the middle of the buffer
+            if found_colon && char.is_whitespace() {
+                chars.reverse();
+                return Some(chars.iter().collect());
+            }
+            if char.is_whitespace() || !char.is_ascii() {
+                return None;
+            }
+            if char == ':' {
+                found_colon = true;
+            } else {
+                chars.push(char);
+            }
+        }
+        // Found a possible emoji shortcode at the beginning of the buffer
+        chars.reverse();
+        Some(chars.iter().collect())
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
@@ -3041,7 +3124,7 @@ impl Editor {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
                     self.inlay_hint_cache.clear();
-                    self.splice_inlay_hints(
+                    self.splice_inlays(
                         self.visible_inlay_hints(cx)
                             .iter()
                             .map(|inlay| inlay.id)
@@ -3063,7 +3146,7 @@ impl Editor {
                         to_remove,
                         to_insert,
                     })) => {
-                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        self.splice_inlays(to_remove, to_insert, cx);
                         return;
                     }
                     ControlFlow::Break(None) => return,
@@ -3076,7 +3159,7 @@ impl Editor {
                     to_insert,
                 }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
                 {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                    self.splice_inlays(to_remove, to_insert, cx);
                 }
                 return;
             }
@@ -3099,7 +3182,7 @@ impl Editor {
             ignore_debounce,
             cx,
         ) {
-            self.splice_inlay_hints(to_remove, to_insert, cx);
+            self.splice_inlays(to_remove, to_insert, cx);
         }
     }
 
@@ -3107,9 +3190,7 @@ impl Editor {
         self.display_map
             .read(cx)
             .current_inlays()
-            .filter(move |inlay| {
-                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
-            })
+            .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
             .cloned()
             .collect()
     }
@@ -3180,7 +3261,7 @@ impl Editor {
         }
     }
 
-    fn splice_inlay_hints(
+    fn splice_inlays(
         &self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -4088,7 +4169,10 @@ impl Editor {
     }
 
     fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
-        self.copilot_state = Default::default();
+        if let Some(old_suggestion) = self.copilot_state.suggestion.take() {
+            self.splice_inlays(vec![old_suggestion.id], Vec::new(), cx);
+        }
+        self.copilot_state = CopilotState::default();
         self.discard_copilot_suggestion(cx);
     }
 
@@ -4835,6 +4919,105 @@ impl Editor {
         })
     }
 
+    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
+        let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.buffer().update(cx, |multi_buffer, cx| {
+                    for (buffer_id, buffer_revert_ranges) in revert_changes {
+                        if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(buffer_revert_ranges, None, cx);
+                            });
+                        }
+                    }
+                });
+                editor.change_selections(None, cx, |selections| selections.refresh());
+            });
+        }
+    }
+
+    fn gather_revert_changes(
+        &mut self,
+        selections: &[Selection<Anchor>],
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>> {
+        let mut revert_changes = HashMap::default();
+        self.buffer.update(cx, |multi_buffer, cx| {
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let selected_multi_buffer_rows = selections.iter().map(|selection| {
+                let head = selection.head();
+                let tail = selection.tail();
+                let start = tail.to_point(&multi_buffer_snapshot).row;
+                let end = head.to_point(&multi_buffer_snapshot).row;
+                if start > end {
+                    end..start
+                } else {
+                    start..end
+                }
+            });
+
+            let mut processed_buffer_rows =
+                HashMap::<BufferId, HashSet<Range<text::Anchor>>>::default();
+            for selected_multi_buffer_rows in selected_multi_buffer_rows {
+                let query_rows =
+                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+                for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+                    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+                    // when the caret is just above or just below the deleted hunk.
+                    let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                    let related_to_selection = if allow_adjacent {
+                        hunk.associated_range.overlaps(&query_rows)
+                            || hunk.associated_range.start == query_rows.end
+                            || hunk.associated_range.end == query_rows.start
+                    } else {
+                        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                        // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+                        hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                            || selected_multi_buffer_rows.end == hunk.associated_range.start
+                    };
+                    if related_to_selection {
+                        if !processed_buffer_rows
+                            .entry(hunk.buffer_id)
+                            .or_default()
+                            .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                        {
+                            continue;
+                        }
+                        Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
+                    }
+                }
+            }
+        });
+        revert_changes
+    }
+
+    fn prepare_revert_change(
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>,
+        multi_buffer: &MultiBuffer,
+        hunk: &DiffHunk<u32>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
+        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
+        let original_text = buffer.diff_base()?.get(hunk.diff_base_byte_range.clone())?;
+        let buffer_snapshot = buffer.snapshot();
+        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
+        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
+            probe
+                .0
+                .start
+                .cmp(&hunk.buffer_range.start, &buffer_snapshot)
+                .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
+                .then(probe.1.as_ref().cmp(original_text))
+        }) {
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), Arc::from(original_text)));
+            Some(())
+        } else {
+            None
+        }
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
         self.manipulate_lines(cx, |lines| lines.reverse())
     }
@@ -5032,7 +5215,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5053,14 +5236,20 @@ impl Editor {
                 }
             }
 
-            // Copy the text from the selected row region and splice it at the start of the region.
+            // Copy the text from the selected row region and splice it either at the start
+            // or end of the region.
             let start = Point::new(rows.start, 0);
             let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
             let text = buffer
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start..start, text));
+            let insert_location = if action.move_upwards {
+                Point::new(rows.end, 0)
+            } else {
+                start
+            };
+            edits.push((insert_location..insert_location, text));
         }
 
         self.transact(cx, |this, cx| {

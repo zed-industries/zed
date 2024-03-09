@@ -36,6 +36,7 @@ collections.workspace = true
 convert_case = "0.6.0"
 copilot.workspace = true
 db.workspace = true
+emojis.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
