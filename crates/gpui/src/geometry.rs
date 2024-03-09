@@ -1167,6 +1167,17 @@ where
     }
 }
 
+/// Checks if the bounds represent an empty area.
+///
+/// # Returns
+///
+/// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
+impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
+    pub fn is_empty(&self) -> bool {
+        self.size.width <= T::default() || self.size.height <= T::default()
+    }
+}
+
 impl Bounds<Pixels> {
     /// Scales the bounds by a given factor, typically used to adjust for display scaling.
     ///

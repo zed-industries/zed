@@ -476,7 +476,7 @@ impl Interactivity {
 
     /// Block the mouse from interacting with this element or any of its children
     /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
-    pub fn block_mouse(&mut self) {
+    pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
     }
 }
@@ -830,8 +830,8 @@ pub trait InteractiveElement: Sized {
 
     /// Block the mouse from interacting with this element or any of its children
     /// The fluent API equivalent to [`Interactivity::block_mouse`]
-    fn block_mouse(mut self) -> Self {
-        self.interactivity().block_mouse();
+    fn occlude(mut self) -> Self {
+        self.interactivity().occlude_mouse();
         self
     }
 }

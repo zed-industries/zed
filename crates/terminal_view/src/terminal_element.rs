@@ -545,7 +545,7 @@ impl Element for TerminalElement {
     type AfterLayout = LayoutState;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        self.interactivity.block_mouse();
+        self.interactivity.occlude_mouse();
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();

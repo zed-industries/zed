@@ -563,7 +563,7 @@ impl Render for Dock {
                         cx.stop_propagation();
                     }
                 }))
-                .block_mouse();
+                .occlude();
 
             match self.position() {
                 DockPosition::Left => {

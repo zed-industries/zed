@@ -3,7 +3,7 @@
 
 use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, ScaledPixels,
+    Hsla, IsZero, Pixels, Point, ScaledPixels,
 };
 use std::{fmt::Debug, iter::Peekable, slice};
 
@@ -14,7 +14,7 @@ pub(crate) type DrawOrder = u32;
 
 #[derive(Default)]
 pub(crate) struct Scene {
-    pub(crate) primitives: Vec<Primitive>,
+    pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels, ()>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) quads: Vec<Quad>,
@@ -27,7 +27,7 @@ pub(crate) struct Scene {
 
 impl Scene {
     pub fn clear(&mut self) {
-        self.primitives.clear();
+        self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.paths.clear();
         self.shadows.clear();
@@ -43,17 +43,16 @@ impl Scene {
     }
 
     pub fn len(&self) -> usize {
-        self.primitives.len()
+        self.paint_operations.len()
     }
 
-    pub(crate) fn push(&mut self, primitive: impl Into<Primitive>) {
+    pub(crate) fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
-        if clipped_bounds.size.width <= ScaledPixels(0.)
-            || clipped_bounds.size.height <= ScaledPixels(0.)
-        {
+
+        if clipped_bounds.is_empty() {
             return;
         }
 
@@ -89,7 +88,16 @@ impl Scene {
                 self.surfaces.push(surface.clone());
             }
         }
-        self.primitives.push(primitive);
+        self.paint_operations
+            .push(PaintOperation::Primitive(primitive));
+    }
+
+    pub(crate) fn replay(&mut self, operation: PaintOperation) {
+        match operation {
+            PaintOperation::Primitive(primitive) => self.insert_primitive(primitive),
+            PaintOperation::StartLayer(bounds) => todo!(),
+            PaintOperation::EndLayer => todo!(),
+        }
     }
 
     pub fn finish(&mut self) {
@@ -139,6 +147,13 @@ pub(crate) enum PrimitiveKind {
     MonochromeSprite,
     PolychromeSprite,
     Surface,
+}
+
+#[derive(Clone)]
+pub(crate) enum PaintOperation {
+    Primitive(Primitive),
+    StartLayer(Bounds<Pixels>),
+    EndLayer,
 }
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]

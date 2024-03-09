@@ -557,10 +557,10 @@ impl<'a> ElementContext<'a> {
             .text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
 
-        for primitive in
-            &window.rendered_frame.scene.primitives[range.start.scene_index..range.end.scene_index]
+        for operation in &window.rendered_frame.scene.paint_operations
+            [range.start.scene_index..range.end.scene_index]
         {
-            window.next_frame.scene.push(primitive.clone());
+            window.next_frame.scene.replay(operation.clone());
         }
     }
 
@@ -836,7 +836,7 @@ impl<'a> ElementContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            self.window.next_frame.scene.push(Shadow {
+            self.window.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 bounds: shadow_bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -854,7 +854,7 @@ impl<'a> ElementContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        self.window.next_frame.scene.push(Quad {
+        self.window.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
@@ -871,7 +871,10 @@ impl<'a> ElementContext<'a> {
         let content_mask = self.content_mask();
         path.content_mask = content_mask;
         path.color = color.into();
-        self.window.next_frame.scene.push(path.scale(scale_factor));
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -893,7 +896,7 @@ impl<'a> ElementContext<'a> {
         };
         let content_mask = self.content_mask();
 
-        self.window.next_frame.scene.push(Underline {
+        self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
@@ -918,7 +921,7 @@ impl<'a> ElementContext<'a> {
         };
         let content_mask = self.content_mask();
 
-        self.window.next_frame.scene.push(Underline {
+        self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
@@ -971,13 +974,16 @@ impl<'a> ElementContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            self.window.next_frame.scene.push(MonochromeSprite {
-                order: 0,
-                bounds,
-                content_mask,
-                color,
-                tile,
-            });
+            self.window
+                .next_frame
+                .scene
+                .insert_primitive(MonochromeSprite {
+                    order: 0,
+                    bounds,
+                    content_mask,
+                    color,
+                    tile,
+                });
         }
         Ok(())
     }
@@ -1022,15 +1028,18 @@ impl<'a> ElementContext<'a> {
             };
             let content_mask = self.content_mask().scale(scale_factor);
 
-            self.window.next_frame.scene.push(PolychromeSprite {
-                order: 0,
-                bounds,
-                corner_radii: Default::default(),
-                content_mask,
-                tile,
-                grayscale: false,
-                pad: 0,
-            });
+            self.window
+                .next_frame
+                .scene
+                .insert_primitive(PolychromeSprite {
+                    order: 0,
+                    bounds,
+                    corner_radii: Default::default(),
+                    content_mask,
+                    tile,
+                    grayscale: false,
+                    pad: 0,
+                });
         }
         Ok(())
     }
@@ -1061,13 +1070,16 @@ impl<'a> ElementContext<'a> {
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
 
-        self.window.next_frame.scene.push(MonochromeSprite {
-            order: 0,
-            bounds,
-            content_mask,
-            color,
-            tile,
-        });
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(MonochromeSprite {
+                order: 0,
+                bounds,
+                content_mask,
+                color,
+                tile,
+            });
 
         Ok(())
     }
@@ -1093,15 +1105,18 @@ impl<'a> ElementContext<'a> {
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
 
-        self.window.next_frame.scene.push(PolychromeSprite {
-            order: 0,
-            bounds,
-            content_mask,
-            corner_radii,
-            tile,
-            grayscale,
-            pad: 0,
-        });
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(PolychromeSprite {
+                order: 0,
+                bounds,
+                content_mask,
+                corner_radii,
+                tile,
+                grayscale,
+                pad: 0,
+            });
         Ok(())
     }
 
@@ -1111,12 +1126,15 @@ impl<'a> ElementContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        self.window.next_frame.scene.push(crate::Surface {
-            order: 0,
-            bounds,
-            content_mask,
-            image_buffer,
-        });
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(crate::Surface {
+                order: 0,
+                bounds,
+                content_mask,
+                image_buffer,
+            });
     }
 
     #[must_use]
