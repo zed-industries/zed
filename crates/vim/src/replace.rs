@@ -4,7 +4,7 @@ use crate::{
     Vim,
 };
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, movement, Bias};
+use editor::{display_map::ToDisplayPoint, Bias};
 use gpui::{actions, ViewContext, WindowContext};
 use language::AutoindentMode;
 use log::error;
@@ -23,7 +23,6 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             } else {
                 vim.switch_mode(Mode::Replace, false, cx);
                 vim.update_active_editor(cx, |_, editor, cx| {
-                    editor.set_last_snapshot(Some(editor.buffer().clone().read(cx).snapshot(cx)));
                     editor.vim_replace_map = Default::default();
                 });
             }

@@ -46,7 +46,6 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             toggle_mode(Mode::VisualBlock, cx)
         },
     );
-
     workspace.register_action(other_end);
     workspace.register_action(delete);
     workspace.register_action(yank);
