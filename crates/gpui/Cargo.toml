@@ -108,7 +108,7 @@ copypasta = "0.10.1"
 [target.'cfg(target_os = "linux")'.dependencies]
 open = "5.0.1"
 ashpd = "0.7.0"
-xcb = { version = "1.3", features = ["as-raw-xcb-connection", "randr", "xkb"] }
+x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
 wayland-protocols = { version = "0.31.2", features = [
