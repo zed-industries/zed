@@ -913,7 +913,6 @@ impl ChatPanel {
     fn cancel_edit_message(&mut self, _: &CancelEditMessage, cx: &mut ViewContext<Self>) {
         self.message_editor.update(cx, |editor, cx| {
             editor.clear_edit_message_id();
-            editor.clear_reply_to_message_id();
 
             let buffer = editor
                 .editor
