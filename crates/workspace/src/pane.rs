@@ -1685,6 +1685,12 @@ impl Pane {
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
+        if let Some(preview_item_id) = self.preview_item_id {
+            if item_id == preview_item_id {
+                self.preview_item_id = None;
+            }
+        }
+
         let from_pane = dragged_tab.pane.clone();
         self.workspace
             .update(cx, |_, cx| {
