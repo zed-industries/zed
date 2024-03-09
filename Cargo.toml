@@ -347,6 +347,7 @@ features = [
     "Win32_System_Threading",
     "Win32_System_DataExchange",
     "Win32_System_Ole",
+    "Win32_System_Com",
 ]
 
 [patch.crates-io]

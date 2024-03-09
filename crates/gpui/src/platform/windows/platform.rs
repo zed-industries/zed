@@ -2,10 +2,10 @@
 #![allow(unused_variables)]
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashSet,
-    ffi::{c_uint, c_void},
-    os::windows::ffi::OsStrExt,
+    ffi::{c_uint, c_void, OsString},
+    os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::{
-    core::{HSTRING, PCWSTR},
+    core::{IUnknown, HRESULT, HSTRING, PCWSTR, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE},
@@ -35,8 +35,9 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::GetDoubleClickTime,
             Shell::{
-                FileSaveDialog, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName,
-                ShellExecuteW, SIGDN_FILESYSPATH,
+                FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
+                SHCreateItemFromParsingName, ShellExecuteW, FILEOPENDIALOGOPTIONS,
+                FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
             },
             WindowsAndMessaging::{
                 DispatchMessageW, EnumThreadWindows, LoadImageW, PeekMessageW, PostQuitMessage,
@@ -341,9 +342,74 @@ impl Platform for WindowsPlatform {
         self.inner.callbacks.lock().open_urls = Some(callback);
     }
 
-    // todo(windows)
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
-        unimplemented!()
+        let (tx, rx) = oneshot::channel();
+
+        self.foreground_executor()
+            .spawn(async move {
+                let tx = Cell::new(Some(tx));
+
+                // create file open dialog
+                let folder_dialog: IFileOpenDialog = unsafe {
+                    CoCreateInstance::<std::option::Option<&IUnknown>, IFileOpenDialog>(
+                        &FileOpenDialog,
+                        None,
+                        CLSCTX_ALL,
+                    )
+                    .unwrap()
+                };
+
+                // dialog options
+                let mut dialog_options: FILEOPENDIALOGOPTIONS = FOS_FILEMUSTEXIST;
+                if options.multiple {
+                    dialog_options |= FOS_ALLOWMULTISELECT;
+                }
+                if options.directories {
+                    dialog_options |= FOS_PICKFOLDERS;
+                }
+
+                unsafe {
+                    folder_dialog.SetOptions(dialog_options).unwrap();
+                    folder_dialog
+                        .SetTitle(&HSTRING::from(OsString::from("Select a folder")))
+                        .unwrap();
+                }
+
+                let hr = unsafe { folder_dialog.Show(None) };
+
+                if hr.is_err() {
+                    if hr.unwrap_err().code() == HRESULT(0x800704C7u32 as i32) {
+                        // user canceled error
+                        if let Some(tx) = tx.take() {
+                            tx.send(None).unwrap();
+                        }
+                        return;
+                    }
+                }
+
+                let mut results = unsafe { folder_dialog.GetResults().unwrap() };
+
+                let mut paths: Vec<PathBuf> = Vec::new();
+                for i in 0..unsafe { results.GetCount().unwrap() } {
+                    let mut item: IShellItem = unsafe { results.GetItemAt(i).unwrap() };
+                    let mut path: PWSTR =
+                        unsafe { item.GetDisplayName(SIGDN_FILESYSPATH).unwrap() };
+                    let mut path_os_string = OsString::from_wide(unsafe { path.as_wide() });
+
+                    paths.push(PathBuf::from(path_os_string));
+                }
+
+                if let Some(tx) = tx.take() {
+                    if paths.len() == 0 {
+                        tx.send(None).unwrap();
+                    } else {
+                        tx.send(Some(paths)).unwrap();
+                    }
+                }
+            })
+            .detach();
+
+        rx
     }
 
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Option<PathBuf>> {
