@@ -1172,34 +1172,45 @@ impl ProjectPanel {
             match settings.sort_order {
                 ProjectPanelSortOrder::DirsFirst => {
                     visible_worktree_entries.sort_by(|entry_a, entry_b| {
-                        let a_components: Vec<_> = entry_a.path.components().map(|c| c.as_os_str()).collect();
-                        let b_components: Vec<_> = entry_b.path.components().map(|c| c.as_os_str()).collect();
-            
-                        for (a_comp, b_comp) in a_components.iter().zip(b_components.iter()) {
-                            let a_is_dir = Path::new(a_comp).is_dir(); 
-                            let b_is_dir = Path::new(b_comp).is_dir();
-                            let a_is_dotfile = a_comp.to_string_lossy().starts_with('.') && Path::new(a_comp).extension().is_some(); 
-                            let b_is_dotfile = b_comp.to_string_lossy().starts_with('.') && Path::new(a_comp).extension().is_some();
+                        let mut components_a = entry_a.path.components().peekable();
+                        let mut components_b = entry_b.path.components().peekable();
                 
-                            match (a_is_dir, b_is_dir) {
-                                (true, false) => return Ordering::Less,
-                                (false, true) => return Ordering::Greater,
-                                _ => {
-                                    match (a_is_dotfile, b_is_dotfile) {
-                                        (true, false) => return Ordering::Less,
-                                        (false, true) => return Ordering::Greater,
-                                        _ => {
-                                            let order = a_comp.cmp(b_comp);
-                                            if order != Ordering::Equal {
-                                                return order;
-                                            }
-                                        }
+                        loop {
+                            match (components_a.peek(), components_b.peek()) {
+                                (Some(a_comp), Some(b_comp)) => {
+                                    // Check if the component is a file or directory using filesystem metadata
+                                    let a_is_file = if let Some(a_parent) = entry_a.path.parent() {
+                                        std::fs::metadata(a_parent.join(a_comp)).map(|meta| meta.is_file()).unwrap_or(false)
+                                    } else {
+                                        false
+                                    };
+                    
+                                    let b_is_file = if let Some(b_parent) = entry_b.path.parent() {
+                                        std::fs::metadata(b_parent.join(b_comp)).map(|meta| meta.is_file()).unwrap_or(false)
+                                    } else {
+                                        false
+                                    };
+                    
+                                    if a_is_file != b_is_file {
+                                        return a_is_file.cmp(&b_is_file);
                                     }
+                    
+                                    // Compare names
+                                    if a_comp != b_comp {
+                                        return a_comp.as_os_str().to_str().unwrap_or_default().cmp(
+                                            &b_comp.as_os_str().to_str().unwrap_or_default()
+                                        );
+                                    }
+                    
+                                    components_a.next();
+                                    components_b.next();
                                 }
+                                (None, None) => return Ordering::Equal,
+                                (None, Some(_)) => return Ordering::Less,
+                                (Some(_), None) => return Ordering::Greater,
                             }
                         }
-                        a_components.len().cmp(&b_components.len())
-                    });
+                    })
                 }
                 _ => {
                     visible_worktree_entries.sort_by(|entry_a, entry_b| { 
