@@ -114,12 +114,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    // Highlight the selected symbol using a background highlight
-                    this.highlight_inlay_background::<HoverState>(
-                        vec![inlay_hover.range],
-                        |theme| theme.element_hover, // todo("use a proper background here")
-                        cx,
-                    );
+                    // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popover = Some(hover_popover);
                     cx.notify();
                 })?;
