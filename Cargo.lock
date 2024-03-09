@@ -3556,6 +3556,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "serde",
  "settings",
  "smallvec",
  "theme",

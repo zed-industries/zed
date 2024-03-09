@@ -2,13 +2,20 @@ mod components;
 
 use crate::components::ExtensionCard;
 use client::telemetry::Telemetry;
-use editor::{Editor, EditorElement, EditorStyle, EditorMode};
+use editor::{Editor, EditorElement, EditorStyle, EditorMode, EditorEvent};
 use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
+<<<<<<< HEAD
     actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
     FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
+=======
+    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
+    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
+    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace,
+    WindowContext, impl_actions,
+>>>>>>> 7732ab878 (button on notification opens extension page with langauge query)
 };
 use settings::Settings;
 use workspace::notifications::simple_message_notification;
@@ -23,8 +30,16 @@ use workspace::{
     Workspace, WorkspaceId,
 };
 use language::{Event, Language};
+use serde::Deserialize;
 
 actions!(zed, [Extensions, InstallDevExtension]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct LanguageExtensions {
+    language_string: SharedString,
+}
+
+impl_actions!(zed, [LanguageExtensions]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
@@ -32,6 +47,26 @@ pub fn init(cx: &mut AppContext) {
             .register_action(move |workspace, _: &Extensions, cx| {
                 let extensions_page = ExtensionsPage::new(workspace, cx);
                 workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+            })
+            .register_action(move |workspace, LanguageExtensions{language_string}: &LanguageExtensions, cx| {
+
+                let extensions_page = ExtensionsPage::new(workspace, cx);
+
+                extensions_page.update(cx, |page, cx| {
+
+                    let editor = &page.query_editor;
+
+                    editor.update(cx, |editor, cx| {
+
+                        editor.set_text(language_string.clone(), cx);
+                        cx.emit(EditorEvent::Edited);
+
+                    });
+                });
+
+
+                workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+
             })
             .register_action(move |_, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
@@ -66,21 +101,24 @@ pub fn init(cx: &mut AppContext) {
 
         match editor.mode() {
             EditorMode::Full => {
-                let create_notification = |cx: &mut ViewContext<_>, language: &Language| -> Option<()> {
+                let create_notification = |cx: &mut ViewContext<_>, language: Arc<Language>| -> Option<()> {
                     let workspace = cx.windows().get(0)?.downcast::<Workspace>()?; // for some reason cx.active_window() returns none
 
                     let _ = workspace
                         .update(cx, |workspace, cx| {
                             workspace.show_notification(0, cx, |cx| {
 
-                                cx.new_view(|cx| {
+
+                                cx.new_view(move |cx| {
                                     simple_message_notification::MessageNotification::new(
                                         format!("Language Extensions for {language} not installed", language = language.name())
                                     )
                                         .with_click_message("View Extensions for Language")
-                                        .on_click(|cx| {
+                                        .on_click(move |cx| {
 
-                                            cx.dispatch_action(Box::new(Extensions));
+                                            cx.dispatch_action(Box::new(LanguageExtensions{
+                                                language_string: language.name().to_string().into()
+                                            }));
 
                                         })
                                         .with_secondary_click_message("Install")
@@ -104,7 +142,7 @@ pub fn init(cx: &mut AppContext) {
                     ).collect::<Vec<_>>();
 
                 for language in languages {
-                    create_notification(cx, &language);
+                    create_notification(cx, language.clone());
                 }
 
 
@@ -123,7 +161,7 @@ pub fn init(cx: &mut AppContext) {
 
                                 if let Some(language) = language_option.cloned() {
 
-                                    create_notification(cx, &language);
+                                    create_notification(cx, language.clone());
                                 }
 
                             },

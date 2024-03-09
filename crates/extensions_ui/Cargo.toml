@@ -28,6 +28,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 language.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
