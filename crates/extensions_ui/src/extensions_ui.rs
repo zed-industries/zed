@@ -2,7 +2,7 @@ mod components;
 
 use crate::components::ExtensionCard;
 use client::telemetry::Telemetry;
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::{Editor, EditorElement, EditorStyle, EditorMode};
 use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -11,6 +11,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
 };
 use settings::Settings;
+use workspace::notifications::simple_message_notification;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
@@ -21,11 +22,12 @@ use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
 };
+use language::{Event, Language};
 
 actions!(zed, [Extensions, InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace
             .register_action(move |workspace, _: &Extensions, cx| {
                 let extensions_page = ExtensionsPage::new(workspace, cx);
@@ -53,8 +55,96 @@ pub fn init(cx: &mut AppContext) {
                     })
                     .detach();
             });
+
     })
     .detach();
+
+
+    // Prompt to install extensions if none installed for language
+    cx.observe_new_views(move |editor: &mut Editor, cx| {
+
+
+        match editor.mode() {
+            EditorMode::Full => {
+                let create_notification = |cx: &mut ViewContext<_>, language: &Language| -> Option<()> {
+                    let workspace = cx.windows().get(0)?.downcast::<Workspace>()?; // for some reason cx.active_window() returns none
+
+                    let _ = workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_notification(0, cx, |cx| {
+
+                                cx.new_view(|cx| {
+                                    simple_message_notification::MessageNotification::new(
+                                        format!("Language Extensions for {language} not installed", language = language.name())
+                                    )
+                                        .with_click_message("View Extensions for Language")
+                                        .on_click(|cx| {
+
+                                            cx.dispatch_action(Box::new(Extensions));
+
+                                        })
+                                        .with_secondary_click_message("Install")
+                                })
+                            })
+                        });
+
+                    Some(())
+                };
+
+                let languages = editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .iter()
+                    .flat_map(|buffer| 
+                        buffer
+                            .read(cx)
+                            .language()
+                            .cloned() // for cx; is cheap because type is Arc
+                    ).collect::<Vec<_>>();
+
+                for language in languages {
+                    create_notification(cx, &language);
+                }
+
+
+                // Listen to language changes
+                let buffers = editor.buffer();
+                let buffers = buffers.read(cx);
+                for buffer_model in buffers.all_buffers().iter() {
+                    cx.subscribe(buffer_model, move |subscriber, emitter, event, cx| {
+
+                        match event {
+                            Event::LanguageChanged => {
+                                let buffer = emitter.read(cx);
+                                let language_option = buffer.language();
+
+                                println!("Language changed/set to {:?}", language_option);
+
+                                if let Some(language) = language_option.cloned() {
+
+                                    create_notification(cx, &language);
+                                }
+
+                            },
+                            _ => {}
+                        }
+
+                    }).detach();
+
+
+                }
+
+            },
+            _ => {}
+        }
+
+
+    })
+        .detach();
+
+
+
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]

@@ -3555,6 +3555,7 @@ dependencies = [
  "extension",
  "fuzzy",
  "gpui",
+ "language",
  "settings",
  "smallvec",
  "theme",
