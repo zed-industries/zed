@@ -731,6 +731,8 @@ impl ChatPanel {
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        self.selected_message_to_reply_id = None;
+
         if let Some((chat, _)) = self.active_chat.as_ref() {
             let message = self
                 .message_editor
@@ -826,6 +828,7 @@ impl ChatPanel {
     }
 
     fn close_reply_preview(&mut self, _: &CloseReplyPreview, cx: &mut ViewContext<Self>) {
+        self.selected_message_to_reply_id = None;
         self.message_editor
             .update(cx, |editor, _| editor.clear_reply_to_message_id());
     }
