@@ -2304,7 +2304,6 @@ dependencies = [
  "editor",
  "emojis",
  "extensions_ui",
- "feedback",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
