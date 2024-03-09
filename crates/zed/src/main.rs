@@ -1008,9 +1008,19 @@ async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) 
 
     let reload_debounce = Duration::from_millis(250);
 
+    #[cfg(not(target_os = "windows"))]
     let mut events = fs
         .watch("crates/zed/src/languages".as_ref(), reload_debounce)
         .await;
+
+    #[cfg(target_os = "windows")]
+    let mut events = {
+        let watch_path = Path::new("crates/zed/src/languages");
+        let Ok(full_path) = watch_path.canonicalize() else {
+            return;
+        };
+        fs.watch(&full_path, reload_debounce).await
+    };
 
     while (events.next().await).is_some() {
         languages.reload();
