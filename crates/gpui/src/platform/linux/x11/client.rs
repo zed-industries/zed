@@ -361,7 +361,7 @@ impl Client for X11Client {
         Box::new(X11Window(window_ptr))
     }
 
-    // TODO linux
+    //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {

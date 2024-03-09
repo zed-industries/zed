@@ -48,7 +48,6 @@ extensions_ui.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true
-fsevent.workspace = true
 futures.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
