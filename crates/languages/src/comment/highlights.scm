@@ -1,4 +1,4 @@
-; The highlighs need to override the color yourself e.g.
+; The highlight need to override the color yourself e.g.
 ; {
 ; 	"experimental.theme_overrides": {
 ; 	    "syntax": {
