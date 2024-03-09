@@ -247,25 +247,6 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<()>>> {
-        // TODO: we want to display the updated message immediately, but we don't have the updated message yet
-        // let current_user = self
-        //     .user_store
-        //     .read(cx)
-        //     .current_user()
-        //     .ok_or_else(|| anyhow!("current_user is not present"))?;
-        // let nonce = self.rng.gen();
-
-        // let updated_message = ChannelMessage {
-        //     id: ChannelMessageId::Saved(id),
-        //     body: message.text.clone(),
-        //     sender: current_user,
-        //     timestamp: OffsetDateTime::now_utc(),
-        //     mentions: message.mentions.clone(),
-        //     nonce,
-        //     reply_to_message_id: message.reply_to_message_id,
-        //     edited_at: Some(OffsetDateTime::now_utc()),
-        // };
-
         self.message_update(id, message.text.clone(), message.mentions.clone(), cx);
 
         let nonce: u128 = self.rng.gen();

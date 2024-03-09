@@ -273,8 +273,7 @@ impl ChatPanel {
                 message_id,
                 message_ix,
             } => {
-                let range = *message_ix..*message_ix + 1;
-                self.message_list.splice(range, 1);
+                self.message_list.splice(*message_ix..*message_ix + 1, 1);
                 self.markdown_data
                     .remove(&ChannelMessageId::Saved(*message_id));
             }
