@@ -13,10 +13,10 @@ test_both_dbs!(
 async fn test_get_user_flags(db: &Arc<Database>) {
     let user_1 = db
         .create_user(
-            &format!("user1@example.com"),
+            "user1@example.com",
             false,
             NewUserParams {
-                github_login: format!("user1"),
+                github_login: "user1".to_string(),
                 github_user_id: 1,
             },
         )
@@ -26,10 +26,10 @@ async fn test_get_user_flags(db: &Arc<Database>) {
 
     let user_2 = db
         .create_user(
-            &format!("user2@example.com"),
+            "user2@example.com",
             false,
             NewUserParams {
-                github_login: format!("user2"),
+                github_login: "user2".to_string(),
                 github_user_id: 2,
             },
         )
@@ -37,8 +37,8 @@ async fn test_get_user_flags(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    const CHANNELS_ALPHA: &'static str = "channels-alpha";
-    const NEW_SEARCH: &'static str = "new-search";
+    const CHANNELS_ALPHA: &str = "channels-alpha";
+    const NEW_SEARCH: &str = "new-search";
 
     let channels_flag = db.create_user_flag(CHANNELS_ALPHA).await.unwrap();
     let search_flag = db.create_user_flag(NEW_SEARCH).await.unwrap();

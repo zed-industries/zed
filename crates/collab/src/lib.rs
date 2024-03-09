@@ -43,8 +43,8 @@ impl From<axum::Error> for Error {
     }
 }
 
-impl From<hyper::Error> for Error {
-    fn from(error: hyper::Error) -> Self {
+impl From<axum::http::Error> for Error {
+    fn from(error: axum::http::Error) -> Self {
         Self::Internal(error.into())
     }
 }
@@ -127,6 +127,7 @@ pub struct Config {
     pub blob_store_bucket: Option<String>,
     pub zed_environment: Arc<str>,
     pub zed_client_checksum_seed: Option<String>,
+    pub slack_panics_webhook: Option<String>,
 }
 
 impl Config {
@@ -175,7 +176,10 @@ impl AppState {
             db: Arc::new(db),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            clickhouse_client: build_clickhouse_client(&config).log_err(),
+            clickhouse_client: config
+                .clickhouse_url
+                .as_ref()
+                .and_then(|_| build_clickhouse_client(&config).log_err()),
             config,
         };
         Ok(Arc::new(this))

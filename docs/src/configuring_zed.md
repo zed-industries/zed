@@ -306,6 +306,70 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
+## Code Actions On Format
+
+- Description: The code actions to perform with the primary language server when formatting the buffer.
+- Setting: `code_actions_on_format`
+- Default: `{}`, except for Go it's `{ "source.organizeImports": true }`
+
+**Examples**
+
+1. Organize imports on format in TypeScript and TSX buffers:
+
+```json
+{
+  "languages": {
+    "TypeScript": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    },
+    "TSX": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    }
+  }
+}
+```
+
+2. Run ESLint `fixAll` code action when formatting (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  }
+}
+```
+
+3. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  },
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "codeActionOnSave": {
+          "rules": ["import/order"]
+        }
+      }
+    }
+  }
+}
+```
+
 ## Auto close
 
 - Description: Whether or not to automatically type closing characters for you.
@@ -681,6 +745,9 @@ These values take in the same options as the root-level settings with the same n
   "font_size": null,
   "option_as_meta": false,
   "shell": {},
+  "toolbar": {
+    "title": true
+  },
   "working_directory": "current_project_directory"
 }
 ```
@@ -838,6 +905,22 @@ See Buffer Font Features
   }
 }
 ```
+
+## Terminal Toolbar
+
+- Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
+- Setting: `toolbar`
+- Default:
+
+```json
+"toolbar": {
+  "title": true,
+},
+```
+
+**Options**
+
+At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
 
 ### Working Directory
 

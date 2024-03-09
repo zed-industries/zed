@@ -5,18 +5,21 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/fs.rs"
 
 [dependencies]
 collections.workspace = true
-fsevent.workspace = true
 rope.workspace = true
 text.workspace = true
 util.workspace = true
 sum_tree.workspace = true
 
 anyhow.workspace = true
+async-tar.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tempfile.workspace = true
@@ -32,6 +35,9 @@ libc = "0.2"
 time.workspace = true
 
 gpui = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fsevent.workspace = true
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"

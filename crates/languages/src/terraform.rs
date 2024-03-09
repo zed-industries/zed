@@ -5,7 +5,7 @@ use futures::StreamExt;
 pub use language::*;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use smol::fs::{self, File};
-use std::{any::Any, ffi::OsString, path::PathBuf, str};
+use std::{any::Any, ffi::OsString, path::PathBuf};
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -23,10 +23,6 @@ pub struct TerraformLspAdapter;
 impl LspAdapter for TerraformLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("terraform-ls".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "terraform-ls"
     }
 
     async fn fetch_latest_server_version(
@@ -133,7 +129,7 @@ impl LspAdapter for TerraformLspAdapter {
 }
 
 fn build_download_url(version: String) -> Result<String> {
-    let v = version.strip_prefix("v").unwrap_or(&version);
+    let v = version.strip_prefix('v').unwrap_or(&version);
     let os = match std::env::consts::OS {
         "linux" => "linux",
         "macos" => "darwin",

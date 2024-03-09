@@ -302,7 +302,7 @@ impl ActiveCall {
             return Task::ready(Ok(()));
         }
 
-        let room_id = call.room_id.clone();
+        let room_id = call.room_id;
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         let join = self

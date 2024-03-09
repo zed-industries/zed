@@ -111,9 +111,23 @@ impl AssistantSettings {
             AiProviderSettings::OpenAi(settings) => {
                 Ok(settings.default_model.unwrap_or(OpenAiModel::FourTurbo))
             }
-            AiProviderSettings::AzureOpenAi(_settings) => {
-                // TODO: We need to use an Azure OpenAI model here.
-                Ok(OpenAiModel::FourTurbo)
+            AiProviderSettings::AzureOpenAi(settings) => {
+                let deployment_id = settings
+                    .deployment_id
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("no Azure OpenAI deployment ID"))?;
+
+                match deployment_id {
+                    // https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models#gpt-4-and-gpt-4-turbo-preview
+                    "gpt-4" | "gpt-4-32k" => Ok(OpenAiModel::Four),
+                    // https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models#gpt-35
+                    "gpt-35-turbo" | "gpt-35-turbo-16k" | "gpt-35-turbo-instruct" => {
+                        Ok(OpenAiModel::ThreePointFiveTurbo)
+                    }
+                    _ => Err(anyhow!(
+                        "no matching OpenAI model found for deployment ID: '{deployment_id}'"
+                    )),
+                }
             }
         }
     }

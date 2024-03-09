@@ -42,7 +42,7 @@ impl Render for KeybindingStory {
                                 .gap_4()
                                 .py_3()
                                 .children(chunk.map(|permutation| {
-                                    KeyBinding::new(binding(&*(permutation.join("-") + "-x")))
+                                    KeyBinding::new(binding(&(permutation.join("-") + "-x")))
                                 }))
                         }),
                 ),

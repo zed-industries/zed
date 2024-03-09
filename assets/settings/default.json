@@ -211,6 +211,11 @@
     // Default width of the channels panel.
     "default_width": 240
   },
+  "message_editor": {
+    // Whether to automatically replace emoji shortcodes with emoji characters.
+    // For example: typing `:wave:` gets replaced with `👋`.
+    "auto_replace_emoji_shortcode": true
+  },
   "notification_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
@@ -472,6 +477,10 @@
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
+    },
+    "toolbar": {
+      // Whether to display the terminal title in its toolbar.
+      "title": true
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -586,7 +595,8 @@
   // Vim settings
   "vim": {
     "use_system_clipboard": "always",
-    "use_multiline_find": false
+    "use_multiline_find": false,
+    "use_smartcase_find": false
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

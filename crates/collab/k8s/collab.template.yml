@@ -11,6 +11,8 @@ metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
   name: ${ZED_SERVICE_NAME}
   annotations:
+    service.beta.kubernetes.io/do-loadbalancer-name: "${ZED_SERVICE_NAME}-${ZED_KUBE_NAMESPACE}"
+    service.beta.kubernetes.io/do-loadbalancer-size-unit: "${ZED_LOAD_BALANCER_SIZE_UNIT}"
     service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
     service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
     service.beta.kubernetes.io/do-loadbalancer-disable-lets-encrypt-dns-records: "true"
@@ -33,6 +35,11 @@ metadata:
 
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: ${ZED_SERVICE_NAME}
@@ -76,6 +83,13 @@ spec:
               port: 8080
             initialDelaySeconds: 1
             periodSeconds: 1
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 1
+            failureThreshold: 15
           env:
             - name: HTTP_PORT
               value: "8080"
@@ -156,6 +170,11 @@ spec:
                 secretKeyRef:
                   name: clickhouse
                   key: database
+            - name: SLACK_PANICS_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: slack
+                  key: panics_webhook
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE
@@ -171,3 +190,4 @@ spec:
               # FIXME - Switch to the more restrictive `PERFMON` capability.
               # This capability isn't yet available in a stable version of Debian.
               add: ["SYS_ADMIN"]
+      terminationGracePeriodSeconds: 10

@@ -128,6 +128,10 @@ impl TestDispatcher {
         self.state.lock().allow_parking = true
     }
 
+    pub fn forbid_parking(&self) {
+        self.state.lock().allow_parking = false
+    }
+
     pub fn start_waiting(&self) {
         self.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
     }

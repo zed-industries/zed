@@ -34,8 +34,15 @@ pub struct SpawnInTerminal {
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     pub allow_concurrent_runs: bool,
-    /// Whether the command should be spawned in a separate shell instance.
-    pub separate_shell: bool,
+}
+
+/// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskContext {
+    /// A path to a directory in which the task should be executed.
+    pub cwd: Option<PathBuf>,
+    /// Additional environment variables associated with a given task.
+    pub env: HashMap<String, String>,
 }
 
 /// Represents a short lived recipe of a task, whose main purpose
@@ -46,10 +53,10 @@ pub trait Task {
     /// Human readable name of the task to display in the UI.
     fn name(&self) -> &str;
     /// Task's current working directory. If `None`, current project's root will be used.
-    fn cwd(&self) -> Option<&Path>;
+    fn cwd(&self) -> Option<&str>;
     /// Sets up everything needed to spawn the task in the given directory (`cwd`).
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
-    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal>;
+    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
 }
 
 /// [`Source`] produces tasks that can be scheduled.

@@ -12,6 +12,7 @@ accepted = [
     "Unicode-DFS-2016",
     "OpenSSL",
     "Zlib",
+    "BSL-1.0"
 ]
 workarounds = [
     "ring",
@@ -35,3 +36,9 @@ license = "BSD-3-Clause"
 [[fuchsia-cprng.clarify.files]]
 path = 'LICENSE'
 checksum = '03b114f53e6587a398931762ee11e2395bfdba252a329940e2c8c9e81813845b'
+
+[tree-sitter-hcl.clarify]
+license = "Apache-2.0"
+[[tree-sitter-hcl.clarify.files]]
+path = 'LICENSE'
+checksum = 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'

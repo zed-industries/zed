@@ -2,7 +2,7 @@ use crate::{Action, KeyBindingContextPredicate, KeyMatch, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
-/// A keybinding and it's associated metadata, from the keymap.
+/// A keybinding and its associated metadata, from the keymap.
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
     pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,

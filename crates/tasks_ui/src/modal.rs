@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
     Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView,
 };
@@ -11,14 +11,36 @@ use picker::{
     Picker, PickerDelegate,
 };
 use project::{Inventory, ProjectPath, TaskSourceKind};
-use task::{oneshot_source::OneshotSource, Task};
+use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
 use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
 
 use crate::schedule_task;
+use serde::Deserialize;
 
-actions!(task, [Spawn, Rerun]);
+/// Spawn a task with name or open tasks modal
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct Spawn {
+    #[serde(default)]
+    /// Name of the task to spawn.
+    /// If it is not set, a modal with a list of available tasks is opened instead.
+    /// Defaults to None.
+    pub task_name: Option<String>,
+}
+
+/// Rerun last task
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct Rerun {
+    #[serde(default)]
+    /// Controls whether the task context is reevaluated prior to execution of a task.
+    /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task
+    /// If it is, these variables will be updated to reflect current state of editor at the time task::Rerun is executed.
+    /// default: false
+    pub reevaluate_context: bool,
+}
+
+impl_actions!(task, [Rerun, Spawn]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
@@ -28,10 +50,15 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakView<Workspace>,
     prompt: String,
+    task_context: TaskContext,
 }
 
 impl TasksModalDelegate {
-    fn new(inventory: Model<Inventory>, workspace: WeakView<Workspace>) -> Self {
+    fn new(
+        inventory: Model<Inventory>,
+        task_context: TaskContext,
+        workspace: WeakView<Workspace>,
+    ) -> Self {
         Self {
             inventory,
             workspace,
@@ -39,6 +66,7 @@ impl TasksModalDelegate {
             matches: Vec::new(),
             selected_index: 0,
             prompt: String::default(),
+            task_context,
         }
     }
 
@@ -79,11 +107,16 @@ pub(crate) struct TasksModal {
 impl TasksModal {
     pub(crate) fn new(
         inventory: Model<Inventory>,
+        task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let picker = cx
-            .new_view(|cx| Picker::uniform_list(TasksModalDelegate::new(inventory, workspace), cx));
+        let picker = cx.new_view(|cx| {
+            Picker::uniform_list(
+                TasksModalDelegate::new(inventory, task_context, workspace),
+                cx,
+            )
+        });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
         });
@@ -223,7 +256,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(workspace, task.as_ref(), cx);
+                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -279,13 +312,12 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use workspace::AppState;
 
     use super::*;
 
     #[gpui::test]
-    async fn test_name(cx: &mut TestAppContext) {
-        init_test(cx);
+    async fn test_spawn_tasks_modal_query_reuse(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
@@ -403,7 +435,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<TasksModalDelegate>> {
-        cx.dispatch_action(crate::modal::Spawn);
+        cx.dispatch_action(crate::modal::Spawn::default());
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<TasksModal>(cx)
@@ -429,18 +461,6 @@ mod tests {
                 .iter()
                 .map(|hit| hit.string.clone())
                 .collect::<Vec<_>>()
-        })
-    }
-
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.update(|cx| {
-            let state = AppState::test(cx);
-            language::init(cx);
-            crate::init(cx);
-            editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
-            state
         })
     }
 }

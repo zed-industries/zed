@@ -12,10 +12,6 @@ impl LspAdapter for NuLanguageServer {
         LanguageServerName("nu".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "nu"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/command_palette.rs"
 doctest = false
@@ -18,7 +21,6 @@ gpui.workspace = true
 picker.workspace = true
 postage.workspace = true
 project.workspace = true
-release_channel.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true

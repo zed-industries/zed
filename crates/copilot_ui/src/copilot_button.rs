@@ -119,7 +119,9 @@ impl Render for CopilotButton {
 
 impl CopilotButton {
     pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
-        Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
+        if let Some(copilot) = Copilot::global(cx) {
+            cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
+        }
 
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
@@ -147,7 +149,7 @@ impl CopilotButton {
     pub fn build_copilot_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
 
-        return ContextMenu::build(cx, move |mut menu, cx| {
+        ContextMenu::build(cx, move |mut menu, cx| {
             if let Some(language) = self.language.clone() {
                 let fs = fs.clone();
                 let language_enabled =
@@ -214,7 +216,7 @@ impl CopilotButton {
                 .boxed_clone(),
             )
             .action("Sign Out", SignOut.boxed_clone())
-        });
+        })
     }
 
     pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
@@ -238,7 +240,7 @@ impl CopilotButton {
 
 impl StatusItemView for CopilotButton {
     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = item.map(|item| item.act_as::<Editor>(cx)).flatten() {
+        if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
                 cx.observe(&editor, Self::update_enabled),
                 editor.entity_id().as_u64() as usize,
@@ -309,7 +311,7 @@ async fn configure_disabled_globs(
 fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_copilot_suggestions = all_language_settings(None, cx).copilot_enabled(None, None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
-        file.defaults.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
+        file.defaults.show_copilot_suggestions = Some(!show_copilot_suggestions)
     });
 }
 
@@ -330,7 +332,7 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     });
 }
 
-fn initiate_sign_in(cx: &mut WindowContext) {
+pub fn initiate_sign_in(cx: &mut WindowContext) {
     let Some(copilot) = Copilot::global(cx) else {
         return;
     };

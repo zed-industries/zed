@@ -38,7 +38,7 @@ impl Render for ScrollStory {
                             .id(id)
                             .tooltip(move |cx| Tooltip::text(format!("{}, {}", row, column), cx))
                             .bg(bg)
-                            .size(px(100. as f32))
+                            .size(px(100_f32))
                             .when(row >= 5 && column >= 5, |d| {
                                 d.overflow_scroll()
                                     .child(div().size(px(50.)).bg(color_1))

@@ -12,10 +12,6 @@ impl LspAdapter for ErlangLspAdapter {
         LanguageServerName("erlang_ls".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "erlang_ls"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

@@ -357,8 +357,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(result.len(), 2);
-        assert!(result.iter().find(|(k, _)| k == &&"baa").is_some());
-        assert!(result.iter().find(|(k, _)| k == &&"baaab").is_some());
+        assert!(result.iter().any(|(k, _)| k == &&"baa"));
+        assert!(result.iter().any(|(k, _)| k == &&"baaab"));
 
         let result = map
             .iter_from(&"c")
@@ -366,7 +366,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(result.len(), 1);
-        assert!(result.iter().find(|(k, _)| k == &&"c").is_some());
+        assert!(result.iter().any(|(k, _)| k == &&"c"));
     }
 
     #[test]
