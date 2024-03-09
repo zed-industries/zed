@@ -323,7 +323,13 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmparser = "0.121"
 wasm-encoder = "0.41"
-wasmtime = { version = "18.0", default-features = false, features = ["async", "demangle", "runtime", "cranelift", "component-model"] }
+wasmtime = { version = "18.0", default-features = false, features = [
+    "async",
+    "demangle",
+    "runtime",
+    "cranelift",
+    "component-model",
+] }
 wasmtime-wasi = "18.0"
 which = "6.0.0"
 wit-component = "0.20"
@@ -334,23 +340,21 @@ version = "0.53.0"
 features = [
     "implement",
     "Wdk_System_SystemServices",
-    "Win32_Graphics_Gdi",
     "Win32_Graphics_DirectComposition",
-    "Win32_UI_Controls",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_System_Com",
-    "Win32_System_SystemInformation",
-    "Win32_System_SystemServices",
-    "Win32_System_Time",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
-    "Win32_System_Threading",
     "Win32_System_DataExchange",
     "Win32_System_Ole",
-    "Win32_System_Com",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Time",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ]
 
 [patch.crates-io]
