@@ -1,12 +1,21 @@
 // todo(linux): remove
 #![allow(unused)]
 
-use crate::{
-    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBounds, WindowOptions,
-};
+#[cfg(not(feature = "vulkan-render"))]
+use crate::platform::blade::BladeRenderer;
+#[cfg(not(feature = "vulkan-render"))]
 use blade_graphics as gpu;
+#[cfg(not(feature = "vulkan-render"))]
+use gpu::Extent;
+
+#[cfg(feature = "vulkan-render")]
+use crate::platform::vulkan::{SurfaceExtensionLoader, VulkanRawWindow, VulkanRenderer};
+
+use crate::{
+    size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance,
+    WindowBounds, WindowOptions,
+};
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 
@@ -51,40 +60,82 @@ xcb::atoms_struct! {
     }
 }
 
+#[cfg(not(feature = "vulkan-render"))]
+type Renderer = BladeRenderer;
+#[cfg(feature = "vulkan-render")]
+type Renderer = VulkanRenderer;
+
 struct LinuxWindowInner {
     bounds: Bounds<i32>,
     scale_factor: f32,
-    renderer: BladeRenderer,
+    renderer: Renderer,
     input_handler: Option<PlatformInputHandler>,
 }
 
-impl LinuxWindowInner {
-    fn content_size(&self) -> Size<Pixels> {
-        let size = self.renderer.viewport_size();
-        Size {
-            width: size.width.into(),
-            height: size.height.into(),
-        }
-    }
-}
-
-fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) -> gpu::Extent {
+fn query_render_extent(xcb_connection: &xcb::Connection, x_window: x::Window) -> Size<Pixels> {
     let cookie = xcb_connection.send_request(&x::GetGeometry {
         drawable: x::Drawable::Window(x_window),
     });
     let reply = xcb_connection.wait_for_reply(cookie).unwrap();
-    gpu::Extent {
-        width: reply.width() as u32,
-        height: reply.height() as u32,
-        depth: 1,
+    Size {
+        width: (reply.width() as u32).into(),
+        height: (reply.height() as u32).into(),
     }
 }
 
+#[derive(Clone)]
 struct RawWindow {
     connection: *mut c_void,
     screen_id: i32,
     window_id: u32,
     visual_id: u32,
+}
+
+#[cfg(feature = "vulkan-render")]
+impl VulkanRawWindow for RawWindow {
+    fn extension_name(&self) -> &std::ffi::CStr {
+        ash::extensions::khr::XcbSurface::name()
+    }
+
+    fn extension_loader(
+        &self,
+        entry: &ash::Entry,
+        instance: &ash::Instance,
+    ) -> SurfaceExtensionLoader {
+        SurfaceExtensionLoader::XCB(ash::extensions::khr::XcbSurface::new(&entry, &instance))
+    }
+
+    fn create_surface(&self, loader: &SurfaceExtensionLoader) -> ash::vk::SurfaceKHR {
+        if let SurfaceExtensionLoader::XCB(loader) = loader {
+            let create_info = ash::vk::XcbSurfaceCreateInfoKHR::builder()
+                .connection(self.connection)
+                .window(self.window_id)
+                .build();
+
+            unsafe { loader.create_xcb_surface(&create_info, None) }.unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn get_physical_device_presentation_support(
+        &self,
+        loader: &SurfaceExtensionLoader,
+        physical_device: ash::vk::PhysicalDevice,
+        queue_family_index: u32,
+    ) -> bool {
+        match loader {
+            SurfaceExtensionLoader::XCB(loader) => unsafe {
+                loader.get_physical_device_xcb_presentation_support(
+                    physical_device,
+                    queue_family_index,
+                    &mut *self.connection,
+                    self.visual_id,
+                )
+            },
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub(crate) struct X11WindowState {
@@ -100,6 +151,7 @@ pub(crate) struct X11WindowState {
 pub(crate) struct X11Window(pub(crate) Rc<X11WindowState>);
 
 // todo(linux): Remove other RawWindowHandle implementation
+#[cfg(not(feature = "vulkan-render"))]
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
     fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
         let mut wh = blade_rwh::XcbWindowHandle::empty();
@@ -108,6 +160,7 @@ unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
         wh.into()
     }
 }
+#[cfg(not(feature = "vulkan-render"))]
 unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
     fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
         let mut dh = blade_rwh::XcbDisplayHandle::empty();
@@ -230,6 +283,8 @@ impl X11WindowState {
             window_id: x_window.resource_id(),
             visual_id: screen.root_visual(),
         };
+
+        #[cfg(not(feature = "vulkan-render"))]
         let gpu = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
@@ -248,16 +303,34 @@ impl X11WindowState {
         // the sizes are immediately invalidated.
         let gpu_extent = query_render_extent(xcb_connection, x_window);
 
+        #[cfg(not(feature = "vulkan-render"))]
+        {
+            Self {
+                xcb_connection: xcb_connection.clone(),
+                display: Rc::new(X11Display::new(xcb_connection, x_screen_index)),
+                raw: raw.clone(),
+                x_window,
+                callbacks: RefCell::new(Callbacks::default()),
+                inner: RefCell::new(LinuxWindowInner {
+                    bounds,
+                    scale_factor: 1.0,
+                    renderer: BladeRenderer::new(gpu, gpu_extent),
+                    input_handler: None,
+                }),
+            }
+        }
+
+        #[cfg(feature = "vulkan-render")]
         Self {
             xcb_connection: xcb_connection.clone(),
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index)),
-            raw,
+            raw: raw.clone(),
             x_window,
             callbacks: RefCell::new(Callbacks::default()),
             inner: RefCell::new(LinuxWindowInner {
                 bounds,
                 scale_factor: 1.0,
-                renderer: BladeRenderer::new(gpu, gpu_extent),
+                renderer: VulkanRenderer::new(Box::new(raw), gpu_extent),
                 input_handler: None,
             }),
         }
@@ -291,15 +364,11 @@ impl X11WindowState {
             let mut inner = self.inner.borrow_mut();
             let old_bounds = mem::replace(&mut inner.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
-            // todo(linux): use normal GPUI types here, refactor out the double
-            // viewport check and extra casts ( )
-            let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
-            if inner.renderer.viewport_size() != gpu_size {
-                inner
-                    .renderer
-                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
-                resize_args = Some((inner.content_size(), inner.scale_factor));
-            }
+
+            inner
+                .renderer
+                .update_drawable_size(query_render_extent(&self.xcb_connection, self.x_window));
+            resize_args = Some((inner.renderer.viewport_size(), inner.scale_factor));
         }
 
         let mut callbacks = self.callbacks.borrow_mut();
@@ -350,7 +419,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.inner.borrow_mut().content_size()
+        self.0.inner.borrow_mut().renderer.viewport_size()
     }
 
     fn scale_factor(&self) -> f32 {

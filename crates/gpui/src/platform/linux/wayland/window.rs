@@ -5,8 +5,16 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[cfg(not(feature = "vulkan-render"))]
+use crate::platform::blade::BladeRenderer;
+#[cfg(not(feature = "vulkan-render"))]
 use blade_graphics as gpu;
+#[cfg(not(feature = "vulkan-render"))]
 use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
+
+#[cfg(feature = "vulkan-render")]
+use crate::platform::vulkan::{SurfaceExtensionLoader, VulkanRawWindow, VulkanRenderer};
+
 use collections::HashSet;
 use futures::channel::oneshot::Receiver;
 use raw_window_handle::{
@@ -17,12 +25,11 @@ use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
-use crate::platform::blade::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
+    px, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
     WindowAppearance, WindowBounds, WindowOptions,
 };
 
@@ -39,8 +46,13 @@ pub(crate) struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
+#[cfg(not(feature = "vulkan-render"))]
+type Renderer = BladeRenderer;
+#[cfg(feature = "vulkan-render")]
+type Renderer = VulkanRenderer;
+
 struct WaylandWindowInner {
-    renderer: BladeRenderer,
+    renderer: Renderer,
     bounds: Bounds<u32>,
     scale: f32,
     fullscreen: bool,
@@ -53,6 +65,7 @@ struct RawWindow {
     display: *mut c_void,
 }
 
+#[cfg(not(feature = "vulkan-render"))]
 unsafe impl HasRawWindowHandle for RawWindow {
     fn raw_window_handle(&self) -> RawWindowHandle {
         let mut wh = blade_rwh::WaylandWindowHandle::empty();
@@ -61,11 +74,60 @@ unsafe impl HasRawWindowHandle for RawWindow {
     }
 }
 
+#[cfg(not(feature = "vulkan-render"))]
 unsafe impl HasRawDisplayHandle for RawWindow {
     fn raw_display_handle(&self) -> RawDisplayHandle {
         let mut dh = blade_rwh::WaylandDisplayHandle::empty();
         dh.display = self.display;
         dh.into()
+    }
+}
+
+#[cfg(feature = "vulkan-render")]
+impl VulkanRawWindow for RawWindow {
+    fn extension_name(&self) -> &std::ffi::CStr {
+        ash::extensions::khr::WaylandSurface::name()
+    }
+
+    fn extension_loader(
+        &self,
+        entry: &ash::Entry,
+        instance: &ash::Instance,
+    ) -> SurfaceExtensionLoader {
+        SurfaceExtensionLoader::Wayland(ash::extensions::khr::WaylandSurface::new(
+            &entry, &instance,
+        ))
+    }
+
+    fn create_surface(&self, loader: &SurfaceExtensionLoader) -> ash::vk::SurfaceKHR {
+        if let SurfaceExtensionLoader::Wayland(loader) = loader {
+            let create_info = ash::vk::WaylandSurfaceCreateInfoKHR::builder()
+                .display(self.display)
+                .surface(self.window)
+                .build();
+
+            unsafe { loader.create_wayland_surface(&create_info, None) }.unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn get_physical_device_presentation_support(
+        &self,
+        loader: &SurfaceExtensionLoader,
+        physical_device: ash::vk::PhysicalDevice,
+        queue_family_index: u32,
+    ) -> bool {
+        match loader {
+            SurfaceExtensionLoader::Wayland(loader) => unsafe {
+                loader.get_physical_device_wayland_presentation_support(
+                    physical_device,
+                    queue_family_index,
+                    &mut *self.display,
+                )
+            },
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -80,26 +142,42 @@ impl WaylandWindowInner {
                 .display_ptr()
                 .cast::<c_void>(),
         };
-        let gpu = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .unwrap(),
-        );
-        let extent = gpu::Extent {
-            width: bounds.size.width,
-            height: bounds.size.height,
-            depth: 1,
+
+        let extent = Size {
+            width: bounds.size.width.into(),
+            height: bounds.size.height.into(),
         };
+
+        #[cfg(not(feature = "vulkan-render"))]
+        {
+            let gpu = Arc::new(
+                unsafe {
+                    gpu::Context::init_windowed(
+                        &raw,
+                        gpu::ContextDesc {
+                            validation: false,
+                            capture: false,
+                            overlay: false,
+                        },
+                    )
+                }
+                .unwrap(),
+            );
+
+            Self {
+                renderer: BladeRenderer::new(gpu, extent),
+                bounds,
+                scale: 1.0,
+                input_handler: None,
+                fullscreen: false,
+                // On wayland, decorations are by default provided by the client
+                decoration_state: WaylandDecorationState::Client,
+            }
+        }
+
+        #[cfg(feature = "vulkan-render")]
         Self {
-            renderer: BladeRenderer::new(gpu, extent),
+            renderer: VulkanRenderer::new(Box::new(raw), extent),
             bounds,
             scale: 1.0,
             fullscreen: false,
@@ -189,10 +267,10 @@ impl WaylandWindowState {
             let width = inner.bounds.size.width;
             let height = inner.bounds.size.height;
             let scale = inner.scale;
-            inner.renderer.update_drawable_size(size(
-                width as f64 * scale as f64,
-                height as f64 * scale as f64,
-            ));
+            inner.renderer.update_drawable_size(Size {
+                width: (width as f64 * scale as f64).into(),
+                height: (height as f64 * scale as f64).into(),
+            });
             (width, height, scale)
         };
 

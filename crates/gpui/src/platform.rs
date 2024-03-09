@@ -12,8 +12,14 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
-#[cfg(any(target_os = "linux", target_os = "windows", feature = "macos-blade"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows", feature = "macos-blade"),
+    not(feature = "vulkan-render")
+))]
 mod blade;
+
+#[cfg(all(target_os = "linux", feature = "vulkan-render"))]
+mod vulkan;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;

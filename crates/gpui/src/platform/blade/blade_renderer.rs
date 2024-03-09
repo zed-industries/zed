@@ -4,7 +4,7 @@
 use super::{BladeAtlas, BladeBelt, BladeBeltDescriptor, PATH_TEXTURE_FORMAT};
 use crate::{
     AtlasTextureKind, AtlasTile, Bounds, ContentMask, Hsla, MonochromeSprite, Path, PathId,
-    PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    PathVertex, Pixels, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Underline,
 };
 use bytemuck::{Pod, Zeroable};
@@ -343,7 +343,7 @@ pub struct BladeRenderer {
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
     instance_belt: BladeBelt,
-    viewport_size: gpu::Extent,
+    viewport_size: Size<Pixels>,
     path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
@@ -363,8 +363,12 @@ impl BladeRenderer {
         }
     }
 
-    pub fn new(gpu: Arc<gpu::Context>, size: gpu::Extent) -> Self {
-        let surface_format = gpu.resize(Self::make_surface_config(size));
+    pub fn new(gpu: Arc<gpu::Context>, size: Size<Pixels>) -> Self {
+        let surface_format = gpu.resize(Self::make_surface_config(gpu::Extent {
+            width: size.width.into(),
+            height: size.height.into(),
+            depth: 1,
+        }));
         let command_encoder = gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
@@ -412,21 +416,19 @@ impl BladeRenderer {
         }
     }
 
-    pub fn update_drawable_size(&mut self, size: Size<f64>) {
-        let gpu_size = gpu::Extent {
-            width: size.width as u32,
-            height: size.height as u32,
-            depth: 1,
-        };
-
-        if gpu_size != self.viewport_size() {
+    pub fn update_drawable_size(&mut self, size: Size<Pixels>) {
+        if size != self.viewport_size() {
             self.wait_for_gpu();
-            self.gpu.resize(Self::make_surface_config(gpu_size));
-            self.viewport_size = gpu_size;
+            self.gpu.resize(Self::make_surface_config(gpu::Extent {
+                width: size.width.into(),
+                height: size.height.into(),
+                depth: 1,
+            }));
+            self.viewport_size = size;
         }
     }
 
-    pub fn viewport_size(&self) -> gpu::Extent {
+    pub fn viewport_size(&self) -> Size<Pixels> {
         self.viewport_size
     }
 
@@ -520,8 +522,8 @@ impl BladeRenderer {
 
         let globals = GlobalParams {
             viewport_size: [
-                self.viewport_size.width as f32,
-                self.viewport_size.height as f32,
+                self.viewport_size.width.into(),
+                self.viewport_size.height.into(),
             ],
             pad: [0; 2],
         };

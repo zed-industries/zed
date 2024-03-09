@@ -19,6 +19,8 @@ test-support = [
 ]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "blade-rwh", "bytemuck"]
+vulkan-render = ["ash"]
+# default = ["vulkan-render"]
 
 [lib]
 path = "src/gpui.rs"
@@ -26,6 +28,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+ash = { version = "0.37.3", features = ["linked"], optional = true }
 async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
 blade-graphics = { workspace = true, optional = true }
