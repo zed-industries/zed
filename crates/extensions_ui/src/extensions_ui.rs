@@ -1,4 +1,5 @@
 mod components;
+mod extension_suggest;
 
 use crate::components::ExtensionCard;
 use client::telemetry::Telemetry;
@@ -80,95 +81,7 @@ pub fn init(cx: &mut AppContext) {
     })
     .detach();
 
-
-    // Prompt to install extensions if none installed for language
-    cx.observe_new_views(move |editor: &mut Editor, cx| {
-
-
-        match editor.mode() {
-            EditorMode::Full => {
-                let create_notification = |cx: &mut ViewContext<_>, language: Arc<Language>| -> Option<()> {
-                    let workspace = cx.windows().get(0)?.downcast::<Workspace>()?; // for some reason cx.active_window() returns none
-
-                    let _ = workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_notification(0, cx, |cx| {
-
-
-                                cx.new_view(move |cx| {
-                                    simple_message_notification::MessageNotification::new(
-                                        format!("Language Extensions for {language} not installed", language = language.name())
-                                    )
-                                        .with_click_message("View Extensions for Language")
-                                        .on_click(move |cx| {
-
-                                            cx.dispatch_action(Box::new(LanguageExtensions{
-                                                language_string: language.name().to_string().into()
-                                            }));
-
-                                        })
-                                        .with_secondary_click_message("Install")
-                                })
-                            })
-                        });
-
-                    Some(())
-                };
-
-                let languages = editor
-                    .buffer()
-                    .read(cx)
-                    .all_buffers()
-                    .iter()
-                    .flat_map(|buffer| 
-                        buffer
-                            .read(cx)
-                            .language()
-                            .cloned() // for cx; is cheap because type is Arc
-                    ).collect::<Vec<_>>();
-
-                for language in languages {
-                    create_notification(cx, language.clone());
-                }
-
-
-                // Listen to language changes
-                let buffers = editor.buffer();
-                let buffers = buffers.read(cx);
-                for buffer_model in buffers.all_buffers().iter() {
-                    cx.subscribe(buffer_model, move |subscriber, emitter, event, cx| {
-
-                        match event {
-                            Event::LanguageChanged => {
-                                let buffer = emitter.read(cx);
-                                let language_option = buffer.language();
-
-                                println!("Language changed/set to {:?}", language_option);
-
-                                if let Some(language) = language_option.cloned() {
-
-                                    create_notification(cx, language.clone());
-                                }
-
-                            },
-                            _ => {}
-                        }
-
-                    }).detach();
-
-
-                }
-
-            },
-            _ => {}
-        }
-
-
-    })
-        .detach();
-
-
-
+    extension_suggest::init(cx);
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
