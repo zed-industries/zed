@@ -22,7 +22,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
                 vim.switch_mode(Mode::Normal, false, cx);
             } else {
                 vim.switch_mode(Mode::Replace, false, cx);
-                vim.update_active_editor(cx, |_, editor, cx| {
+                vim.update_active_editor(cx, |_, editor, _| {
                     editor.vim_replace_map = Default::default();
                 });
             }
