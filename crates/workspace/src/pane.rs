@@ -500,7 +500,7 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
-    fn set_preview_item_id(&mut self, tab_id: Option<EntityId>) {
+    pub fn set_preview_item_id(&mut self, tab_id: Option<EntityId>) {
         self.preview_item_id = tab_id;
     }
 
@@ -651,8 +651,6 @@ impl Pane {
             self.activate_item(insertion_index, activate_pane, focus_item, cx);
             cx.notify();
         }
-
-        self.set_preview_item_id(Some(item.item_id()));
 
         cx.emit(Event::AddItem { item });
     }

@@ -2087,6 +2087,7 @@ impl Workspace {
         }
 
         let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        pane.update(cx, |pane, _| pane.set_preview_item_id(Some(item.item_id())));
         self.add_item(pane, Box::new(item.clone()), cx);
         item
     }
