@@ -184,8 +184,6 @@ fn main() {
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
 
-        cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
-            .detach();
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -1000,31 +998,6 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         }
     })
     .detach()
-}
-
-#[cfg(debug_assertions)]
-async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
-    use std::time::Duration;
-
-    let reload_debounce = Duration::from_millis(250);
-
-    #[cfg(not(target_os = "windows"))]
-    let mut events = fs
-        .watch("crates/zed/src/languages".as_ref(), reload_debounce)
-        .await;
-
-    #[cfg(target_os = "windows")]
-    let mut events = {
-        let watch_path = Path::new("crates/zed/src/languages");
-        let Ok(full_path) = watch_path.canonicalize() else {
-            return;
-        };
-        fs.watch(&full_path, reload_debounce).await
-    };
-
-    while (events.next().await).is_some() {
-        languages.reload();
-    }
 }
 
 #[cfg(debug_assertions)]
