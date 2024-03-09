@@ -268,6 +268,9 @@ impl Client for WaylandClient {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
+        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
+        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
+        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
         let cursor_icon_name = match style {
             CursorStyle::Arrow => "arrow".to_string(),
             CursorStyle::IBeam => "text".to_string(),
