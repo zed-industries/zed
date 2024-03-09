@@ -385,10 +385,7 @@ impl WindowsWindowInner {
 
     fn parse_char_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
         let src = [wparam.0 as u16];
-        let Ok(first_char) = char::decode_utf16(src)
-            .map(|r| r.map_err(|e| e.unpaired_surrogate()))
-            .collect::<Vec<_>>()[0]
-        else {
+        let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
             return None;
         };
         if first_char.is_control() {
@@ -403,67 +400,66 @@ impl WindowsWindowInner {
     }
 
     fn handle_keydown_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_keydown_msg_keystroke(wparam);
-        if let Some(keystroke) = keystroke {
-            if let Some(callback) = callbacks.input.as_mut() {
-                let ime_key = keystroke.ime_key.clone();
-                let event = KeyDownEvent {
-                    keystroke,
-                    is_held: lparam.0 & (0x1 << 30) > 0,
-                };
-
-                if callback(PlatformInput::KeyDown(event)) {
-                    return LRESULT(0);
-                }
-            }
+        let Some(keystroke) = self.parse_keydown_msg_keystroke(wparam) else {
+            return LRESULT(1);
+        };
+        let Some(ref mut func) = self.callbacks.borrow_mut().input else {
+            return LRESULT(1);
+        };
+        let event = KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        };
+        if func(PlatformInput::KeyDown(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
         }
-        self.invalidate_client_area();
         LRESULT(1)
     }
 
     fn handle_keyup_msg(&self, message: u32, wparam: WPARAM) -> LRESULT {
-        let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_keydown_msg_keystroke(wparam);
-        if let Some(keystroke) = keystroke {
-            if let Some(callback) = callbacks.input.as_mut() {
-                let ime_key = keystroke.ime_key.clone();
-                let event = KeyUpEvent { keystroke };
-
-                if callback(PlatformInput::KeyUp(event)) {
-                    return LRESULT(0);
-                }
-            }
+        let Some(keystroke) = self.parse_keydown_msg_keystroke(wparam) else {
+            return LRESULT(1);
+        };
+        let Some(ref mut func) = self.callbacks.borrow_mut().input else {
+            return LRESULT(1);
+        };
+        let event = KeyUpEvent { keystroke };
+        if func(PlatformInput::KeyUp(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
         }
-        self.invalidate_client_area();
         LRESULT(1)
     }
 
     fn handle_char_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let Some(keystroke) = self.parse_char_msg_keystroke(wparam) else {
+            return LRESULT(1);
+        };
         let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_char_msg_keystroke(wparam);
-        if let Some(keystroke) = keystroke {
-            if let Some(callback) = callbacks.input.as_mut() {
-                let ime_key = keystroke.ime_key.clone();
-                let event = KeyDownEvent {
-                    keystroke,
-                    is_held: lparam.0 & (0x1 << 30) > 0,
-                };
-
-                if callback(PlatformInput::KeyDown(event)) {
-                    return LRESULT(0);
-                }
-                if let Some(mut input_handler) = self.input_handler.take() {
-                    if let Some(ime_key) = ime_key {
-                        input_handler.replace_text_in_range(None, &ime_key);
-                        return LRESULT(0);
-                    }
-                    self.input_handler.set(Some(input_handler));
-                }
-            }
+        let Some(ref mut func) = callbacks.input else {
+            return LRESULT(1);
+        };
+        let ime_key = keystroke.ime_key.clone();
+        let event = KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        };
+        if func(PlatformInput::KeyDown(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
         }
+        drop(callbacks);
+        let Some(ime_char) = ime_key else {
+            return LRESULT(1);
+        };
+        let Some(mut input_handler) = self.input_handler.take() else {
+            return LRESULT(1);
+        };
+        input_handler.replace_text_in_range(None, &ime_char);
+        self.input_handler.set(Some(input_handler));
         self.invalidate_client_area();
-        LRESULT(1)
+        LRESULT(0)
     }
 
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
