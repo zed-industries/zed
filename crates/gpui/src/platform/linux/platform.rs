@@ -391,7 +391,6 @@ impl Platform for LinuxPlatform {
     }
 
     //todo(linux): add trait methods for accessing the primary selection
-
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {

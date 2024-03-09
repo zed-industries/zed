@@ -431,7 +431,7 @@ impl Render for FeedbackModal {
             .h(rems(32.))
             .p_4()
             .gap_2()
-            .child(Headline::new("Share Feedback"))
+            .child(Headline::new("Give Feedback"))
             .child(
                 Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
                     format!(

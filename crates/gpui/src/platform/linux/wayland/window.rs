@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -40,8 +41,9 @@ pub(crate) struct Callbacks {
 
 struct WaylandWindowInner {
     renderer: BladeRenderer,
-    bounds: Bounds<i32>,
+    bounds: Bounds<u32>,
     scale: f32,
+    fullscreen: bool,
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
 }
@@ -68,7 +70,7 @@ unsafe impl HasRawDisplayHandle for RawWindow {
 }
 
 impl WaylandWindowInner {
-    fn new(wl_surf: &Arc<wl_surface::WlSurface>, bounds: Bounds<i32>) -> Self {
+    fn new(wl_surf: &Arc<wl_surface::WlSurface>, bounds: Bounds<u32>) -> Self {
         let raw = RawWindow {
             window: wl_surf.id().as_ptr().cast::<c_void>(),
             display: wl_surf
@@ -92,14 +94,15 @@ impl WaylandWindowInner {
             .unwrap(),
         );
         let extent = gpu::Extent {
-            width: bounds.size.width as u32,
-            height: bounds.size.height as u32,
+            width: bounds.size.width,
+            height: bounds.size.height,
             depth: 1,
         };
         Self {
             renderer: BladeRenderer::new(gpu, extent),
             bounds,
             scale: 1.0,
+            fullscreen: false,
             input_handler: None,
 
             // On wayland, decorations are by default provided by the client
@@ -130,7 +133,7 @@ impl WaylandWindowState {
             toplevel.set_fullscreen(None);
         }
 
-        let bounds: Bounds<i32> = match options.bounds {
+        let bounds: Bounds<u32> = match options.bounds {
             WindowBounds::Fullscreen | WindowBounds::Maximized => Bounds {
                 origin: Point::default(),
                 size: Size {
@@ -138,7 +141,7 @@ impl WaylandWindowState {
                     height: 500,
                 }, // todo(implement)
             },
-            WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as i32),
+            WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as u32),
         };
 
         Self {
@@ -160,14 +163,38 @@ impl WaylandWindowState {
         }
     }
 
-    pub fn set_size_and_scale(&self, width: i32, height: i32, scale: f32) {
-        self.inner.borrow_mut().scale = scale;
-        self.inner.borrow_mut().bounds.size.width = width;
-        self.inner.borrow_mut().bounds.size.height = height;
-        self.inner.borrow_mut().renderer.update_drawable_size(size(
-            width as f64 * scale as f64,
-            height as f64 * scale as f64,
-        ));
+    pub fn set_size_and_scale(
+        &self,
+        width: Option<NonZeroU32>,
+        height: Option<NonZeroU32>,
+        scale: Option<f32>,
+    ) {
+        let (width, height, scale) = {
+            let mut inner = self.inner.borrow_mut();
+            if width.map_or(true, |width| width.get() == inner.bounds.size.width)
+                && height.map_or(true, |height| height.get() == inner.bounds.size.height)
+                && scale.map_or(true, |scale| scale == inner.scale)
+            {
+                return;
+            }
+            if let Some(width) = width {
+                inner.bounds.size.width = width.get();
+            }
+            if let Some(height) = height {
+                inner.bounds.size.height = height.get();
+            }
+            if let Some(scale) = scale {
+                inner.scale = scale;
+            }
+            let width = inner.bounds.size.width;
+            let height = inner.bounds.size.height;
+            let scale = inner.scale;
+            inner.renderer.update_drawable_size(size(
+                width as f64 * scale as f64,
+                height as f64 * scale as f64,
+            ));
+            (width, height, scale)
+        };
 
         if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
             fun(
@@ -180,18 +207,25 @@ impl WaylandWindowState {
         }
 
         if let Some(viewport) = &self.viewport {
-            viewport.set_destination(width, height);
+            viewport.set_destination(width as i32, height as i32);
         }
     }
 
-    pub fn resize(&self, width: i32, height: i32) {
+    pub fn resize(&self, width: Option<NonZeroU32>, height: Option<NonZeroU32>) {
         let scale = self.inner.borrow_mut().scale;
-        self.set_size_and_scale(width, height, scale);
+        self.set_size_and_scale(width, height, None);
     }
 
     pub fn rescale(&self, scale: f32) {
-        let bounds = self.inner.borrow_mut().bounds;
-        self.set_size_and_scale(bounds.size.width, bounds.size.height, scale)
+        self.set_size_and_scale(None, None, Some(scale));
+    }
+
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(ref mut fun) = callbacks.fullscreen {
+            fun(fullscreen)
+        }
+        self.inner.borrow_mut().fullscreen = fullscreen;
     }
 
     /// Notifies the window of the state of the decorations.
@@ -337,7 +371,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        // todo(linux)
+        self.0.toplevel.set_minimized();
     }
 
     fn zoom(&self) {
@@ -345,7 +379,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn toggle_full_screen(&self) {
-        // todo(linux)
+        if !self.0.inner.borrow_mut().fullscreen {
+            self.0.toplevel.set_fullscreen(None);
+        } else {
+            self.0.toplevel.unset_fullscreen();
+        }
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -365,7 +403,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        // todo(linux)
+        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {

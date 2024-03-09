@@ -36,7 +36,7 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use ::git::diff::DiffHunk;
+use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -62,9 +62,9 @@ use gpui::{
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakView, WhiteSpace, WindowContext,
+    ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -251,7 +251,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewFile, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -260,7 +260,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -932,6 +932,15 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
+
+                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                                        highlight.strikethrough = Some(StrikethroughStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        });
+                                        highlight.color = Some(cx.theme().colors().text_muted);
+                                    }
+
                                     (range, highlight)
                                 },
                             ),
@@ -1217,6 +1226,7 @@ impl CodeActionsMenu {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
@@ -3116,7 +3126,7 @@ impl Editor {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
                     self.inlay_hint_cache.clear();
-                    self.splice_inlay_hints(
+                    self.splice_inlays(
                         self.visible_inlay_hints(cx)
                             .iter()
                             .map(|inlay| inlay.id)
@@ -3138,7 +3148,7 @@ impl Editor {
                         to_remove,
                         to_insert,
                     })) => {
-                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        self.splice_inlays(to_remove, to_insert, cx);
                         return;
                     }
                     ControlFlow::Break(None) => return,
@@ -3151,7 +3161,7 @@ impl Editor {
                     to_insert,
                 }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
                 {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                    self.splice_inlays(to_remove, to_insert, cx);
                 }
                 return;
             }
@@ -3174,7 +3184,7 @@ impl Editor {
             ignore_debounce,
             cx,
         ) {
-            self.splice_inlay_hints(to_remove, to_insert, cx);
+            self.splice_inlays(to_remove, to_insert, cx);
         }
     }
 
@@ -3182,9 +3192,7 @@ impl Editor {
         self.display_map
             .read(cx)
             .current_inlays()
-            .filter(move |inlay| {
-                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
-            })
+            .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
             .cloned()
             .collect()
     }
@@ -3255,7 +3263,7 @@ impl Editor {
         }
     }
 
-    fn splice_inlay_hints(
+    fn splice_inlays(
         &self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -4163,7 +4171,10 @@ impl Editor {
     }
 
     fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
-        self.copilot_state = Default::default();
+        if let Some(old_suggestion) = self.copilot_state.suggestion.take() {
+            self.splice_inlays(vec![old_suggestion.id], Vec::new(), cx);
+        }
+        self.copilot_state = CopilotState::default();
         self.discard_copilot_suggestion(cx);
     }
 
@@ -4904,6 +4915,105 @@ impl Editor {
             let mut seen = HashSet::default();
             lines.retain(|line| seen.insert(*line));
         })
+    }
+
+    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
+        let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.buffer().update(cx, |multi_buffer, cx| {
+                    for (buffer_id, buffer_revert_ranges) in revert_changes {
+                        if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(buffer_revert_ranges, None, cx);
+                            });
+                        }
+                    }
+                });
+                editor.change_selections(None, cx, |selections| selections.refresh());
+            });
+        }
+    }
+
+    fn gather_revert_changes(
+        &mut self,
+        selections: &[Selection<Anchor>],
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>> {
+        let mut revert_changes = HashMap::default();
+        self.buffer.update(cx, |multi_buffer, cx| {
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let selected_multi_buffer_rows = selections.iter().map(|selection| {
+                let head = selection.head();
+                let tail = selection.tail();
+                let start = tail.to_point(&multi_buffer_snapshot).row;
+                let end = head.to_point(&multi_buffer_snapshot).row;
+                if start > end {
+                    end..start
+                } else {
+                    start..end
+                }
+            });
+
+            let mut processed_buffer_rows =
+                HashMap::<BufferId, HashSet<Range<text::Anchor>>>::default();
+            for selected_multi_buffer_rows in selected_multi_buffer_rows {
+                let query_rows =
+                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+                for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+                    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+                    // when the caret is just above or just below the deleted hunk.
+                    let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                    let related_to_selection = if allow_adjacent {
+                        hunk.associated_range.overlaps(&query_rows)
+                            || hunk.associated_range.start == query_rows.end
+                            || hunk.associated_range.end == query_rows.start
+                    } else {
+                        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                        // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+                        hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                            || selected_multi_buffer_rows.end == hunk.associated_range.start
+                    };
+                    if related_to_selection {
+                        if !processed_buffer_rows
+                            .entry(hunk.buffer_id)
+                            .or_default()
+                            .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                        {
+                            continue;
+                        }
+                        Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
+                    }
+                }
+            }
+        });
+        revert_changes
+    }
+
+    fn prepare_revert_change(
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>,
+        multi_buffer: &MultiBuffer,
+        hunk: &DiffHunk<u32>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
+        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
+        let original_text = buffer.diff_base()?.get(hunk.diff_base_byte_range.clone())?;
+        let buffer_snapshot = buffer.snapshot();
+        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
+        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
+            probe
+                .0
+                .start
+                .cmp(&hunk.buffer_range.start, &buffer_snapshot)
+                .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
+                .then(probe.1.as_ref().cmp(original_text))
+        }) {
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), Arc::from(original_text)));
+            Some(())
+        } else {
+            None
+        }
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
