@@ -148,12 +148,7 @@ impl X11WindowState {
         let x_screen_index = options
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
-        let screen = xcb_connection
-            .setup()
-            .roots
-            .iter()
-            .nth(x_screen_index as usize)
-            .unwrap();
+        let screen = xcb_connection.setup().roots.get(x_screen_index).unwrap();
 
         let win_aux = xproto::CreateWindowAux::new().event_mask(
             xproto::EventMask::EXPOSURE

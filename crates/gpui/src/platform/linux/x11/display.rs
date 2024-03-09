@@ -13,12 +13,7 @@ pub(crate) struct X11Display {
 
 impl X11Display {
     pub(crate) fn new(xc: &XCBConnection, x_screen_index: usize) -> Self {
-        let screen = xc
-            .setup()
-            .roots
-            .iter()
-            .nth(x_screen_index as usize)
-            .unwrap();
+        let screen = xc.setup().roots.get(x_screen_index).unwrap();
         Self {
             x_screen_index,
             bounds: Bounds {
