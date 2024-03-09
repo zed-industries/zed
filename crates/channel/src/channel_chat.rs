@@ -509,12 +509,7 @@ impl ChannelChat {
     pub fn message(&self, ix: usize) -> &ChannelMessage {
         let mut cursor = self.messages.cursor::<Count>();
         cursor.seek(&Count(ix), Bias::Right, &());
-        if let Some(item) = cursor.item() {
-            item
-        } else {
-            dbg!(ix, &self.messages);
-            panic!("message not found")
-        }
+        cursor.item().unwrap()
     }
 
     pub fn acknowledge_message(&mut self, id: u64) {
