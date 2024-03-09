@@ -65,7 +65,7 @@ impl Render for Head {
     }
 }
 
-/// An invisizble element that can hold focus
+/// An invisible element that can hold focus
 pub(crate) struct EmptyHead {
     focus_handle: FocusHandle,
 }

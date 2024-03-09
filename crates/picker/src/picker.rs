@@ -111,8 +111,8 @@ impl<D: PickerDelegate> Picker<D> {
         Self::new(delegate, cx, false, true)
     }
 
-    fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool, is_queriable: bool) -> Self {
-        let head = if is_queriable {
+    fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool, is_queryable: bool) -> Self {
+        let head = if is_queryable {
             Head::query_line(
                 delegate.placeholder_text(cx),
                 cx,
