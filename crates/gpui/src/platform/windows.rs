@@ -1,4 +1,3 @@
-mod constants;
 mod dispatcher;
 mod display;
 mod platform;
@@ -6,7 +5,6 @@ mod text_system;
 mod util;
 mod window;
 
-use constants::*;
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use platform::*;

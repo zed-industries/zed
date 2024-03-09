@@ -24,7 +24,7 @@ use windows::{
     core::{IUnknown, HRESULT, HSTRING, PCWSTR, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
-        Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM, TRUE, WAIT_OBJECT_0},
+        Foundation::{CloseHandle, HANDLE, HWND, WAIT_OBJECT_0},
         Graphics::{
             DirectComposition::DCompositionWaitForCompositorClock,
             Gdi::{RedrawWindow, HRGN, RDW_INVALIDATE, RDW_UPDATENOW},
@@ -43,12 +43,12 @@ use windows::{
                 FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
             },
             WindowsAndMessaging::{
-                DispatchMessageW, EnumThreadWindows, LoadImageW, MsgWaitForMultipleObjects,
-                PeekMessageW, PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage,
-                HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
+                DispatchMessageW, LoadImageW, MsgWaitForMultipleObjects, PeekMessageW,
+                PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage, HCURSOR,
+                IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
                 IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
                 SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT,
             },
         },
     },
@@ -207,28 +207,6 @@ impl WindowsPlatform {
             }
         }
     }
-}
-
-unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let window_handle_values = unsafe { &*(lparam.0 as *const WindowHandleValues) };
-    if !window_handle_values.contains(&hwnd.0) {
-        return TRUE;
-    }
-    if let Some(inner) = try_get_window_inner(hwnd) {
-        inner.invalidate_client_area();
-    }
-    TRUE
-}
-
-/// invalidates all windows belonging to a thread causing a paint message to be scheduled
-fn invalidate_thread_windows(win32_thread_id: u32, window_handle_values: &WindowHandleValues) {
-    unsafe {
-        EnumThreadWindows(
-            win32_thread_id,
-            Some(invalidate_window_callback),
-            LPARAM(window_handle_values as *const _ as isize),
-        )
-    };
 }
 
 impl Platform for WindowsPlatform {

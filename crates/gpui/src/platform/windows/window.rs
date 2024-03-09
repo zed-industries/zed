@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use windows::{
     core::{implement, w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINTL, S_OK, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, MAX_PATH, POINTL, S_OK, WPARAM},
         Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
         System::{
             Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
@@ -42,7 +42,7 @@ use windows::{
             Input::KeyboardAndMouse::{
                 GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
                 VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
-                VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+                VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
@@ -50,11 +50,10 @@ use windows::{
                 RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
                 GWLP_USERDATA, HMENU, IDC_ARROW, SW_MAXIMIZE, SW_SHOW, WHEEL_DELTA,
                 WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
-                WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
-                WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN,
-                WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
-                WS_VISIBLE, XBUTTON1, XBUTTON2,
+                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
+                WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1, XBUTTON2,
             },
         },
     },
@@ -411,7 +410,7 @@ impl WindowsWindowInner {
                 }
             }
         }
-        self.redraw_now();
+        self.invalidate_client_area();
         LRESULT(1)
     }
 
@@ -502,17 +501,6 @@ impl WindowsWindowInner {
             return;
         };
         func(input);
-    }
-
-    fn redraw_now(&self) {
-        unsafe {
-            RedrawWindow(
-                self.hwnd,
-                None,
-                HRGN::default(),
-                RDW_INVALIDATE | RDW_UPDATENOW,
-            );
-        }
     }
 }
 
