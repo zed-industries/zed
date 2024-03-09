@@ -1,0 +1,13 @@
+id = "uiua"
+name = "Uiua"
+description = "Uiua support for Zed"
+version = "0.0.1"
+authors = ["Max Brunsfeld <max@zed.dev>"]
+
+[language_servers.uiua]
+name = "Uiua LSP"
+language = "Uiua"
+
+[grammars.uiua]
+repository = "https://github.com/shnarazk/tree-sitter-uiua"
+commit = "21dc2db39494585bf29a3f86d5add6e9d11a22ba"

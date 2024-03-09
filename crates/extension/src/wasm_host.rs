@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use fs::Fs;
+use fs::{normalize_path, Fs};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -71,8 +71,6 @@ type ExtensionCall = Box<
 >;
 
 static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
-
-const EXTENSION_WORK_DIR_PATH: &str = "/zed/work";
 
 impl WasmHost {
     pub fn new(
@@ -181,11 +179,12 @@ impl WasmHost {
             .await
             .context("failed to create extension work dir")?;
 
-        let work_dir_preopen = Dir::open_ambient_dir(extension_work_dir, ambient_authority())
+        let work_dir_preopen = Dir::open_ambient_dir(&extension_work_dir, ambient_authority())
             .context("failed to preopen extension work directory")?;
         let current_dir_preopen = work_dir_preopen
             .try_clone()
             .context("failed to preopen extension current directory")?;
+        let extension_work_dir = extension_work_dir.to_string_lossy();
 
         let perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
@@ -193,26 +192,24 @@ impl WasmHost {
         Ok(wasi::WasiCtxBuilder::new()
             .inherit_stdio()
             .preopened_dir(current_dir_preopen, dir_perms, perms, ".")
-            .preopened_dir(work_dir_preopen, dir_perms, perms, EXTENSION_WORK_DIR_PATH)
-            .env("PWD", EXTENSION_WORK_DIR_PATH)
-            .env("RUST_BACKTRACE", "1")
+            .preopened_dir(work_dir_preopen, dir_perms, perms, &extension_work_dir)
+            .env("PWD", &extension_work_dir)
+            .env("RUST_BACKTRACE", "full")
             .build())
     }
 
     pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
-        self.writeable_path_from_extension(id, path)
-            .unwrap_or_else(|| path.to_path_buf())
+        let extension_work_dir = self.work_dir.join(id.as_ref());
+        normalize_path(&extension_work_dir.join(path))
     }
 
-    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Option<PathBuf> {
-        let path = path.strip_prefix(EXTENSION_WORK_DIR_PATH).unwrap_or(path);
-        if path.is_relative() {
-            let mut result = self.work_dir.clone();
-            result.push(id.as_ref());
-            result.extend(path);
-            Some(result)
+    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
+        let extension_work_dir = self.work_dir.join(id.as_ref());
+        let path = normalize_path(&extension_work_dir.join(path));
+        if path.starts_with(&extension_work_dir) {
+            Ok(path)
         } else {
-            None
+            Err(anyhow!("cannot write to path {}", path.display()))
         }
     }
 }
@@ -252,13 +249,6 @@ impl WasmExtension {
     }
 }
 
-impl WasmState {
-    pub fn writeable_path_from_extension(&self, path: &Path) -> Option<PathBuf> {
-        self.host
-            .writeable_path_from_extension(&self.manifest.id, path)
-    }
-}
-
 #[async_trait]
 impl wit::HostWorktree for WasmState {
     async fn read_text_file(
@@ -271,6 +261,26 @@ impl wit::HostWorktree for WasmState {
             .read_text_file(path.into())
             .await
             .map_err(|error| error.to_string()))
+    }
+
+    async fn shell_env(
+        &mut self,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> wasmtime::Result<wit::EnvVars> {
+        let delegate = self.table.get(&delegate)?;
+        Ok(delegate.shell_env().await.into_iter().collect())
+    }
+
+    async fn which(
+        &mut self,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+        binary_name: String,
+    ) -> wasmtime::Result<Option<String>> {
+        let delegate = self.table.get(&delegate)?;
+        Ok(delegate
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().to_string()))
     }
 
     fn drop(&mut self, _worktree: Resource<wit::Worktree>) -> Result<()> {
@@ -395,8 +405,8 @@ impl wit::ExtensionImports for WasmState {
             this.host.fs.create_dir(&extension_work_dir).await?;
 
             let destination_path = this
-                .writeable_path_from_extension(&path)
-                .ok_or_else(|| anyhow!("cannot write to path {:?}", path))?;
+                .host
+                .writeable_path_from_extension(&this.manifest.id, &path)?;
 
             let mut response = this
                 .host

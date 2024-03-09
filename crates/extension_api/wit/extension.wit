@@ -61,14 +61,18 @@ world extension {
     /// Updates the installation status for the given language server.
     import set-language-server-installation-status: func(language-server-name: string, status: language-server-installation-status);
 
+    type env-vars = list<tuple<string, string>>;
+
     record command {
         command: string,
         args: list<string>,
-        env: list<tuple<string, string>>,
+        env: env-vars,
     }
 
     resource worktree {
         read-text-file: func(path: string) -> result<string, string>;
+        which: func(binary-name: string) -> option<string>;
+        shell-env: func() -> env-vars;
     }
 
     record language-server-config {

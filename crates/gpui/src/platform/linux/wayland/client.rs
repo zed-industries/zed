@@ -281,7 +281,7 @@ impl Client for WaylandClient {
             CursorStyle::ResizeUp => "n-resize".to_string(),
             CursorStyle::ResizeDown => "s-resize".to_string(),
             CursorStyle::ResizeUpDown => "ns-resize".to_string(),
-            CursorStyle::DisappearingItem => "grabbing".to_string(), // TODO linux - couldn't find equivalent icon in linux
+            CursorStyle::DisappearingItem => "grabbing".to_string(), // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
             CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
             CursorStyle::DragLink => "dnd-link".to_string(),
@@ -520,15 +520,16 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         if let xdg_toplevel::Event::Configure {
             width,
             height,
-            states: _states,
+            states,
         } = event
         {
-            if width == 0 || height == 0 {
-                return;
-            }
+            let width = NonZeroU32::new(width as u32);
+            let height = NonZeroU32::new(height as u32);
+            let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
             for window in &state.windows {
                 if window.1.toplevel.id() == xdg_toplevel.id() {
                     window.1.resize(width, height);
+                    window.1.set_fullscreen(fullscreen);
                     window.1.surface.commit();
                     return;
                 }

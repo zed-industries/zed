@@ -210,6 +210,7 @@ gpui::actions!(
         PageDown,
         PageUp,
         Paste,
+        RevertSelectedHunks,
         Redo,
         RedoSelection,
         Rename,
