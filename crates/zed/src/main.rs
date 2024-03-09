@@ -1035,6 +1035,3 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
-
-#[cfg(not(debug_assertions))]
-async fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>) {}
