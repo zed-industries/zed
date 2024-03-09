@@ -665,19 +665,52 @@ impl EditorElement {
                 }
             }
 
-            if let Some(highlighted_rows) = &layout.highlighted_rows {
+            let mut paint_highlight = |mut highlight_rows: Range<u32>, color| {
+                // TODO kb comment why do we need to do +1 here (b.c. we are using BTreeMap<u32, ..> rows and need to covnert those into exclusive ranges, and using mutable inclisive ranges is not possible)
+                highlight_rows.end += 1;
                 let origin = point(
                     bounds.origin.x,
                     bounds.origin.y
-                        + (layout.position_map.line_height * highlighted_rows.start as f32)
+                        + (layout.position_map.line_height * highlight_rows.start as f32)
                         - scroll_top,
                 );
                 let size = size(
                     bounds.size.width,
-                    layout.position_map.line_height * highlighted_rows.len() as f32,
+                    layout.position_map.line_height * highlight_rows.len() as f32,
                 );
-                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
-                cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
+                cx.paint_quad(fill(Bounds { origin, size }, color));
+            };
+            let mut last_row = None;
+            let mut highlight_rows_range = 0_u32..0;
+            for (&row, &color) in &layout.highlighted_rows {
+                let paint = last_row.map_or(false, |(last_row, last_color)| {
+                    last_color != color || last_row + 1 < row
+                });
+
+                if paint {
+                    let paint_range_is_unfinished = highlight_rows_range.end == 0;
+                    if paint_range_is_unfinished {
+                        highlight_rows_range.end = row;
+                        last_row = None;
+                    }
+                    paint_highlight(highlight_rows_range, color);
+                    highlight_rows_range = 0..0;
+                    if !paint_range_is_unfinished {
+                        highlight_rows_range.start = row;
+                        last_row = Some((row, color));
+                    }
+                } else {
+                    if last_row.is_none() {
+                        highlight_rows_range.start = row;
+                    } else {
+                        highlight_rows_range.end = row;
+                    }
+                    last_row = Some((row, color));
+                }
+            }
+            if let Some((row, hsla)) = last_row {
+                highlight_rows_range.end = row;
+                paint_highlight(highlight_rows_range, hsla);
             }
 
             let scroll_left =
@@ -2064,7 +2097,7 @@ impl EditorElement {
             let mut active_rows = BTreeMap::new();
             let is_singleton = editor.is_singleton(cx);
 
-            let highlighted_rows = editor.highlighted_rows();
+            let highlighted_rows = editor.highlighted_display_rows(cx);
             let highlighted_ranges = editor.background_highlights_in_range(
                 start_anchor..end_anchor,
                 &snapshot.display_snapshot,
@@ -3198,7 +3231,7 @@ pub struct LayoutState {
     visible_anchor_range: Range<Anchor>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
-    highlighted_rows: Option<Range<u32>>,
+    highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,

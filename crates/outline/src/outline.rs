@@ -1,7 +1,4 @@
-use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, DisplayPoint, Editor,
-    EditorMode, ToPoint,
-};
+use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
     actions, div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -121,7 +118,7 @@ impl OutlineViewDelegate {
 
     fn restore_active_editor(&mut self, cx: &mut WindowContext) {
         self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
+            editor.clear_row_highlights::<OutlineRowHighlights>();
             if let Some(scroll_position) = self.prev_scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
             }
@@ -141,18 +138,19 @@ impl OutlineViewDelegate {
             let outline_item = &self.outline.items[selected_match.candidate_id];
 
             self.active_editor.update(cx, |active_editor, cx| {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let buffer_snapshot = &snapshot.buffer_snapshot;
-                let start = outline_item.range.start.to_point(buffer_snapshot);
-                let end = outline_item.range.end.to_point(buffer_snapshot);
-                let display_rows = start.to_display_point(&snapshot).row()
-                    ..end.to_display_point(&snapshot).row() + 1;
-                active_editor.highlight_rows(Some(display_rows));
+                active_editor.clear_row_highlights::<OutlineRowHighlights>();
+                active_editor.highlight_rows::<OutlineRowHighlights>(
+                    outline_item.range.clone(),
+                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    cx,
+                );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
     }
 }
+
+enum OutlineRowHighlights {}
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
@@ -240,13 +238,13 @@ impl PickerDelegate for OutlineViewDelegate {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(rows) = active_editor.highlighted_rows() {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                    s.select_ranges([position..position])
-                });
-                active_editor.highlight_rows(None);
+            if let Some(rows) = active_editor
+                .highlighted_rows::<OutlineRowHighlights>()
+                .and_then(|highlights| highlights.into_iter().next().map(|(rows, _)| rows.clone()))
+            {
+                active_editor
+                    .change_selections(Some(Autoscroll::center()), cx, |s| s.select_ranges([rows]));
+                active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.focus(cx);
             }
         });

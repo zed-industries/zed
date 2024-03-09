@@ -1,6 +1,6 @@
 pub mod cursor_position;
 
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Editor};
+use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
@@ -33,6 +33,8 @@ impl FocusableView for GoToLine {
     }
 }
 impl EventEmitter<DismissEvent> for GoToLine {}
+
+enum GoToLineRowHighlights {}
 
 impl GoToLine {
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
@@ -84,7 +86,7 @@ impl GoToLine {
             .update(cx, |_, cx| {
                 let scroll_position = self.prev_scroll_position.take();
                 self.active_editor.update(cx, |editor, cx| {
-                    editor.highlight_rows(None);
+                    editor.clear_row_highlights::<GoToLineRowHighlights>();
                     if let Some(scroll_position) = scroll_position {
                         editor.set_scroll_position(scroll_position, cx);
                     }
@@ -112,9 +114,13 @@ impl GoToLine {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                let display_point = point.to_display_point(&snapshot);
-                let row = display_point.row();
-                active_editor.highlight_rows(Some(row..row + 1));
+                let anchor = snapshot.buffer_snapshot.anchor_before(point);
+                active_editor.clear_row_highlights::<GoToLineRowHighlights>();
+                active_editor.highlight_rows::<GoToLineRowHighlights>(
+                    anchor..anchor,
+                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    cx,
+                );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
             cx.notify();
