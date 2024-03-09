@@ -314,19 +314,19 @@ impl Client for X11Client {
             .xcb_connection
             .send_request(&xcb::randr::GetScreenResourcesCurrent { window: x_window });
         let screen_resources = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
-        let crtc = screen_resources.crtcs().first().expect("TODO");
-
-        let cookie = self.xcb_connection.send_request(&xcb::randr::GetCrtcInfo {
-            crtc: crtc.to_owned(),
-            config_timestamp: xcb::x::Time::CurrentTime as u32,
-        });
-        let crtc_info = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
-
-        let mode_id = crtc_info.mode().resource_id();
         let mode = screen_resources
-            .modes()
+            .crtcs()
             .iter()
-            .find(|m| m.id == mode_id)
+            .find_map(|crtc| {
+                let cookie = self.xcb_connection.send_request(&xcb::randr::GetCrtcInfo {
+                    crtc: crtc.to_owned(),
+                    config_timestamp: xcb::x::Time::CurrentTime as u32,
+                });
+                let crtc_info = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
+
+                let mode_id = crtc_info.mode().resource_id();
+                screen_resources.modes().iter().find(|m| m.id == mode_id)
+            })
             .expect("Missing screen mode for crtc specified mode id");
 
         let refresh_event_token = self
