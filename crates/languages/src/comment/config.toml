@@ -2,4 +2,6 @@ name = "Comment"
 grammar = "comment"
 path_suffixes = []
 line_comments = []
-brackets = []
+brackets = [
+  { start = "(", end = ")", close = true, newline = false }
+]
