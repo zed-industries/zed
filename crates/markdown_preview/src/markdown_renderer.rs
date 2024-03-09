@@ -248,15 +248,13 @@ fn render_markdown_code_block(
     parsed: &ParsedMarkdownCodeBlock,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let body = if let Some(language) = parsed.language.as_ref() {
-        let highlights =
-            language.highlight_text(&parsed.contents.as_ref().into(), 0..parsed.contents.len());
-
+    let body = if let Some(highlights) = parsed.highlights.as_ref() {
         StyledText::new(parsed.contents.clone()).with_highlights(
             &cx.text_style,
             highlights.iter().filter_map(|(range, highlight_id)| {
-                let highlight = highlight_id.style(cx.syntax_theme.as_ref());
-                highlight.map(|style| (range.clone(), style))
+                highlight_id
+                    .style(cx.syntax_theme.as_ref())
+                    .map(|style| (range.clone(), style))
             }),
         )
     } else {

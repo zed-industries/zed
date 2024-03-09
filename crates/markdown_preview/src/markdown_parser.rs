@@ -587,9 +587,14 @@ impl<'a> MarkdownParser<'a> {
             }
         }
 
-        let language = if let Some(language) = language {
+        let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
-                registry.language_for_name(language.as_ref()).await.ok()
+                let rope: language::Rope = code.as_str().into();
+                registry
+                    .language_for_name(language)
+                    .await
+                    .map(|l| l.highlight_text(&rope, 0..code.len()))
+                    .ok()
             } else {
                 None
             }
@@ -601,6 +606,7 @@ impl<'a> MarkdownParser<'a> {
             source_range,
             contents: code.trim().to_string().into(),
             language,
+            highlights,
         }
     }
 }
@@ -610,7 +616,7 @@ mod tests {
     use super::*;
 
     use gpui::BackgroundExecutor;
-    use language::{Language, LanguageConfig};
+    use language::{tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher};
     use pretty_assertions::assert_eq;
 
     use ParsedMarkdownElement::*;
@@ -1062,7 +1068,12 @@ fn main() {
 
         assert_eq!(
             parsed.children,
-            vec![code_block(None, "fn main() {\n    return 0;\n}", 0..35)]
+            vec![code_block(
+                None,
+                "fn main() {\n    return 0;\n}",
+                0..35,
+                None
+            )]
         );
     }
 
@@ -1071,11 +1082,7 @@ fn main() {
         let mut language_registry = LanguageRegistry::test();
         language_registry.set_executor(executor);
         let language_registry = Arc::new(language_registry);
-        let rust_language = LanguageConfig {
-            name: "Rust".into(),
-            ..Default::default()
-        };
-        language_registry.register_test_language(rust_language.clone());
+        language_registry.add(rust_lang());
 
         let parsed = parse_markdown(
             "\
@@ -1090,17 +1097,30 @@ fn main() {
         )
         .await;
 
-        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children,
+            vec![code_block(
+                Some("rust".to_string()),
+                "fn main() {\n    return 0;\n}",
+                0..39,
+                Some(vec![])
+            )]
+        );
+    }
 
-        if let ParsedMarkdownElement::CodeBlock(code_block) = &parsed.children[0] {
-            let language_name = code_block.language.as_ref().unwrap().name().to_string();
-
-            assert_eq!(code_block.contents, "fn main() {\n    return 0;\n}");
-            assert_eq!(code_block.source_range, 0..39);
-            assert_eq!(language_name, "Rust".to_string());
-        } else {
-            panic!("Expected a code block");
-        }
+    fn rust_lang() -> Arc<Language> {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
+                    ..Default::default()
+                },
+                collapsed_placeholder: " /* ... */ ".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ))
     }
 
     fn h1(contents: ParsedMarkdownText, source_range: Range<usize>) -> ParsedMarkdownElement {
@@ -1152,14 +1172,16 @@ fn main() {
     }
 
     fn code_block(
-        language: Option<Arc<Language>>,
+        language: Option<String>,
         code: &str,
         source_range: Range<usize>,
+        highlights: Option<Vec<(Range<usize>, HighlightId)>>,
     ) -> ParsedMarkdownElement {
         ParsedMarkdownElement::CodeBlock(ParsedMarkdownCodeBlock {
             source_range,
             language,
             contents: code.to_string().into(),
+            highlights,
         })
     }
 
