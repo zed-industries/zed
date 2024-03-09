@@ -121,13 +121,13 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
-        self.shadows.sort_unstable();
-        self.quads.sort_unstable();
-        self.paths.sort_unstable();
-        self.underlines.sort_unstable();
-        self.monochrome_sprites.sort_unstable();
-        self.polychrome_sprites.sort_unstable();
-        self.surfaces.sort_unstable();
+        self.shadows.sort();
+        self.quads.sort();
+        self.paths.sort();
+        self.underlines.sort();
+        self.monochrome_sprites.sort();
+        self.polychrome_sprites.sort();
+        self.surfaces.sort();
     }
 
     pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
