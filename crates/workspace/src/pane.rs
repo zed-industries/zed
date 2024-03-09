@@ -645,6 +645,8 @@ impl Pane {
             cx.notify();
         }
 
+        self.preview_item_id = Some(item.item_id());
+
         cx.emit(Event::AddItem { item });
     }
 
