@@ -5,7 +5,8 @@ use crate::{
 use call::ActiveCall;
 use editor::{
     actions::{
-        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, ToggleCodeActions, Undo,
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, RevertSelectedHunks,
+        ToggleCodeActions, Undo,
     },
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor,
@@ -1812,6 +1813,171 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
+}
+
+#[gpui::test]
+async fn test_multiple_types_reverts(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+
+    let base_text = indoc! {r#"struct Row;
+struct Row1;
+struct Row2;
+
+struct Row4;
+struct Row5;
+struct Row6;
+
+struct Row8;
+struct Row9;
+struct Row10;"#};
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "main.rs": base_text,
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let mut editor_cx_a = EditorTestContext {
+        cx: cx_a.clone(),
+        window: cx_a.handle(),
+        editor: editor_a,
+        assertion_cx: AssertionContextManager::new(),
+    };
+    let mut editor_cx_b = EditorTestContext {
+        cx: cx_b.clone(),
+        window: cx_b.handle(),
+        editor: editor_b,
+        assertion_cx: AssertionContextManager::new(),
+    };
+
+    // host edits the file, that differs from the base text, producing diff hunks
+    editor_cx_a.set_state(indoc! {r#"struct Row;
+        struct Row0.1;
+        struct Row0.2;
+        struct Row1;
+
+        struct Row4;
+        struct Row5444;
+        struct Row6;
+
+        struct Row9;
+        struct Row1220;ˇ"#});
+    editor_cx_a.update_editor(|editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_diff_base(Some(base_text.to_string()), cx);
+            });
+    });
+    editor_cx_b.update_editor(|editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_diff_base(Some(base_text.to_string()), cx);
+            });
+    });
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    // client, selects a range in the updated buffer, and reverts it
+    // both host and the client observe the reverted state (with one hunk left, not covered by client's selection)
+    editor_cx_b.set_selections_state(indoc! {r#"«ˇstruct Row;
+        struct Row0.1;
+        struct Row0.2;
+        struct Row1;
+
+        struct Row4;
+        struct Row5444;
+        struct Row6;
+
+        struct R»ow9;
+        struct Row1220;"#});
+    editor_cx_b.update_editor(|editor, cx| {
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    });
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+    editor_cx_a.assert_editor_state(indoc! {r#"struct Row;
+        struct Row1;
+        struct Row2;
+
+        struct Row4;
+        struct Row5;
+        struct Row6;
+
+        struct Row8;
+        struct Row9;
+        struct Row1220;ˇ"#});
+    editor_cx_b.assert_editor_state(indoc! {r#"«ˇstruct Row;
+        struct Row1;
+        struct Row2;
+
+        struct Row4;
+        struct Row5;
+        struct Row6;
+
+        struct Row8;
+        struct R»ow9;
+        struct Row1220;"#});
 }
 
 fn extract_hint_labels(editor: &Editor) -> Vec<String> {

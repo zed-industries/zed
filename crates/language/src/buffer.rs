@@ -930,8 +930,17 @@ impl Buffer {
     /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
-        self.git_diff_recalc(cx);
-        cx.emit(Event::DiffBaseChanged);
+        if let Some(recalc_task) = self.git_diff_recalc(cx) {
+            cx.spawn(|buffer, mut cx| async move {
+                recalc_task.await;
+                buffer
+                    .update(&mut cx, |_, cx| {
+                        cx.emit(Event::DiffBaseChanged);
+                    })
+                    .ok();
+            })
+            .detach();
+        }
     }
 
     /// Recomputes the Git diff status.
