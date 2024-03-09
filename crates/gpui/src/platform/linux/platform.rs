@@ -305,7 +305,9 @@ impl Platform for LinuxPlatform {
     }
 
     fn double_click_interval(&self) -> Duration {
-        Duration::default()
+        // Matches the default on GNOME, there isn't an obvious way to query this in a
+        // cross-desktop way but should eventually be done to improve accessibility
+        Duration::from_millis(400)
     }
 
     fn os_version(&self) -> Result<SemanticVersion> {
