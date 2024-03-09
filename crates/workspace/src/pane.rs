@@ -10,9 +10,9 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
-    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, MouseDownEvent,
+    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -1361,6 +1361,16 @@ impl Pane {
                 cx.listener(move |pane, _event, cx| {
                     pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                         .detach_and_log_err(cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |pane, event: &MouseDownEvent, _| {
+                    if let Some(id) = pane.preview_item_id {
+                        if id == item_id && event.click_count > 1 {
+                            pane.preview_item_id = None;
+                        }
+                    }
                 }),
             )
             .on_drag(
