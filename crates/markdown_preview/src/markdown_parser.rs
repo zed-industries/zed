@@ -1,23 +1,16 @@
 use crate::markdown_elements::*;
-use async_recursion::async_recursion;
 use gpui::FontWeight;
-use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{ops::Range, path::PathBuf};
 
-pub async fn parse_markdown(
+pub fn parse_markdown(
     markdown_input: &str,
     file_location_directory: Option<PathBuf>,
-    language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
     let options = Options::all();
     let parser = Parser::new_ext(markdown_input, options);
-    let parser = MarkdownParser::new(
-        parser.into_offset_iter().collect(),
-        file_location_directory,
-        language_registry,
-    );
-    let renderer = parser.parse_document().await;
+    let parser = MarkdownParser::new(parser.into_offset_iter().collect(), file_location_directory);
+    let renderer = parser.parse_document();
     ParsedMarkdown {
         children: renderer.parsed,
     }
@@ -30,19 +23,16 @@ struct MarkdownParser<'a> {
     /// The blocks that we have successfully parsed so far
     parsed: Vec<ParsedMarkdownElement>,
     file_location_directory: Option<PathBuf>,
-    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 impl<'a> MarkdownParser<'a> {
     fn new(
         tokens: Vec<(Event<'a>, Range<usize>)>,
         file_location_directory: Option<PathBuf>,
-        language_registry: Option<Arc<LanguageRegistry>>,
     ) -> Self {
         Self {
             tokens,
             file_location_directory,
-            language_registry,
             cursor: 0,
             parsed: vec![],
         }
@@ -91,16 +81,16 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    async fn parse_document(mut self) -> Self {
+    fn parse_document(mut self) -> Self {
         while !self.eof() {
-            if let Some(block) = self.parse_block().await {
+            if let Some(block) = self.parse_block() {
                 self.parsed.push(block);
             }
         }
         self
     }
 
-    async fn parse_block(&mut self) -> Option<ParsedMarkdownElement> {
+    fn parse_block(&mut self) -> Option<ParsedMarkdownElement> {
         let (current, source_range) = self.current().unwrap();
         match current {
             Event::Start(tag) => match tag {
@@ -129,12 +119,12 @@ impl<'a> MarkdownParser<'a> {
                 Tag::List(order) => {
                     let order = *order;
                     self.cursor += 1;
-                    let list = self.parse_list(1, order).await;
+                    let list = self.parse_list(1, order);
                     Some(ParsedMarkdownElement::List(list))
                 }
                 Tag::BlockQuote => {
                     self.cursor += 1;
-                    let block_quote = self.parse_block_quote().await;
+                    let block_quote = self.parse_block_quote();
                     Some(ParsedMarkdownElement::BlockQuote(block_quote))
                 }
                 Tag::CodeBlock(kind) => {
@@ -151,7 +141,7 @@ impl<'a> MarkdownParser<'a> {
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await;
+                    let code_block = self.parse_code_block(language);
                     Some(ParsedMarkdownElement::CodeBlock(code_block))
                 }
                 _ => {
@@ -417,8 +407,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    #[async_recursion]
-    async fn parse_list(&mut self, depth: u16, order: Option<u64>) -> ParsedMarkdownList {
+    fn parse_list(&mut self, depth: u16, order: Option<u64>) -> ParsedMarkdownList {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
         let mut children = vec![];
@@ -435,7 +424,7 @@ impl<'a> MarkdownParser<'a> {
                     let order = *order;
                     self.cursor += 1;
 
-                    let inner_list = self.parse_list(depth + 1, order).await;
+                    let inner_list = self.parse_list(depth + 1, order);
                     let block = ParsedMarkdownElement::List(inner_list);
                     current_list_items.push(Box::new(block));
                 }
@@ -466,7 +455,7 @@ impl<'a> MarkdownParser<'a> {
                             let block = ParsedMarkdownElement::Paragraph(text);
                             current_list_items.push(Box::new(block));
                         } else {
-                            let block = self.parse_block().await;
+                            let block = self.parse_block();
                             if let Some(block) = block {
                                 current_list_items.push(Box::new(block));
                             }
@@ -504,7 +493,7 @@ impl<'a> MarkdownParser<'a> {
                         break;
                     }
 
-                    let block = self.parse_block().await;
+                    let block = self.parse_block();
                     if let Some(block) = block {
                         current_list_items.push(Box::new(block));
                     }
@@ -518,8 +507,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    #[async_recursion]
-    async fn parse_block_quote(&mut self) -> ParsedMarkdownBlockQuote {
+    fn parse_block_quote(&mut self) -> ParsedMarkdownBlockQuote {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
         let mut nested_depth = 1;
@@ -527,7 +515,7 @@ impl<'a> MarkdownParser<'a> {
         let mut children: Vec<Box<ParsedMarkdownElement>> = vec![];
 
         while !self.eof() {
-            let block = self.parse_block().await;
+            let block = self.parse_block();
 
             if let Some(block) = block {
                 children.push(Box::new(block));
@@ -565,7 +553,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    async fn parse_code_block(&mut self, language: Option<String>) -> ParsedMarkdownCodeBlock {
+    fn parse_code_block(&mut self, language: Option<String>) -> ParsedMarkdownCodeBlock {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
         let mut code = String::new();
@@ -587,16 +575,6 @@ impl<'a> MarkdownParser<'a> {
             }
         }
 
-        let language = if let Some(language) = language {
-            if let Some(registry) = &self.language_registry {
-                registry.language_for_name(language.as_ref()).await.ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
         ParsedMarkdownCodeBlock {
             source_range,
             contents: code.trim().to_string().into(),
@@ -614,13 +592,13 @@ mod tests {
     use ParsedMarkdownElement::*;
     use ParsedMarkdownListItemType::*;
 
-    async fn parse(input: &str) -> ParsedMarkdown {
-        parse_markdown(input, None, None).await
+    fn parse(input: &str) -> ParsedMarkdown {
+        parse_markdown(input, None)
     }
 
-    #[gpui::test]
+    #[test]
     fn test_headings() {
-        let parsed = parse("# Heading one\n## Heading two\n### Heading three").await;
+        let parsed = parse("# Heading one\n## Heading two\n### Heading three");
 
         assert_eq!(
             parsed.children,
@@ -632,9 +610,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_newlines_dont_new_paragraphs() {
-        let parsed = parse("Some text **that is bolded**\n and *italicized*").await;
+        let parsed = parse("Some text **that is bolded**\n and *italicized*");
 
         assert_eq!(
             parsed.children,
@@ -642,9 +620,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_heading_with_paragraph() {
-        let parsed = parse("# Zed\nThe editor").await;
+        let parsed = parse("# Zed\nThe editor");
 
         assert_eq!(
             parsed.children,
@@ -652,9 +630,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_double_newlines_do_new_paragraphs() {
-        let parsed = parse("Some text **that is bolded**\n\n and *italicized*").await;
+        let parsed = parse("Some text **that is bolded**\n\n and *italicized*");
 
         assert_eq!(
             parsed.children,
@@ -665,9 +643,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_bold_italic_text() {
-        let parsed = parse("Some text **that is bolded** and *italicized*").await;
+        let parsed = parse("Some text **that is bolded** and *italicized*");
 
         assert_eq!(
             parsed.children,
@@ -675,9 +653,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_nested_bold_strikethrough_text() {
-        let parsed = parse("Some **bo~~strikethrough~~ld** text").await;
+        let parsed = parse("Some **bo~~strikethrough~~ld** text");
 
         assert_eq!(parsed.children.len(), 1);
         assert_eq!(
@@ -725,7 +703,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
@@ -741,12 +719,12 @@ Some other content
         );
 
         assert_eq!(
-            parse(markdown).await.children[0],
+            parse(markdown).children[0],
             ParsedMarkdownElement::Table(expected_table)
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_basic_table() {
         let markdown = "\
 | Header 1 | Header 2 |
@@ -764,12 +742,12 @@ Some other content
         );
 
         assert_eq!(
-            parse(markdown).await.children[0],
+            parse(markdown).children[0],
             ParsedMarkdownElement::Table(expected_table)
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_list_basic() {
         let parsed = parse(
             "\
@@ -777,8 +755,7 @@ Some other content
 * Item 2
 * Item 3
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -793,15 +770,14 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_list_with_tasks() {
         let parsed = parse(
             "\
 - [ ] TODO
 - [x] Checked
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -815,7 +791,7 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_list_nested() {
         let parsed = parse(
             "\
@@ -837,8 +813,7 @@ Some other content
   2. Goodbyte
 * Last
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -925,15 +900,14 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_list_with_nested_content() {
         let parsed = parse(
             "\
 *   This is a list item with two paragraphs.
 
     This is the second paragraph in the list item.",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -951,7 +925,7 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_list_with_leading_text() {
         let parsed = parse(
             "\
@@ -959,8 +933,7 @@ Some other content
 * **bold**
 * [link](https://example.com)
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -975,9 +948,9 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_simple_block_quote() {
-        let parsed = parse("> Simple block quote with **styled text**").await;
+        let parsed = parse("> Simple block quote with **styled text**");
 
         assert_eq!(
             parsed.children,
@@ -988,7 +961,7 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_simple_block_quote_with_multiple_lines() {
         let parsed = parse(
             "\
@@ -998,8 +971,7 @@ Some other content
 >
 > More text
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -1014,7 +986,7 @@ Some other content
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_nested_block_quote() {
         let parsed = parse(
             "\
@@ -1026,8 +998,7 @@ Some other content
 
 More text
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -1045,7 +1016,7 @@ More text
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_code_block() {
         let parsed = parse(
             "\
@@ -1055,8 +1026,7 @@ fn main() {
 }
 ```
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
@@ -1064,7 +1034,7 @@ fn main() {
         );
     }
 
-    #[gpui::test]
+    #[test]
     fn test_code_block_with_language() {
         let parsed = parse(
             "\
@@ -1074,8 +1044,7 @@ fn main() {
 }
 ```
 ",
-        )
-        .await;
+        );
 
         assert_eq!(
             parsed.children,
