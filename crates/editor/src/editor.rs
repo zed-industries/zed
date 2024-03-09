@@ -56,7 +56,13 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext
+    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
+    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
+    ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -930,8 +936,9 @@ impl CompletionsMenu {
                                             thickness: 1.0.into(),
                                             ..Default::default()
                                         });
+                                        highlight.color = Some(cx.theme().colors().text_muted);
                                     }
-                                    
+
                                     (range, highlight)
                                 },
                             ),
