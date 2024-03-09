@@ -12,10 +12,10 @@ use workspace::Workspace;
 
 use crate::{
     normal::normal_motion,
+    replace::replace_motion,
     state::{Mode, Operator},
     utils::coerce_punctuation,
     visual::visual_motion,
-    replace::replace_motion,
     Vim,
 };
 
@@ -312,8 +312,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             motion(Motion::PreviousWordEnd { ignore_punctuation }, cx)
         },
     );
-    workspace
-    .register_action(|_: &mut Workspace, _: &UndoReplace, cx: _| motion(Motion::UndoReplace, cx));
+    workspace.register_action(|_: &mut Workspace, _: &UndoReplace, cx: _| {
+        motion(Motion::UndoReplace, cx)
+    });
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {

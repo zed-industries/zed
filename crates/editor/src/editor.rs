@@ -361,7 +361,7 @@ pub struct Editor {
     buffer: Model<MultiBuffer>,
     /// Map of how text in the buffer should be displayed.
     /// Handles soft wraps, folds, fake inlay text insertions, etc.
-    display_map: Model<DisplayMap>,
+    pub display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
     columnar_selection_tail: Option<Anchor>,
@@ -421,6 +421,7 @@ pub struct Editor {
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_width: Pixels,
     pub last_snapshot: Option<MultiBufferSnapshot>,
+    pub vim_replace_map: HashMap<Range<usize>, String>,
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
@@ -1553,6 +1554,7 @@ impl Editor {
             show_cursor_names: false,
             hovered_cursors: Default::default(),
             editor_actions: Default::default(),
+            vim_replace_map: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             custom_context_menu: None,
             _subscriptions: vec![

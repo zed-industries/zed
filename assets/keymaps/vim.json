@@ -107,7 +107,7 @@
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
-      "R": "vim::ToggleReplace",
+      "shift-r": "vim::ToggleReplace",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
