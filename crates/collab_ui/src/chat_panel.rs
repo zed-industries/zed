@@ -16,7 +16,7 @@ use language::LanguageRegistry;
 use menu::Confirm;
 use message_editor::MessageEditor;
 use project::Fs;
-use rich_text::RichText;
+use rich_text::{Highlight, RichText};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{sync::Arc, time::Duration};
@@ -775,7 +775,27 @@ impl ChatPanel {
             })
             .collect::<Vec<_>>();
 
-        rich_text::render_rich_text(message.body.clone(), &mentions, language_registry, None)
+        const MESSAGE_UPDATED: &str = " (edited)";
+
+        let mut body = message.body.clone();
+
+        if message.edited_at.is_some() {
+            body.push_str(MESSAGE_UPDATED);
+        }
+
+        let mut rich_text = rich_text::render_rich_text(body, &mentions, language_registry, None);
+
+        if message.edited_at.is_some() {
+            rich_text.highlights.push((
+                message.body.len()..(message.body.len() + MESSAGE_UPDATED.len()),
+                Highlight::Highlight(HighlightStyle {
+                    font_style: Some(FontStyle::Italic),
+                    fade_out: Some(0.2),
+                    ..Default::default()
+                }),
+            ));
+        }
+        rich_text
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
