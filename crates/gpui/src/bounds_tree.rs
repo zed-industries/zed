@@ -121,10 +121,7 @@ where
     }
 
     fn find_max_ordering(&self, index: usize, bounds: &Bounds<U>, mut max_ordering: u32) -> u32 {
-        match {
-            let this = &self;
-            &this.nodes[index]
-        } {
+        match &self.nodes[index] {
             Node::Leaf {
                 bounds: node_bounds,
                 order: ordering,

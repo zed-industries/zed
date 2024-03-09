@@ -1918,16 +1918,6 @@ impl EditorElement {
     }
 
     fn paint_text(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
-        let start_row = layout.visible_display_row_range.start;
-        let line_end_overshoot = 0.15 * layout.position_map.line_height;
-        let whitespace_setting = self
-            .editor
-            .read(cx)
-            .buffer
-            .read(cx)
-            .settings_at(0, cx)
-            .show_whitespaces;
-
         cx.with_content_mask(
             Some(ContentMask {
                 bounds: layout.text_hitbox.bounds,
@@ -1947,77 +1937,112 @@ impl EditorElement {
                 cx.set_cursor_style(cursor_style, &layout.text_hitbox);
 
                 cx.with_element_id(Some("folds"), |cx| self.paint_folds(layout, cx));
-
-                for (range, color) in &layout.highlighted_ranges {
-                    self.paint_highlighted_range(
-                        range.clone(),
-                        *color,
-                        Pixels::ZERO,
-                        line_end_overshoot,
-                        layout,
-                        cx,
-                    );
-                }
-
-                let corner_radius = 0.15 * layout.position_map.line_height;
-                let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
-
-                for (player_color, selections) in &layout.selections {
-                    for selection in selections.into_iter() {
-                        self.paint_highlighted_range(
-                            selection.range.clone(),
-                            player_color.selection,
-                            corner_radius,
-                            corner_radius * 2.,
-                            layout,
-                            cx,
-                        );
-
-                        if selection.is_local && !selection.range.is_empty() {
-                            invisible_display_ranges.push(selection.range.clone());
-                        }
-                    }
-                }
-
-                for (ix, line_with_invisibles) in
-                    layout.position_map.line_layouts.iter().enumerate()
-                {
-                    let row = start_row + ix as u32;
-                    line_with_invisibles.draw(
-                        layout,
-                        row,
-                        layout.content_origin,
-                        whitespace_setting,
-                        &invisible_display_ranges,
-                        cx,
-                    )
-                }
-
-                self.paint_redactions(&layout, cx);
-
-                for cursor in &mut layout.cursors {
-                    cursor.paint(layout.content_origin, cx);
-                }
+                let invisible_display_ranges = self.paint_highlights(layout, cx);
+                self.paint_lines(&invisible_display_ranges, layout, cx);
+                self.paint_redactions(layout, cx);
+                self.paint_cursors(layout, cx);
             },
         )
     }
 
+    fn paint_highlights(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut ElementContext,
+    ) -> SmallVec<[Range<DisplayPoint>; 32]> {
+        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+            let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+            let line_end_overshoot = 0.15 * layout.position_map.line_height;
+            for (range, color) in &layout.highlighted_ranges {
+                self.paint_highlighted_range(
+                    range.clone(),
+                    *color,
+                    Pixels::ZERO,
+                    line_end_overshoot,
+                    layout,
+                    cx,
+                );
+            }
+
+            let corner_radius = 0.15 * layout.position_map.line_height;
+
+            for (player_color, selections) in &layout.selections {
+                for selection in selections.into_iter() {
+                    self.paint_highlighted_range(
+                        selection.range.clone(),
+                        player_color.selection,
+                        corner_radius,
+                        corner_radius * 2.,
+                        layout,
+                        cx,
+                    );
+
+                    if selection.is_local && !selection.range.is_empty() {
+                        invisible_display_ranges.push(selection.range.clone());
+                    }
+                }
+            }
+            invisible_display_ranges
+        })
+    }
+
+    fn paint_lines(
+        &mut self,
+        invisible_display_ranges: &[Range<DisplayPoint>],
+        layout: &EditorLayout,
+        cx: &mut ElementContext,
+    ) {
+        let whitespace_setting = self
+            .editor
+            .read(cx)
+            .buffer
+            .read(cx)
+            .settings_at(0, cx)
+            .show_whitespaces;
+
+        for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
+            let row = layout.visible_display_row_range.start + ix as u32;
+            line_with_invisibles.draw(
+                layout,
+                row,
+                layout.content_origin,
+                whitespace_setting,
+                invisible_display_ranges,
+                cx,
+            )
+        }
+    }
+
     fn paint_redactions(&mut self, layout: &EditorLayout, cx: &mut ElementContext) {
+        if layout.redacted_ranges.is_empty() {
+            return;
+        }
+
         let line_end_overshoot = layout.line_end_overshoot();
 
         // A softer than perfect black
         let redaction_color = gpui::rgb(0x0e1111);
 
-        for range in layout.redacted_ranges.iter() {
-            self.paint_highlighted_range(
-                range.clone(),
-                redaction_color.into(),
-                Pixels::ZERO,
-                line_end_overshoot,
-                layout,
-                cx,
-            );
-        }
+        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+            for range in layout.redacted_ranges.iter() {
+                self.paint_highlighted_range(
+                    range.clone(),
+                    redaction_color.into(),
+                    Pixels::ZERO,
+                    line_end_overshoot,
+                    layout,
+                    cx,
+                );
+            }
+        });
+    }
+
+    fn paint_cursors(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+            for cursor in &mut layout.cursors {
+                cursor.paint(layout.content_origin, cx);
+            }
+        });
     }
 
     fn paint_scrollbar(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
@@ -2027,216 +2052,220 @@ impl EditorElement {
 
         let thumb_bounds = scrollbar_layout.thumb_bounds();
         if scrollbar_layout.visible {
-            cx.paint_quad(quad(
-                scrollbar_layout.hitbox.bounds,
-                Corners::default(),
-                cx.theme().colors().scrollbar_track_background,
-                Edges {
-                    top: Pixels::ZERO,
-                    right: Pixels::ZERO,
-                    bottom: Pixels::ZERO,
-                    left: px(1.),
-                },
-                cx.theme().colors().scrollbar_track_border,
-            ));
-            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-            let is_singleton = self.editor.read(cx).is_singleton(cx);
-            if is_singleton && scrollbar_settings.selections {
-                let start_anchor = Anchor::min();
-                let end_anchor = Anchor::max();
-                let background_ranges = self
-                    .editor
-                    .read(cx)
-                    .background_highlight_row_ranges::<BufferSearchHighlights>(
-                        start_anchor..end_anchor,
+            cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
+                cx.paint_quad(quad(
+                    scrollbar_layout.hitbox.bounds,
+                    Corners::default(),
+                    cx.theme().colors().scrollbar_track_background,
+                    Edges {
+                        top: Pixels::ZERO,
+                        right: Pixels::ZERO,
+                        bottom: Pixels::ZERO,
+                        left: px(1.),
+                    },
+                    cx.theme().colors().scrollbar_track_border,
+                ));
+                let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+                let is_singleton = self.editor.read(cx).is_singleton(cx);
+                if is_singleton && scrollbar_settings.selections {
+                    let start_anchor = Anchor::min();
+                    let end_anchor = Anchor::max();
+                    let background_ranges = self
+                        .editor
+                        .read(cx)
+                        .background_highlight_row_ranges::<BufferSearchHighlights>(
+                            start_anchor..end_anchor,
+                            &layout.position_map.snapshot,
+                            50000,
+                        );
+                    for range in background_ranges {
+                        let start_y = scrollbar_layout.y_for_row(range.start().row() as f32);
+                        let mut end_y = scrollbar_layout.y_for_row(range.end().row() as f32);
+                        if end_y - start_y < px(1.) {
+                            end_y = start_y + px(1.);
+                        }
+                        let bounds = Bounds::from_corners(
+                            point(scrollbar_layout.hitbox.left(), start_y),
+                            point(scrollbar_layout.hitbox.right(), end_y),
+                        );
+                        cx.paint_quad(quad(
+                            bounds,
+                            Corners::default(),
+                            cx.theme().status().info,
+                            Edges {
+                                top: Pixels::ZERO,
+                                right: px(1.),
+                                bottom: Pixels::ZERO,
+                                left: px(1.),
+                            },
+                            cx.theme().colors().scrollbar_thumb_border,
+                        ));
+                    }
+                }
+
+                if is_singleton && scrollbar_settings.symbols_selections {
+                    let selection_ranges = self.editor.read(cx).background_highlights_in_range(
+                        Anchor::min()..Anchor::max(),
                         &layout.position_map.snapshot,
-                        50000,
+                        cx.theme().colors(),
                     );
-                for range in background_ranges {
-                    let start_y = scrollbar_layout.y_for_row(range.start().row() as f32);
-                    let mut end_y = scrollbar_layout.y_for_row(range.end().row() as f32);
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
+                    for hunk in selection_ranges {
+                        let start_display = Point::new(hunk.0.start.row(), 0)
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                        let end_display = Point::new(hunk.0.end.row(), 0)
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                        let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
+                        let mut end_y = if hunk.0.start == hunk.0.end {
+                            scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
+                        } else {
+                            scrollbar_layout.y_for_row(end_display.row() as f32)
+                        };
+
+                        if end_y - start_y < px(1.) {
+                            end_y = start_y + px(1.);
+                        }
+                        let bounds = Bounds::from_corners(
+                            point(scrollbar_layout.hitbox.left(), start_y),
+                            point(scrollbar_layout.hitbox.right(), end_y),
+                        );
+
+                        cx.paint_quad(quad(
+                            bounds,
+                            Corners::default(),
+                            cx.theme().status().info,
+                            Edges {
+                                top: Pixels::ZERO,
+                                right: px(1.),
+                                bottom: Pixels::ZERO,
+                                left: px(1.),
+                            },
+                            cx.theme().colors().scrollbar_thumb_border,
+                        ));
                     }
-                    let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.left(), start_y),
-                        point(scrollbar_layout.hitbox.right(), end_y),
-                    );
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        cx.theme().status().info,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
                 }
-            }
 
-            if is_singleton && scrollbar_settings.symbols_selections {
-                let selection_ranges = self.editor.read(cx).background_highlights_in_range(
-                    Anchor::min()..Anchor::max(),
-                    &layout.position_map.snapshot,
-                    cx.theme().colors(),
-                );
-                for hunk in selection_ranges {
-                    let start_display = Point::new(hunk.0.start.row(), 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = Point::new(hunk.0.end.row(), 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
-                    let mut end_y = if hunk.0.start == hunk.0.end {
-                        scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
-                    } else {
-                        scrollbar_layout.y_for_row(end_display.row() as f32)
-                    };
+                if is_singleton && scrollbar_settings.git_diff {
+                    for hunk in layout
+                        .position_map
+                        .snapshot
+                        .buffer_snapshot
+                        .git_diff_hunks_in_range(0..layout.max_row)
+                    {
+                        let start_display = Point::new(hunk.buffer_range.start, 0)
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                        let end_display = Point::new(hunk.buffer_range.end, 0)
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                        let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
+                        let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
+                            scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
+                        } else {
+                            scrollbar_layout.y_for_row(end_display.row() as f32)
+                        };
 
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
+                        if end_y - start_y < px(1.) {
+                            end_y = start_y + px(1.);
+                        }
+                        let bounds = Bounds::from_corners(
+                            point(scrollbar_layout.hitbox.left(), start_y),
+                            point(scrollbar_layout.hitbox.right(), end_y),
+                        );
+
+                        let color = match hunk.status() {
+                            DiffHunkStatus::Added => cx.theme().status().created,
+                            DiffHunkStatus::Modified => cx.theme().status().modified,
+                            DiffHunkStatus::Removed => cx.theme().status().deleted,
+                        };
+                        cx.paint_quad(quad(
+                            bounds,
+                            Corners::default(),
+                            color,
+                            Edges {
+                                top: Pixels::ZERO,
+                                right: px(1.),
+                                bottom: Pixels::ZERO,
+                                left: px(1.),
+                            },
+                            cx.theme().colors().scrollbar_thumb_border,
+                        ));
                     }
-                    let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.left(), start_y),
-                        point(scrollbar_layout.hitbox.right(), end_y),
-                    );
-
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        cx.theme().status().info,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
                 }
-            }
 
-            if is_singleton && scrollbar_settings.git_diff {
-                for hunk in layout
-                    .position_map
-                    .snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range(0..layout.max_row)
-                {
-                    let start_display = Point::new(hunk.buffer_range.start, 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = Point::new(hunk.buffer_range.end, 0)
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
-                    let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
-                        scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
-                    } else {
-                        scrollbar_layout.y_for_row(end_display.row() as f32)
-                    };
+                if is_singleton && scrollbar_settings.diagnostics {
+                    let max_point = layout
+                        .position_map
+                        .snapshot
+                        .display_snapshot
+                        .buffer_snapshot
+                        .max_point();
 
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
+                    let diagnostics = layout
+                        .position_map
+                        .snapshot
+                        .buffer_snapshot
+                        .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+                        // We want to sort by severity, in order to paint the most severe diagnostics last.
+                        .sorted_by_key(|diagnostic| {
+                            std::cmp::Reverse(diagnostic.diagnostic.severity)
+                        });
+
+                    for diagnostic in diagnostics {
+                        let start_display = diagnostic
+                            .range
+                            .start
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                        let end_display = diagnostic
+                            .range
+                            .end
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                        let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
+                        let mut end_y = if diagnostic.range.start == diagnostic.range.end {
+                            scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
+                        } else {
+                            scrollbar_layout.y_for_row(end_display.row() as f32)
+                        };
+
+                        if end_y - start_y < px(1.) {
+                            end_y = start_y + px(1.);
+                        }
+                        let bounds = Bounds::from_corners(
+                            point(scrollbar_layout.hitbox.left(), start_y),
+                            point(scrollbar_layout.hitbox.right(), end_y),
+                        );
+
+                        let color = match diagnostic.diagnostic.severity {
+                            DiagnosticSeverity::ERROR => cx.theme().status().error,
+                            DiagnosticSeverity::WARNING => cx.theme().status().warning,
+                            DiagnosticSeverity::INFORMATION => cx.theme().status().info,
+                            _ => cx.theme().status().hint,
+                        };
+                        cx.paint_quad(quad(
+                            bounds,
+                            Corners::default(),
+                            color,
+                            Edges {
+                                top: Pixels::ZERO,
+                                right: px(1.),
+                                bottom: Pixels::ZERO,
+                                left: px(1.),
+                            },
+                            cx.theme().colors().scrollbar_thumb_border,
+                        ));
                     }
-                    let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.left(), start_y),
-                        point(scrollbar_layout.hitbox.right(), end_y),
-                    );
-
-                    let color = match hunk.status() {
-                        DiffHunkStatus::Added => cx.theme().status().created,
-                        DiffHunkStatus::Modified => cx.theme().status().modified,
-                        DiffHunkStatus::Removed => cx.theme().status().deleted,
-                    };
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        color,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
                 }
-            }
 
-            if is_singleton && scrollbar_settings.diagnostics {
-                let max_point = layout
-                    .position_map
-                    .snapshot
-                    .display_snapshot
-                    .buffer_snapshot
-                    .max_point();
-
-                let diagnostics = layout
-                    .position_map
-                    .snapshot
-                    .buffer_snapshot
-                    .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
-                    // We want to sort by severity, in order to paint the most severe diagnostics last.
-                    .sorted_by_key(|diagnostic| std::cmp::Reverse(diagnostic.diagnostic.severity));
-
-                for diagnostic in diagnostics {
-                    let start_display = diagnostic
-                        .range
-                        .start
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = diagnostic
-                        .range
-                        .end
-                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
-                    let mut end_y = if diagnostic.range.start == diagnostic.range.end {
-                        scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
-                    } else {
-                        scrollbar_layout.y_for_row(end_display.row() as f32)
-                    };
-
-                    if end_y - start_y < px(1.) {
-                        end_y = start_y + px(1.);
-                    }
-                    let bounds = Bounds::from_corners(
-                        point(scrollbar_layout.hitbox.left(), start_y),
-                        point(scrollbar_layout.hitbox.right(), end_y),
-                    );
-
-                    let color = match diagnostic.diagnostic.severity {
-                        DiagnosticSeverity::ERROR => cx.theme().status().error,
-                        DiagnosticSeverity::WARNING => cx.theme().status().warning,
-                        DiagnosticSeverity::INFORMATION => cx.theme().status().info,
-                        _ => cx.theme().status().hint,
-                    };
-                    cx.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
-                        color,
-                        Edges {
-                            top: Pixels::ZERO,
-                            right: px(1.),
-                            bottom: Pixels::ZERO,
-                            left: px(1.),
-                        },
-                        cx.theme().colors().scrollbar_thumb_border,
-                    ));
-                }
-            }
-
-            cx.paint_quad(quad(
-                thumb_bounds,
-                Corners::default(),
-                cx.theme().colors().scrollbar_thumb_background,
-                Edges {
-                    top: Pixels::ZERO,
-                    right: px(1.),
-                    bottom: Pixels::ZERO,
-                    left: px(1.),
-                },
-                cx.theme().colors().scrollbar_thumb_border,
-            ));
+                cx.paint_quad(quad(
+                    thumb_bounds,
+                    Corners::default(),
+                    cx.theme().colors().scrollbar_thumb_background,
+                    Edges {
+                        top: Pixels::ZERO,
+                        right: px(1.),
+                        bottom: Pixels::ZERO,
+                        left: px(1.),
+                    },
+                    cx.theme().colors().scrollbar_thumb_border,
+                ));
+            });
         }
 
         cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout.hitbox);
@@ -2385,6 +2414,10 @@ impl EditorElement {
     }
 
     fn paint_folds(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        if layout.folds.is_empty() {
+            return;
+        }
+
         let fold_corner_radius = 0.15 * layout.position_map.line_height;
         for mut fold in mem::take(&mut layout.folds) {
             fold.hover_element.paint(cx);
