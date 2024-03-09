@@ -1011,8 +1011,8 @@ impl Render for ChatPanel {
                                         cx,
                                     )
                                 })
-                                .on_click(cx.listener(move |_, _, cx| {
-                                    cx.dispatch_action(CancelEditMessage.boxed_clone())
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.cancel_edit_message(&CancelEditMessage, cx);
                                 })),
                         ),
                 )
@@ -1050,8 +1050,8 @@ impl Render for ChatPanel {
                                                 cx,
                                             )
                                         })
-                                        .on_click(cx.listener(move |_, _, cx| {
-                                            cx.dispatch_action(CloseReplyPreview.boxed_clone())
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.close_reply_preview(&CloseReplyPreview, cx);
                                         })),
                                 ),
                         )
