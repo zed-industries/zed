@@ -3916,6 +3916,7 @@ impl Render for Workspace {
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
                         let div = div()
+                            .occlude()
                             .absolute()
                             .overflow_hidden()
                             .border_color(colors.border)
