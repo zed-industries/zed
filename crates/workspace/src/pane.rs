@@ -1302,6 +1302,7 @@ impl Pane {
             TabContentParams {
                 detail: Some(detail),
                 selected: is_active,
+                preview: false,
             },
             cx,
         );
@@ -2672,6 +2673,7 @@ impl Render for DraggedTab {
             TabContentParams {
                 detail: Some(self.detail),
                 selected: false,
+                preview: false,
             },
             cx,
         );

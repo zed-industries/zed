@@ -102,6 +102,7 @@ pub struct BreadcrumbText {
 pub struct TabContentParams {
     pub detail: Option<usize>,
     pub selected: bool,
+    pub preview: bool,
 }
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
