@@ -448,7 +448,7 @@ impl Element for InteractiveText {
                         let hitbox = hitbox.clone();
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
                         cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                            if phase == DispatchPhase::Bubble && dbg!(hitbox.is_hovered(cx)) {
+                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                                 if let Some(mouse_up_index) =
                                     text_state.index_for_position(bounds, event.position)
                                 {

@@ -1418,6 +1418,7 @@ impl Interactivity {
                     cx.with_text_style(style.text_style().cloned(), |cx| {
                         cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                             if let Some(hitbox) = hitbox {
+                                #[cfg(debug_assertions)]
                                 self.paint_debug_info(hitbox, &style, cx);
 
                                 if !cx.has_active_drag() {
@@ -1451,8 +1452,8 @@ impl Interactivity {
         );
     }
 
+    #[cfg(debug_assertions)]
     fn paint_debug_info(&mut self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
-        #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(cx)
