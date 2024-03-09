@@ -500,6 +500,10 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
+    fn set_preview_item_id(&mut self, tab_id: Option<EntityId>) {
+        self.preview_item_id = tab_id;
+    }
+
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
@@ -527,7 +531,7 @@ impl Pane {
             if let Some(preview_item_id) = self.preview_item_id {
                 if let Some(tab) = self.items.get(index) {
                     if tab.item_id() == preview_item_id && !allow_preview {
-                        self.preview_item_id = None;
+                        self.set_preview_item_id(None);
                     }
                 }
             }
@@ -544,9 +548,9 @@ impl Pane {
             let new_item = build_item(cx);
             self.add_item(new_item.clone(), true, focus_item, None, cx);
             if allow_preview {
-                self.preview_item_id = Some(new_item.item_id());
+                self.set_preview_item_id(Some(new_item.item_id()));
             } else {
-                self.preview_item_id = None;
+                self.set_preview_item_id(None);
             }
 
             new_item
@@ -648,7 +652,7 @@ impl Pane {
             cx.notify();
         }
 
-        self.preview_item_id = Some(item.item_id());
+        self.set_preview_item_id(Some(item.item_id()));
 
         cx.emit(Event::AddItem { item });
     }
@@ -1383,7 +1387,7 @@ impl Pane {
                 cx.listener(move |pane, event: &MouseDownEvent, _| {
                     if let Some(id) = pane.preview_item_id {
                         if id == item_id && event.click_count > 1 {
-                            pane.preview_item_id = None;
+                            pane.set_preview_item_id(None);
                         }
                     }
                 }),
@@ -1702,7 +1706,7 @@ impl Pane {
         let item_id = dragged_tab.item.item_id();
         if let Some(preview_item_id) = self.preview_item_id {
             if item_id == preview_item_id {
-                self.preview_item_id = None;
+                self.set_preview_item_id(None);
             }
         }
 
