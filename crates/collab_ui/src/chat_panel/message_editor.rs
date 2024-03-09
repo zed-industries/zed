@@ -36,7 +36,7 @@ pub struct MessageEditor {
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
-    pub reply_to_message_id: Option<u64>,
+    reply_to_message_id: Option<u64>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
