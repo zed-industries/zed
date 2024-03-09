@@ -14,6 +14,8 @@
   (list_marker_parenthesis)
 ] @punctuation.list_marker
 
+(emphasis_delimiter) @punctuation.delimiter
+
 (code_span) @text.literal
 
 (fenced_code_block
