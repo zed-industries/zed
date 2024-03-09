@@ -252,7 +252,7 @@ impl Interactivity {
                     (listener)(
                         &DragMoveEvent {
                             event: event.clone(),
-                            bounds: hitbox.bounds.clone(),
+                            bounds: hitbox.bounds,
                             drag: PhantomData,
                         },
                         cx,

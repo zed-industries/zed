@@ -181,10 +181,10 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 return;
             };
 
-            let attach = this.attach.clone();
+            let attach = this.attach;
             let menu = element_state.menu.clone();
             let position = element_state.position.clone();
-            let child_layout_id = before_layout.child_layout_id.clone();
+            let child_layout_id = before_layout.child_layout_id;
             let child_bounds = cx.layout_bounds(child_layout_id.unwrap());
 
             let hitbox_id = hitbox.id;
@@ -202,8 +202,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
                     cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                         if modal.focus_handle(cx).contains_focused(cx) {
-                            if previous_focus_handle.is_some() {
-                                cx.focus(previous_focus_handle.as_ref().unwrap())
+                            if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
+                                cx.focus(previous_focus_handle);
                             }
                         }
                         *menu2.borrow_mut() = None;
@@ -212,8 +212,12 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                     .detach();
                     cx.focus_view(&new_menu);
                     *menu.borrow_mut() = Some(new_menu);
-                    *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
-                        attach.unwrap().corner(child_bounds)
+                    *position.borrow_mut() = if child_layout_id.is_some() {
+                        if let Some(attach) = attach {
+                            attach.corner(child_bounds)
+                        } else {
+                            cx.mouse_position()
+                        }
                     } else {
                         cx.mouse_position()
                     };

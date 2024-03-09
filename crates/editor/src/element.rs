@@ -723,6 +723,7 @@ impl EditorElement {
         (selections, active_rows, newest_selection_head)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_folds(
         &self,
         snapshot: &EditorSnapshot,
@@ -786,6 +787,7 @@ impl EditorElement {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_cursors(
         &self,
         snapshot: &EditorSnapshot,
@@ -965,6 +967,7 @@ impl EditorElement {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_gutter_fold_indicators(
         &self,
         fold_statuses: Vec<Option<(FoldStatus, u32, bool)>>,
@@ -1539,6 +1542,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_context_menu(
         &self,
         line_height: Pixels,
@@ -1601,6 +1605,7 @@ impl EditorElement {
         Some(element)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_hover_popovers(
         &self,
         snapshot: &EditorSnapshot,
@@ -1810,10 +1815,8 @@ impl EditorElement {
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
-                for fold_indicator in &mut layout.fold_indicators {
-                    if let Some(fold_indicator) = fold_indicator {
-                        fold_indicator.paint(cx);
-                    }
+                for fold_indicator in layout.fold_indicators.iter_mut().flatten() {
+                    fold_indicator.paint(cx);
                 }
             });
 

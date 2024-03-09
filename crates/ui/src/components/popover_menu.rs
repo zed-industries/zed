@@ -147,7 +147,7 @@ impl<M> Clone for PopoverMenuElementState<M> {
     fn clone(&self) -> Self {
         Self {
             menu: Rc::clone(&self.menu),
-            child_bounds: self.child_bounds.clone(),
+            child_bounds: self.child_bounds,
         }
     }
 }
