@@ -324,7 +324,7 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //TODO linux
+    //todo(linux)
     fn app_path(&self) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::app_path is not implemented yet",
@@ -338,7 +338,7 @@ impl Platform for LinuxPlatform {
         UtcOffset::UTC
     }
 
-    //TODO linux
+    //todo(linux)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
@@ -390,8 +390,7 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //TODO linux: add trait methods for accessing the primary selection
-
+    //todo(linux): add trait methods for accessing the primary selection
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
