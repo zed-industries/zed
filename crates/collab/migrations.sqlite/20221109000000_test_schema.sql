@@ -46,10 +46,11 @@ CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE NOT NULL,
-    "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
+    "host_user_id" INTEGER REFERENCES users (id),
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
-    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE
+    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
+    "hosted_project_id" INTEGER REFERENCES hosted_projects (id)
 );
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
 CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
@@ -247,7 +248,10 @@ CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channe
 CREATE TABLE "buffers" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    "epoch" INTEGER NOT NULL DEFAULT 0
+    "epoch" INTEGER NOT NULL DEFAULT 0,
+    "latest_operation_epoch" INTEGER,
+    "latest_operation_replica_id" INTEGER,
+    "latest_operation_lamport_timestamp" INTEGER
 );
 
 CREATE INDEX "index_buffers_on_channel_id" ON "buffers" ("channel_id");

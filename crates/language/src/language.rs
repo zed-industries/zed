@@ -5,7 +5,7 @@
 //! use Tree-sitter to provide syntax highlighting to the editor; note though that `language` doesn't perform the highlighting by itself. It only maps ranges in a buffer to colors. Treesitter is also used for buffer outlines (lists of symbols in a buffer)
 //! - Exposes [`LanguageConfig`] that describes how constructs (like brackets or line comments) should be handled by the editor for a source file of a particular language.
 //!
-//! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in it's API.
+//! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
@@ -22,6 +22,7 @@ pub mod markdown;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
@@ -35,15 +36,17 @@ use schemars::{
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use smol::future::FutureExt as _;
 use std::{
     any::Any,
     cell::RefCell,
-    ffi::OsString,
+    ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    pin::Pin,
     str,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
@@ -86,7 +89,9 @@ thread_local! {
 lazy_static! {
     static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
     static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-    static ref WASM_ENGINE: wasmtime::Engine = wasmtime::Engine::default();
+    static ref WASM_ENGINE: wasmtime::Engine = {
+        wasmtime::Engine::new(&wasmtime::Config::new()).unwrap()
+    };
 
     /// A shared grammar for plain text, exposed for reuse by downstream crates.
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
@@ -106,13 +111,53 @@ pub trait ToLspPosition {
 }
 
 /// A name of a language server.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct LanguageServerName(pub Arc<str>);
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: Model<Buffer>,
     pub range: Range<Anchor>,
+}
+
+pub struct LanguageContext {
+    pub package: Option<String>,
+    pub symbol: Option<String>,
+}
+
+pub trait LanguageContextProvider: Send + Sync {
+    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
+}
+
+/// A context provider that fills out LanguageContext without inspecting the contents.
+pub struct DefaultContextProvider;
+
+impl LanguageContextProvider for DefaultContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut AppContext,
+    ) -> gpui::Result<LanguageContext> {
+        let symbols = location
+            .buffer
+            .read(cx)
+            .snapshot()
+            .symbols_containing(location.range.start, None);
+        let symbol = symbols.and_then(|symbols| {
+            symbols.last().map(|symbol| {
+                let range = symbol
+                    .name_ranges
+                    .last()
+                    .cloned()
+                    .unwrap_or(0..symbol.text.len());
+                symbol.text[range].to_string()
+            })
+        });
+        Ok(LanguageContext {
+            package: None,
+            symbol,
+        })
+    }
 }
 
 /// Represents a Language Server, with certain cached sync properties.
@@ -120,54 +165,44 @@ pub struct Location {
 /// once at startup, and caches the results.
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
-    pub short_name: &'static str,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
+    cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
 impl CachedLspAdapter {
-    pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
-        let short_name = adapter.short_name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
 
         Arc::new(CachedLspAdapter {
             name,
-            short_name,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 
-    pub fn check_if_user_installed(
-        &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+    pub async fn get_language_server_command(
+        self: Arc<Self>,
+        language: Arc<Language>,
+        container_dir: Arc<Path>,
+        delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
-        self.adapter.check_if_user_installed(delegate, cx)
-    }
-
-    pub async fn fetch_latest_server_version(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        self.adapter.fetch_latest_server_version(delegate).await
-    }
-
-    pub fn will_fetch_server(
-        &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Result<()>>> {
-        self.adapter.will_fetch_server(delegate, cx)
+    ) -> Result<LanguageServerBinary> {
+        let cached_binary = self.cached_binary.lock().await;
+        self.adapter
+            .clone()
+            .get_language_server_command(language, container_dir, delegate, cached_binary, cx)
+            .await
     }
 
     pub fn will_start_server(
@@ -176,27 +211,6 @@ impl CachedLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Option<Task<Result<()>>> {
         self.adapter.will_start_server(delegate, cx)
-    }
-
-    pub async fn fetch_server_binary(
-        &self,
-        version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        self.adapter
-            .fetch_server_binary(version, container_dir, delegate)
-            .await
-    }
-
-    pub async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        self.adapter
-            .cached_server_binary(container_dir, delegate)
-            .await
     }
 
     pub fn can_be_reinstalled(&self) -> bool {
@@ -248,31 +262,125 @@ impl CachedLspAdapter {
     pub fn prettier_plugins(&self) -> &[&'static str] {
         self.adapter.prettier_plugins()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> Option<&FakeLspAdapter> {
+        self.adapter.as_fake()
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
 // e.g. to display a notification or fetch data from the web.
+#[async_trait]
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
-    fn which_command(
-        &self,
-        command: OsString,
-        cx: &AppContext,
-    ) -> Task<Option<(PathBuf, HashMap<String, String>)>>;
+    fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn shell_env(&self) -> HashMap<String, String>;
+    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
 }
 
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
 
-    fn short_name(&self) -> &'static str;
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        language: Arc<Language>,
+        container_dir: Arc<Path>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
+        cx: &'a mut AsyncAppContext,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        async move {
+            // First we check whether the adapter can give us a user-installed binary.
+            // If so, we do *not* want to cache that, because each worktree might give us a different
+            // binary:
+            //
+            //      worktree 1: user-installed at `.bin/gopls`
+            //      worktree 2: user-installed at `~/bin/gopls`
+            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
+            //
+            // We only want to cache when we fall back to the global one,
+            // because we don't want to download and overwrite our global one
+            // for each worktree we might have open.
+            if let Some(binary) = self.check_if_user_installed(delegate.as_ref()).await {
+                log::info!(
+                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                    language.name(),
+                    binary.path,
+                    binary.arguments
+                );
+                return Ok(binary);
+            }
 
-    fn check_if_user_installed(
+            if let Some(cached_binary) = cached_binary.as_ref() {
+                return Ok(cached_binary.clone());
+            }
+
+            if !container_dir.exists() {
+                smol::fs::create_dir_all(&container_dir)
+                    .await
+                    .context("failed to create container directory")?;
+            }
+
+            if let Some(task) = self.will_fetch_server(&delegate, cx) {
+                task.await?;
+            }
+
+            let name = self.name();
+            log::info!("fetching latest version of language server {:?}", name.0);
+            delegate.update_status(
+                name.clone(),
+                LanguageServerBinaryStatus::CheckingForUpdate,
+            );
+            let version_info = self.fetch_latest_server_version(delegate.as_ref()).await?;
+
+            log::info!("downloading language server {:?}", name.0);
+            delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
+            let mut binary = self
+                .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate.as_ref())
+                .await;
+
+            delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+
+            if let Err(error) = binary.as_ref() {
+                if let Some(prev_downloaded_binary) = self
+                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                    .await
+                {
+                    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Cached);
+                    log::info!(
+                        "failed to fetch newest version of language server {:?}. falling back to using {:?}",
+                        name.clone(),
+                        prev_downloaded_binary.path.display()
+                    );
+                    binary = Ok(prev_downloaded_binary);
+                } else {
+                    delegate.update_status(
+                        name.clone(),
+                        LanguageServerBinaryStatus::Failed {
+                            error: format!("{:?}", error),
+                        },
+                    );
+                }
+            }
+
+            if let Ok(binary) = &binary {
+                *cached_binary = Some(binary.clone());
+            }
+
+            binary
+        }
+        .boxed_local()
+    }
+
+    async fn check_if_user_installed(
         &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         None
     }
 
@@ -383,6 +491,11 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn prettier_plugins(&self) -> &[&'static str] {
         &[]
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_fake(&self) -> Option<&FakeLspAdapter> {
+        None
     }
 }
 
@@ -578,6 +691,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub prettier_plugins: Vec<&'static str>,
+    pub language_server_binary: LanguageServerBinary,
 }
 
 /// Configuration of handling bracket pairs for a given language.
@@ -654,13 +768,7 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    fake_adapter: Option<(
-        futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-        Arc<FakeLspAdapter>,
-    )>,
+    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -775,15 +883,16 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            adapters: Vec::new(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            fake_adapter: None,
+            context_provider: None,
         }
     }
 
-    pub fn lsp_adapters(&self) -> &[Arc<CachedLspAdapter>] {
-        &self.adapters
+    pub fn with_context_provider(
+        mut self,
+        provider: Option<Arc<dyn LanguageContextProvider>>,
+    ) -> Self {
+        self.context_provider = provider;
+        self
     }
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
@@ -1077,74 +1186,12 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub async fn with_lsp_adapters(mut self, lsp_adapters: Vec<Arc<dyn LspAdapter>>) -> Self {
-        for adapter in lsp_adapters {
-            self.adapters.push(CachedLspAdapter::new(adapter).await);
-        }
-        self
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn set_fake_lsp_adapter(
-        &mut self,
-        fake_lsp_adapter: Arc<FakeLspAdapter>,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        let (servers_tx, servers_rx) = futures::channel::mpsc::unbounded();
-        self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
-        let adapter = CachedLspAdapter::new(Arc::new(fake_lsp_adapter)).await;
-        self.adapters = vec![adapter];
-        servers_rx
-    }
-
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
     }
 
-    pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
-        match self.adapters.first().as_ref() {
-            Some(adapter) => &adapter.disk_based_diagnostic_sources,
-            None => &[],
-        }
-    }
-
-    pub async fn disk_based_diagnostics_progress_token(&self) -> Option<&str> {
-        for adapter in &self.adapters {
-            let token = adapter.disk_based_diagnostics_progress_token.as_deref();
-            if token.is_some() {
-                return token;
-            }
-        }
-
-        None
-    }
-
-    pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
-        for adapter in &self.adapters {
-            adapter.process_completion(completion).await;
-        }
-    }
-
-    pub async fn label_for_completion(
-        self: &Arc<Self>,
-        completion: &lsp::CompletionItem,
-    ) -> Option<CodeLabel> {
-        self.adapters
-            .first()
-            .as_ref()?
-            .label_for_completion(completion, self)
-            .await
-    }
-
-    pub async fn label_for_symbol(
-        self: &Arc<Self>,
-        name: &str,
-        kind: lsp::SymbolKind,
-    ) -> Option<CodeLabel> {
-        self.adapters
-            .first()
-            .as_ref()?
-            .label_for_symbol(name, kind, self)
-            .await
+    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+        self.context_provider.clone()
     }
 
     pub fn highlight_text<'a>(
@@ -1404,19 +1451,31 @@ impl Default for FakeLspAdapter {
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
             prettier_plugins: Vec::new(),
+            language_server_binary: LanguageServerBinary {
+                path: "/the/fake/lsp/path".into(),
+                arguments: vec![],
+                env: Default::default(),
+            },
         }
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
-impl LspAdapter for Arc<FakeLspAdapter> {
+impl LspAdapter for FakeLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "FakeLspAdapter"
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        _: Arc<Language>,
+        _: Arc<Path>,
+        _: Arc<dyn LspAdapterDelegate>,
+        _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
+        _: &'a mut AsyncAppContext,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        async move { Ok(self.language_server_binary.clone()) }.boxed_local()
     }
 
     async fn fetch_latest_server_version(
@@ -1463,6 +1522,10 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     fn prettier_plugins(&self) -> &[&'static str] {
         &self.prettier_plugins
+    }
+
+    fn as_fake(&self) -> Option<&FakeLspAdapter> {
+        Some(self)
     }
 }
 

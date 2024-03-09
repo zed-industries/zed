@@ -48,14 +48,14 @@ impl ThemeSettings {
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry.get(&theme_name).ok().is_none() {
+            if theme_registry.get(theme_name).ok().is_none() {
                 theme_name = match *system_appearance {
                     Appearance::Light => "One Light",
                     Appearance::Dark => "One Dark",
                 };
             };
 
-            if let Some(_theme) = theme_settings.switch_theme(&theme_name, cx) {
+            if let Some(_theme) = theme_settings.switch_theme(theme_name, cx) {
                 ThemeSettings::override_global(theme_settings, cx);
             }
         }
@@ -155,22 +155,31 @@ impl ThemeSelection {
     }
 }
 
+/// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
+    /// The default font size for text in the UI.
     #[serde(default)]
     pub ui_font_size: Option<f32>,
+    /// The name of a font to use for rendering in the UI.
     #[serde(default)]
     pub ui_font_family: Option<String>,
+    /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
+    /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<String>,
+    /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
+    /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
+    /// The OpenType features to enable for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_features: Option<FontFeatures>,
+    /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
 
@@ -220,7 +229,7 @@ impl ThemeSettings {
 
         let mut new_theme = None;
 
-        if let Some(theme) = themes.get(&theme).log_err() {
+        if let Some(theme) = themes.get(theme).log_err() {
             self.active_theme = theme.clone();
             new_theme = Some(theme);
         }
@@ -243,6 +252,7 @@ impl ThemeSettings {
                 .styles
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
+            base_theme.styles.player.merge(&theme_overrides.players);
             base_theme.styles.syntax = Arc::new(SyntaxTheme {
                 highlights: {
                     let mut highlights = base_theme.styles.syntax.highlights.clone();
@@ -312,13 +322,13 @@ impl settings::Settings for ThemeSettings {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
-                features: defaults.ui_font_features.clone().unwrap(),
+                features: defaults.ui_font_features.unwrap(),
                 weight: Default::default(),
                 style: Default::default(),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
-                features: defaults.buffer_font_features.clone().unwrap(),
+                features: defaults.buffer_font_features.unwrap(),
                 weight: FontWeight::default(),
                 style: FontStyle::default(),
             },
@@ -332,7 +342,7 @@ impl settings::Settings for ThemeSettings {
             theme_overrides: None,
         };
 
-        for value in user_values.into_iter().copied().cloned() {
+        for value in user_values.iter().copied().cloned() {
             if let Some(value) = value.buffer_font_family {
                 this.buffer_font.family = value.into();
             }

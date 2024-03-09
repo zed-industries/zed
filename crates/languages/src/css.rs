@@ -14,7 +14,7 @@ use std::{
 };
 use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str =
+const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -35,10 +35,6 @@ impl CssLspAdapter {
 impl LspAdapter for CssLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-css-language-server".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "css"
     }
 
     async fn fetch_latest_server_version(

@@ -12,9 +12,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
+const SERVER_PATH: &str = "node_modules/@astrojs/language-server/bin/nodeServer.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -34,10 +34,6 @@ impl AstroLspAdapter {
 impl LspAdapter for AstroLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("astro-language-server".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "astro"
     }
 
     async fn fetch_latest_server_version(
@@ -109,7 +105,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -132,7 +128,7 @@ async fn get_cached_server_binary(
                 last_version_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }

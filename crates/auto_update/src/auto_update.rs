@@ -343,8 +343,7 @@ impl AutoUpdater {
         ));
         cx.update(|cx| {
             if let Some(param) = ReleaseChannel::try_global(cx)
-                .map(|release_channel| release_channel.release_query_param())
-                .flatten()
+                .and_then(|release_channel| release_channel.release_query_param())
             {
                 url_string += "&";
                 url_string += param;

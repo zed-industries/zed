@@ -12,10 +12,6 @@ impl LspAdapter for HaskellLanguageServer {
         LanguageServerName("hls".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "hls"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

@@ -42,8 +42,8 @@ async fn test_channels(db: &Arc<Database>) {
 
     let mut members = db
         .transaction(|tx| async move {
-            let channel = db.get_channel_internal(replace_id, &*tx).await?;
-            Ok(db.get_channel_participants(&channel, &*tx).await?)
+            let channel = db.get_channel_internal(replace_id, &tx).await?;
+            db.get_channel_participants(&channel, &tx).await
         })
         .await
         .unwrap();
@@ -464,9 +464,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(public_channel_id, &*tx).await?,
+            &db.get_channel_internal(public_channel_id, &tx).await?,
             admin,
-            &*tx,
+            &tx,
         )
         .await
     })
@@ -474,9 +474,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(public_channel_id, &*tx).await?,
+            &db.get_channel_internal(public_channel_id, &tx).await?,
             member,
-            &*tx,
+            &tx,
         )
         .await
     })
@@ -517,9 +517,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(public_channel_id, &*tx).await?,
+            &db.get_channel_internal(public_channel_id, &tx).await?,
             guest,
-            &*tx,
+            &tx,
         )
         .await
     })
@@ -547,11 +547,11 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     assert!(db
         .transaction(|tx| async move {
             db.check_user_is_channel_participant(
-                &db.get_channel_internal(public_channel_id, &*tx)
+                &db.get_channel_internal(public_channel_id, &tx)
                     .await
                     .unwrap(),
                 guest,
-                &*tx,
+                &tx,
             )
             .await
         })
@@ -629,9 +629,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(zed_channel, &*tx).await.unwrap(),
+            &db.get_channel_internal(zed_channel, &tx).await.unwrap(),
             guest,
-            &*tx,
+            &tx,
         )
         .await
     })
@@ -640,11 +640,11 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     assert!(db
         .transaction(|tx| async move {
             db.check_user_is_channel_participant(
-                &db.get_channel_internal(internal_channel_id, &*tx)
+                &db.get_channel_internal(internal_channel_id, &tx)
                     .await
                     .unwrap(),
                 guest,
-                &*tx,
+                &tx,
             )
             .await
         })
@@ -653,11 +653,11 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(public_channel_id, &*tx)
+            &db.get_channel_internal(public_channel_id, &tx)
                 .await
                 .unwrap(),
             guest,
-            &*tx,
+            &tx,
         )
         .await
     })

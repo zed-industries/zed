@@ -97,9 +97,9 @@ impl<'a> Drop for ChannelPathsInsertGuard<'a> {
     }
 }
 
-fn channel_path_sorting_key<'a>(
+fn channel_path_sorting_key(
     id: ChannelId,
-    channels_by_id: &'a BTreeMap<ChannelId, Arc<Channel>>,
+    channels_by_id: &BTreeMap<ChannelId, Arc<Channel>>,
 ) -> impl Iterator<Item = (&str, ChannelId)> {
     let (parent_path, name) = channels_by_id
         .get(&id)

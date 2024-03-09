@@ -487,6 +487,7 @@ impl Vim {
                     } else {
                         FindRange::SingleLine
                     },
+                    smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -502,6 +503,7 @@ impl Vim {
                     } else {
                         FindRange::SingleLine
                     },
+                    smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
@@ -623,12 +625,15 @@ impl Settings for VimModeSetting {
     }
 }
 
-/// Controls the soft-wrapping behavior in the editor.
+/// Controls when to use system clipboard.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UseSystemClipboard {
+    /// Don't use system clipboard.
     Never,
+    /// Use system clipboard.
     Always,
+    /// Use system clipboard for yank operations.
     OnYank,
 }
 
@@ -639,12 +644,14 @@ struct VimSettings {
     // some magic where yy is system and dd is not.
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
+    pub use_smartcase_find: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
+    pub use_smartcase_find: Option<bool>,
 }
 
 impl Settings for VimSettings {

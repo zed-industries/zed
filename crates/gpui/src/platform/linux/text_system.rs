@@ -9,6 +9,8 @@ use cosmic_text::{
     fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont,
     FontSystem, SwashCache,
 };
+
+use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -71,9 +73,14 @@ impl PlatformTextSystem for LinuxTextSystem {
             .collect()
     }
 
-    // todo(linux)
     fn all_font_families(&self) -> Vec<String> {
-        Vec::new()
+        self.0
+            .read()
+            .font_system
+            .db()
+            .faces()
+            .filter_map(|face| Some(face.families.get(0)?.0.clone()))
+            .collect_vec()
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {

@@ -279,7 +279,7 @@ impl PickerDelegate for OutlineViewDelegate {
             font_size: settings.buffer_font_size(cx).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.).into(),
+            line_height: relative(1.),
             background_color: None,
             underline: None,
             strikethrough: None,

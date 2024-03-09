@@ -1,8 +1,12 @@
 use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
 use collections::{HashMap, HashSet};
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias};
+use editor::{
+    display_map::{DisplaySnapshot, ToDisplayPoint},
+    scroll::Autoscroll,
+    Bias, DisplayPoint,
+};
 use gpui::WindowContext;
-use language::Point;
+use language::{Point, Selection};
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
@@ -72,6 +76,14 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                 s.move_with(|map, selection| {
                     object.expand_selection(map, selection, around);
                     let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
+                    let mut move_selection_start_to_previous_line =
+                        |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
+                            let start = selection.start.to_offset(map, Bias::Left);
+                            if selection.start.row() > 0 {
+                                should_move_to_start.insert(selection.id);
+                                selection.start = (start - '\n'.len_utf8()).to_display_point(map);
+                            }
+                        };
                     let contains_only_newlines = map
                         .chars_at(selection.start)
                         .take_while(|(_, p)| p < &selection.end)
@@ -88,12 +100,23 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                     // at the end or start
                     if (around || object == Object::Sentence) && contains_only_newlines {
                         if end_at_newline {
-                            selection.end =
-                                (offset_range.end + '\n'.len_utf8()).to_display_point(map);
-                        } else if selection.start.row() > 0 {
-                            should_move_to_start.insert(selection.id);
-                            selection.start =
-                                (offset_range.start - '\n'.len_utf8()).to_display_point(map);
+                            move_selection_end_to_next_line(map, selection);
+                        } else {
+                            move_selection_start_to_previous_line(map, selection);
+                        }
+                    }
+
+                    // Does post-processing for the trailing newline and EOF
+                    // when not cancelled.
+                    let cancelled = around && selection.start == selection.end;
+                    if object == Object::Paragraph && !cancelled {
+                        // EOF check should be done before including a trailing newline.
+                        if ends_at_eof(map, selection) {
+                            move_selection_start_to_previous_line(map, selection);
+                        }
+
+                        if end_at_newline {
+                            move_selection_end_to_next_line(map, selection);
                         }
                     }
                 });
@@ -115,6 +138,15 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
             });
         });
     });
+}
+
+fn move_selection_end_to_next_line(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+    let end = selection.end.to_offset(map, Bias::Left);
+    selection.end = (end + '\n'.len_utf8()).to_display_point(map);
+}
+
+fn ends_at_eof(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) -> bool {
+    selection.end.to_point(map) == map.buffer_snapshot.max_point()
 }
 
 #[cfg(test)]

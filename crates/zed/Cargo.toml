@@ -2,9 +2,13 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.126.0"
+version = "0.127.0"
 publish = false
 license = "GPL-3.0-or-later"
+authors = ["Zed Team <hi@zed.dev>"]
+
+[lints]
+workspace = true
 
 [lib]
 name = "zed"
@@ -44,13 +48,11 @@ extensions_ui.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true
-fsevent.workspace = true
 futures.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
 install_cli.workspace = true
 isahc.workspace = true
-itertools.workspace = true
 journal.workspace = true
 language.workspace = true
 language_selector.workspace = true
@@ -107,7 +109,7 @@ identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-dev"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-nightly]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
@@ -115,7 +117,7 @@ identifier = "dev.zed.Zed-Nightly"
 name = "Zed Nightly"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-nightly"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
@@ -123,7 +125,7 @@ identifier = "dev.zed.Zed-Preview"
 name = "Zed Preview"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-preview"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]

@@ -1,10 +1,6 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use collections::HashMap;
 use futures::StreamExt;
@@ -13,7 +9,7 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::{SpawnInTerminal, Task, TaskId, TaskSource};
+use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// A single config file entry with the deserialized task definition.
@@ -24,7 +20,16 @@ struct StaticTask {
 }
 
 impl Task for StaticTask {
-    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal> {
+    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+        let TaskContext { cwd, env } = cx;
+        let cwd = self
+            .definition
+            .cwd
+            .clone()
+            .and_then(|path| subst::substitute(&path, &env).map(Into::into).ok())
+            .or(cwd);
+        let mut definition_env = self.definition.env.clone();
+        definition_env.extend(env);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
@@ -33,8 +38,7 @@ impl Task for StaticTask {
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),
-            env: self.definition.env.clone(),
-            separate_shell: false,
+            env: definition_env,
         })
     }
 
@@ -46,7 +50,7 @@ impl Task for StaticTask {
         &self.id
     }
 
-    fn cwd(&self) -> Option<&Path> {
+    fn cwd(&self) -> Option<&str> {
         self.definition.cwd.as_deref()
     }
 }
@@ -73,7 +77,7 @@ pub(crate) struct Definition {
     pub env: HashMap<String, String>,
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,
@@ -97,7 +101,7 @@ impl DefinitionProvider {
         serde_json_lenient::to_value(schema).unwrap()
     }
 }
-/// A Wrapper around deserializable T that keeps track of it's contents
+/// A Wrapper around deserializable T that keeps track of its contents
 /// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
 /// notified.
 struct TrackedFile<T> {

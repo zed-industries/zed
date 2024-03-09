@@ -241,7 +241,7 @@ impl ListState {
             let mut cursor = state.items.cursor::<ListItemSummary>();
             cursor.seek(&Count(ix + 1), Bias::Right, &());
             let bottom = cursor.start().height + padding.top;
-            let goal_top = px(0.).max(bottom - height);
+            let goal_top = px(0.).max(bottom - height + padding.bottom);
 
             cursor.seek(&Height(goal_top), Bias::Left, &());
             let start_ix = cursor.start().count;

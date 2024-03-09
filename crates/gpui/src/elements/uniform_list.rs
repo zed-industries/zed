@@ -7,7 +7,7 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
     ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
-    Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -74,6 +74,7 @@ pub struct UniformList {
 /// This should be stored in your view and passed to the uniform_list on each frame.
 #[derive(Clone, Default)]
 pub struct UniformListScrollHandle {
+    base_handle: ScrollHandle,
     deferred_scroll_to_item: Rc<RefCell<Option<usize>>>,
 }
 
@@ -81,6 +82,7 @@ impl UniformListScrollHandle {
     /// Create a new scroll handle to bind to a uniform list.
     pub fn new() -> Self {
         Self {
+            base_handle: ScrollHandle::new(),
             deferred_scroll_to_item: Rc::new(RefCell::new(None)),
         }
     }
@@ -221,10 +223,10 @@ impl Element for UniformList {
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
-                        if item_top < scroll_top {
-                            updated_scroll_offset.y = -item_top;
-                        } else if item_bottom > scroll_top + list_height {
-                            updated_scroll_offset.y = -(item_bottom - list_height);
+                        if item_top < scroll_top + padding.top {
+                            updated_scroll_offset.y = -(item_top) + padding.top;
+                        } else if item_bottom > scroll_top + list_height - padding.bottom {
+                            updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
                         scroll_offset = *updated_scroll_offset;
                     }
@@ -299,6 +301,7 @@ impl UniformList {
 
     /// Track and render scroll state of this list with reference to the given scroll handle.
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
+        self.interactivity.scroll_handle = Some(handle.base_handle.clone());
         self.scroll_handle = Some(handle);
         self
     }

@@ -160,7 +160,7 @@ impl TestAppContext {
     /// Gives you an `&AppContext` for the duration of the closure
     pub fn read<R>(&self, f: impl FnOnce(&AppContext) -> R) -> R {
         let cx = self.app.borrow();
-        f(&*cx)
+        f(&cx)
     }
 
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
@@ -331,11 +331,11 @@ impl TestAppContext {
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
-            .split(" ")
+            .split(' ')
             .map(Keystroke::parse)
             .map(Result::unwrap)
         {
-            self.dispatch_keystroke(window, keystroke.into());
+            self.dispatch_keystroke(window, keystroke);
         }
 
         self.background_executor.run_until_parked()
@@ -347,7 +347,7 @@ impl TestAppContext {
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
-            self.dispatch_keystroke(window, keystroke.into());
+            self.dispatch_keystroke(window, keystroke);
         }
 
         self.background_executor.run_until_parked()
@@ -575,7 +575,7 @@ pub struct VisualTestContext {
     window: AnyWindowHandle,
 }
 
-impl<'a> VisualTestContext {
+impl VisualTestContext {
     /// Get the underlying window handle underlying this context.
     pub fn handle(&self) -> AnyWindowHandle {
         self.window

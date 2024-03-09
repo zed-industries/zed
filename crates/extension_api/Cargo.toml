@@ -1,0 +1,17 @@
+[package]
+name = "zed_extension_api"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/extension_api.rs"
+
+[dependencies]
+wit-bindgen = "0.18"
+
+[package.metadata.component]
+target = { path = "wit" }

@@ -4,9 +4,7 @@
 [
   {
     "label": "Example task",
-    "command": "bash",
-    // rest of the parameters are optional
-    "args": ["-c", "for i in {1..5}; do echo \"Hello $i/5\"; sleep 1; done"],
+    "command": "for i in {1..5}; do echo \"Hello $i/5\"; sleep 1; done",
     // Env overrides for the command, will be appended to the terminal's environment from the settings.
     "env": { "foo": "bar" },
     // Current working directory to spawn the command into, defaults to current project root.

@@ -43,7 +43,7 @@ impl<T> Outline<T> {
             let candidate_text = item
                 .name_ranges
                 .iter()
-                .map(|range| &item.text[range.start as usize..range.end as usize])
+                .map(|range| &item.text[range.start..range.end])
                 .collect::<String>();
 
             path_candidates.push(StringMatchCandidate::new(id, path_text.clone()));
@@ -97,11 +97,11 @@ impl<T> Outline<T> {
                 let mut name_range = name_ranges.next().unwrap();
                 let mut preceding_ranges_len = 0;
                 for position in &mut string_match.positions {
-                    while *position >= preceding_ranges_len + name_range.len() as usize {
+                    while *position >= preceding_ranges_len + name_range.len() {
                         preceding_ranges_len += name_range.len();
                         name_range = name_ranges.next().unwrap();
                     }
-                    *position = name_range.start as usize + (*position - preceding_ranges_len);
+                    *position = name_range.start + (*position - preceding_ranges_len);
                 }
             }
 

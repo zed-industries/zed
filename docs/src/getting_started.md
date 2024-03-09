@@ -8,7 +8,7 @@ You can obtain the release build via the [download page](https://zed.dev/downloa
 
 ## Configure Zed
 
-Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings and more. You can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See Configuring Zed for all available settings.
+Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings and more. You can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](https://zed.dev/docs/configuring-zed) for all available settings.
 
 ## Set up your key bindings
 

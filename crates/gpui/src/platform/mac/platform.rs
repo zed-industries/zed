@@ -5,7 +5,7 @@ use crate::{
     MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowOptions,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -496,11 +496,14 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
+        // Clippy thinks that this evaluates to `()`, for some reason.
+        #[allow(clippy::unit_arg, clippy::clone_on_copy)]
+        let renderer_context = self.0.lock().renderer_context.clone();
         Box::new(MacWindow::open(
             handle,
             options,
             self.foreground_executor(),
-            self.0.lock().renderer_context.clone(),
+            renderer_context,
         ))
     }
 
@@ -520,6 +523,49 @@ impl Platform for MacPlatform {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
+    }
+
+    fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
+        // API only available post Monterey
+        // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
+        let (done_tx, done_rx) = oneshot::channel();
+        if self.os_version().ok() < Some(SemanticVersion::new(12, 0, 0)) {
+            return Task::ready(Err(anyhow!(
+                "macOS 12.0 or later is required to register URL schemes"
+            )));
+        }
+
+        let bundle_id = unsafe {
+            let bundle: id = msg_send![class!(NSBundle), mainBundle];
+            let bundle_id: id = msg_send![bundle, bundleIdentifier];
+            if bundle_id == nil {
+                return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
+            }
+            bundle_id
+        };
+
+        unsafe {
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let scheme: id = ns_string(scheme);
+            let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+            let done_tx = Cell::new(Some(done_tx));
+            let block = ConcreteBlock::new(move |error: id| {
+                let result = if error == nil {
+                    Ok(())
+                } else {
+                    let msg: id = msg_send![error, localizedDescription];
+                    Err(anyhow!("Failed to register: {:?}", msg))
+                };
+
+                if let Some(done_tx) = done_tx.take() {
+                    let _ = done_tx.send(result);
+                }
+            });
+            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
+        }
+
+        self.background_executor()
+            .spawn(async { crate::Flatten::flatten(done_rx.await.map_err(|e| anyhow!(e))) })
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -685,6 +731,9 @@ impl Platform for MacPlatform {
                 Err(anyhow!("app is not running inside a bundle"))
             } else {
                 let version: id = msg_send![bundle, objectForInfoDictionaryKey: ns_string("CFBundleShortVersionString")];
+                if version.is_null() {
+                    bail!("bundle does not have version");
+                }
                 let len = msg_send![version, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
                 let bytes = version.UTF8String() as *const u8;
                 let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();

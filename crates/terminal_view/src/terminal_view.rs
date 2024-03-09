@@ -13,6 +13,7 @@ use gpui::{
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
+use settings::SettingsStore;
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -90,6 +91,7 @@ pub struct TerminalView {
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
     workspace_id: WorkspaceId,
+    show_title: bool,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -165,7 +167,12 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            _subscriptions: vec![focus_in, focus_out],
+            show_title: TerminalSettings::get_global(cx).toolbar.title,
+            _subscriptions: vec![
+                focus_in,
+                focus_out,
+                cx.observe_global::<SettingsStore>(Self::settings_changed),
+            ],
             _terminal_subscriptions: terminal_subscriptions,
         }
     }
@@ -206,6 +213,12 @@ impl TerminalView {
             });
 
         self.context_menu = Some((context_menu, position, subscription));
+    }
+
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        let settings = TerminalSettings::get_global(cx);
+        self.show_title = settings.toolbar.title;
+        cx.notify();
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
@@ -441,7 +454,7 @@ fn subscribe_for_terminal_events(
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
-                if !terminal.task().is_some() {
+                if terminal.task().is_none() {
                     if let Some(foreground_info) = &terminal.foreground_process_info {
                         let cwd = foreground_info.cwd.clone();
 
@@ -832,7 +845,11 @@ impl Item for TerminalView {
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+        if self.show_title {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, _: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -862,16 +879,14 @@ impl Item for TerminalView {
                 .or_else(|| {
                     cx.update(|cx| {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
-                        workspace
-                            .upgrade()
-                            .map(|workspace| {
-                                get_working_directory(workspace.read(cx), cx, strategy)
-                            })
-                            .flatten()
+                        workspace.upgrade().and_then(|workspace| {
+                            get_working_directory(workspace.read(cx), cx, strategy)
+                        })
                     })
                     .ok()
                     .flatten()
-                });
+                })
+                .filter(|cwd| !cwd.as_os_str().is_empty());
 
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(cwd, None, window, cx)
@@ -883,7 +898,7 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        if !self.terminal().read(cx).task().is_some() {
+        if self.terminal().read(cx).task().is_none() {
             cx.background_executor()
                 .spawn(TERMINAL_DB.update_workspace_id(
                     workspace.database_id(),

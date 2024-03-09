@@ -34,13 +34,13 @@ use workspace::{
     Workspace,
 };
 
-const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
+const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
     project: Model<Project>,
     fs: Arc<dyn Fs>,
-    list: UniformListScrollHandle,
+    scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
@@ -166,13 +166,7 @@ impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
-            cx.observe(&project, |this, _, cx| {
-                this.update_visible_entries(None, cx);
-                cx.notify();
-            })
-            .detach();
             let focus_handle = cx.focus_handle();
-
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
             cx.subscribe(&project, |this, project, event, cx| match event {
@@ -190,6 +184,10 @@ impl ProjectPanel {
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                project::Event::WorktreeUpdatedEntries(_, _) | project::Event::WorktreeAdded => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
@@ -226,7 +224,7 @@ impl ProjectPanel {
             let mut this = Self {
                 project: project.clone(),
                 fs: workspace.app_state().fs.clone(),
-                list: UniformListScrollHandle::new(),
+                scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
@@ -607,7 +605,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
-            let new_path = entry.path.join(&filename.trim_start_matches("/"));
+            let new_path = entry.path.join(&filename.trim_start_matches('/'));
             if path_already_exists(new_path.as_path()) {
                 return None;
             }
@@ -866,7 +864,7 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            self.list.scroll_to_item(index);
+            self.scroll_handle.scroll_to_item(index);
             cx.notify();
         }
     }
@@ -1028,7 +1026,7 @@ impl ProjectPanel {
                 cx.foreground_executor().spawn(task).detach_and_log_err(cx);
             }
 
-            Some(project.worktree_id_for_entry(destination, cx)?)
+            project.worktree_id_for_entry(destination, cx)
         });
 
         if let Some(destination_worktree) = destination_worktree {
@@ -1428,9 +1426,11 @@ impl ProjectPanel {
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                            div().h_full().w_full().child(editor.clone())
+                            h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            div().child(Label::new(file_name).color(filename_text_color))
+                            div()
+                                .h_6()
+                                .child(Label::new(file_name).color(filename_text_color))
                         }
                         .ml_1(),
                     )
@@ -1567,7 +1567,7 @@ impl Render for ProjectPanel {
                         },
                     )
                     .size_full()
-                    .track_scroll(self.list.clone()),
+                    .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     overlay()

@@ -1,15 +1,12 @@
-use std::{
-    path::Path,
-    sync::{
-        atomic::{self, AtomicBool, AtomicUsize},
-        Arc,
-    },
+use crate::{
+    rpc::RECONNECT_TIMEOUT,
+    tests::{rust_lang, TestServer},
 };
-
 use call::ActiveCall;
 use editor::{
     actions::{
-        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, ToggleCodeActions, Undo,
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, RevertSelectedHunks,
+        ToggleCodeActions, Undo,
     },
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor,
@@ -19,15 +16,21 @@ use gpui::{TestAppContext, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
-    tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    FakeLspAdapter,
 };
+use project::SERVER_PROGRESS_DEBOUNCE_TIMEOUT;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
+use std::{
+    path::Path,
+    sync::{
+        atomic::{self, AtomicBool, AtomicUsize},
+        Arc,
+    },
+};
 use text::Point;
 use workspace::Workspace;
-
-use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -265,20 +268,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
@@ -288,9 +281,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -455,19 +447,10 @@ async fn test_collaborating_with_code_actions(
     cx_b.update(editor::init);
 
     // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry().add(Arc::new(language));
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
 
     client_a
         .fs()
@@ -671,19 +654,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     cx_b.update(editor::init);
 
     // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                     prepare_provider: Some(true),
@@ -692,9 +666,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -858,25 +831,14 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     cx_b.update(editor::init);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             name: "the-language-server",
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -905,6 +867,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             },
         )),
     });
+    executor.advance_clock(SERVER_PROGRESS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, _| {
@@ -938,6 +901,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             },
         )),
     });
+    executor.advance_clock(SERVER_PROGRESS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, _| {
@@ -1152,20 +1116,10 @@ async fn test_on_input_format_from_host_to_guest(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
                     first_trigger_character: ":".to_string(),
@@ -1174,9 +1128,8 @@ async fn test_on_input_format_from_host_to_guest(
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -1283,20 +1236,10 @@ async fn test_on_input_format_from_guest_to_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
                     first_trigger_character: ":".to_string(),
@@ -1305,9 +1248,8 @@ async fn test_on_input_format_from_guest_to_host(
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
+        },
+    );
 
     client_a
         .fs()
@@ -1450,29 +1392,18 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         });
     });
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    let language = Arc::new(language);
-    client_a.language_registry().add(Arc::clone(&language));
-    client_b.language_registry().add(language);
+        },
+    );
 
     // Client A opens a project.
     client_a
@@ -1723,29 +1654,18 @@ async fn test_inlay_hint_refresh_is_forwarded(
         });
     });
 
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        }))
-        .await;
-    let language = Arc::new(language);
-    client_a.language_registry().add(Arc::clone(&language));
-    client_b.language_registry().add(language);
+        },
+    );
 
     client_a
         .fs()
@@ -1893,6 +1813,171 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
+}
+
+#[gpui::test]
+async fn test_multiple_types_reverts(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+
+    let base_text = indoc! {r#"struct Row;
+struct Row1;
+struct Row2;
+
+struct Row4;
+struct Row5;
+struct Row6;
+
+struct Row8;
+struct Row9;
+struct Row10;"#};
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "main.rs": base_text,
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let mut editor_cx_a = EditorTestContext {
+        cx: cx_a.clone(),
+        window: cx_a.handle(),
+        editor: editor_a,
+        assertion_cx: AssertionContextManager::new(),
+    };
+    let mut editor_cx_b = EditorTestContext {
+        cx: cx_b.clone(),
+        window: cx_b.handle(),
+        editor: editor_b,
+        assertion_cx: AssertionContextManager::new(),
+    };
+
+    // host edits the file, that differs from the base text, producing diff hunks
+    editor_cx_a.set_state(indoc! {r#"struct Row;
+        struct Row0.1;
+        struct Row0.2;
+        struct Row1;
+
+        struct Row4;
+        struct Row5444;
+        struct Row6;
+
+        struct Row9;
+        struct Row1220;ˇ"#});
+    editor_cx_a.update_editor(|editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_diff_base(Some(base_text.to_string()), cx);
+            });
+    });
+    editor_cx_b.update_editor(|editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_diff_base(Some(base_text.to_string()), cx);
+            });
+    });
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    // client, selects a range in the updated buffer, and reverts it
+    // both host and the client observe the reverted state (with one hunk left, not covered by client's selection)
+    editor_cx_b.set_selections_state(indoc! {r#"«ˇstruct Row;
+        struct Row0.1;
+        struct Row0.2;
+        struct Row1;
+
+        struct Row4;
+        struct Row5444;
+        struct Row6;
+
+        struct R»ow9;
+        struct Row1220;"#});
+    editor_cx_b.update_editor(|editor, cx| {
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    });
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+    editor_cx_a.assert_editor_state(indoc! {r#"struct Row;
+        struct Row1;
+        struct Row2;
+
+        struct Row4;
+        struct Row5;
+        struct Row6;
+
+        struct Row8;
+        struct Row9;
+        struct Row1220;ˇ"#});
+    editor_cx_b.assert_editor_state(indoc! {r#"«ˇstruct Row;
+        struct Row1;
+        struct Row2;
+
+        struct Row4;
+        struct Row5;
+        struct Row6;
+
+        struct Row8;
+        struct R»ow9;
+        struct Row1220;"#});
 }
 
 fn extract_hint_labels(editor: &Editor) -> Vec<String> {

@@ -1408,7 +1408,7 @@ impl LspCommand for GetHover {
         if let Some(range) = range.as_ref() {
             buffer
                 .update(&mut cx, |buffer, _| {
-                    buffer.wait_for_anchors([range.start.clone(), range.end.clone()])
+                    buffer.wait_for_anchors([range.start, range.end])
                 })?
                 .await?;
         }
@@ -1472,6 +1472,12 @@ impl LspCommand for GetCompletions {
             Default::default()
         };
 
+        let language_server_adapter = project
+            .update(&mut cx, |project, _cx| {
+                project.language_server_adapter_for_id(server_id)
+            })?
+            .ok_or_else(|| anyhow!("no such language server"))?;
+
         let completions = buffer.update(&mut cx, |buffer, cx| {
             let language_registry = project.read(cx).languages().clone();
             let language = buffer.language().cloned();
@@ -1517,7 +1523,7 @@ impl LspCommand for GetCompletions {
                                 });
 
                             let range = if let Some(range) = default_edit_range {
-                                let range = range_from_lsp(range.clone());
+                                let range = range_from_lsp(*range);
                                 let start = snapshot.clip_point_utf16(range.start, Bias::Left);
                                 let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                 if start != range.start.0 || end != range.end.0 {
@@ -1559,12 +1565,17 @@ impl LspCommand for GetCompletions {
 
                     let language_registry = language_registry.clone();
                     let language = language.clone();
+                    let language_server_adapter = language_server_adapter.clone();
                     LineEnding::normalize(&mut new_text);
                     Some(async move {
                         let mut label = None;
-                        if let Some(language) = language.as_ref() {
-                            language.process_completion(&mut lsp_completion).await;
-                            label = language.label_for_completion(&lsp_completion).await;
+                        if let Some(language) = &language {
+                            language_server_adapter
+                                .process_completion(&mut lsp_completion)
+                                .await;
+                            label = language_server_adapter
+                                .label_for_completion(&lsp_completion, language)
+                                .await;
                         }
 
                         let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
@@ -1651,7 +1662,7 @@ impl LspCommand for GetCompletions {
     async fn response_from_proto(
         self,
         message: proto::GetCompletionsResponse,
-        _: Model<Project>,
+        project: Model<Project>,
         buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Completion>> {
@@ -1662,8 +1673,13 @@ impl LspCommand for GetCompletions {
             .await?;
 
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
         let completions = message.completions.into_iter().map(|completion| {
-            language::proto::deserialize_completion(completion, language.clone())
+            language::proto::deserialize_completion(
+                completion,
+                language.clone(),
+                &language_registry,
+            )
         });
         future::try_join_all(completions).await
     }
@@ -1815,6 +1831,19 @@ impl LspCommand for GetCodeActions {
 
     fn buffer_id_from_proto(message: &proto::GetCodeActions) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+impl GetCodeActions {
+    pub fn can_resolve_actions(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_action_provider
+            .as_ref()
+            .and_then(|options| match options {
+                lsp::CodeActionProviderCapability::Simple(_is_supported) => None,
+                lsp::CodeActionProviderCapability::Options(options) => options.resolve_provider,
+            })
+            .unwrap_or(false)
     }
 }
 

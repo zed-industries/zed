@@ -16,6 +16,7 @@ use gpui::{
     actions, point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, Task, WindowBounds,
     WindowContext, WindowKind, WindowOptions,
 };
+use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
@@ -31,6 +32,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     CollaborationPanelSettings::register(cx);
     ChatPanelSettings::register(cx);
     NotificationPanelSettings::register(cx);
+    MessageEditorSettings::register(cx);
 
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);

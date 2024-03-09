@@ -20,11 +20,12 @@ arch="x86_64-apple-darwin"
 if [[ "$cpu_type" == *ARM-64* ]]; then
     arch="aarch64-apple-darwin"
 fi
+echo $bundle_id;
 
 channel="stable"
-if [[ "$bundle_id" == *nightly* ]]; then
+if [[ "$bundle_id" == *Nightly* ]]; then
     channel="nightly"
-elif [[ "$bundle_id" == *preview* ]]; then
+elif [[ "$bundle_id" == *Preview* ]]; then
     channel="preview"
 fi
 

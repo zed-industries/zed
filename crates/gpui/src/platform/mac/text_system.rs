@@ -51,13 +51,19 @@ const kCGImageAlphaOnly: u32 = 7;
 
 pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct FontKey {
+    font_family: SharedString,
+    font_features: FontFeatures,
+}
+
 struct MacTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
-    font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
+    font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
@@ -69,7 +75,7 @@ impl MacTextSystem {
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
-            font_ids_by_family_name: HashMap::default(),
+            font_ids_by_font_key: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
         }))
     }
@@ -115,14 +121,16 @@ impl PlatformTextSystem for MacTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
-            {
+            let font_key = FontKey {
+                font_family: font.family.clone(),
+                font_features: font.features,
+            };
+            let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
                 let font_ids = lock.load_family(&font.family, font.features)?;
-                lock.font_ids_by_family_name
-                    .insert(font.family.clone(), font_ids);
-                lock.font_ids_by_family_name[&font.family].as_ref()
+                lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
+                lock.font_ids_by_font_key[&font_key].as_ref()
             };
 
             let candidate_properties = candidates

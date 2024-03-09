@@ -271,7 +271,13 @@ mod tests {
     async fn test_project_symbols(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let mut language = Language::new(
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
+
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: LanguageMatcher {
@@ -281,16 +287,9 @@ mod tests {
                 ..Default::default()
             },
             None,
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::<FakeLspAdapter>::default())
-            .await;
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
-
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+        )));
+        let mut fake_servers =
+            language_registry.register_fake_lsp_adapter("Rust", FakeLspAdapter::default());
 
         let _buffer = project
             .update(cx, |project, cx| {

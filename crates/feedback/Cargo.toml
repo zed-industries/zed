@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/feedback.rs"
 
@@ -13,7 +16,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-bitflags = "2.4.1"
+bitflags.workspace = true
 client.workspace = true
 db.workspace = true
 editor.workspace = true

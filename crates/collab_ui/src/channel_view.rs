@@ -171,10 +171,8 @@ impl ChannelView {
                 let this = this.clone();
                 Some(ui::ContextMenu::build(cx, move |menu, _| {
                     menu.entry("Copy link to section", None, move |cx| {
-                        this.update(cx, |this, cx| {
-                            this.copy_link_for_position(position.clone(), cx)
-                        })
-                        .ok();
+                        this.update(cx, |this, cx| this.copy_link_for_position(position, cx))
+                            .ok();
                     })
                 }))
             });
@@ -267,7 +265,7 @@ impl ChannelView {
             return;
         };
 
-        let link = channel.notes_link(closest_heading.map(|heading| heading.text));
+        let link = channel.notes_link(closest_heading.map(|heading| heading.text), cx);
         cx.write_to_clipboard(ClipboardItem::new(link));
         self.workspace
             .update(cx, |workspace, cx| {
@@ -378,7 +376,7 @@ impl Item for ChannelView {
                 (_, false) => format!("#{} (disconnected)", channel.name),
             }
         } else {
-            format!("channel notes (disconnected)")
+            "channel notes (disconnected)".to_string()
         };
         Label::new(label)
             .color(if selected {

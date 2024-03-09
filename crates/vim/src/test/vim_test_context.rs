@@ -90,7 +90,7 @@ impl VimTestContext {
         T: 'static,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
     {
-        let window = self.window.clone();
+        let window = self.window;
         self.update_window(window, move |_, cx| view.update(cx, update))
             .unwrap()
     }
@@ -157,6 +157,19 @@ impl VimTestContext {
         self.cx.simulate_keystrokes(keystrokes);
         self.cx.assert_editor_state(state_after);
         assert_eq!(self.mode(), mode_after, "{}", self.assertion_context());
+        assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
+    }
+
+    pub fn assert_binding_normal<const COUNT: usize>(
+        &mut self,
+        keystrokes: [&str; COUNT],
+        initial_state: &str,
+        state_after: &str,
+    ) {
+        self.set_state(initial_state, Mode::Normal);
+        self.cx.simulate_keystrokes(keystrokes);
+        self.cx.assert_editor_state(state_after);
+        assert_eq!(self.mode(), Mode::Normal, "{}", self.assertion_context());
         assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
     }
 }

@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/welcome.rs"
 
@@ -14,6 +17,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+copilot_ui.workspace = true
 db.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true

@@ -5,11 +5,12 @@ mod open_listener;
 pub use app_menus::*;
 use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
+use client::ZED_URL_SCHEME;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions, View,
-    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
+    TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -38,11 +39,11 @@ use util::{
 use uuid::Uuid;
 use vim::VimModeSetting;
 use welcome::BaseKeymap;
-use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
+    open_new, AppState, NewFile, NewWindow, Toast, Workspace, WorkspaceSettings,
 };
+use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
@@ -129,13 +130,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
-        let feedback_button =
-            cx.new_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
-        let cursor_position = cx.new_view(|_| editor::items::CursorPosition::new());
+        let cursor_position =
+            cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-            status_bar.add_right_item(feedback_button, cx);
             status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
@@ -232,7 +231,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.toggle_full_screen();
             })
             .register_action(|_, action: &OpenZedUrl, cx| {
-                OpenListener::global(cx).open_urls(&[action.url.clone()])
+                OpenListener::global(cx).open_urls(vec![action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
             .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
@@ -243,12 +242,50 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
             .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
             .register_action(|_, _: &install_cli::Install, cx| {
-                cx.spawn(|_, cx| async move {
-                    install_cli::install_cli(cx.deref())
+                cx.spawn(|workspace, mut cx| async move {
+                    let path = install_cli::install_cli(cx.deref())
                         .await
-                        .context("error creating CLI symlink")
+                        .context("error creating CLI symlink")?;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_toast(
+                            Toast::new(
+                                0,
+                                format!(
+                                    "Installed `zed` to {}. You can launch {} from your terminal.",
+                                    path.to_string_lossy(),
+                                    ReleaseChannel::global(cx).display_name()
+                                ),
+                            ),
+                            cx,
+                        )
+                    })?;
+                    register_zed_scheme(&cx).await.log_err();
+                    Ok(())
                 })
-                .detach_and_log_err(cx);
+                .detach_and_prompt_err("Error installing zed cli", cx, |_, _| None);
+            })
+            .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
+                cx.spawn(|workspace, mut cx| async move {
+                    register_zed_scheme(&cx).await?;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_toast(
+                            Toast::new(
+                                0,
+                                format!(
+                                    "zed:// links will now open in {}.",
+                                    ReleaseChannel::global(cx).display_name()
+                                ),
+                            ),
+                            cx,
+                        )
+                    })?;
+                    Ok(())
+                })
+                .detach_and_prompt_err(
+                    "Error registering zed:// scheme",
+                    cx,
+                    |_, _| None,
+                );
             })
             .register_action(|workspace, _: &OpenLog, cx| {
                 open_log_file(workspace, cx);
@@ -360,7 +397,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewWindow, cx| {
                     if let Some(app_state) = app_state.upgrade() {
-                        open_new(&app_state, cx, |workspace, cx| {
+                        open_new(app_state, cx, |workspace, cx| {
                             Editor::new_file(workspace, &Default::default(), cx)
                         })
                         .detach();
@@ -371,7 +408,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewFile, cx| {
                     if let Some(app_state) = app_state.upgrade() {
-                        open_new(&app_state, cx, |workspace, cx| {
+                        open_new(app_state, cx, |workspace, cx| {
                             Editor::new_file(workspace, &Default::default(), cx)
                         })
                         .detach();
@@ -561,7 +598,7 @@ pub fn handle_keymap_file_changes(
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
         if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
-            old_base_keymap = new_base_keymap.clone();
+            old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
             base_keymap_tx.unbounded_send(()).unwrap();
         }
@@ -872,7 +909,7 @@ mod tests {
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
-                &app_state,
+                app_state.clone(),
                 None,
                 cx,
             )
@@ -881,7 +918,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], app_state.clone(), None, cx))
             .await
             .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
@@ -903,7 +940,7 @@ mod tests {
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
-                &app_state,
+                app_state.clone(),
                 None,
                 cx,
             )
@@ -919,7 +956,7 @@ mod tests {
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
-                &app_state,
+                app_state,
                 Some(window),
                 cx,
             )
@@ -956,7 +993,7 @@ mod tests {
             .insert_tree("/root", json!({"a": "hey"}))
             .await;
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], app_state.clone(), None, cx))
             .await
             .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
@@ -1023,7 +1060,7 @@ mod tests {
         assert!(!window_is_edited(window, cx));
 
         // Opening the buffer again doesn't impact the window's edited state.
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], app_state, None, cx))
             .await
             .unwrap();
         let editor = window
@@ -1061,7 +1098,7 @@ mod tests {
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         cx.update(|cx| {
-            open_new(&app_state, cx, |workspace, cx| {
+            open_new(app_state.clone(), cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })
@@ -1252,7 +1289,7 @@ mod tests {
             )
             .await;
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], app_state, None, cx))
             .await
             .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
@@ -1486,7 +1523,7 @@ mod tests {
             Path::new("/root/excluded_dir/ignored_subdir").to_path_buf(),
         ];
         let (opened_workspace, new_items) = cx
-            .update(|cx| workspace::open_paths(&paths_to_open, &app_state, None, cx))
+            .update(|cx| workspace::open_paths(&paths_to_open, app_state, None, cx))
             .await
             .unwrap();
 
@@ -1594,7 +1631,7 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_file("/root/a.txt", "changed".to_string())
+            .insert_file("/root/a.txt", b"changed".to_vec())
             .await;
 
         cx.run_until_parked();
@@ -1979,7 +2016,7 @@ mod tests {
                     editor.newline(&Default::default(), cx);
                     editor.move_down(&Default::default(), cx);
                     editor.move_down(&Default::default(), cx);
-                    editor.save(project.clone(), cx)
+                    editor.save(true, project.clone(), cx)
                 })
             })
             .unwrap()
@@ -2845,10 +2882,10 @@ mod tests {
         ))
     }
     #[track_caller]
-    fn assert_key_bindings_for<'a>(
+    fn assert_key_bindings_for(
         window: AnyWindowHandle,
         cx: &TestAppContext,
-        actions: Vec<(&'static str, &'a dyn Action)>,
+        actions: Vec<(&'static str, &dyn Action)>,
         line: u32,
     ) {
         let available_actions = cx
@@ -2880,4 +2917,9 @@ mod tests {
             );
         }
     }
+}
+
+async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
+    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
+        .await
 }

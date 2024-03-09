@@ -20,11 +20,11 @@ pub struct FileAssociations {
 
 impl Global for FileAssociations {}
 
-const COLLAPSED_DIRECTORY_TYPE: &'static str = "collapsed_folder";
-const EXPANDED_DIRECTORY_TYPE: &'static str = "expanded_folder";
-const COLLAPSED_CHEVRON_TYPE: &'static str = "collapsed_chevron";
-const EXPANDED_CHEVRON_TYPE: &'static str = "expanded_chevron";
-pub const FILE_TYPES_ASSET: &'static str = "icons/file_icons/file_types.json";
+const COLLAPSED_DIRECTORY_TYPE: &str = "collapsed_folder";
+const EXPANDED_DIRECTORY_TYPE: &str = "expanded_folder";
+const COLLAPSED_CHEVRON_TYPE: &str = "collapsed_chevron";
+const EXPANDED_CHEVRON_TYPE: &str = "expanded_chevron";
+pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.set_global(FileAssociations::new(assets))

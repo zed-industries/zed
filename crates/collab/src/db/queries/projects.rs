@@ -57,13 +57,14 @@ impl Database {
             }
 
             let project = project::ActiveModel {
-                room_id: ActiveValue::set(participant.room_id),
-                host_user_id: ActiveValue::set(participant.user_id),
+                room_id: ActiveValue::set(Some(participant.room_id)),
+                host_user_id: ActiveValue::set(Some(participant.user_id)),
                 host_connection_id: ActiveValue::set(Some(connection.id as i32)),
                 host_connection_server_id: ActiveValue::set(Some(ServerId(
                     connection.owner_id as i32,
                 ))),
-                ..Default::default()
+                id: ActiveValue::NotSet,
+                hosted_project_id: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
@@ -153,8 +154,12 @@ impl Database {
             self.update_project_worktrees(project.id, worktrees, &tx)
                 .await?;
 
+            let room_id = project
+                .room_id
+                .ok_or_else(|| anyhow!("project not in a room"))?;
+
             let guest_connection_ids = self.project_guest_connection_ids(project.id, &tx).await?;
-            let room = self.get_room(project.room_id, &tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             Ok((room, guest_connection_ids))
         })
         .await
@@ -181,7 +186,7 @@ impl Database {
                     .update_column(worktree::Column::RootName)
                     .to_owned(),
             )
-            .exec(&*tx)
+            .exec(tx)
             .await?;
         }
 
@@ -189,7 +194,7 @@ impl Database {
             .filter(worktree::Column::ProjectId.eq(project_id).and(
                 worktree::Column::Id.is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
             ))
-            .exec(&*tx)
+            .exec(tx)
             .await?;
 
         Ok(())
@@ -382,7 +387,6 @@ impl Database {
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
                 warning_count: ActiveValue::set(summary.warning_count as i32),
-                ..Default::default()
             })
             .on_conflict(
                 OnConflict::columns([
@@ -434,7 +438,6 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
-                ..Default::default()
             })
             .on_conflict(
                 OnConflict::columns([
@@ -506,8 +509,42 @@ impl Database {
         .await
     }
 
-    /// Adds the given connection to the specified project.
-    pub async fn join_project(
+    /// Adds the given connection to the specified hosted project
+    pub async fn join_hosted_project(
+        &self,
+        id: ProjectId,
+        user_id: UserId,
+        connection: ConnectionId,
+    ) -> Result<(Project, ReplicaId)> {
+        self.transaction(|tx| async move {
+            let (project, hosted_project) = project::Entity::find_by_id(id)
+                .find_also_related(hosted_project::Entity)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("hosted project is no longer shared"))?;
+
+            let Some(hosted_project) = hosted_project else {
+                return Err(anyhow!("project is not hosted"))?;
+            };
+
+            let channel = channel::Entity::find_by_id(hosted_project.channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+
+            let role = self
+                .check_user_is_channel_participant(&channel, user_id, &tx)
+                .await?;
+
+            self.join_project_internal(project, user_id, connection, role, &tx)
+                .await
+        })
+        .await
+    }
+
+    /// Adds the given connection to the specified project
+    /// in the current room.
+    pub async fn join_project_in_room(
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
@@ -534,180 +571,240 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such project"))?;
-            if project.room_id != participant.room_id {
+            if project.room_id != Some(participant.room_id) {
                 return Err(anyhow!("no such project"))?;
             }
+            self.join_project_internal(
+                project,
+                participant.user_id,
+                connection,
+                participant.role.unwrap_or(ChannelRole::Member),
+                &tx,
+            )
+            .await
+        })
+        .await
+    }
 
-            let mut collaborators = project
+    async fn join_project_internal(
+        &self,
+        project: project::Model,
+        user_id: UserId,
+        connection: ConnectionId,
+        role: ChannelRole,
+        tx: &DatabaseTransaction,
+    ) -> Result<(Project, ReplicaId)> {
+        let mut collaborators = project
+            .find_related(project_collaborator::Entity)
+            .all(tx)
+            .await?;
+        let replica_ids = collaborators
+            .iter()
+            .map(|c| c.replica_id)
+            .collect::<HashSet<_>>();
+        let mut replica_id = ReplicaId(1);
+        while replica_ids.contains(&replica_id) {
+            replica_id.0 += 1;
+        }
+        let new_collaborator = project_collaborator::ActiveModel {
+            project_id: ActiveValue::set(project.id),
+            connection_id: ActiveValue::set(connection.id as i32),
+            connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
+            user_id: ActiveValue::set(user_id),
+            replica_id: ActiveValue::set(replica_id),
+            is_host: ActiveValue::set(false),
+            ..Default::default()
+        }
+        .insert(tx)
+        .await?;
+        collaborators.push(new_collaborator);
+
+        let db_worktrees = project.find_related(worktree::Entity).all(tx).await?;
+        let mut worktrees = db_worktrees
+            .into_iter()
+            .map(|db_worktree| {
+                (
+                    db_worktree.id as u64,
+                    Worktree {
+                        id: db_worktree.id as u64,
+                        abs_path: db_worktree.abs_path,
+                        root_name: db_worktree.root_name,
+                        visible: db_worktree.visible,
+                        entries: Default::default(),
+                        repository_entries: Default::default(),
+                        diagnostic_summaries: Default::default(),
+                        settings_files: Default::default(),
+                        scan_id: db_worktree.scan_id as u64,
+                        completed_scan_id: db_worktree.completed_scan_id as u64,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        // Populate worktree entries.
+        {
+            let mut db_entries = worktree_entry::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(worktree_entry::Column::ProjectId.eq(project.id))
+                        .add(worktree_entry::Column::IsDeleted.eq(false)),
+                )
+                .stream(tx)
+                .await?;
+            while let Some(db_entry) = db_entries.next().await {
+                let db_entry = db_entry?;
+                if let Some(worktree) = worktrees.get_mut(&(db_entry.worktree_id as u64)) {
+                    worktree.entries.push(proto::Entry {
+                        id: db_entry.id as u64,
+                        is_dir: db_entry.is_dir,
+                        path: db_entry.path,
+                        inode: db_entry.inode as u64,
+                        mtime: Some(proto::Timestamp {
+                            seconds: db_entry.mtime_seconds as u64,
+                            nanos: db_entry.mtime_nanos as u32,
+                        }),
+                        is_symlink: db_entry.is_symlink,
+                        is_ignored: db_entry.is_ignored,
+                        is_external: db_entry.is_external,
+                        git_status: db_entry.git_status.map(|status| status as i32),
+                    });
+                }
+            }
+        }
+
+        // Populate repository entries.
+        {
+            let mut db_repository_entries = worktree_repository::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(worktree_repository::Column::ProjectId.eq(project.id))
+                        .add(worktree_repository::Column::IsDeleted.eq(false)),
+                )
+                .stream(tx)
+                .await?;
+            while let Some(db_repository_entry) = db_repository_entries.next().await {
+                let db_repository_entry = db_repository_entry?;
+                if let Some(worktree) = worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
+                {
+                    worktree.repository_entries.insert(
+                        db_repository_entry.work_directory_id as u64,
+                        proto::RepositoryEntry {
+                            work_directory_id: db_repository_entry.work_directory_id as u64,
+                            branch: db_repository_entry.branch,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Populate worktree diagnostic summaries.
+        {
+            let mut db_summaries = worktree_diagnostic_summary::Entity::find()
+                .filter(worktree_diagnostic_summary::Column::ProjectId.eq(project.id))
+                .stream(tx)
+                .await?;
+            while let Some(db_summary) = db_summaries.next().await {
+                let db_summary = db_summary?;
+                if let Some(worktree) = worktrees.get_mut(&(db_summary.worktree_id as u64)) {
+                    worktree
+                        .diagnostic_summaries
+                        .push(proto::DiagnosticSummary {
+                            path: db_summary.path,
+                            language_server_id: db_summary.language_server_id as u64,
+                            error_count: db_summary.error_count as u32,
+                            warning_count: db_summary.warning_count as u32,
+                        });
+                }
+            }
+        }
+
+        // Populate worktree settings files
+        {
+            let mut db_settings_files = worktree_settings_file::Entity::find()
+                .filter(worktree_settings_file::Column::ProjectId.eq(project.id))
+                .stream(tx)
+                .await?;
+            while let Some(db_settings_file) = db_settings_files.next().await {
+                let db_settings_file = db_settings_file?;
+                if let Some(worktree) = worktrees.get_mut(&(db_settings_file.worktree_id as u64)) {
+                    worktree.settings_files.push(WorktreeSettingsFile {
+                        path: db_settings_file.path,
+                        content: db_settings_file.content,
+                    });
+                }
+            }
+        }
+
+        // Populate language servers.
+        let language_servers = project
+            .find_related(language_server::Entity)
+            .all(tx)
+            .await?;
+
+        let project = Project {
+            id: project.id,
+            role,
+            collaborators: collaborators
+                .into_iter()
+                .map(|collaborator| ProjectCollaborator {
+                    connection_id: collaborator.connection(),
+                    user_id: collaborator.user_id,
+                    replica_id: collaborator.replica_id,
+                    is_host: collaborator.is_host,
+                })
+                .collect(),
+            worktrees,
+            language_servers: language_servers
+                .into_iter()
+                .map(|language_server| proto::LanguageServer {
+                    id: language_server.id as u64,
+                    name: language_server.name,
+                })
+                .collect(),
+        };
+        Ok((project, replica_id as ReplicaId))
+    }
+
+    pub async fn leave_hosted_project(
+        &self,
+        project_id: ProjectId,
+        connection: ConnectionId,
+    ) -> Result<LeftProject> {
+        self.transaction(|tx| async move {
+            let result = project_collaborator::Entity::delete_many()
+                .filter(
+                    Condition::all()
+                        .add(project_collaborator::Column::ProjectId.eq(project_id))
+                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
+                        .add(
+                            project_collaborator::Column::ConnectionServerId
+                                .eq(connection.owner_id as i32),
+                        ),
+                )
+                .exec(&*tx)
+                .await?;
+            if result.rows_affected == 0 {
+                return Err(anyhow!("not in the project"))?;
+            }
+
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            let collaborators = project
                 .find_related(project_collaborator::Entity)
                 .all(&*tx)
                 .await?;
-            let replica_ids = collaborators
-                .iter()
-                .map(|c| c.replica_id)
-                .collect::<HashSet<_>>();
-            let mut replica_id = ReplicaId(1);
-            while replica_ids.contains(&replica_id) {
-                replica_id.0 += 1;
-            }
-            let new_collaborator = project_collaborator::ActiveModel {
-                project_id: ActiveValue::set(project_id),
-                connection_id: ActiveValue::set(connection.id as i32),
-                connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
-                user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(replica_id),
-                is_host: ActiveValue::set(false),
-                ..Default::default()
-            }
-            .insert(&*tx)
-            .await?;
-            collaborators.push(new_collaborator);
-
-            let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
-            let mut worktrees = db_worktrees
+            let connection_ids = collaborators
                 .into_iter()
-                .map(|db_worktree| {
-                    (
-                        db_worktree.id as u64,
-                        Worktree {
-                            id: db_worktree.id as u64,
-                            abs_path: db_worktree.abs_path,
-                            root_name: db_worktree.root_name,
-                            visible: db_worktree.visible,
-                            entries: Default::default(),
-                            repository_entries: Default::default(),
-                            diagnostic_summaries: Default::default(),
-                            settings_files: Default::default(),
-                            scan_id: db_worktree.scan_id as u64,
-                            completed_scan_id: db_worktree.completed_scan_id as u64,
-                        },
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-
-            // Populate worktree entries.
-            {
-                let mut db_entries = worktree_entry::Entity::find()
-                    .filter(
-                        Condition::all()
-                            .add(worktree_entry::Column::ProjectId.eq(project_id))
-                            .add(worktree_entry::Column::IsDeleted.eq(false)),
-                    )
-                    .stream(&*tx)
-                    .await?;
-                while let Some(db_entry) = db_entries.next().await {
-                    let db_entry = db_entry?;
-                    if let Some(worktree) = worktrees.get_mut(&(db_entry.worktree_id as u64)) {
-                        worktree.entries.push(proto::Entry {
-                            id: db_entry.id as u64,
-                            is_dir: db_entry.is_dir,
-                            path: db_entry.path,
-                            inode: db_entry.inode as u64,
-                            mtime: Some(proto::Timestamp {
-                                seconds: db_entry.mtime_seconds as u64,
-                                nanos: db_entry.mtime_nanos as u32,
-                            }),
-                            is_symlink: db_entry.is_symlink,
-                            is_ignored: db_entry.is_ignored,
-                            is_external: db_entry.is_external,
-                            git_status: db_entry.git_status.map(|status| status as i32),
-                        });
-                    }
-                }
-            }
-
-            // Populate repository entries.
-            {
-                let mut db_repository_entries = worktree_repository::Entity::find()
-                    .filter(
-                        Condition::all()
-                            .add(worktree_repository::Column::ProjectId.eq(project_id))
-                            .add(worktree_repository::Column::IsDeleted.eq(false)),
-                    )
-                    .stream(&*tx)
-                    .await?;
-                while let Some(db_repository_entry) = db_repository_entries.next().await {
-                    let db_repository_entry = db_repository_entry?;
-                    if let Some(worktree) =
-                        worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
-                    {
-                        worktree.repository_entries.insert(
-                            db_repository_entry.work_directory_id as u64,
-                            proto::RepositoryEntry {
-                                work_directory_id: db_repository_entry.work_directory_id as u64,
-                                branch: db_repository_entry.branch,
-                            },
-                        );
-                    }
-                }
-            }
-
-            // Populate worktree diagnostic summaries.
-            {
-                let mut db_summaries = worktree_diagnostic_summary::Entity::find()
-                    .filter(worktree_diagnostic_summary::Column::ProjectId.eq(project_id))
-                    .stream(&*tx)
-                    .await?;
-                while let Some(db_summary) = db_summaries.next().await {
-                    let db_summary = db_summary?;
-                    if let Some(worktree) = worktrees.get_mut(&(db_summary.worktree_id as u64)) {
-                        worktree
-                            .diagnostic_summaries
-                            .push(proto::DiagnosticSummary {
-                                path: db_summary.path,
-                                language_server_id: db_summary.language_server_id as u64,
-                                error_count: db_summary.error_count as u32,
-                                warning_count: db_summary.warning_count as u32,
-                            });
-                    }
-                }
-            }
-
-            // Populate worktree settings files
-            {
-                let mut db_settings_files = worktree_settings_file::Entity::find()
-                    .filter(worktree_settings_file::Column::ProjectId.eq(project_id))
-                    .stream(&*tx)
-                    .await?;
-                while let Some(db_settings_file) = db_settings_files.next().await {
-                    let db_settings_file = db_settings_file?;
-                    if let Some(worktree) =
-                        worktrees.get_mut(&(db_settings_file.worktree_id as u64))
-                    {
-                        worktree.settings_files.push(WorktreeSettingsFile {
-                            path: db_settings_file.path,
-                            content: db_settings_file.content,
-                        });
-                    }
-                }
-            }
-
-            // Populate language servers.
-            let language_servers = project
-                .find_related(language_server::Entity)
-                .all(&*tx)
-                .await?;
-
-            let project = Project {
-                collaborators: collaborators
-                    .into_iter()
-                    .map(|collaborator| ProjectCollaborator {
-                        connection_id: collaborator.connection(),
-                        user_id: collaborator.user_id,
-                        replica_id: collaborator.replica_id,
-                        is_host: collaborator.is_host,
-                    })
-                    .collect(),
-                worktrees,
-                language_servers: language_servers
-                    .into_iter()
-                    .map(|language_server| proto::LanguageServer {
-                        id: language_server.id as u64,
-                        name: language_server.name,
-                    })
-                    .collect(),
-            };
-            Ok((project, replica_id as ReplicaId))
+                .map(|collaborator| collaborator.connection())
+                .collect();
+            Ok(LeftProject {
+                id: project.id,
+                connection_ids,
+                host_user_id: None,
+                host_connection_id: None,
+            })
         })
         .await
     }
@@ -774,7 +871,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            let room = self.get_room(project.room_id, &tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             let left_project = LeftProject {
                 id: project_id,
                 host_user_id: project.host_user_id,
@@ -998,7 +1095,9 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("project {} not found", project_id))?;
-            Ok(project.room_id)
+            Ok(project
+                .room_id
+                .ok_or_else(|| anyhow!("project not in room"))?)
         })
         .await
     }
@@ -1061,7 +1160,7 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            let room = self.get_room(room_id, &*tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             Ok(room)
         })
         .await
@@ -1095,7 +1194,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            let room = self.get_room(room_id, &*tx).await?;
+            let room = self.get_room(room_id, &tx).await?;
             Ok(room)
         })
         .await

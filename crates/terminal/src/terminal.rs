@@ -38,10 +38,14 @@ use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
+#[cfg(target_os = "windows")]
+use std::num::NonZeroU32;
 use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
+#[cfg(target_os = "windows")]
+use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use std::{
     cmp::{self, min},
@@ -158,11 +162,11 @@ impl TerminalSize {
     }
 
     pub fn num_lines(&self) -> usize {
-        f32::from((self.size.height / self.line_height).floor()) as usize
+        (self.size.height / self.line_height).floor() as usize
     }
 
     pub fn num_columns(&self) -> usize {
-        f32::from((self.size.width / self.cell_width).floor()) as usize
+        (self.size.width / self.cell_width).floor() as usize
     }
 
     pub fn height(&self) -> Pixels {
@@ -303,6 +307,7 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
@@ -399,9 +404,16 @@ impl TerminalBuilder {
         #[cfg(unix)]
         let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
 
-        // todo("windows")
+        // todo(windows)
         #[cfg(windows)]
-        let (fd, shell_pid) = (-1, 0);
+        let (fd, shell_pid) = {
+            let child = pty.child_watcher();
+            let handle = child.raw_handle();
+            let pid = child.pid().unwrap_or_else(|| unsafe {
+                NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle)))
+            });
+            (handle, u32::from(pid))
+        };
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -486,21 +498,21 @@ impl TerminalBuilder {
                         }
                     }
 
-                    if events.is_empty() && wakeup == false {
+                    if events.is_empty() && !wakeup {
                         smol::future::yield_now().await;
                         break 'outer;
-                    } else {
-                        terminal.update(&mut cx, |this, cx| {
-                            if wakeup {
-                                this.process_event(&AlacTermEvent::Wakeup, cx);
-                            }
-
-                            for event in events {
-                                this.process_event(&event, cx);
-                            }
-                        })?;
-                        smol::future::yield_now().await;
                     }
+
+                    terminal.update(&mut cx, |this, cx| {
+                        if wakeup {
+                            this.process_event(&AlacTermEvent::Wakeup, cx);
+                        }
+
+                        for event in events {
+                            this.process_event(&event, cx);
+                        }
+                    })?;
+                    smol::future::yield_now().await;
                 }
             }
 
@@ -666,13 +678,31 @@ impl Terminal {
     /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
         #[cfg(unix)]
-        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
-        // todo("windows")
+        let pid = {
+            let ret = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+            if ret < 0 {
+                self.shell_pid as i32
+            } else {
+                ret
+            }
+        };
+
         #[cfg(windows)]
-        let mut pid = -1;
-        if pid < 0 {
-            pid = self.shell_pid as i32;
-        }
+        let pid = {
+            let ret = unsafe { GetProcessId(HANDLE(self.shell_fd as _)) };
+            // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
+            if ret == 0 {
+                // in the builder process, there is a small chance, almost negligible,
+                // that this value could be zero, which means child_watcher returns None,
+                // GetProcessId returns 0.
+                if self.shell_pid == 0 {
+                    return false;
+                }
+                self.shell_pid
+            } else {
+                ret
+            }
+        } as i32;
 
         if let Some(process_info) = LocalProcessInfo::with_root_pid(pid as u32) {
             let res = self
@@ -715,7 +745,7 @@ impl Terminal {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
 
-                self.last_content.size = new_size.clone();
+                self.last_content.size = new_size;
 
                 self.pty_tx.0.send(Msg::Resize(new_size.into())).ok();
 
@@ -1294,8 +1324,7 @@ impl Terminal {
                     self.last_content.display_offset,
                 );
 
-                if let Some(scrolls) =
-                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+                if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
                         self.pty_tx.notify(scroll);
@@ -1365,7 +1394,13 @@ impl Terminal {
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.task {
-            Some(task_state) => truncate_and_trailoff(&task_state.label, MAX_CHARS),
+            Some(task_state) => {
+                if truncate {
+                    truncate_and_trailoff(&task_state.label, MAX_CHARS)
+                } else {
+                    task_state.label.clone()
+                }
+            }
             None => self
                 .foreground_process_info
                 .as_ref()
@@ -1478,7 +1513,7 @@ fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
     clamped_row * size.columns() + clamped_col
 }
 
-/// Converts an 8 bit ANSI color to it's GPUI equivalent.
+/// Converts an 8 bit ANSI color to its GPUI equivalent.
 /// Accepts `usize` for compatibility with the `alacritty::Colors` interface,
 /// Other than that use case, should only be called with values in the [0,255] range
 pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
@@ -1504,7 +1539,7 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         15 => colors.terminal_ansi_bright_white,
         // 16-231 are mapped to their RGB colors on a 0-5 range per channel
         16..=231 => {
-            let (r, g, b) = rgb_for_index(&(index as u8)); // Split the index into it's ANSI-RGB components
+            let (r, g, b) = rgb_for_index(index as u8); // Split the index into its ANSI-RGB components
             let step = (u8::MAX as f32 / 5.).floor() as u8; // Split the RGB range into 5 chunks, with floor so no overflow
             rgba_color(r * step, g * step, b * step) // Map the ANSI-RGB components to an RGB color
         }
@@ -1543,8 +1578,8 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
 /// ```
 ///
 /// This function does the reverse, calculating the `r`, `g`, and `b` components from a given index.
-fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
-    debug_assert!((&16..=&231).contains(&i));
+fn rgb_for_index(i: u8) -> (u8, u8, u8) {
+    debug_assert!((16..=231).contains(&i));
     let i = i - 16;
     let r = (i - (i % 36)) / 36;
     let g = ((i % 36) - (i % 6)) / 6;
@@ -1554,9 +1589,9 @@ fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
 
 pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
     Rgba {
-        r: (r as f32 / 255.) as f32,
-        g: (g as f32 / 255.) as f32,
-        b: (b as f32 / 255.) as f32,
+        r: (r as f32 / 255.),
+        g: (g as f32 / 255.),
+        b: (b as f32 / 255.),
         a: 1.,
     }
     .into()
@@ -1577,9 +1612,9 @@ mod tests {
 
     #[test]
     fn test_rgb_for_index() {
-        //Test every possible value in the color cube
+        // Test every possible value in the color cube.
         for i in 16..=231 {
-            let (r, g, b) = rgb_for_index(&(i as u8));
+            let (r, g, b) = rgb_for_index(i);
             assert_eq!(i, 16 + 36 * r + 6 * g + b);
         }
     }
@@ -1663,9 +1698,9 @@ mod tests {
     fn get_cells(size: TerminalSize, rng: &mut ThreadRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..(f32::from(size.height() / size.line_height()) as usize) {
+        for _ in 0..((size.height() / size.line_height()) as usize) {
             let mut row_vec = Vec::new();
-            for _ in 0..(f32::from(size.width() / size.cell_width()) as usize) {
+            for _ in 0..((size.width() / size.cell_width()) as usize) {
                 let cell_char = rng.sample(Alphanumeric) as char;
                 row_vec.push(cell_char)
             }

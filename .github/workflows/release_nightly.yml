@@ -32,8 +32,7 @@ jobs:
         uses: ./.github/actions/check_style
 
       - name: Run clippy
-        shell: bash -euxo pipefail {0}
-        run: script/clippy
+        run: cargo xtask clippy
   tests:
     name: Run tests
     if: github.repository_owner == 'zed-industries'
@@ -51,8 +50,8 @@ jobs:
       - name: Run tests
         uses: ./.github/actions/run_tests
 
-  bundle:
-    name: Bundle app
+  bundle-mac:
+    name: Create a macOS bundle
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
@@ -78,9 +77,6 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 100
-
       - name: Set release channel to nightly
         run: |
           set -eu
@@ -91,8 +87,50 @@ jobs:
       - name: Generate license file
         run: script/generate-licenses
 
-      - name: Create app bundle
-        run: script/bundle
+      - name: Create macOS app bundle
+        run: script/bundle-mac
 
       - name: Upload Zed Nightly
-        run: script/upload-nightly
+        run: script/upload-nightly macos
+
+  bundle-deb:
+    name: Create a *.deb Linux bundle
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
+    needs: tests
+    env:
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Configure linux
+        shell: bash -euxo pipefail {0}
+        run: script/linux
+
+      - name: Set release channel to nightly
+        run: |
+          set -euo pipefail
+          version=$(git rev-parse --short HEAD)
+          echo "Publishing version: ${version} on release channel nightly"
+          echo "nightly" > crates/zed/RELEASE_CHANNEL
+
+      # TODO linux : find a way to add licenses to the final bundle
+      # - name: Generate license file
+      #   run: script/generate-licenses
+
+      - name: Create Linux *.deb bundle
+        run: script/bundle-linux
+
+      - name: Upload Zed Nightly
+        run: script/upload-nightly linux-deb
