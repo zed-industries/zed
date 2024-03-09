@@ -275,6 +275,9 @@
   "autosave": "off",
   // Settings related to the editor's tabs
   "tabs": {
+    // Whether to show opened editors as preview editors.
+    // Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+    "enable_preview_tabs": true,
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.

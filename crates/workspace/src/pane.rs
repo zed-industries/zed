@@ -500,8 +500,12 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
-    pub fn set_preview_item_id(&mut self, tab_id: Option<EntityId>) {
-        self.preview_item_id = tab_id;
+    /// Marks the item with the given ID as the preview item.
+    /// This will be ignored if the global setting `preview_tabs` is disabled.
+    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
+        if ItemSettings::get_global(cx).enable_preview_tabs {
+            self.preview_item_id = item_id;
+        }
     }
 
     pub(crate) fn open_item(
@@ -531,7 +535,7 @@ impl Pane {
             if let Some(preview_item_id) = self.preview_item_id {
                 if let Some(tab) = self.items.get(index) {
                     if tab.item_id() == preview_item_id && !allow_preview {
-                        self.set_preview_item_id(None);
+                        self.set_preview_item_id(None, cx);
                     }
                 }
             }
@@ -548,9 +552,9 @@ impl Pane {
             let new_item = build_item(cx);
             self.add_item(new_item.clone(), true, focus_item, None, cx);
             if allow_preview {
-                self.set_preview_item_id(Some(new_item.item_id()));
+                self.set_preview_item_id(Some(new_item.item_id()), cx);
             } else {
-                self.set_preview_item_id(None);
+                self.set_preview_item_id(None, cx);
             }
 
             new_item
@@ -1382,10 +1386,10 @@ impl Pane {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, _| {
+                cx.listener(move |pane, event: &MouseDownEvent, cx| {
                     if let Some(id) = pane.preview_item_id {
                         if id == item_id && event.click_count > 1 {
-                            pane.set_preview_item_id(None);
+                            pane.set_preview_item_id(None, cx);
                         }
                     }
                 }),
@@ -1704,7 +1708,7 @@ impl Pane {
         let item_id = dragged_tab.item.item_id();
         if let Some(preview_item_id) = self.preview_item_id {
             if item_id == preview_item_id {
-                self.set_preview_item_id(None);
+                self.set_preview_item_id(None, cx);
             }
         }
 

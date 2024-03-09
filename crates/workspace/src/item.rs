@@ -37,6 +37,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
+    pub enable_preview_tabs: bool,
     pub git_status: bool,
     pub close_position: ClosePosition,
 }
@@ -60,6 +61,11 @@ impl ClosePosition {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ItemSettingsContent {
+    /// Whether to show opened editors as preview editors.
+    /// Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+    ///
+    /// Default: true
+    enable_preview_tabs: Option<bool>,
     /// Whether to show the Git file status on a tab item.
     ///
     /// Default: true
