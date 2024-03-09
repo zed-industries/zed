@@ -45,26 +45,12 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace
             .register_action(move |workspace, _: &Extensions, cx| {
-                let extensions_page = ExtensionsPage::new(workspace, cx);
+                let extensions_page = ExtensionsPage::new(workspace, cx, None);
                 workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
             })
             .register_action(move |workspace, LanguageExtensions{language_string}: &LanguageExtensions, cx| {
 
-                let extensions_page = ExtensionsPage::new(workspace, cx);
-
-                extensions_page.update(cx, |page, cx| {
-
-                    let editor = &page.query_editor;
-
-                    editor.update(cx, |editor, cx| {
-
-                        editor.set_text(language_string.clone(), cx);
-                        cx.emit(EditorEvent::Edited);
-
-                    });
-                });
-
-
+                let extensions_page = ExtensionsPage::new(workspace, cx, Some(language_string));
                 workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
 
             })
@@ -216,7 +202,7 @@ pub struct ExtensionsPage {
 }
 
 impl ExtensionsPage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>, initial_query: Option<&str>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
             let subscriptions = [
@@ -229,7 +215,12 @@ impl ExtensionsPage {
 
             let query_editor = cx.new_view(|cx| {
                 let mut input = Editor::single_line(cx);
-                input.set_placeholder_text("Search extensions...", cx);
+
+                match initial_query {
+                    None => {input.set_placeholder_text("Search extensions...", cx);},
+                    Some(query) => {input.set_text(Arc::from(query), cx);}
+                }
+                
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
@@ -247,7 +238,7 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
             };
-            this.fetch_extensions(None, cx);
+            this.fetch_extensions(initial_query.map(|query| query.to_string()), cx);
             this
         })
     }
