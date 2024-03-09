@@ -64,6 +64,7 @@ pub struct ChatPanel {
     open_context_menu: Option<(u64, Subscription)>,
     highlighted_message: Option<(u64, Task<()>)>,
     last_acknowledged_message_id: Option<u64>,
+    selected_message_to_reply_id: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,6 +129,7 @@ impl ChatPanel {
                 open_context_menu: None,
                 highlighted_message: None,
                 last_acknowledged_message_id: None,
+                selected_message_to_reply_id: None,
             };
 
             if let Some(channel_id) = ActiveCall::global(cx)
@@ -464,6 +466,13 @@ impl ChatPanel {
                     .overflow_hidden()
                     .px_1p5()
                     .py_0p5()
+                    .when_some(self.selected_message_to_reply_id, |el, reply_id| {
+                        el.when_some(message_id, |el, message_id| {
+                            el.when(reply_id == message_id, |el| {
+                                el.bg(cx.theme().colors().element_selected)
+                            })
+                        })
+                    })
                     .when(!self.has_open_menu(message_id), |this| {
                         this.hover(|style| style.bg(cx.theme().colors().element_hover))
                     })
@@ -598,6 +607,7 @@ impl ChatPanel {
                                     )
                                     .on_click(cx.listener(
                                         move |this, _, cx| {
+                                            this.selected_message_to_reply_id = Some(message_id);
                                             this.message_editor.update(cx, |editor, cx| {
                                                 editor.set_reply_to_message_id(message_id);
                                                 editor.focus_handle(cx).focus(cx);
@@ -665,6 +675,8 @@ impl ChatPanel {
                     "Reply to message",
                     None,
                     cx.handler_for(&this, move |this, cx| {
+                        this.selected_message_to_reply_id = Some(message_id);
+
                         this.message_editor.update(cx, |editor, cx| {
                             editor.set_reply_to_message_id(message_id);
                             editor.focus_handle(cx).focus(cx);
@@ -922,7 +934,9 @@ impl Render for ChatPanel {
                                     .tooltip(|cx| {
                                         Tooltip::for_action("Close reply", &CloseReplyPreview, cx)
                                     })
-                                    .on_click(cx.listener(move |_, _, cx| {
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.selected_message_to_reply_id = None;
+
                                         cx.dispatch_action(CloseReplyPreview.boxed_clone())
                                     })),
                             ),
