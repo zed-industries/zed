@@ -1,3 +1,31 @@
+; The highlighs need to override the color yourself e.g.
+; {
+; 	"experimental.theme_overrides": {
+; 	    "syntax": {
+; 	      "hint": {
+; 	        "color": "#576cdbff",
+; 	        "font_style": "italic",
+; 	        "font_weight": 700
+; 	       },
+; 	       "info": {
+; 	         "color": "#36a165ff",
+; 	         "font_style": "oblique",
+; 	         "font_weight": 700
+; 	       },
+; 	       "error": {
+; 	         "color": "#d73837ff",
+; 	         "font_style": "oblique",
+; 	         "font_weight": 700
+; 	       },
+; 	       "warning": {
+; 	         "color": "#ae9414ff",
+; 	         "font_style": "italic",
+; 	         "font_weight": 700
+; 	       }
+; 	    }
+; 	}
+; }
+
 [
  "("
  ")"
