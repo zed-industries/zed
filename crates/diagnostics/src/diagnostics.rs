@@ -894,7 +894,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint, GutterDimensions,
     };
-    use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
+    use gpui::{px, Stateful, TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -1610,7 +1610,7 @@ mod tests {
                                     block_id: ix,
                                     editor_style: &editor::EditorStyle::default(),
                                 });
-                                let element = element.downcast_mut::<Div>().unwrap();
+                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
                                 element.interactivity().element_id.clone()?.try_into().ok()
                             }
                         })?,
