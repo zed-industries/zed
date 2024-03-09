@@ -37,12 +37,12 @@ impl Cursor {
     pub fn set_icon(&mut self, wl_pointer: &WlPointer, cursor_icon_name: String) {
         let mut cursor_icon_name = cursor_icon_name.clone();
         if self.current_icon_name != cursor_icon_name {
-            if self.theme.is_ok() {
+            if let Ok(theme) = &mut self.theme {
                 let mut buffer: Option<&CursorImageBuffer>;
 
-                if let Some(cursor) = self.theme.as_mut().unwrap().get_cursor(&cursor_icon_name) {
+                if let Some(cursor) = theme.get_cursor(&cursor_icon_name) {
                     buffer = Some(&cursor[0]);
-                } else if let Some(cursor) = self.theme.as_mut().unwrap().get_cursor("default") {
+                } else if let Some(cursor) = theme.get_cursor("default") {
                     buffer = Some(&cursor[0]);
                     cursor_icon_name = "default".to_string();
                     log::warn!(
@@ -54,9 +54,9 @@ impl Cursor {
                     log::warn!("Linux: Wayland: Unable to get default cursor too!");
                 }
 
-                if buffer.is_some(){
-                    let (width, height) = buffer.unwrap().dimensions();
-                    let (hot_x, hot_y) = buffer.unwrap().hotspot();
+                if let Some(buffer) = &mut buffer {
+                    let (width, height) = buffer.dimensions();
+                    let (hot_x, hot_y) = buffer.hotspot();
 
                     wl_pointer.set_cursor(
                         self.serial_id,
@@ -64,7 +64,7 @@ impl Cursor {
                         hot_x as i32,
                         hot_y as i32,
                     );
-                    self.surface.attach(Some(&buffer.unwrap()), 0, 0);
+                    self.surface.attach(Some(&buffer), 0, 0);
                     self.surface.damage(0, 0, width as i32, height as i32);
                     self.surface.commit();
 
