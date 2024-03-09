@@ -591,7 +591,7 @@ impl<'a> MarkdownParser<'a> {
             if let Some(registry) = &self.language_registry {
                 let rope: language::Rope = code.as_str().into();
                 registry
-                    .language_for_name(language)
+                    .language_for_name_or_extension(language)
                     .await
                     .map(|l| l.highlight_text(&rope, 0..code.len()))
                     .ok()
