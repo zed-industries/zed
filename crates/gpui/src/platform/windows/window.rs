@@ -40,9 +40,9 @@ use windows::{
                 TD_INFORMATION_ICON, TD_WARNING_ICON,
             },
             Input::KeyboardAndMouse::{
-                GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
-                VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
-                VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
+                GetKeyState, VIRTUAL_KEY, VK_0, VK_9, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
+                VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT,
+                VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP, VK_Z,
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
@@ -50,10 +50,10 @@ use windows::{
                 RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
                 GWLP_USERDATA, HMENU, IDC_ARROW, SW_MAXIMIZE, SW_SHOW, WHEEL_DELTA,
                 WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
-                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
-                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
-                WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1, XBUTTON2,
+                WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
+                WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_XBUTTONDOWN, WM_XBUTTONUP,
+                WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1, XBUTTON2,
             },
         },
     },
@@ -206,7 +206,9 @@ impl WindowsWindowInner {
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(wparam, lparam),
-            WM_KEYDOWN | WM_CHAR => self.handle_keydown_msg(msg, wparam, lparam),
+            WM_KEYDOWN => self.handle_keydown_msg(msg, wparam, lparam),
+            WM_KEYUP => self.handle_keyup_msg(msg, wparam),
+            WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
             _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
         }
     }
@@ -323,8 +325,26 @@ impl WindowsWindowInner {
         LRESULT(1)
     }
 
-    fn parse_key_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
+    fn parse_keydown_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
         let vk_code = wparam.loword();
+
+        if self.is_virtual_key_pressed(VK_CONTROL) {
+            if vk_code >= VK_0.0 && vk_code <= VK_9.0 {
+                return Some(Keystroke {
+                    modifiers: self.current_modifiers(),
+                    key: format!("{}", vk_code - VK_0.0),
+                    ime_key: None,
+                });
+            }
+
+            if vk_code >= VK_A.0 && vk_code <= VK_Z.0 {
+                return Some(Keystroke {
+                    modifiers: self.current_modifiers(),
+                    key: format!("{}", (b'a' + vk_code as u8 - VK_A.0 as u8) as char),
+                    ime_key: None,
+                });
+            }
+        }
 
         if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
             let offset = vk_code - VK_F1.0;
@@ -372,24 +392,56 @@ impl WindowsWindowInner {
             return None;
         };
         if first_char.is_control() {
-            return None;
+            None
+        } else {
+            Some(Keystroke {
+                modifiers: self.current_modifiers(),
+                key: first_char.to_lowercase().to_string(),
+                ime_key: Some(first_char.to_string()),
+            })
         }
-        Some(Keystroke {
-            modifiers: self.current_modifiers(),
-            key: first_char.to_lowercase().to_string(),
-            ime_key: Some(first_char.to_string()),
-        })
     }
 
     fn handle_keydown_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = {
-            if message == WM_KEYDOWN {
-                self.parse_key_msg_keystroke(wparam)
-            } else {
-                self.parse_char_msg_keystroke(wparam)
+        let keystroke = self.parse_keydown_msg_keystroke(wparam);
+        if let Some(keystroke) = keystroke {
+            if let Some(callback) = callbacks.input.as_mut() {
+                let ime_key = keystroke.ime_key.clone();
+                let event = KeyDownEvent {
+                    keystroke,
+                    is_held: lparam.0 & (0x1 << 30) > 0,
+                };
+
+                if callback(PlatformInput::KeyDown(event)) {
+                    return LRESULT(0);
+                }
             }
-        };
+        }
+        self.invalidate_client_area();
+        LRESULT(1)
+    }
+
+    fn handle_keyup_msg(&self, message: u32, wparam: WPARAM) -> LRESULT {
+        let mut callbacks = self.callbacks.borrow_mut();
+        let keystroke = self.parse_keydown_msg_keystroke(wparam);
+        if let Some(keystroke) = keystroke {
+            if let Some(callback) = callbacks.input.as_mut() {
+                let ime_key = keystroke.ime_key.clone();
+                let event = KeyUpEvent { keystroke };
+
+                if callback(PlatformInput::KeyUp(event)) {
+                    return LRESULT(0);
+                }
+            }
+        }
+        self.invalidate_client_area();
+        LRESULT(1)
+    }
+
+    fn handle_char_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let mut callbacks = self.callbacks.borrow_mut();
+        let keystroke = self.parse_char_msg_keystroke(wparam);
         if let Some(keystroke) = keystroke {
             if let Some(callback) = callbacks.input.as_mut() {
                 let ime_key = keystroke.ime_key.clone();
@@ -419,12 +471,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = Pixels::from(lparam.signed_loword() as f32);
             let y = Pixels::from(lparam.signed_hiword() as f32);
+            let start = std::time::Instant::now();
             let event = MouseDownEvent {
                 button,
                 position: Point { x, y },
                 modifiers: self.current_modifiers(),
                 click_count: 1,
             };
+            let cost = start.elapsed();
             if callback(PlatformInput::MouseDown(event)) {
                 return LRESULT(0);
             }
