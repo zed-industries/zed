@@ -545,7 +545,10 @@ impl Pane {
             self.add_item(new_item.clone(), true, focus_item, None, cx);
             if allow_preview {
                 self.preview_item_id = Some(new_item.item_id());
+            } else {
+                self.preview_item_id = None;
             }
+
             new_item
         }
     }
