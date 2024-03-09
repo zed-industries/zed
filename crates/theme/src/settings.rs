@@ -155,22 +155,31 @@ impl ThemeSelection {
     }
 }
 
+/// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
+    /// The default font size for text in the UI.
     #[serde(default)]
     pub ui_font_size: Option<f32>,
+    /// The name of a font to use for rendering in the UI.
     #[serde(default)]
     pub ui_font_family: Option<String>,
+    /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
+    /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<String>,
+    /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
+    /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
+    /// The OpenType features to enable for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_features: Option<FontFeatures>,
+    /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
 

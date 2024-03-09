@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::Point;
-use modal::TasksModal;
+use modal::{Spawn, TasksModal};
 use project::{Location, WorktreeId};
 use task::{Task, TaskContext};
 use util::ResultExt;
@@ -15,15 +15,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace
-                .register_action(|workspace, _: &modal::Spawn, cx| {
-                    let inventory = workspace.project().read(cx).task_inventory().clone();
-                    let workspace_handle = workspace.weak_handle();
-                    let cwd = task_cwd(workspace, cx).log_err().flatten();
-                    let task_context = task_context(workspace, cwd, cx);
-                    workspace.toggle_modal(cx, |cx| {
-                        TasksModal::new(inventory, task_context, workspace_handle, cx)
-                    })
-                })
+                .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
                     if let Some((task, old_context)) =
                         workspace.project().update(cx, |project, cx| {
@@ -44,6 +36,54 @@ pub fn init(cx: &mut AppContext) {
                 });
         },
     )
+    .detach();
+}
+
+fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
+    let inventory = workspace.project().read(cx).task_inventory().clone();
+    let workspace_handle = workspace.weak_handle();
+    let cwd = task_cwd(workspace, cx).log_err().flatten();
+    let task_context = task_context(workspace, cwd, cx);
+    if let Some(name) = action.task_name.clone() {
+        // Do not actually show the modal.
+        spawn_task_with_name(name.clone(), cx);
+    } else {
+        workspace.toggle_modal(cx, |cx| {
+            TasksModal::new(inventory, task_context, workspace_handle, cx)
+        })
+    }
+}
+
+fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
+    cx.spawn(|workspace, mut cx| async move {
+        let did_spawn = workspace
+            .update(&mut cx, |this, cx| {
+                let active_item = this
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+                    .map(|path| path.worktree_id);
+                let tasks = this.project().update(cx, |project, cx| {
+                    project.task_inventory().update(cx, |inventory, cx| {
+                        inventory.list_tasks(None, active_item, false, cx)
+                    })
+                });
+                let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
+                let cwd = task_cwd(this, cx).log_err().flatten();
+                let task_context = task_context(this, cwd, cx);
+                schedule_task(this, target_task.as_ref(), task_context, cx);
+                Some(())
+            })
+            .ok()
+            .flatten()
+            .is_some();
+        if !did_spawn {
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    spawn_task_or_modal(workspace, &Spawn::default(), cx);
+                })
+                .ok();
+        }
+    })
     .detach();
 }
 

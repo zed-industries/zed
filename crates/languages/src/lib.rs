@@ -39,7 +39,6 @@ mod tailwind;
 mod terraform;
 mod toml;
 mod typescript;
-mod uiua;
 mod vue;
 mod yaml;
 mod zig;
@@ -114,7 +113,6 @@ pub fn init(
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
-        ("uiua", tree_sitter_uiua::language()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
@@ -344,7 +342,6 @@ pub fn init(
         "vue",
         vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]
     );
-    language!("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language!("proto");
     language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
     language!(

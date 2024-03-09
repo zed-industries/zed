@@ -339,6 +339,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
         register_action(view, cx, Editor::accept_partial_copilot_suggestion);
+        register_action(view, cx, Editor::revert_selected_hunks);
     }
 
     fn register_key_listeners(
@@ -1452,12 +1453,12 @@ impl EditorElement {
                     .buffer_snapshot
                     .git_diff_hunks_in_range(0..(max_row.floor() as u32))
                 {
-                    let start_display = Point::new(hunk.buffer_range.start, 0)
+                    let start_display = Point::new(hunk.associated_range.start, 0)
                         .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                    let end_display = Point::new(hunk.buffer_range.end, 0)
+                    let end_display = Point::new(hunk.associated_range.end, 0)
                         .to_display_point(&layout.position_map.snapshot.display_snapshot);
                     let start_y = y_for_row(start_display.row() as f32);
-                    let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
+                    let mut end_y = if hunk.associated_range.start == hunk.associated_range.end {
                         y_for_row((end_display.row() + 1) as f32)
                     } else {
                         y_for_row((end_display.row()) as f32)
