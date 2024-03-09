@@ -664,12 +664,11 @@ impl ChatPanel {
                                             this.message_editor.update(cx, |editor, cx| {
                                                 let message = this
                                                     .active_chat()
-                                                    .map(|active_chat| {
+                                                    .and_then(|active_chat| {
                                                         active_chat
                                                             .read(cx)
                                                             .find_loaded_message(message_id)
                                                     })
-                                                    .flatten()
                                                     .cloned();
 
                                                 if let Some(message) = message {
@@ -1005,16 +1004,11 @@ impl Render for ChatPanel {
                 this.when_some(reply_to_message_id, |el, reply_to_message_id| {
                     let reply_message = self
                         .active_chat()
-                        .map(|active_chat| {
-                            active_chat.read(cx).messages().iter().find_map(|m| {
-                                if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                    Some(m)
-                                } else {
-                                    None
-                                }
-                            })
+                        .and_then(|active_chat| {
+                            active_chat
+                                .read(cx)
+                                .find_loaded_message(reply_to_message_id)
                         })
-                        .flatten()
                         .cloned();
 
                     el.when_some(reply_message, |el, reply_message| {

@@ -729,16 +729,13 @@ impl ChannelMessage {
             })?
             .await?;
 
-        let edited_at = message
-            .edited_at
-            .map(|t| -> Option<OffsetDateTime> {
-                if let Ok(a) = OffsetDateTime::from_unix_timestamp(t as i64) {
-                    return Some(a);
-                }
+        let edited_at = message.edited_at.and_then(|t| -> Option<OffsetDateTime> {
+            if let Ok(a) = OffsetDateTime::from_unix_timestamp(t as i64) {
+                return Some(a);
+            }
 
-                None
-            })
-            .flatten();
+            None
+        });
 
         Ok(ChannelMessage {
             id: ChannelMessageId::Saved(message.id),
