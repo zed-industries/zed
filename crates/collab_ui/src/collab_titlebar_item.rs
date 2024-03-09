@@ -723,7 +723,6 @@ impl CollabTitlebarItem {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .action("Themes...", theme_selector::Toggle.boxed_clone())
-                            .separator()
                     })
                     .into()
                 })
