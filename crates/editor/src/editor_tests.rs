@@ -5206,20 +5206,39 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
         editor.handle_input(":", cx);
         assert_eq!(editor.text(cx), "Hello 👋 😄".unindent());
 
-        editor.handle_input(":1:", cx);
-        assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+        // Ensure shortcode gets replaced when it is part of a word that only consists of emojis
+        editor.handle_input(":wave", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋".unindent());
+
+        editor.handle_input(":1", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1:".unindent());
 
         // Ensure shortcode does not get replaced when it is part of a word
-        editor.handle_input(" Test:wave:", cx);
-        assert_eq!(editor.text(cx), "Hello 👋 😄:1: Test:wave:".unindent());
+        editor.handle_input(" Test:wave", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1: Test:wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1: Test:wave:".unindent());
 
         editor.set_auto_replace_emoji_shortcode(false);
 
         // Ensure shortcode does not get replaced when auto replace is off
-        editor.handle_input(" :wave:", cx);
+        editor.handle_input(" :wave", cx);
         assert_eq!(
             editor.text(cx),
-            "Hello 👋 😄:1: Test:wave: :wave:".unindent()
+            "Hello 👋 😄👋:1: Test:wave: :wave".unindent()
+        );
+
+        editor.handle_input(":", cx);
+        assert_eq!(
+            editor.text(cx),
+            "Hello 👋 😄👋:1: Test:wave: :wave:".unindent()
         );
     });
 }
