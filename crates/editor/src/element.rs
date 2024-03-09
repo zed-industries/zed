@@ -802,92 +802,85 @@ impl EditorElement {
         cx: &mut ElementContext,
     ) -> SmallVec<[CursorLayout; 32]> {
         self.editor.update(cx, |editor, cx| {
-            selections
-                .iter()
-                .flat_map(|(player_color, selections)| {
-                    selections
-                        .iter()
-                        .filter_map(|selection| {
-                            let cursor_position = selection.head;
-                            if (selection.is_local && !editor.show_local_cursors(cx))
-                                || !visible_display_row_range.contains(&cursor_position.row())
-                            {
-                                return None;
-                            }
+            let mut cursors = SmallVec::new();
+            for (player_color, selections) in selections {
+                for selection in selections {
+                    let cursor_position = selection.head;
+                    if (selection.is_local && !editor.show_local_cursors(cx))
+                        || !visible_display_row_range.contains(&cursor_position.row())
+                    {
+                        continue;
+                    }
 
-                            let cursor_row_layout = &line_layouts[(cursor_position.row()
-                                - visible_display_row_range.start)
-                                as usize]
-                                .line;
-                            let cursor_column = cursor_position.column() as usize;
+                    let cursor_row_layout = &line_layouts
+                        [(cursor_position.row() - visible_display_row_range.start) as usize]
+                        .line;
+                    let cursor_column = cursor_position.column() as usize;
 
-                            let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                            let mut block_width = cursor_row_layout.x_for_index(cursor_column + 1)
-                                - cursor_character_x;
-                            if block_width == Pixels::ZERO {
-                                block_width = em_width;
-                            }
-                            let block_text = if let CursorShape::Block = selection.cursor_shape {
-                                snapshot.chars_at(cursor_position).next().and_then(
-                                    |(character, _)| {
-                                        let text = if character == '\n' {
-                                            SharedString::from(" ")
-                                        } else {
-                                            SharedString::from(character.to_string())
-                                        };
-                                        let len = text.len();
-                                        cx.text_system()
-                                            .shape_line(
-                                                text,
-                                                cursor_row_layout.font_size,
-                                                &[TextRun {
-                                                    len,
-                                                    font: self.style.text.font(),
-                                                    color: self.style.background,
-                                                    background_color: None,
-                                                    strikethrough: None,
-                                                    underline: None,
-                                                }],
-                                            )
-                                            .log_err()
-                                    },
-                                )
-                            } else {
-                                None
-                            };
+                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                    let mut block_width =
+                        cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                    if block_width == Pixels::ZERO {
+                        block_width = em_width;
+                    }
+                    let block_text = if let CursorShape::Block = selection.cursor_shape {
+                        snapshot
+                            .chars_at(cursor_position)
+                            .next()
+                            .and_then(|(character, _)| {
+                                let text = if character == '\n' {
+                                    SharedString::from(" ")
+                                } else {
+                                    SharedString::from(character.to_string())
+                                };
+                                let len = text.len();
+                                cx.text_system()
+                                    .shape_line(
+                                        text,
+                                        cursor_row_layout.font_size,
+                                        &[TextRun {
+                                            len,
+                                            font: self.style.text.font(),
+                                            color: self.style.background,
+                                            background_color: None,
+                                            strikethrough: None,
+                                            underline: None,
+                                        }],
+                                    )
+                                    .log_err()
+                            })
+                    } else {
+                        None
+                    };
 
-                            let x = cursor_character_x - scroll_pixel_position.x;
-                            let y = cursor_position.row() as f32 * line_height
-                                - scroll_pixel_position.y;
-                            if selection.is_newest {
-                                editor.pixel_position_of_newest_cursor = Some(point(
-                                    text_hitbox.origin.x + x + block_width / 2.,
-                                    text_hitbox.origin.y + y + line_height / 2.,
-                                ))
-                            }
+                    let x = cursor_character_x - scroll_pixel_position.x;
+                    let y = cursor_position.row() as f32 * line_height - scroll_pixel_position.y;
+                    if selection.is_newest {
+                        editor.pixel_position_of_newest_cursor = Some(point(
+                            text_hitbox.origin.x + x + block_width / 2.,
+                            text_hitbox.origin.y + y + line_height / 2.,
+                        ))
+                    }
 
-                            let mut cursor = CursorLayout {
-                                color: player_color.cursor,
-                                block_width,
-                                origin: point(x, y),
-                                line_height,
-                                shape: selection.cursor_shape,
-                                block_text,
-                                cursor_name: None,
-                            };
-                            let cursor_name = selection.user_name.clone().map(|name| CursorName {
-                                string: name,
-                                color: self.style.background,
-                                is_top_row: cursor_position.row() == 0,
-                            });
-                            cx.with_element_context(|cx| {
-                                cursor.layout(content_origin, cursor_name, cx)
-                            });
-                            Some(cursor)
-                        })
-                        .collect::<SmallVec<[_; 32]>>()
-                })
-                .collect()
+                    let mut cursor = CursorLayout {
+                        color: player_color.cursor,
+                        block_width,
+                        origin: point(x, y),
+                        line_height,
+                        shape: selection.cursor_shape,
+                        block_text,
+                        cursor_name: None,
+                    };
+                    let cursor_name = selection.user_name.clone().map(|name| CursorName {
+                        string: name,
+                        color: self.style.background,
+                        is_top_row: cursor_position.row() == 0,
+                    });
+                    cx.with_element_context(|cx| cursor.layout(content_origin, cursor_name, cx));
+                    cursors.push(cursor);
+                }
+            }
+            cursors
         })
     }
 
