@@ -1690,87 +1690,90 @@ impl EditorElement {
     }
 
     fn paint_background(&self, layout: &EditorLayout, cx: &mut ElementContext) {
-        let scroll_top =
-            layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
-        let gutter_bg = cx.theme().colors().editor_gutter_background;
-        cx.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
-        cx.paint_quad(fill(layout.text_hitbox.bounds, self.style.background));
+        cx.paint_layer(layout.hitbox.bounds, |cx| {
+            let scroll_top =
+                layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
+            let gutter_bg = cx.theme().colors().editor_gutter_background;
+            cx.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
+            cx.paint_quad(fill(layout.text_hitbox.bounds, self.style.background));
 
-        if let EditorMode::Full = layout.mode {
-            let mut active_rows = layout.active_rows.iter().peekable();
-            while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
-                let mut end_row = *start_row;
-                while active_rows.peek().map_or(false, |r| {
-                    *r.0 == end_row + 1 && r.1 == contains_non_empty_selection
-                }) {
-                    active_rows.next().unwrap();
-                    end_row += 1;
+            if let EditorMode::Full = layout.mode {
+                let mut active_rows = layout.active_rows.iter().peekable();
+                while let Some((start_row, contains_non_empty_selection)) = active_rows.next() {
+                    let mut end_row = *start_row;
+                    while active_rows.peek().map_or(false, |r| {
+                        *r.0 == end_row + 1 && r.1 == contains_non_empty_selection
+                    }) {
+                        active_rows.next().unwrap();
+                        end_row += 1;
+                    }
+
+                    if !contains_non_empty_selection {
+                        let origin = point(
+                            layout.hitbox.origin.x,
+                            layout.hitbox.origin.y
+                                + (layout.position_map.line_height * *start_row as f32)
+                                - scroll_top,
+                        );
+                        let size = size(
+                            layout.hitbox.size.width,
+                            layout.position_map.line_height * (end_row - start_row + 1) as f32,
+                        );
+                        let active_line_bg = cx.theme().colors().editor_active_line_background;
+                        cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
+                    }
                 }
 
-                if !contains_non_empty_selection {
+                if let Some(highlighted_rows) = &layout.highlighted_rows {
                     let origin = point(
                         layout.hitbox.origin.x,
                         layout.hitbox.origin.y
-                            + (layout.position_map.line_height * *start_row as f32)
+                            + (layout.position_map.line_height * highlighted_rows.start as f32)
                             - scroll_top,
                     );
                     let size = size(
                         layout.hitbox.size.width,
-                        layout.position_map.line_height * (end_row - start_row + 1) as f32,
+                        layout.position_map.line_height * highlighted_rows.len() as f32,
                     );
-                    let active_line_bg = cx.theme().colors().editor_active_line_background;
-                    cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
-                }
-            }
-
-            if let Some(highlighted_rows) = &layout.highlighted_rows {
-                let origin = point(
-                    layout.hitbox.origin.x,
-                    layout.hitbox.origin.y
-                        + (layout.position_map.line_height * highlighted_rows.start as f32)
-                        - scroll_top,
-                );
-                let size = size(
-                    layout.hitbox.size.width,
-                    layout.position_map.line_height * highlighted_rows.len() as f32,
-                );
-                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
-                cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
-            }
-
-            let scroll_left =
-                layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
-
-            for (wrap_position, active) in layout.wrap_guides.iter() {
-                let x = (layout.text_hitbox.origin.x
-                    + *wrap_position
-                    + layout.position_map.em_width / 2.)
-                    - scroll_left;
-
-                let show_scrollbars = layout
-                    .scrollbar_layout
-                    .as_ref()
-                    .map_or(false, |scrollbar| scrollbar.visible);
-                if x < layout.text_hitbox.origin.x
-                    || (show_scrollbars && x > self.scrollbar_left(&layout.hitbox.bounds))
-                {
-                    continue;
+                    let highlighted_line_bg =
+                        cx.theme().colors().editor_highlighted_line_background;
+                    cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
                 }
 
-                let color = if *active {
-                    cx.theme().colors().editor_active_wrap_guide
-                } else {
-                    cx.theme().colors().editor_wrap_guide
-                };
-                cx.paint_quad(fill(
-                    Bounds {
-                        origin: point(x, layout.text_hitbox.origin.y),
-                        size: size(px(1.), layout.text_hitbox.size.height),
-                    },
-                    color,
-                ));
+                let scroll_left =
+                    layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
+
+                for (wrap_position, active) in layout.wrap_guides.iter() {
+                    let x = (layout.text_hitbox.origin.x
+                        + *wrap_position
+                        + layout.position_map.em_width / 2.)
+                        - scroll_left;
+
+                    let show_scrollbars = layout
+                        .scrollbar_layout
+                        .as_ref()
+                        .map_or(false, |scrollbar| scrollbar.visible);
+                    if x < layout.text_hitbox.origin.x
+                        || (show_scrollbars && x > self.scrollbar_left(&layout.hitbox.bounds))
+                    {
+                        continue;
+                    }
+
+                    let color = if *active {
+                        cx.theme().colors().editor_active_wrap_guide
+                    } else {
+                        cx.theme().colors().editor_wrap_guide
+                    };
+                    cx.paint_quad(fill(
+                        Bounds {
+                            origin: point(x, layout.text_hitbox.origin.y),
+                            size: size(px(1.), layout.text_hitbox.size.height),
+                        },
+                        color,
+                    ));
+                }
             }
-        }
+        })
     }
 
     fn paint_gutter(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
@@ -1804,117 +1807,125 @@ impl EditorElement {
             }
         }
 
-        cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
-            for fold_indicator in &mut layout.fold_indicators {
-                if let Some(fold_indicator) = fold_indicator {
-                    fold_indicator.paint(cx);
+        cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+            cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+                for fold_indicator in &mut layout.fold_indicators {
+                    if let Some(fold_indicator) = fold_indicator {
+                        fold_indicator.paint(cx);
+                    }
                 }
-            }
-        });
+            });
 
-        if let Some(indicator) = layout.code_actions_indicator.as_mut() {
-            indicator.paint(cx);
-        }
+            if let Some(indicator) = layout.code_actions_indicator.as_mut() {
+                indicator.paint(cx);
+            }
+        })
     }
 
     fn paint_diff_hunks(layout: &EditorLayout, cx: &mut ElementContext) {
+        if layout.display_hunks.is_empty() {
+            return;
+        }
+
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
-        for hunk in &layout.display_hunks {
-            let (display_row_range, status) = match hunk {
-                //TODO: This rendering is entirely a horrible hack
-                &DisplayDiffHunk::Folded { display_row: row } => {
-                    let start_y = row as f32 * line_height - scroll_top;
-                    let end_y = start_y + line_height;
+        cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+            for hunk in &layout.display_hunks {
+                let (display_row_range, status) = match hunk {
+                    //TODO: This rendering is entirely a horrible hack
+                    &DisplayDiffHunk::Folded { display_row: row } => {
+                        let start_y = row as f32 * line_height - scroll_top;
+                        let end_y = start_y + line_height;
 
-                    let width = 0.275 * line_height;
-                    let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
-                    let highlight_size = size(width * 2., end_y - start_y);
-                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-                    cx.paint_quad(quad(
-                        highlight_bounds,
-                        Corners::all(1. * line_height),
-                        cx.theme().status().modified,
-                        Edges::default(),
-                        transparent_black(),
-                    ));
+                        let width = 0.275 * line_height;
+                        let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
+                        let highlight_size = size(width * 2., end_y - start_y);
+                        let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                        cx.paint_quad(quad(
+                            highlight_bounds,
+                            Corners::all(1. * line_height),
+                            cx.theme().status().modified,
+                            Edges::default(),
+                            transparent_black(),
+                        ));
 
-                    continue;
-                }
-
-                DisplayDiffHunk::Unfolded {
-                    display_row_range,
-                    status,
-                } => (display_row_range, status),
-            };
-
-            let color = match status {
-                DiffHunkStatus::Added => cx.theme().status().created,
-                DiffHunkStatus::Modified => cx.theme().status().modified,
-
-                //TODO: This rendering is entirely a horrible hack
-                DiffHunkStatus::Removed => {
-                    let row = display_row_range.start;
-
-                    let offset = line_height / 2.;
-                    let start_y = row as f32 * line_height - offset - scroll_top;
-                    let end_y = start_y + line_height;
-
-                    let width = 0.275 * line_height;
-                    let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
-                    let highlight_size = size(width * 2., end_y - start_y);
-                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-                    cx.paint_quad(quad(
-                        highlight_bounds,
-                        Corners::all(1. * line_height),
-                        cx.theme().status().deleted,
-                        Edges::default(),
-                        transparent_black(),
-                    ));
-
-                    continue;
-                }
-            };
-
-            let start_row = display_row_range.start;
-            let end_row = display_row_range.end;
-            // If we're in a multibuffer, row range span might include an
-            // excerpt header, so if we were to draw the marker straight away,
-            // the hunk might include the rows of that header.
-            // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
-            // Instead, we simply check whether the range we're dealing with includes
-            // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
-            let end_row_in_current_excerpt = layout
-                .position_map
-                .snapshot
-                .blocks_in_range(start_row..end_row)
-                .find_map(|(start_row, block)| {
-                    if matches!(block, TransformBlock::ExcerptHeader { .. }) {
-                        Some(start_row)
-                    } else {
-                        None
+                        continue;
                     }
-                })
-                .unwrap_or(end_row);
 
-            let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
+                    DisplayDiffHunk::Unfolded {
+                        display_row_range,
+                        status,
+                    } => (display_row_range, status),
+                };
 
-            let width = 0.275 * line_height;
-            let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
-            let highlight_size = size(width * 2., end_y - start_y);
-            let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-            cx.paint_quad(quad(
-                highlight_bounds,
-                Corners::all(0.05 * line_height),
-                color,
-                Edges::default(),
-                transparent_black(),
-            ));
-        }
+                let color = match status {
+                    DiffHunkStatus::Added => cx.theme().status().created,
+                    DiffHunkStatus::Modified => cx.theme().status().modified,
+
+                    //TODO: This rendering is entirely a horrible hack
+                    DiffHunkStatus::Removed => {
+                        let row = display_row_range.start;
+
+                        let offset = line_height / 2.;
+                        let start_y = row as f32 * line_height - offset - scroll_top;
+                        let end_y = start_y + line_height;
+
+                        let width = 0.275 * line_height;
+                        let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
+                        let highlight_size = size(width * 2., end_y - start_y);
+                        let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                        cx.paint_quad(quad(
+                            highlight_bounds,
+                            Corners::all(1. * line_height),
+                            cx.theme().status().deleted,
+                            Edges::default(),
+                            transparent_black(),
+                        ));
+
+                        continue;
+                    }
+                };
+
+                let start_row = display_row_range.start;
+                let end_row = display_row_range.end;
+                // If we're in a multibuffer, row range span might include an
+                // excerpt header, so if we were to draw the marker straight away,
+                // the hunk might include the rows of that header.
+                // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
+                // Instead, we simply check whether the range we're dealing with includes
+                // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
+                let end_row_in_current_excerpt = layout
+                    .position_map
+                    .snapshot
+                    .blocks_in_range(start_row..end_row)
+                    .find_map(|(start_row, block)| {
+                        if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                            Some(start_row)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(end_row);
+
+                let start_y = start_row as f32 * line_height - scroll_top;
+                let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
+
+                let width = 0.275 * line_height;
+                let highlight_origin = layout.gutter_hitbox.origin + point(-width, start_y);
+                let highlight_size = size(width * 2., end_y - start_y);
+                let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                cx.paint_quad(quad(
+                    highlight_bounds,
+                    Corners::all(0.05 * line_height),
+                    color,
+                    Edges::default(),
+                    transparent_black(),
+                ));
+            }
+        })
     }
 
     fn paint_text(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
@@ -2418,28 +2429,30 @@ impl EditorElement {
             return;
         }
 
-        let fold_corner_radius = 0.15 * layout.position_map.line_height;
-        for mut fold in mem::take(&mut layout.folds) {
-            fold.hover_element.paint(cx);
+        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+            let fold_corner_radius = 0.15 * layout.position_map.line_height;
+            for mut fold in mem::take(&mut layout.folds) {
+                fold.hover_element.paint(cx);
 
-            let hover_element = fold.hover_element.downcast_mut::<Stateful<Div>>().unwrap();
-            let fold_background = if hover_element.interactivity().active.unwrap() {
-                cx.theme().colors().ghost_element_active
-            } else if hover_element.interactivity().hovered.unwrap() {
-                cx.theme().colors().ghost_element_hover
-            } else {
-                cx.theme().colors().ghost_element_background
-            };
+                let hover_element = fold.hover_element.downcast_mut::<Stateful<Div>>().unwrap();
+                let fold_background = if hover_element.interactivity().active.unwrap() {
+                    cx.theme().colors().ghost_element_active
+                } else if hover_element.interactivity().hovered.unwrap() {
+                    cx.theme().colors().ghost_element_hover
+                } else {
+                    cx.theme().colors().ghost_element_background
+                };
 
-            self.paint_highlighted_range(
-                fold.display_range.clone(),
-                fold_background,
-                fold_corner_radius,
-                fold_corner_radius * 2.,
-                layout,
-                cx,
-            );
-        }
+                self.paint_highlighted_range(
+                    fold.display_range.clone(),
+                    fold_background,
+                    fold_corner_radius,
+                    fold_corner_radius * 2.,
+                    layout,
+                    cx,
+                );
+            }
+        })
     }
 
     fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
