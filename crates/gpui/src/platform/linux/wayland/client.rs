@@ -290,7 +290,8 @@ impl Client for WaylandClient {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
-        }.to_string();
+        }
+        .to_string();
 
         let mut cursor_state = self.state.cursor_state.borrow_mut();
         cursor_state.cursor_icon_name = cursor_icon_name;
