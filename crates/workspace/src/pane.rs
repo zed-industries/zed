@@ -1,5 +1,5 @@
 use crate::{
-    item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
+    item::{ClosePosition, Item, ItemHandle, ItemSettings, TabContentParams, WeakItemHandle},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
@@ -1298,7 +1298,13 @@ impl Pane {
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
 
-        let label = item.tab_content(Some(detail), is_active, cx);
+        let label = item.tab_content(
+            TabContentParams {
+                detail: Some(detail),
+                selected: is_active,
+            },
+            cx,
+        );
         let close_side = &ItemSettings::get_global(cx).close_position;
 
         let indicator = maybe!({
@@ -2662,7 +2668,13 @@ mod tests {
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        let label = self.item.tab_content(Some(self.detail), false, cx);
+        let label = self.item.tab_content(
+            TabContentParams {
+                detail: Some(self.detail),
+                selected: false,
+            },
+            cx,
+        );
         Tab::new("")
             .selected(self.is_active)
             .child(label)

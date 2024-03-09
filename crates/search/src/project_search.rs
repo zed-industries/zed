@@ -38,7 +38,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use workspace::{DeploySearch, NewSearch};
+use workspace::{item::TabContentParams, DeploySearch, NewSearch};
 
 use ui::{
     h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
@@ -479,7 +479,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext<'_>) -> AnyElement {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -496,12 +496,14 @@ impl Item for ProjectSearchView {
             .unwrap_or_else(|| "Project Search".into());
         h_flex()
             .gap_2()
-            .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
-            .child(Label::new(tab_name).color(if selected {
+            .child(
+                Icon::new(IconName::MagnifyingGlass).color(if params.selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                }),
+            )
+            .child(Label::new(tab_name).color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

@@ -6,7 +6,7 @@ use gpui::{
     IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext, WeakView,
 };
 use ui::prelude::*;
-use workspace::item::{Item, ItemHandle};
+use workspace::item::{Item, ItemHandle, TabContentParams};
 use workspace::Workspace;
 
 use crate::{
@@ -183,21 +183,16 @@ impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
 impl Item for MarkdownPreviewView {
     type Event = PreviewEvent;
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        selected: bool,
-        _cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
         h_flex()
             .gap_2()
-            .child(Icon::new(IconName::FileDoc).color(if selected {
+            .child(Icon::new(IconName::FileDoc).color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
             }))
             .child(
-                Label::new(self.tab_description.to_string()).color(if selected {
+                Label::new(self.tab_description.to_string()).color(if params.selected {
                     Color::Default
                 } else {
                     Color::Muted

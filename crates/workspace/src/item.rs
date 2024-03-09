@@ -98,6 +98,12 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TabContentParams {
+    pub detail: Option<usize>,
+    pub selected: bool,
+}
+
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
 
@@ -112,7 +118,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
         None
     }
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
 
     fn telemetry_event_text(&self) -> Option<&'static str>;
 
@@ -231,9 +237,9 @@ pub trait ItemHandle: 'static + Send {
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
+    fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
@@ -334,12 +340,18 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_description(detail, cx)
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, selected, cx)
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        self.read(cx).tab_content(params, cx)
     }
 
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, true, cx)
+    fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        self.read(cx).tab_content(
+            TabContentParams {
+                selected: true,
+                ..params
+            },
+            cx,
+        )
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -814,7 +826,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent};
+    use super::{Item, ItemEvent, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
@@ -979,11 +991,10 @@ pub mod test {
 
         fn tab_content(
             &self,
-            detail: Option<usize>,
-            _selected: bool,
+            params: TabContentParams,
             _cx: &ui::prelude::WindowContext,
         ) -> AnyElement {
-            self.tab_detail.set(detail);
+            self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }
 

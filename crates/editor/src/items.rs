@@ -19,7 +19,7 @@ use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::ItemSettings;
+use workspace::item::{ItemSettings, TabContentParams};
 
 use std::{
     borrow::Cow,
@@ -594,7 +594,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let git_status = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
@@ -610,7 +610,7 @@ impl Item for Editor {
             Some(GitFileStatus::Modified) => Color::Modified,
             Some(GitFileStatus::Conflict) => Color::Conflict,
             None => {
-                if selected {
+                if params.selected {
                     Color::Default
                 } else {
                     Color::Muted
@@ -618,7 +618,7 @@ impl Item for Editor {
             }
         };
 
-        let description = detail.and_then(|detail| {
+        let description = params.detail.and_then(|detail| {
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
             let description = path.to_string_lossy();
             let description = description.trim();
