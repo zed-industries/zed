@@ -609,8 +609,6 @@ impl<'a> MarkdownParser<'a> {
 mod tests {
     use super::*;
 
-    use gpui::BackgroundExecutor;
-    use language::{Language, LanguageConfig};
     use pretty_assertions::assert_eq;
 
     use ParsedMarkdownElement::*;
@@ -621,7 +619,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_headings() {
+    fn test_headings() {
         let parsed = parse("# Heading one\n## Heading two\n### Heading three").await;
 
         assert_eq!(
@@ -635,7 +633,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_newlines_dont_new_paragraphs() {
+    fn test_newlines_dont_new_paragraphs() {
         let parsed = parse("Some text **that is bolded**\n and *italicized*").await;
 
         assert_eq!(
@@ -645,7 +643,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_heading_with_paragraph() {
+    fn test_heading_with_paragraph() {
         let parsed = parse("# Zed\nThe editor").await;
 
         assert_eq!(
@@ -655,7 +653,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_double_newlines_do_new_paragraphs() {
+    fn test_double_newlines_do_new_paragraphs() {
         let parsed = parse("Some text **that is bolded**\n\n and *italicized*").await;
 
         assert_eq!(
@@ -668,7 +666,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_bold_italic_text() {
+    fn test_bold_italic_text() {
         let parsed = parse("Some text **that is bolded** and *italicized*").await;
 
         assert_eq!(
@@ -678,7 +676,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_nested_bold_strikethrough_text() {
+    fn test_nested_bold_strikethrough_text() {
         let parsed = parse("Some **bo~~strikethrough~~ld** text").await;
 
         assert_eq!(parsed.children.len(), 1);
@@ -728,7 +726,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_header_only_table() {
+    fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
 |----------|----------|
@@ -749,7 +747,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_basic_table() {
+    fn test_basic_table() {
         let markdown = "\
 | Header 1 | Header 2 |
 |----------|----------|
@@ -772,7 +770,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_list_basic() {
+    fn test_list_basic() {
         let parsed = parse(
             "\
 * Item 1
@@ -796,7 +794,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_list_with_tasks() {
+    fn test_list_with_tasks() {
         let parsed = parse(
             "\
 - [ ] TODO
@@ -818,7 +816,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_list_nested() {
+    fn test_list_nested() {
         let parsed = parse(
             "\
 * Item 1
@@ -928,7 +926,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_list_with_nested_content() {
+    fn test_list_with_nested_content() {
         let parsed = parse(
             "\
 *   This is a list item with two paragraphs.
@@ -954,7 +952,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_list_with_leading_text() {
+    fn test_list_with_leading_text() {
         let parsed = parse(
             "\
 * `code`
@@ -978,7 +976,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_simple_block_quote() {
+    fn test_simple_block_quote() {
         let parsed = parse("> Simple block quote with **styled text**").await;
 
         assert_eq!(
@@ -991,7 +989,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_simple_block_quote_with_multiple_lines() {
+    fn test_simple_block_quote_with_multiple_lines() {
         let parsed = parse(
             "\
 > # Heading
@@ -1017,7 +1015,7 @@ Some other content
     }
 
     #[gpui::test]
-    async fn test_nested_block_quote() {
+    fn test_nested_block_quote() {
         let parsed = parse(
             "\
 > A
@@ -1048,7 +1046,7 @@ More text
     }
 
     #[gpui::test]
-    async fn test_code_block() {
+    fn test_code_block() {
         let parsed = parse(
             "\
 ```
@@ -1067,17 +1065,8 @@ fn main() {
     }
 
     #[gpui::test]
-    async fn test_code_block_with_language(executor: BackgroundExecutor) {
-        let mut language_registry = LanguageRegistry::test();
-        language_registry.set_executor(executor);
-        let language_registry = Arc::new(language_registry);
-        let rust_language = LanguageConfig {
-            name: "Rust".into(),
-            ..Default::default()
-        };
-        language_registry.register_test_language(rust_language.clone());
-
-        let parsed = parse_markdown(
+    fn test_code_block_with_language() {
+        let parsed = parse(
             "\
 ```rust
 fn main() {
@@ -1085,22 +1074,17 @@ fn main() {
 }
 ```
 ",
-            None,
-            Some(language_registry),
         )
         .await;
 
-        assert_eq!(parsed.children.len(), 1);
-
-        if let ParsedMarkdownElement::CodeBlock(code_block) = &parsed.children[0] {
-            let language_name = code_block.language.as_ref().unwrap().name().to_string();
-
-            assert_eq!(code_block.contents, "fn main() {\n    return 0;\n}");
-            assert_eq!(code_block.source_range, 0..39);
-            assert_eq!(language_name, "Rust".to_string());
-        } else {
-            panic!("Expected a code block");
-        }
+        assert_eq!(
+            parsed.children,
+            vec![code_block(
+                Some("rust".into()),
+                "fn main() {\n    return 0;\n}",
+                0..39
+            )]
+        );
     }
 
     fn h1(contents: ParsedMarkdownText, source_range: Range<usize>) -> ParsedMarkdownElement {
@@ -1152,7 +1136,7 @@ fn main() {
     }
 
     fn code_block(
-        language: Option<Arc<Language>>,
+        language: Option<String>,
         code: &str,
         source_range: Range<usize>,
     ) -> ParsedMarkdownElement {
