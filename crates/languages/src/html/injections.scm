@@ -5,3 +5,6 @@
 (style_element
   (raw_text) @content
   (#set! "language" "css"))
+
+((comment) @content
+  (#set! "language" "comment"))

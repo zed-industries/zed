@@ -1,6 +1,5 @@
-; We need impl this
-; ((comment) @injection.content
-;  (#set! injection.language "comment"))
+([(shell_command) (shell_fragment)] @content
+  (#set! "language" "bash"))
 
-((shell_command) @content
- (#set! "language" "bash"))
+((comment) @content
+  (#set! "language" "comment"))
