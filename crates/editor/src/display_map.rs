@@ -339,8 +339,13 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
-    pub inlay_highlight_style: Option<HighlightStyle>,
-    pub suggestion_highlight_style: Option<HighlightStyle>,
+    pub styles: HighlightStyles,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct HighlightStyles {
+    pub inlay_hint: Option<HighlightStyle>,
+    pub suggestion: Option<HighlightStyle>,
 }
 
 pub struct HighlightedChunk<'a> {
@@ -516,8 +521,7 @@ impl DisplaySnapshot {
         &self,
         display_rows: Range<u32>,
         language_aware: bool,
-        inlay_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
+        highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
@@ -525,8 +529,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
-                inlay_highlight_style,
-                suggestion_highlight_style,
+                styles: highlight_styles,
             },
         )
     }
@@ -540,8 +543,10 @@ impl DisplaySnapshot {
         self.chunks(
             display_rows,
             language_aware,
-            Some(editor_style.inlays_style),
-            Some(editor_style.suggestions_style),
+            HighlightStyles {
+                inlay_hint: Some(editor_style.inlay_hints_style),
+                suggestion: Some(editor_style.suggestions_style),
+            },
         )
         .map(|chunk| {
             let mut highlight_style = chunk
@@ -1846,7 +1851,7 @@ pub mod tests {
     ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Hsla>, Option<Hsla>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, None, None) {
+        for chunk in snapshot.chunks(rows, true, HighlightStyles::default()) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
