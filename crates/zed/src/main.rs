@@ -1031,13 +1031,23 @@ async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) 
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
+    #[cfg(not(target_os = "windows"))]
+    let path = Path::new("assets/icons/file_icons/file_types.json");
+
+    #[cfg(target_os = "windows")]
+    let path = {
+        let p = Path::new("assets/icons/file_icons/file_types.json");
+        let Ok(full_path) = p.canonicalize() else {
+            return;
+        };
+        full_path
+    };
+
     cx.spawn(|cx| async move {
-        let mut events = fs
-            .watch(
-                "assets/icons/file_icons/file_types.json".as_ref(),
-                Duration::from_millis(100),
-            )
-            .await;
+        #[cfg(not(target_os = "windows"))]
+        let mut events = fs.watch(path, Duration::from_millis(100)).await;
+        #[cfg(target_os = "windows")]
+        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 cx.update_global(|file_types, _| {
