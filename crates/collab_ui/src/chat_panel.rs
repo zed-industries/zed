@@ -274,8 +274,7 @@ impl ChatPanel {
                 message_ix,
             } => {
                 self.message_list.splice(*message_ix..*message_ix + 1, 1);
-                self.markdown_data
-                    .remove(&ChannelMessageId::Saved(*message_id));
+                self.markdown_data.remove(message_id);
             }
             ChannelChatEvent::NewMessage {
                 channel_id,

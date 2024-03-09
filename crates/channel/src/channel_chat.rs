@@ -85,7 +85,7 @@ pub enum ChannelChatEvent {
         new_count: usize,
     },
     UpdateMessage {
-        message_id: u64,
+        message_id: ChannelMessageId,
         message_ix: usize,
     },
     NewMessage {
@@ -247,7 +247,13 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<()>>> {
-        self.message_update(id, message.text.clone(), message.mentions.clone(), cx);
+        self.message_update(
+            ChannelMessageId::Saved(id),
+            message.text.clone(),
+            message.mentions.clone(),
+            Some(OffsetDateTime::now_utc()),
+            cx,
+        );
 
         let nonce: u128 = self.rng.gen();
 
@@ -555,24 +561,24 @@ impl ChannelChat {
 
     async fn handle_message_updated(
         this: Model<Self>,
-        message: TypedEnvelope<proto::UpdateChannelMessage>,
+        message: TypedEnvelope<proto::ChannelMessageUpdate>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
+        let message = message
+            .payload
+            .message
+            .ok_or_else(|| anyhow!("empty message"))?;
+
+        let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
+
         this.update(&mut cx, |this, cx| {
             this.message_update(
-                message.payload.message_id,
-                message.payload.body,
-                message
-                    .payload
-                    .mentions
-                    .iter()
-                    .filter(|m| m.range.is_some())
-                    .map(|m| {
-                        let range = m.range.as_ref().unwrap();
-                        ((range.start as usize..range.end as usize), m.user_id)
-                    })
-                    .collect::<Vec<_>>(),
+                message.id,
+                message.body,
+                message.mentions,
+                message.edited_at,
                 cx,
             )
         })?;
@@ -658,18 +664,20 @@ impl ChannelChat {
 
     fn message_update(
         &mut self,
-        id: u64,
+        id: ChannelMessageId,
         body: String,
         mentions: Vec<(Range<usize>, u64)>,
+        edited_at: Option<OffsetDateTime>,
         cx: &mut ModelContext<Self>,
     ) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>();
-        let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
+        let mut messages = cursor.slice(&id, Bias::Left, &());
         let ix = messages.summary().count;
 
         if let Some(mut message_to_update) = cursor.item().cloned() {
             message_to_update.body = body;
             message_to_update.mentions = mentions;
+            message_to_update.edited_at = edited_at;
             messages.push(message_to_update, &());
             cursor.next(&());
         }

@@ -3210,14 +3210,22 @@ async fn update_channel_message(
     };
 
     response.send(proto::UpdateChannelMessageResponse {
-        message: Some(message),
+        message: Some(message.clone()),
     })?;
 
     let pool = &*session.connection_pool().await;
     broadcast(
         Some(session.connection_id),
         participant_connection_ids,
-        |connection| session.peer.send(connection, request.clone()),
+        |connection| {
+            session.peer.send(
+                connection,
+                proto::ChannelMessageUpdate {
+                    channel_id: channel_id.to_proto(),
+                    message: Some(message.clone()),
+                },
+            )
+        },
     );
 
     send_notifications(pool, &session.peer, notifications);

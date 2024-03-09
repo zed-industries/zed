@@ -149,6 +149,7 @@ messages!(
     (CallCanceled, Foreground),
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
+    (ChannelMessageUpdate, Foreground),
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
@@ -438,6 +439,7 @@ entity_messages!(
 entity_messages!(
     {channel_id, Channel},
     ChannelMessageSent,
+    ChannelMessageUpdate,
     RemoveChannelMessage,
     UpdateChannelMessage,
     UpdateChannelBuffer,

@@ -201,6 +201,7 @@ message Envelope {
 
         UpdateChannelMessage update_channel_message = 165;
         UpdateChannelMessageResponse update_channel_message_response = 166;
+        ChannelMessageUpdate channel_message_update = 167;
     }
 
     reserved 158 to 161;
@@ -1200,6 +1201,11 @@ message SendChannelMessageResponse {
 }
 
 message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message ChannelMessageUpdate {
     uint64 channel_id = 1;
     ChannelMessage message = 2;
 }
