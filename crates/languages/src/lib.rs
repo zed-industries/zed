@@ -39,6 +39,7 @@ mod tailwind;
 mod terraform;
 mod toml;
 mod typescript;
+mod typst;
 mod vue;
 mod yaml;
 mod zig;
@@ -113,6 +114,7 @@ pub fn init(
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
+        ("typst", tree_sitter_typst::language()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
@@ -356,6 +358,7 @@ pub fn init(
         ))]
     );
     language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
+    language!("typst", vec![Arc::new(typst::TypstLspAdapter)]);
 }
 
 #[cfg(any(test, feature = "test-support"))]
