@@ -97,14 +97,14 @@ fn test_select_language() {
     // matching file extension
     assert_eq!(
         registry
-            .language_for_file("zed/lib.rs", None)
+            .language_for_file("zed/lib.rs".as_ref(), None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Rust".into())
     );
     assert_eq!(
         registry
-            .language_for_file("zed/lib.mk", None)
+            .language_for_file("zed/lib.mk".as_ref(), None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -113,7 +113,7 @@ fn test_select_language() {
     // matching filename
     assert_eq!(
         registry
-            .language_for_file("zed/Makefile", None)
+            .language_for_file("zed/Makefile".as_ref(), None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -122,21 +122,21 @@ fn test_select_language() {
     // matching suffix that is not the full file extension or filename
     assert_eq!(
         registry
-            .language_for_file("zed/cars", None)
+            .language_for_file("zed/cars".as_ref(), None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file("zed/a.cars", None)
+            .language_for_file("zed/a.cars".as_ref(), None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file("zed/sumk", None)
+            .language_for_file("zed/sumk".as_ref(), None)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
@@ -1110,7 +1110,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
                 b();
                 |
             "
-            .replace("|", "") // marker to preserve trailing whitespace
+            .replace('|', "") // marker to preserve trailing whitespace
             .unindent(),
         )
         .with_language(Arc::new(rust_lang()), cx);
@@ -1787,7 +1787,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
 
         // In a JSX expression: use the default config.
         let expression_in_element_config = snapshot
-            .language_scope_at(text.find("{").unwrap() + 1)
+            .language_scope_at(text.find('{').unwrap() + 1)
             .unwrap();
         assert_eq!(
             expression_in_element_config
@@ -2321,7 +2321,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         actual_ranges,
         expected_ranges,
         "wrong ranges for text lines:\n{:?}",
-        text.split("\n").collect::<Vec<_>>()
+        text.split('\n').collect::<Vec<_>>()
     );
 }
 

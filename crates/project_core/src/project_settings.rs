@@ -64,6 +64,7 @@ pub enum GitGutterSetting {
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub initialization_options: Option<serde_json::Value>,
+    pub settings: Option<serde_json::Value>,
 }
 
 impl Settings for ProjectSettings {

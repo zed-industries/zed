@@ -221,7 +221,7 @@ impl Dock {
                     return;
                 };
                 if panel.is_zoomed(cx) {
-                    workspace.zoomed = Some(panel.to_any().downgrade().into());
+                    workspace.zoomed = Some(panel.to_any().downgrade());
                     workspace.zoomed_position = Some(position);
                 } else {
                     workspace.zoomed = None;
@@ -522,7 +522,7 @@ impl Dock {
 
     pub fn resize_active_panel(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE));
+            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
             entry.panel.set_size(size, cx);
             cx.notify();
         }

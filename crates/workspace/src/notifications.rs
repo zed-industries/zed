@@ -213,6 +213,7 @@ impl Render for LanguageServerPrompt {
             .id("language_server_prompt_notification")
             .elevation_3(cx)
             .items_start()
+            .justify_between()
             .p_2()
             .gap_2()
             .w_full()

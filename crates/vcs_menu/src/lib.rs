@@ -9,7 +9,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
 use ui::{
-    h_flex, v_flex, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
+    h_flex, v_flex, Button, ButtonCommon, Clickable, Color, HighlightedLabel, Label, LabelCommon,
     LabelSize, ListItem, ListItemSpacing, Selectable,
 };
 use util::ResultExt;
@@ -292,11 +292,13 @@ impl PickerDelegate for BranchListDelegate {
         let label = if self.last_query.is_empty() {
             h_flex()
                 .ml_3()
-                .child(Label::new("Recent branches").size(LabelSize::Small))
+                .child(Label::new("Recent Branches").size(LabelSize::Small))
         } else {
             let match_label = self.matches.is_empty().not().then(|| {
                 let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                Label::new(format!("{} match{}", self.matches.len(), suffix)).size(LabelSize::Small)
+                Label::new(format!("{} match{}", self.matches.len(), suffix))
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
             });
             h_flex()
                 .px_3()
@@ -305,7 +307,7 @@ impl PickerDelegate for BranchListDelegate {
                 .child(Label::new("Branches").size(LabelSize::Small))
                 .children(match_label)
         };
-        Some(label.into_any())
+        Some(label.mt_1().into_any())
     }
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         if self.last_query.is_empty() {

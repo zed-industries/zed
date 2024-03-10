@@ -44,10 +44,6 @@ impl super::LspAdapter for VueLspAdapter {
         LanguageServerName("vue-language-server".into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "vue-language-server"
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

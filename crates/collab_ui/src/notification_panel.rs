@@ -29,7 +29,7 @@ use workspace::{
 const LOADING_THRESHOLD: usize = 30;
 const MARK_AS_READ_DELAY: Duration = Duration::from_secs(1);
 const TOAST_DURATION: Duration = Duration::from_secs(5);
-const NOTIFICATION_PANEL_KEY: &'static str = "NotificationPanel";
+const NOTIFICATION_PANEL_KEY: &str = "NotificationPanel";
 
 pub struct NotificationPanel {
     client: Arc<Client>,
@@ -183,7 +183,7 @@ impl NotificationPanel {
                 let panel = Self::new(workspace, cx);
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width;
+                        panel.width = serialized_panel.width.map(|w| w.round());
                         cx.notify();
                     });
                 }
@@ -778,7 +778,7 @@ fn format_timestamp(
             "just now".to_string()
         }
     } else if date.next_day() == Some(today) {
-        format!("yesterday")
+        "yesterday".to_string()
     } else {
         format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }

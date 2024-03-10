@@ -42,7 +42,7 @@ fn main() {
     menu::init();
     let args = Args::parse();
 
-    let story_selector = args.story.clone().unwrap_or_else(|| {
+    let story_selector = args.story.unwrap_or_else(|| {
         let stories = ComponentStory::iter().collect::<Vec<_>>();
 
         ctrlc::set_handler(move || {}).unwrap();

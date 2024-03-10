@@ -11,6 +11,7 @@ use rand::prelude::*;
 use rpc::RECEIVE_TIMEOUT;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use settings::SettingsStore;
+use std::sync::OnceLock;
 use std::{
     env,
     path::PathBuf,
@@ -21,16 +22,32 @@ use std::{
     },
 };
 
-lazy_static::lazy_static! {
-    static ref PLAN_LOAD_PATH: Option<PathBuf> = path_env_var("LOAD_PLAN");
-    static ref PLAN_SAVE_PATH: Option<PathBuf> = path_env_var("SAVE_PLAN");
-    static ref MAX_PEERS: usize = env::var("MAX_PEERS")
-        .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
-        .unwrap_or(3);
-    static ref MAX_OPERATIONS: usize = env::var("OPERATIONS")
-        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-        .unwrap_or(10);
+fn plan_load_path() -> &'static Option<PathBuf> {
+    static PLAN_LOAD_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    PLAN_LOAD_PATH.get_or_init(|| path_env_var("LOAD_PLAN"))
+}
 
+fn plan_save_path() -> &'static Option<PathBuf> {
+    static PLAN_SAVE_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    PLAN_SAVE_PATH.get_or_init(|| path_env_var("SAVE_PLAN"))
+}
+
+fn max_peers() -> usize {
+    static MAX_PEERS: OnceLock<usize> = OnceLock::new();
+    *MAX_PEERS.get_or_init(|| {
+        env::var("MAX_PEERS")
+            .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
+            .unwrap_or(3)
+    })
+}
+
+fn max_operations() -> usize {
+    static MAX_OPERATIONS: OnceLock<usize> = OnceLock::new();
+    *MAX_OPERATIONS.get_or_init(|| {
+        env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10)
+    })
 }
 
 static LOADED_PLAN_JSON: Mutex<Option<Vec<u8>>> = Mutex::new(None);
@@ -175,7 +192,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
     }
     executor.run_until_parked();
 
-    if let Some(path) = &*PLAN_SAVE_PATH {
+    if let Some(path) = plan_save_path() {
         eprintln!("saved test plan to path {:?}", path);
         std::fs::write(path, plan.lock().serialize()).unwrap();
     }
@@ -183,7 +200,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
 
 pub fn save_randomized_test_plan() {
     if let Some(serialize_plan) = LAST_PLAN.lock().take() {
-        if let Some(path) = &*PLAN_SAVE_PATH {
+        if let Some(path) = plan_save_path() {
             eprintln!("saved test plan to path {:?}", path);
             std::fs::write(path, serialize_plan()).unwrap();
         }
@@ -197,7 +214,7 @@ impl<T: RandomizedTest> TestPlan<T> {
         let allow_client_disconnection = rng.gen_bool(0.1);
 
         let mut users = Vec::new();
-        for ix in 0..*MAX_PEERS {
+        for ix in 0..max_peers() {
             let username = format!("user-{}", ix + 1);
             let user_id = server
                 .app_state
@@ -234,12 +251,12 @@ impl<T: RandomizedTest> TestPlan<T> {
             stored_operations: Vec::new(),
             operation_ix: 0,
             next_batch_id: 0,
-            max_operations: *MAX_OPERATIONS,
+            max_operations: max_operations(),
             users,
             rng,
         }));
 
-        if let Some(path) = &*PLAN_LOAD_PATH {
+        if let Some(path) = plan_load_path() {
             let json = LOADED_PLAN_JSON
                 .lock()
                 .get_or_insert_with(|| {
@@ -447,6 +464,7 @@ impl<T: RandomizedTest> TestPlan<T> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply_server_operation(
         plan: Arc<Mutex<Self>>,
         deterministic: BackgroundExecutor,

@@ -1,13 +1,19 @@
 use std::cell::RefCell;
+use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::Mutex;
-use smol::Timer;
+use calloop::timer::{TimeoutAction, Timer};
+use calloop::LoopHandle;
+use calloop_wayland_source::WaylandSource;
+use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
+use copypasta::ClipboardProvider;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
+use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_callback::WlCallback;
+use wayland_client::protocol::wl_output;
 use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
 use wayland_client::{
     delegate_noop,
@@ -16,7 +22,7 @@ use wayland_client::{
         wl_shm, wl_shm_pool,
         wl_surface::{self, WlSurface},
     },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
@@ -30,27 +36,29 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use crate::platform::linux::client::Client;
+use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, DisplayId, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, WindowOptions,
+    platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, WindowOptions,
 };
 
-const MIN_KEYCODE: u32 = 8; // used to convert evdev scancode to xkb scancode
+/// Used to convert evdev scancode to xkb scancode
+const MIN_KEYCODE: u32 = 8;
 
 pub(crate) struct WaylandClientStateInner {
-    compositor: Option<wl_compositor::WlCompositor>,
-    buffer: Option<wl_buffer::WlBuffer>,
-    wm_base: Option<xdg_wm_base::XdgWmBase>,
+    compositor: wl_compositor::WlCompositor,
+    wm_base: xdg_wm_base::XdgWmBase,
+    shm: wl_shm::WlShm,
     viewporter: Option<wp_viewporter::WpViewporter>,
     fractional_scale_manager: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
+    outputs: Vec<(wl_output::WlOutput, Rc<RefCell<OutputState>>)>,
     platform_inner: Rc<LinuxPlatformInner>,
-    wl_seat: Option<wl_seat::WlSeat>,
     keymap_state: Option<xkb::State>,
     repeat: KeyRepeat,
     modifiers: Modifiers,
@@ -59,10 +67,21 @@ pub(crate) struct WaylandClientStateInner {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<Rc<WaylandWindowState>>,
     keyboard_focused_window: Option<Rc<WaylandWindowState>>,
+    loop_handle: Rc<LoopHandle<'static, ()>>,
+}
+
+pub(crate) struct CursorState {
+    cursor_icon_name: String,
+    cursor: Option<Cursor>,
 }
 
 #[derive(Clone)]
-pub(crate) struct WaylandClientState(Rc<RefCell<WaylandClientStateInner>>);
+pub(crate) struct WaylandClientState {
+    client_state_inner: Rc<RefCell<WaylandClientStateInner>>,
+    cursor_state: Rc<RefCell<CursorState>>,
+    clipboard: Rc<RefCell<Clipboard>>,
+    primary: Rc<RefCell<Primary>>,
+}
 
 pub(crate) struct KeyRepeat {
     characters_per_second: u32,
@@ -73,24 +92,61 @@ pub(crate) struct KeyRepeat {
 
 pub(crate) struct WaylandClient {
     platform_inner: Rc<LinuxPlatformInner>,
-    conn: Arc<Connection>,
     state: WaylandClientState,
-    event_queue: Mutex<EventQueue<WaylandClientState>>,
     qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
+const WL_SEAT_VERSION: u32 = 4;
+const WL_OUTPUT_VERSION: u32 = 2;
+
 impl WaylandClient {
-    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>, conn: Arc<Connection>) -> Self {
-        let state = WaylandClientState(Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: None,
-            buffer: None,
-            wm_base: None,
-            viewporter: None,
-            fractional_scale_manager: None,
-            decoration_manager: None,
+    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
+        let conn = Connection::connect_to_env().unwrap();
+
+        let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
+        let qh = event_queue.handle();
+        let mut outputs = Vec::new();
+
+        globals.contents().with_list(|list| {
+            for global in list {
+                match &global.interface[..] {
+                    "wl_seat" => {
+                        globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                            global.name,
+                            WL_SEAT_VERSION,
+                            &qh,
+                            (),
+                        );
+                    }
+                    "wl_output" => outputs.push((
+                        globals.registry().bind::<wl_output::WlOutput, _, _>(
+                            global.name,
+                            WL_OUTPUT_VERSION,
+                            &qh,
+                            (),
+                        ),
+                        Rc::new(RefCell::new(OutputState::default())),
+                    )),
+                    _ => {}
+                }
+            }
+        });
+
+        let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
+        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
+
+        let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
+            compositor: globals
+                .bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ())
+                .unwrap(),
+            wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
+            shm: globals.bind(&qh, 1..=1, ()).unwrap(),
+            outputs,
+            viewporter: globals.bind(&qh, 1..=1, ()).ok(),
+            fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
-            wl_seat: None,
             keymap_state: None,
             repeat: KeyRepeat {
                 characters_per_second: 16,
@@ -110,41 +166,39 @@ impl WaylandClient {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
-        })));
-        let event_queue: EventQueue<WaylandClientState> = conn.new_event_queue();
-        let qh = event_queue.handle();
+            loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
+        }));
+
+        let mut cursor_state = Rc::new(RefCell::new(CursorState {
+            cursor_icon_name: "arrow".to_string(),
+            cursor: None,
+        }));
+
+        let source = WaylandSource::new(conn, event_queue);
+
+        let mut state = WaylandClientState {
+            client_state_inner: Rc::clone(&state_inner),
+            cursor_state: Rc::clone(&cursor_state),
+            clipboard: Rc::new(RefCell::new(clipboard)),
+            primary: Rc::new(RefCell::new(primary)),
+        };
+        let mut state_loop = state.clone();
+        linux_platform_inner
+            .loop_handle
+            .insert_source(source, move |_, queue, _| {
+                queue.dispatch_pending(&mut state_loop)
+            })
+            .unwrap();
+
         Self {
             platform_inner: linux_platform_inner,
-            conn,
             state,
-            event_queue: Mutex::new(event_queue),
             qh: Arc::new(qh),
         }
     }
 }
 
 impl Client for WaylandClient {
-    fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        let display = self.conn.display();
-        let mut eq = self.event_queue.lock();
-        let _registry = display.get_registry(&self.qh, ());
-
-        eq.roundtrip(&mut self.state.clone()).unwrap();
-
-        on_finish_launching();
-        while !self.platform_inner.state.lock().quit_requested {
-            eq.flush().unwrap();
-            eq.dispatch_pending(&mut self.state.clone()).unwrap();
-            if let Some(guard) = self.conn.prepare_read() {
-                guard.read().unwrap();
-                eq.dispatch_pending(&mut self.state.clone()).unwrap();
-            }
-            if let Ok(runnable) = self.platform_inner.main_receiver.try_recv() {
-                runnable.run();
-            }
-        }
-    }
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         Vec::new()
     }
@@ -158,12 +212,10 @@ impl Client for WaylandClient {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let mut state = self.state.0.borrow_mut();
+        let mut state = self.state.client_state_inner.borrow_mut();
 
-        let wm_base = state.wm_base.as_ref().unwrap();
-        let compositor = state.compositor.as_ref().unwrap();
-        let wl_surface = compositor.create_surface(&self.qh, ());
-        let xdg_surface = wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
+        let wl_surface = state.compositor.create_surface(&self.qh, ());
+        let xdg_surface = state.wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
         let toplevel = xdg_surface.get_toplevel(&self.qh, ());
         let wl_surface = Arc::new(wl_surface);
 
@@ -180,7 +232,7 @@ impl Client for WaylandClient {
             let decoration =
                 decoration_manager.get_toplevel_decoration(&toplevel, &self.qh, xdg_surface.id());
 
-            // todo!(linux) - options.titlebar is lacking information required for wayland.
+            // todo(linux) - options.titlebar is lacking information required for wayland.
             //                Especially, whether a titlebar is wanted in itself.
             //
             // Removing the titlebar also removes the entire window frame (ie. the ability to
@@ -200,8 +252,7 @@ impl Client for WaylandClient {
         wl_surface.frame(&self.qh, wl_surface.clone());
         wl_surface.commit();
 
-        let window_state = Rc::new(WaylandWindowState::new(
-            &self.conn,
+        let window_state: Rc<WaylandWindowState> = Rc::new(WaylandWindowState::new(
             wl_surface.clone(),
             viewport,
             Arc::new(toplevel),
@@ -215,70 +266,76 @@ impl Client for WaylandClient {
         state.windows.push((xdg_surface, Rc::clone(&window_state)));
         Box::new(WaylandWindow(window_state))
     }
+
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let cursor_icon_name = match style {
+            CursorStyle::Arrow => "arrow".to_string(),
+            CursorStyle::IBeam => "text".to_string(),
+            CursorStyle::Crosshair => "crosshair".to_string(),
+            CursorStyle::ClosedHand => "grabbing".to_string(),
+            CursorStyle::OpenHand => "openhand".to_string(),
+            CursorStyle::PointingHand => "hand".to_string(),
+            CursorStyle::ResizeLeft => "w-resize".to_string(),
+            CursorStyle::ResizeRight => "e-resize".to_string(),
+            CursorStyle::ResizeLeftRight => "ew-resize".to_string(),
+            CursorStyle::ResizeUp => "n-resize".to_string(),
+            CursorStyle::ResizeDown => "s-resize".to_string(),
+            CursorStyle::ResizeUpDown => "ns-resize".to_string(),
+            CursorStyle::DisappearingItem => "grabbing".to_string(), // todo(linux) - couldn't find equivalent icon in linux
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
+            CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
+            CursorStyle::DragLink => "dnd-link".to_string(),
+            CursorStyle::DragCopy => "dnd-copy".to_string(),
+            CursorStyle::ContextualMenu => "context-menu".to_string(),
+        };
+
+        let mut cursor_state = self.state.cursor_state.borrow_mut();
+        cursor_state.cursor_icon_name = cursor_icon_name;
+    }
+
+    fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
+        self.state.clipboard.clone()
+    }
+
+    fn get_primary(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
+        self.state.primary.clone()
+    }
 }
 
-impl Dispatch<wl_registry::WlRegistry, ()> for WaylandClientState {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientState {
     fn event(
         state: &mut Self,
         registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
-        _: &(),
+        _: &GlobalListContents,
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
-        if let wl_registry::Event::Global {
-            name, interface, ..
-        } = event
-        {
-            match &interface[..] {
-                "wl_compositor" => {
-                    let compositor =
-                        registry.bind::<wl_compositor::WlCompositor, _, _>(name, 1, qh, ());
-                    state.compositor = Some(compositor);
-                }
-                "xdg_wm_base" => {
-                    let wm_base = registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, 1, qh, ());
-                    state.wm_base = Some(wm_base);
-                }
+        let mut state = state.client_state_inner.borrow_mut();
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version: _,
+            } => match &interface[..] {
                 "wl_seat" => {
-                    let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, 4, qh, ());
-                    state.wl_seat = Some(seat);
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, WL_SEAT_VERSION, qh, ());
                 }
-                "wp_fractional_scale_manager_v1" => {
-                    let manager = registry
-                        .bind::<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _, _>(
-                        name,
-                        1,
-                        qh,
-                        (),
-                    );
-                    state.fractional_scale_manager = Some(manager);
-                }
-                "wp_viewporter" => {
-                    let view_porter =
-                        registry.bind::<wp_viewporter::WpViewporter, _, _>(name, 1, qh, ());
-                    state.viewporter = Some(view_porter);
-                }
-                "zxdg_decoration_manager_v1" => {
-                    // Unstable and optional
-                    let decoration_manager = registry
-                        .bind::<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _, _>(
-                        name,
-                        1,
-                        qh,
-                        (),
-                    );
-                    state.decoration_manager = Some(decoration_manager);
+                "wl_output" => {
+                    state.outputs.push((
+                        registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ()),
+                        Rc::new(RefCell::new(OutputState::default())),
+                    ));
                 }
                 _ => {}
-            };
+            },
+            wl_registry::Event::GlobalRemove { name: _ } => {}
+            _ => {}
         }
     }
 }
 
 delegate_noop!(WaylandClientState: ignore wl_compositor::WlCompositor);
-delegate_noop!(WaylandClientState: ignore wl_surface::WlSurface);
 delegate_noop!(WaylandClientState: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientState: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientState: ignore wl_buffer::WlBuffer);
@@ -296,7 +353,7 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let wl_callback::Event::Done { .. } = event {
             for window in &state.windows {
                 if window.1.surface.id() == surf.id() {
@@ -305,6 +362,124 @@ impl Dispatch<WlCallback, Arc<WlSurface>> for WaylandClientState {
                     window.1.surface.commit();
                 }
             }
+        }
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        surface: &wl_surface::WlSurface,
+        event: <wl_surface::WlSurface as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+
+        // We use `WpFractionalScale` instead to set the scale if it's available
+        // or give up on scaling if `WlSurface::set_buffer_scale` isn't available
+        if state.fractional_scale_manager.is_some()
+            || state.compositor.version() < wl_surface::REQ_SET_BUFFER_SCALE_SINCE
+        {
+            return;
+        }
+
+        let Some(window) = state
+            .windows
+            .iter()
+            .map(|(_, state)| state)
+            .find(|state| &*state.surface == surface)
+        else {
+            return;
+        };
+
+        let mut outputs = window.outputs.borrow_mut();
+
+        match event {
+            wl_surface::Event::Enter { output } => {
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                    return;
+                }
+                let mut scale = 1;
+                for global_output in &state.outputs {
+                    if output == global_output.0 {
+                        outputs.insert(output.id());
+                        scale = scale.max(global_output.1.borrow().scale.get());
+                    } else if outputs.contains(&global_output.0.id()) {
+                        scale = scale.max(global_output.1.borrow().scale.get());
+                    }
+                }
+                window.rescale(scale as f32);
+                window.surface.set_buffer_scale(scale as i32);
+                window.surface.commit();
+            }
+            wl_surface::Event::Leave { output } => {
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if surface.version() >= 6 {
+                    return;
+                }
+
+                outputs.remove(&output.id());
+
+                let mut scale = 1;
+                for global_output in &state.outputs {
+                    if outputs.contains(&global_output.0.id()) {
+                        scale = scale.max(global_output.1.borrow().scale.get());
+                    }
+                }
+                window.rescale(scale as f32);
+                window.surface.set_buffer_scale(scale as i32);
+                window.surface.commit();
+            }
+            wl_surface::Event::PreferredBufferScale { factor } => {
+                window.rescale(factor as f32);
+                surface.set_buffer_scale(factor);
+                window.surface.commit();
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OutputState {
+    scale: NonZeroU32,
+}
+
+impl Default for OutputState {
+    fn default() -> Self {
+        Self {
+            scale: NonZeroU32::new(1).unwrap(),
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for WaylandClientState {
+    fn event(
+        state: &mut Self,
+        output: &wl_output::WlOutput,
+        event: <wl_output::WlOutput as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut state = state.client_state_inner.borrow_mut();
+        let mut output_state = state
+            .outputs
+            .iter_mut()
+            .find(|(o, _)| o == output)
+            .map(|(_, state)| state)
+            .unwrap()
+            .borrow_mut();
+        match event {
+            wl_output::Event::Scale { factor } => {
+                if factor > 0 {
+                    output_state.scale = NonZeroU32::new(factor as u32).unwrap();
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -318,7 +493,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let xdg_surface::Event::Configure { serial, .. } = event {
             xdg_surface.ack_configure(serial);
             for window in &state.windows {
@@ -341,19 +516,20 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let xdg_toplevel::Event::Configure {
             width,
             height,
-            states: _states,
+            states,
         } = event
         {
-            if width == 0 || height == 0 {
-                return;
-            }
+            let width = NonZeroU32::new(width as u32);
+            let height = NonZeroU32::new(height as u32);
+            let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
             for window in &state.windows {
                 if window.1.toplevel.id() == xdg_toplevel.id() {
                     window.1.resize(width, height);
+                    window.1.set_fullscreen(fullscreen);
                     window.1.surface.commit();
                     return;
                 }
@@ -367,7 +543,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
                     true
                 }
             });
-            state.platform_inner.state.lock().quit_requested |= state.windows.is_empty();
+            state.platform_inner.loop_signal.stop();
         }
     }
 }
@@ -419,7 +595,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = this.0.borrow_mut();
+        let mut state = this.client_state_inner.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat.characters_per_second = rate as u32;
@@ -506,6 +682,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let Some(focused_window) = focused_window else {
                     return;
                 };
+                let focused_window = focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
@@ -513,12 +690,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed => {
-                        let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                            is_held: false, // todo!(linux)
-                        });
-
-                        focused_window.handle_input(input.clone());
+                        let input = if keysym.is_modifier_key() {
+                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                                modifiers: state.modifiers,
+                            })
+                        } else {
+                            PlatformInput::KeyDown(KeyDownEvent {
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
+                                is_held: false, // todo(linux)
+                            })
+                        };
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_id += 1;
@@ -529,44 +714,59 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             let id = state.repeat.current_id;
                             let this = this.clone();
 
+                            let timer = Timer::from_duration(delay);
+                            let state_ = Rc::clone(&this.client_state_inner);
+                            let input_ = input.clone();
                             state
-                                .platform_inner
-                                .foreground_executor
-                                .spawn(async move {
-                                    let mut wait_time = delay;
+                                .loop_handle
+                                .insert_source(timer, move |event, _metadata, shared_data| {
+                                    let state_ = state_.borrow_mut();
+                                    let is_repeating = id == state_.repeat.current_id
+                                        && state_.repeat.current_keysym.is_some()
+                                        && state_.keyboard_focused_window.is_some();
 
-                                    loop {
-                                        Timer::after(wait_time).await;
-
-                                        let state = this.0.borrow_mut();
-                                        let is_repeating = id == state.repeat.current_id
-                                            && state.repeat.current_keysym.is_some()
-                                            && state.keyboard_focused_window.is_some();
-
-                                        if !is_repeating {
-                                            return;
-                                        }
-
-                                        state
-                                            .keyboard_focused_window
-                                            .as_ref()
-                                            .unwrap()
-                                            .handle_input(input.clone());
-
-                                        wait_time = Duration::from_secs(1) / rate;
+                                    if !is_repeating {
+                                        return TimeoutAction::Drop;
                                     }
+
+                                    let focused_window =
+                                        state_.keyboard_focused_window.as_ref().unwrap().clone();
+
+                                    drop(state_);
+
+                                    focused_window.handle_input(input_.clone());
+
+                                    TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                                 })
-                                .detach();
+                                .unwrap();
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     wl_keyboard::KeyState::Released => {
-                        focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                        }));
+                        let input = if keysym.is_modifier_key() {
+                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                                modifiers: state.modifiers,
+                            })
+                        } else {
+                            PlatformInput::KeyUp(KeyUpEvent {
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
+                            })
+                        };
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_keysym = None;
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     _ => {}
                 }
@@ -605,9 +805,18 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut cursor_state = state.cursor_state.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
+
+        if cursor_state.cursor.is_none() {
+            cursor_state.cursor = Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
+        }
+        let cursor_icon_name = cursor_state.cursor_icon_name.clone();
+        let mut cursor: &mut Cursor = cursor_state.cursor.as_mut().unwrap();
+
         match event {
             wl_pointer::Event::Enter {
+                serial,
                 surface,
                 surface_x,
                 surface_y,
@@ -616,11 +825,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 let mut mouse_focused_window = None;
                 for window in &state.windows {
                     if window.1.surface.id() == surface.id() {
+                        window.1.set_focused(true);
                         mouse_focused_window = Some(Rc::clone(&window.1));
                     }
                 }
                 if mouse_focused_window.is_some() {
                     state.mouse_focused_window = mouse_focused_window;
+                    cursor.set_serial_id(serial);
+                    cursor.set_icon(&wl_pointer, cursor_icon_name);
                 }
 
                 state.mouse_location = Some(Point {
@@ -648,6 +860,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         modifiers: state.modifiers,
                     }),
                 );
+                cursor.set_icon(&wl_pointer, cursor_icon_name);
             }
             wl_pointer::Event::Button {
                 button,
@@ -731,6 +944,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         pressed_button: None,
                         modifiers: Modifiers::default(),
                     }));
+                    focused_window.set_focused(false);
                 }
                 state.mouse_focused_window = None;
                 state.mouse_location = None;
@@ -749,7 +963,7 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Wayland
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let wp_fractional_scale_v1::Event::PreferredScale { scale, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *id {
@@ -772,7 +986,7 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut state = state.client_state_inner.borrow_mut();
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode, .. } = event {
             for window in &state.windows {
                 if window.0.id() == *surface_id {

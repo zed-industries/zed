@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/project.rs"
 doctest = false
@@ -16,6 +19,7 @@ test-support = [
     "settings/test-support",
     "text/test-support",
     "prettier/test-support",
+    "project_core/test-support",
     "gpui/test-support",
 ]
 
@@ -30,10 +34,8 @@ copilot.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
-git.workspace = true
 globset.workspace = true
 gpui.workspace = true
-ignore = "0.4"
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
@@ -47,14 +49,12 @@ rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
 task.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 similar = "1.3"
 smol.workspace = true
-sum_tree.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true

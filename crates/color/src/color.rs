@@ -14,7 +14,7 @@
 //! Once we have a good idea of the needs of the theme system and color in gpui in general I see 3 paths:
 //! 1. Use `palette` (or another color library) directly in gpui and everywhere else, rather than rolling our own color system.
 //! 2. Keep this crate as a thin wrapper around `palette` and use it everywhere except gpui, and convert to gpui's color system when needed.
-//! 3. Build the needed functionality into gpui and keep using it's color system everywhere.
+//! 3. Build the needed functionality into gpui and keep using its color system everywhere.
 //!
 //! I'm leaning towards 2 in the short term and 1 in the long term, but we'll need to discuss it more.
 //!
@@ -197,7 +197,7 @@ pub struct ColorStates {
 
 /// Returns a set of colors for different states of an element.
 ///
-/// todo!("This should take a theme and use appropriate colors from it")
+/// todo("This should take a theme and use appropriate colors from it")
 pub fn states_for_color(color: RGBAColor, is_light: bool) -> ColorStates {
     let adjustment_factor = if is_light { 0.1 } else { -0.1 };
     let hover_adjustment = 1.0 - adjustment_factor;

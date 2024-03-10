@@ -41,7 +41,7 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
     //
     // For now, you can only do a replace on the % range, and you can
     // only use a specific line number range to "go to line"
-    while query.starts_with(":") {
+    while query.starts_with(':') {
         query = &query[1..];
     }
 
@@ -321,16 +321,16 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
         "0" => ("0", StartOfDocument.boxed_clone()),
 
         _ => {
-            if query.starts_with("/") || query.starts_with("?") {
+            if query.starts_with('/') || query.starts_with('?') {
                 (
                     query,
                     FindCommand {
                         query: query[1..].to_string(),
-                        backwards: query.starts_with("?"),
+                        backwards: query.starts_with('?'),
                     }
                     .boxed_clone(),
                 )
-            } else if query.starts_with("%") {
+            } else if query.starts_with('%') {
                 (
                     query,
                     ReplaceCommand {
@@ -358,7 +358,7 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     let mut positions = Vec::new();
-    let mut chars = query.chars().into_iter();
+    let mut chars = query.chars();
 
     let Some(mut current) = chars.next() else {
         return positions;
@@ -490,9 +490,7 @@ mod test {
 
         assert_eq!(fs.load(&path).await.unwrap(), "@\n");
 
-        fs.as_fake()
-            .write_file_internal(path, "oops\n".to_string())
-            .unwrap();
+        fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
 
         // conflict!
         cx.simulate_keystrokes(["i", "@", "escape"]);

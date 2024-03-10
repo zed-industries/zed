@@ -114,12 +114,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    // Highlight the selected symbol using a background highlight
-                    this.highlight_inlay_background::<HoverState>(
-                        vec![inlay_hover.range],
-                        |theme| theme.element_hover, // todo!("use a proper background here")
-                        cx,
-                    );
+                    // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popover = Some(hover_popover);
                     cx.notify();
                 })?;
@@ -294,18 +289,19 @@ fn show_hover(
             let hover_popover = match hover_result {
                 Some(hover_result) if !hover_result.is_empty() => {
                     // Create symbol range of anchors for highlighting and filtering of future requests.
-                    let range = if let Some(range) = hover_result.range {
-                        let start = snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id.clone(), range.start);
-                        let end = snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id.clone(), range.end);
+                    let range = hover_result
+                        .range
+                        .and_then(|range| {
+                            let start = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, range.start)?;
+                            let end = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, range.end)?;
 
-                        start..end
-                    } else {
-                        anchor..anchor
-                    };
+                            Some(start..end)
+                        })
+                        .unwrap_or_else(|| anchor..anchor);
 
                     let language_registry =
                         project.update(&mut cx, |p, _| p.languages().clone())?;
@@ -332,7 +328,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     this.highlight_background::<HoverState>(
                         vec![symbol_range],
-                        |theme| theme.element_hover, // todo! update theme
+                        |theme| theme.element_hover, // todo update theme
                         cx,
                     );
                 } else {
@@ -597,7 +593,7 @@ impl DiagnosticPopover {
             .as_ref()
             .unwrap_or(&self.local_diagnostic);
 
-        (entry.diagnostic.group_id, entry.range.start.clone())
+        (entry.diagnostic.group_id, entry.range.start)
     }
 }
 
@@ -1066,6 +1062,8 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,

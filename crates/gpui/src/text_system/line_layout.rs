@@ -40,7 +40,7 @@ pub struct ShapedGlyph {
     /// The ID for this glyph, as determined by the text system.
     pub id: GlyphId,
 
-    /// The position of this glyph in it's containing line.
+    /// The position of this glyph in its containing line.
     pub position: Point<Pixels>,
 
     /// The index of this glyph in the original text.
@@ -247,10 +247,11 @@ impl WrappedLineLayout {
         let wrapped_line_ix = (position.y / line_height) as usize;
 
         let wrapped_line_start_x = if wrapped_line_ix > 0 {
-            let wrap_boundary_ix = wrapped_line_ix - 1;
-            let wrap_boundary = self.wrap_boundaries[wrap_boundary_ix];
-            let run = &self.unwrapped_layout.runs[wrap_boundary.run_ix];
-            run.glyphs[wrap_boundary.glyph_ix].position.x
+            let Some(line_start_boundary) = self.wrap_boundaries.get(wrapped_line_ix - 1) else {
+                return None;
+            };
+            let run = &self.unwrapped_layout.runs[line_start_boundary.run_ix];
+            run.glyphs[line_start_boundary.glyph_ix].position.x
         } else {
             Pixels::ZERO
         };

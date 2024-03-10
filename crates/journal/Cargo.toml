@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/journal.rs"
 doctest = false
@@ -12,7 +15,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-dirs = "4.0"
 editor.workspace = true
 gpui.workspace = true
 log.workspace = true
@@ -20,7 +22,6 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
-util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

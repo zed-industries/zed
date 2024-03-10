@@ -51,6 +51,12 @@ pub(crate) struct TooltipRequest {
     pub(crate) tooltip: AnyTooltip,
 }
 
+#[derive(Clone)]
+pub(crate) struct CursorStyleRequest {
+    pub(crate) style: CursorStyle,
+    stacking_order: StackingOrder,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -66,8 +72,8 @@ pub(crate) struct Frame {
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) tooltip_request: Option<TooltipRequest>,
-    pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyle>,
-    pub(crate) requested_cursor_style: Option<CursorStyle>,
+    pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyleRequest>,
+    pub(crate) requested_cursor_style: Option<CursorStyleRequest>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
 
@@ -346,9 +352,13 @@ impl<'a> ElementContext<'a> {
             }
 
             // Reuse the cursor styles previously requested during painting of the reused view.
-            if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
-                self.window.next_frame.cursor_styles.insert(view_id, style);
-                self.window.next_frame.requested_cursor_style = Some(style);
+            if let Some(cursor_style_request) =
+                self.window.rendered_frame.cursor_styles.remove(&view_id)
+            {
+                self.set_cursor_style(
+                    cursor_style_request.style,
+                    cursor_style_request.stacking_order,
+                );
             }
         }
 
@@ -387,10 +397,27 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Updates the cursor style at the platform level.
-    pub fn set_cursor_style(&mut self, style: CursorStyle) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, stacking_order: StackingOrder) {
         let view_id = self.parent_view_id();
-        self.window.next_frame.cursor_styles.insert(view_id, style);
-        self.window.next_frame.requested_cursor_style = Some(style);
+        let style_request = CursorStyleRequest {
+            style,
+            stacking_order,
+        };
+        if self
+            .window
+            .next_frame
+            .requested_cursor_style
+            .as_ref()
+            .map_or(true, |prev_style_request| {
+                style_request.stacking_order >= prev_style_request.stacking_order
+            })
+        {
+            self.window.next_frame.requested_cursor_style = Some(style_request.clone());
+        }
+        self.window
+            .next_frame
+            .cursor_styles
+            .insert(view_id, style_request);
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame

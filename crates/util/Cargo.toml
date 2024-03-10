@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/util.rs"
 doctest = true
@@ -31,6 +34,7 @@ serde_json.workspace = true
 smol.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
+unicase.workspace = true
 url.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -15,7 +15,7 @@ use std::{
 };
 use util::{async_maybe, ResultExt};
 
-const SERVER_PATH: &'static str = "node_modules/.bin/purescript-language-server";
+const SERVER_PATH: &str = "node_modules/.bin/purescript-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -26,7 +26,7 @@ pub struct PurescriptLspAdapter {
 }
 
 impl PurescriptLspAdapter {
-    // todo!(linux): remove
+    // todo(linux): remove
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         Self { node }
@@ -37,10 +37,6 @@ impl PurescriptLspAdapter {
 impl LspAdapter for PurescriptLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("purescript-language-server".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "purescript"
     }
 
     async fn fetch_latest_server_version(

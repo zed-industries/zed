@@ -93,7 +93,7 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
-                workspace.add_item(
+                workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
@@ -756,8 +756,8 @@ impl Render for LspLogToolbarItemView {
             .trigger(Button::new(
                 "language_server_menu_header",
                 current_server
-                    .and_then(|row| {
-                        Some(Cow::Owned(format!(
+                    .map(|row| {
+                        Cow::Owned(format!(
                             "{} ({}) - {}",
                             row.server_name.0,
                             row.worktree_root_name,
@@ -766,7 +766,7 @@ impl Render for LspLogToolbarItemView {
                             } else {
                                 SERVER_LOGS
                             },
-                        )))
+                        ))
                     })
                     .unwrap_or_else(|| "No server selected".into()),
             ))
@@ -823,7 +823,7 @@ impl Render for LspLogToolbarItemView {
                                                             selection,
                                                             Selection::Selected
                                                         );
-                                                        view.toggle_logging_for_server(
+                                                        view.toggle_rpc_logging_for_server(
                                                             row.server_id,
                                                             enabled,
                                                             cx,
@@ -887,7 +887,7 @@ impl LspLogToolbarItemView {
         }
     }
 
-    fn toggle_logging_for_server(
+    fn toggle_rpc_logging_for_server(
         &mut self,
         id: LanguageServerId,
         enabled: bool,
@@ -898,6 +898,9 @@ impl LspLogToolbarItemView {
                 log_view.toggle_rpc_trace_for_server(id, enabled, cx);
                 if !enabled && Some(id) == log_view.current_server_id {
                     log_view.show_logs_for_server(id, cx);
+                    cx.notify();
+                } else if enabled {
+                    log_view.show_rpc_trace_for_server(id, cx);
                     cx.notify();
                 }
                 cx.focus(&log_view.focus_handle);

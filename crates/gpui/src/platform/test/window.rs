@@ -169,13 +169,15 @@ impl PlatformWindow for TestWindow {
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
-    ) -> futures::channel::oneshot::Receiver<usize> {
-        self.0
-            .lock()
-            .platform
-            .upgrade()
-            .expect("platform dropped")
-            .prompt()
+    ) -> Option<futures::channel::oneshot::Receiver<usize>> {
+        Some(
+            self.0
+                .lock()
+                .platform
+                .upgrade()
+                .expect("platform dropped")
+                .prompt(),
+        )
     }
 
     fn activate(&self) {
@@ -250,8 +252,6 @@ impl PlatformWindow for TestWindow {
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
     }
-
-    fn set_graphics_profiler_enabled(&self, _enabled: bool) {}
 
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)

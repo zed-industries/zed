@@ -80,7 +80,7 @@ impl Database {
                 github_login,
                 github_user_id,
                 github_email,
-                &*tx,
+                &tx,
             )
             .await
         })
@@ -122,7 +122,7 @@ impl Database {
                     metrics_id: ActiveValue::set(Uuid::new_v4()),
                     ..Default::default()
                 })
-                .exec_with_returning(&*tx)
+                .exec_with_returning(tx)
                 .await?;
                 Ok(user)
             }

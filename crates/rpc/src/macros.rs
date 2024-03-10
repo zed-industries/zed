@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! messages {
     ($(($name:ident, $priority:ident)),* $(,)?) => {
-        pub fn build_typed_envelope(sender_id: ConnectionId, envelope: Envelope) -> Option<Box<dyn AnyTypedEnvelope>> {
+        pub fn build_typed_envelope(sender_id: ConnectionId, received_at: Instant, envelope: Envelope) -> Option<Box<dyn AnyTypedEnvelope>> {
             match envelope.payload {
                 $(Some(envelope::Payload::$name(payload)) => {
                     Some(Box::new(TypedEnvelope {
@@ -12,6 +12,7 @@ macro_rules! messages {
                         }),
                         message_id: envelope.id,
                         payload,
+                        received_at,
                     }))
                 }, )*
                 _ => None

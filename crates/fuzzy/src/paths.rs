@@ -200,7 +200,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                         usize::MAX,
                                         |relative_to| {
                                             distance_between_paths(
-                                                candidate.path.as_ref(),
+                                                candidate.path,
                                                 relative_to.as_ref(),
                                             )
                                         },

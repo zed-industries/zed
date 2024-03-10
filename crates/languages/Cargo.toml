@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
@@ -46,7 +49,6 @@ tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-erlang.workspace = true
-tree-sitter-gitcommit.workspace = true
 tree-sitter-gleam.workspace = true
 tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true
@@ -74,7 +76,6 @@ tree-sitter-scheme.workspace = true
 tree-sitter-svelte.workspace = true
 tree-sitter-toml.workspace = true
 tree-sitter-typescript.workspace = true
-tree-sitter-uiua.workspace = true
 tree-sitter-vue.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-zig.workspace = true

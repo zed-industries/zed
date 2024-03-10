@@ -26,8 +26,7 @@ pub(crate) type PointF = crate::Point<f32>;
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 #[cfg(feature = "runtime_shaders")]
-const SHADERS_SOURCE_FILE: &'static str =
-    include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
+const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
 const INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value (maybe even we could adjust dynamically...)
 
 pub type Context = Arc<Mutex<Vec<metal::Buffer>>>;

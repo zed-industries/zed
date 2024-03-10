@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/multi_buffer.rs"
 doctest = false
@@ -24,8 +27,6 @@ collections.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
-indoc = "1.0.4"
-itertools.workspace = true
 language.workspace = true
 log.workspace = true
 parking_lot.workspace = true

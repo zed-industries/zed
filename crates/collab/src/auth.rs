@@ -8,24 +8,16 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
-use lazy_static::lazy_static;
 use prometheus::{exponential_buckets, register_histogram, Histogram};
-use rand::thread_rng;
 use scrypt::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{PasswordHash, PasswordVerifier},
     Scrypt,
 };
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
+use std::sync::OnceLock;
 use std::{sync::Arc, time::Instant};
-
-lazy_static! {
-    static ref METRIC_ACCESS_TOKEN_HASHING_TIME: Histogram = register_histogram!(
-        "access_token_hashing_time",
-        "time spent hashing access tokens",
-        exponential_buckets(10.0, 2.0, 10).unwrap(),
-    )
-    .unwrap();
-}
+use subtle::ConstantTimeEq;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Impersonator(pub Option<db::User>);
@@ -124,8 +116,7 @@ pub async fn create_access_token(
 ) -> Result<String> {
     const VERSION: usize = 1;
     let access_token = rpc::auth::random_token();
-    let access_token_hash =
-        hash_access_token(&access_token).context("failed to hash access token")?;
+    let access_token_hash = hash_access_token(&access_token);
     let id = db
         .create_access_token(
             user_id,
@@ -141,23 +132,15 @@ pub async fn create_access_token(
     })?)
 }
 
-fn hash_access_token(token: &str) -> Result<String> {
-    // Avoid slow hashing in debug mode.
-    let params = if cfg!(debug_assertions) {
-        scrypt::Params::new(1, 1, 1).unwrap()
-    } else {
-        scrypt::Params::new(14, 8, 1).unwrap()
-    };
-
-    Ok(Scrypt
-        .hash_password(
-            token.as_bytes(),
-            None,
-            params,
-            &SaltString::generate(thread_rng()),
-        )
-        .map_err(anyhow::Error::new)?
-        .to_string())
+/// Hashing prevents anyone with access to the database being able to login.
+/// As the token is randomly generated, we don't need to worry about scrypt-style
+/// protection.
+fn hash_access_token(token: &str) -> String {
+    let digest = sha2::Sha256::digest(token);
+    format!(
+        "$sha256${}",
+        base64::encode_config(digest, base64::URL_SAFE)
+    )
 }
 
 /// Encrypts the given access token with the given public key to avoid leaking it on the way
@@ -182,6 +165,16 @@ pub async fn verify_access_token(
     user_id: UserId,
     db: &Arc<Database>,
 ) -> Result<VerifyAccessTokenResult> {
+    static METRIC_ACCESS_TOKEN_HASHING_TIME: OnceLock<Histogram> = OnceLock::new();
+    let metric_access_token_hashing_time = METRIC_ACCESS_TOKEN_HASHING_TIME.get_or_init(|| {
+        register_histogram!(
+            "access_token_hashing_time",
+            "time spent hashing access tokens",
+            exponential_buckets(10.0, 2.0, 10).unwrap(),
+        )
+        .unwrap()
+    });
+
     let token: AccessTokenJson = serde_json::from_str(&token)?;
 
     let db_token = db.get_access_token(token.id).await?;
@@ -189,15 +182,27 @@ pub async fn verify_access_token(
     if token_user_id != user_id {
         return Err(anyhow!("no such access token"))?;
     }
-
-    let db_hash = PasswordHash::new(&db_token.hash).map_err(anyhow::Error::new)?;
     let t0 = Instant::now();
-    let is_valid = Scrypt
-        .verify_password(token.token.as_bytes(), &db_hash)
-        .is_ok();
+
+    let is_valid = if db_token.hash.starts_with("$scrypt$") {
+        let db_hash = PasswordHash::new(&db_token.hash).map_err(anyhow::Error::new)?;
+        Scrypt
+            .verify_password(token.token.as_bytes(), &db_hash)
+            .is_ok()
+    } else {
+        let token_hash = hash_access_token(&token.token);
+        db_token.hash.as_bytes().ct_eq(token_hash.as_ref()).into()
+    };
+
     let duration = t0.elapsed();
     log::info!("hashed access token in {:?}", duration);
-    METRIC_ACCESS_TOKEN_HASHING_TIME.observe(duration.as_millis() as f64);
+    metric_access_token_hashing_time.observe(duration.as_millis() as f64);
+
+    if is_valid && db_token.hash.starts_with("$scrypt$") {
+        let new_hash = hash_access_token(&token.token);
+        db.update_access_token_hash(db_token.id, &new_hash).await?;
+    }
+
     Ok(VerifyAccessTokenResult {
         is_valid,
         impersonator_id: if db_token.impersonated_user_id.is_some() {
@@ -206,4 +211,146 @@ pub async fn verify_access_token(
             None
         },
     })
+}
+
+#[cfg(test)]
+mod test {
+    use rand::thread_rng;
+    use scrypt::password_hash::{PasswordHasher, SaltString};
+    use sea_orm::EntityTrait;
+
+    use super::*;
+    use crate::db::{access_token, NewUserParams};
+
+    #[gpui::test]
+    async fn test_verify_access_token(cx: &mut gpui::TestAppContext) {
+        let test_db = crate::db::TestDb::postgres(cx.executor().clone());
+        let db = test_db.db();
+
+        let user = db
+            .create_user(
+                "example@example.com",
+                false,
+                NewUserParams {
+                    github_login: "example".into(),
+                    github_user_id: 1,
+                },
+            )
+            .await
+            .unwrap();
+
+        let token = create_access_token(&db, user.user_id, None).await.unwrap();
+        assert!(matches!(
+            verify_access_token(&token, user.user_id, &db)
+                .await
+                .unwrap(),
+            VerifyAccessTokenResult {
+                is_valid: true,
+                impersonator_id: None,
+            }
+        ));
+
+        let old_token = create_previous_access_token(user.user_id, None, &db)
+            .await
+            .unwrap();
+
+        let old_token_id = serde_json::from_str::<AccessTokenJson>(&old_token)
+            .unwrap()
+            .id;
+
+        let hash = db
+            .transaction(|tx| async move {
+                Ok(access_token::Entity::find_by_id(old_token_id)
+                    .one(&*tx)
+                    .await?)
+            })
+            .await
+            .unwrap()
+            .unwrap()
+            .hash;
+        assert!(hash.starts_with("$scrypt$"));
+
+        assert!(matches!(
+            verify_access_token(&old_token, user.user_id, &db)
+                .await
+                .unwrap(),
+            VerifyAccessTokenResult {
+                is_valid: true,
+                impersonator_id: None,
+            }
+        ));
+
+        let hash = db
+            .transaction(|tx| async move {
+                Ok(access_token::Entity::find_by_id(old_token_id)
+                    .one(&*tx)
+                    .await?)
+            })
+            .await
+            .unwrap()
+            .unwrap()
+            .hash;
+        assert!(hash.starts_with("$sha256$"));
+
+        assert!(matches!(
+            verify_access_token(&old_token, user.user_id, &db)
+                .await
+                .unwrap(),
+            VerifyAccessTokenResult {
+                is_valid: true,
+                impersonator_id: None,
+            }
+        ));
+
+        assert!(matches!(
+            verify_access_token(&token, user.user_id, &db)
+                .await
+                .unwrap(),
+            VerifyAccessTokenResult {
+                is_valid: true,
+                impersonator_id: None,
+            }
+        ));
+    }
+
+    async fn create_previous_access_token(
+        user_id: UserId,
+        impersonated_user_id: Option<UserId>,
+        db: &Database,
+    ) -> Result<String> {
+        let access_token = rpc::auth::random_token();
+        let access_token_hash = previous_hash_access_token(&access_token)?;
+        let id = db
+            .create_access_token(
+                user_id,
+                impersonated_user_id,
+                &access_token_hash,
+                MAX_ACCESS_TOKENS_TO_STORE,
+            )
+            .await?;
+        Ok(serde_json::to_string(&AccessTokenJson {
+            version: 1,
+            id,
+            token: access_token,
+        })?)
+    }
+
+    fn previous_hash_access_token(token: &str) -> Result<String> {
+        // Avoid slow hashing in debug mode.
+        let params = if cfg!(debug_assertions) {
+            scrypt::Params::new(1, 1, 1).unwrap()
+        } else {
+            scrypt::Params::new(14, 8, 1).unwrap()
+        };
+
+        Ok(Scrypt
+            .hash_password(
+                token.as_bytes(),
+                None,
+                params,
+                &SaltString::generate(thread_rng()),
+            )
+            .map_err(anyhow::Error::new)?
+            .to_string())
+    }
 }

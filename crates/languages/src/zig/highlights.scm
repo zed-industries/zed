@@ -1,7 +1,11 @@
 [
   (container_doc_comment)
   (doc_comment)
-  (line_comment)
+
+] @comment.doc
+
+[
+    (line_comment)
 ] @comment
 
 [
@@ -9,12 +13,13 @@
   variable_type_function: (IDENTIFIER)
 ] @variable
 
-parameter: (IDENTIFIER) @parameter
+;; func parameter
+parameter: (IDENTIFIER) @property
 
 [
   field_member: (IDENTIFIER)
   field_access: (IDENTIFIER)
-] @field
+] @property
 
 ;; assume TitleCase is a type
 (
@@ -23,13 +28,17 @@ parameter: (IDENTIFIER) @parameter
     field_access: (IDENTIFIER)
     parameter: (IDENTIFIER)
   ] @type
-  (#match? @type "^[A-Z]([a-z]+[A-Za-z0-9]*)*$")
+  (#match? @type "^[A-Z]([a-z]+[A-Za-z0-9]*)+$")
 )
 
+;; assume camelCase is a function
 (
-  (_
-    variable_type_function: (IDENTIFIER) @function
-    (FnCallArguments))
+  [
+    variable_type_function: (IDENTIFIER)
+    field_access: (IDENTIFIER)
+    parameter: (IDENTIFIER)
+  ] @function
+  (#match? @function "^[a-z]+([A-Z][a-z0-9]*)+$")
 )
 
 ;; assume all CAPS_1 is a constant
@@ -46,14 +55,14 @@ parameter: (IDENTIFIER) @parameter
   function: (IDENTIFIER)
 ] @function
 
-exception: "!" @keyword.exception
+exception: "!" @keyword
 
 (
-  (IDENTIFIER) @variable.builtin
-  (#eq? @variable.builtin "_")
+  (IDENTIFIER) @variable.special
+  (#eq? @variable.special "_")
 )
 
-(PtrTypeStart "c" @variable.builtin)
+(PtrTypeStart "c" @variable.special)
 
 (
   (ContainerDeclType
@@ -69,12 +78,12 @@ field_constant: (IDENTIFIER) @constant
 
 (BUILTINIDENTIFIER) @keyword
 
-((BUILTINIDENTIFIER) @keyword.import
-  (#any-of? @keyword.import "@import" "@cImport"))
+((BUILTINIDENTIFIER) @function
+  (#any-of? @function "@import" "@cImport"))
 
 (INTEGER) @number
 
-(FLOAT) @number.float
+(FLOAT) @number
 
 [
   "true"
@@ -86,12 +95,12 @@ field_constant: (IDENTIFIER) @constant
   (STRINGLITERALSINGLE)
 ] @string
 
-(CHAR_LITERAL) @character
+(CHAR_LITERAL) @string.special.symbol
 (EscapeSequence) @string.escape
 (FormatSequence) @string.special
 
-(BreakLabel (IDENTIFIER) @label)
-(BlockLabel (IDENTIFIER) @label)
+(BreakLabel (IDENTIFIER) @tag)
+(BlockLabel (IDENTIFIER) @tag)
 
 [
   "asm"
@@ -115,13 +124,13 @@ field_constant: (IDENTIFIER) @constant
 
 [
   "fn"
-] @keyword.function
+] @keyword
 
 [
   "and"
   "or"
   "orelse"
-] @keyword.operator
+] @operator
 
 [
   "return"
@@ -131,7 +140,7 @@ field_constant: (IDENTIFIER) @constant
   "if"
   "else"
   "switch"
-] @keyword
+] @keyword.control
 
 [
   "for"
@@ -142,7 +151,7 @@ field_constant: (IDENTIFIER) @constant
 
 [
   "usingnamespace"
-] @keyword.import
+] @constant
 
 [
   "try"
@@ -151,8 +160,9 @@ field_constant: (IDENTIFIER) @constant
 
 [
   "anytype"
+  "anyframe"
   (BuildinTypeExpr)
-] @type.builtin
+] @type
 
 [
   "const"
@@ -160,7 +170,7 @@ field_constant: (IDENTIFIER) @constant
   "volatile"
   "allowzero"
   "noalias"
-] @type.qualifier
+] @keyword
 
 [
   "addrspace"
@@ -178,13 +188,13 @@ field_constant: (IDENTIFIER) @constant
   "packed"
   "pub"
   "threadlocal"
-] @attribute
+] @keyword
 
 [
   "null"
   "unreachable"
   "undefined"
-] @constant.builtin
+] @constant
 
 [
   (CompareOp)

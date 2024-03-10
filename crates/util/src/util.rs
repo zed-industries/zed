@@ -22,6 +22,7 @@ use std::{
     task::{Context, Poll},
     time::Instant,
 };
+use unicase::UniCase;
 
 pub use take_until::*;
 
@@ -487,6 +488,43 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
     }
 }
 
+/// A way to sort strings with starting numbers numerically first, falling back to alphanumeric one,
+/// case-insensitive.
+///
+/// This is useful for turning regular alphanumerically sorted sequences as `1-abc, 10, 11-def, .., 2, 21-abc`
+/// into `1-abc, 2, 10, 11-def, .., 21-abc`
+#[derive(Debug, PartialEq, Eq)]
+pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
+
+impl<'a> NumericPrefixWithSuffix<'a> {
+    pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
+        let mut chars = str.chars();
+        let prefix: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
+        let remainder = chars.as_str();
+
+        match prefix.parse::<i32>() {
+            Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
+            Err(_) => None,
+        }
+    }
+}
+
+impl Ord for NumericPrefixWithSuffix<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let NumericPrefixWithSuffix(num_a, remainder_a) = self;
+        let NumericPrefixWithSuffix(num_b, remainder_b) = other;
+        num_a
+            .cmp(num_b)
+            .then_with(|| UniCase::new(remainder_a).cmp(&UniCase::new(remainder_b)))
+    }
+}
+
+impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,5 +563,24 @@ mod tests {
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
+    }
+
+    #[test]
+    fn test_numeric_prefix_with_suffix() {
+        let mut sorted = vec!["1-abc", "10", "11def", "2", "21-abc"];
+        sorted.sort_by_key(|s| {
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(s).unwrap_or_else(|| {
+                panic!("Cannot convert string `{s}` into NumericPrefixWithSuffix")
+            })
+        });
+        assert_eq!(sorted, ["1-abc", "2", "10", "11def", "21-abc"]);
+
+        for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~™£"] {
+            assert_eq!(
+                NumericPrefixWithSuffix::from_numeric_prefixed_str(numeric_prefix_less),
+                None,
+                "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
+            )
+        }
     }
 }

@@ -68,6 +68,11 @@ use util::{
     ResultExt,
 };
 
+#[cfg(feature = "test-support")]
+pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+#[cfg(not(feature = "test-support"))]
+const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
@@ -215,7 +220,7 @@ impl Deref for WorkDirectoryEntry {
     }
 }
 
-impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
+impl From<ProjectEntryId> for WorkDirectoryEntry {
     fn from(value: ProjectEntryId) -> Self {
         WorkDirectoryEntry(value)
     }
@@ -652,7 +657,7 @@ fn start_background_scan_tasks(
         let abs_path = abs_path.to_path_buf();
         let background = cx.background_executor().clone();
         async move {
-            let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
+            let events = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
             let case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
                 log::error!(
                     "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
@@ -986,7 +991,7 @@ impl LocalWorktree {
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
-            let mut is_scanning = is_scanning_rx.borrow().clone();
+            let mut is_scanning = *is_scanning_rx.borrow();
             while is_scanning {
                 if let Some(value) = is_scanning_rx.recv().await {
                     is_scanning = value;
@@ -2109,6 +2114,11 @@ impl LocalSnapshot {
     ) -> Option<(RepositoryWorkDirectory, &LocalRepositoryEntry)> {
         let (path, repo) = self.repository_and_work_directory_for_path(path)?;
         Some((path, self.git_repositories.get(&repo.work_directory_id())?))
+    }
+
+    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
+        self.local_repo_for_path(path)
+            .map(|(_, entry)| entry.repo_ptr.clone())
     }
 
     fn build_update(
@@ -3294,6 +3304,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         snapshot: LocalSnapshot,
         next_entry_id: Arc<AtomicUsize>,
@@ -3325,7 +3336,7 @@ impl BackgroundScanner {
         }
     }
 
-    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<fs::Event>>>>) {
+    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>) {
         use futures::FutureExt as _;
 
         // Populate ignores above the root.
@@ -3378,11 +3389,9 @@ impl BackgroundScanner {
         // For these events, update events cannot be as precise, because we didn't
         // have the previous state loaded yet.
         self.phase = BackgroundScannerPhase::EventsReceivedDuringInitialScan;
-        if let Poll::Ready(Some(events)) = futures::poll!(fs_events_rx.next()) {
-            let mut paths = fs::fs_events_paths(events);
-
-            while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
-                paths.extend(fs::fs_events_paths(more_events));
+        if let Poll::Ready(Some(mut paths)) = futures::poll!(fs_events_rx.next()) {
+            while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
+                paths.extend(more_paths);
             }
             self.process_events(paths).await;
         }
@@ -3419,12 +3428,10 @@ impl BackgroundScanner {
                     }
                 }
 
-                events = fs_events_rx.next().fuse() => {
-                    let Some(events) = events else { break };
-                    let mut paths = fs::fs_events_paths(events);
-
-                    while let Poll::Ready(Some(more_events)) = futures::poll!(fs_events_rx.next()) {
-                        paths.extend(fs::fs_events_paths(more_events));
+                paths = fs_events_rx.next().fuse() => {
+                    let Some(mut paths) = paths else { break };
+                    while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
+                        paths.extend(more_paths);
                     }
                     self.process_events(paths.clone()).await;
                 }
@@ -3912,16 +3919,14 @@ impl BackgroundScanner {
         let repository =
             dotgit_path.and_then(|path| state.build_git_repository(path, self.fs.as_ref()));
 
-        for new_job in new_jobs {
-            if let Some(mut new_job) = new_job {
-                if let Some(containing_repository) = &repository {
-                    new_job.containing_repository = Some(containing_repository.clone());
-                }
-
-                job.scan_queue
-                    .try_send(new_job)
-                    .expect("channel is unbounded");
+        for mut new_job in new_jobs.into_iter().flatten() {
+            if let Some(containing_repository) = &repository {
+                new_job.containing_repository = Some(containing_repository.clone());
             }
+
+            job.scan_queue
+                .try_send(new_job)
+                .expect("channel is unbounded");
         }
 
         Ok(())
@@ -4340,7 +4345,7 @@ impl BackgroundScanner {
             return self.executor.simulate_random_delay().await;
         }
 
-        smol::Timer::after(Duration::from_millis(100)).await;
+        smol::Timer::after(FS_WATCH_LATENCY).await;
     }
 }
 

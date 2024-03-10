@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/project_panel.rs"
 doctest = false
@@ -26,7 +29,7 @@ serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
-unicase = "2.6"
+unicase.workspace = true
 util.workspace = true
 client.workspace = true
 workspace.workspace = true

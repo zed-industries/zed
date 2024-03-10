@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+build_flag="--release"
+target_dir="release"
+bundle_name=""
+zed_crate="zed"
+
+
+help_info() {
+  echo "
+Usage: ${0##*/} [options] [bundle_name]
+Build the application bundle for Linux.
+
+Options:
+  -d    Compile in debug mode
+  -h    Display this help and exit
+  "
+}
+
+while getopts 'dh' flag
+do
+    case "${flag}" in
+        d)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            build_flag="";
+            target_dir="debug"
+            ;;
+        h)
+           help_info
+           exit 0
+           ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [[ $# -gt 0 ]]; then
+    if [ "$1" ]; then
+        bundle_name=$1
+    fi
+fi
+
+export ZED_BUNDLE=true
+
+cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.0-zed" ]; then
+    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+fi
+
+echo "Compiling zed binaries"
+cargo build ${build_flag} --package ${zed_crate} --package cli
+
+echo "Creating application bundle"
+pushd crates/${zed_crate}
+    channel=$(<RELEASE_CHANNEL)
+    cp Cargo.toml Cargo.toml.backup
+    sed \
+        -i.backup -e \
+        "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+        Cargo.toml
+
+    # TODO linux `zed_cli` does not get into this bundle despite being built
+    bundle_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+
+    mv Cargo.toml.backup Cargo.toml
+popd
+
+# For nightly, cut off the version out of the bundle name that `cargo bundle` always adds.
+if [ "$channel" == "nightly" ]; then
+    version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
+    version_less_bundle_path=$(echo "$bundle_path" | sed "s/_$version//")
+    mv "$bundle_path" "$version_less_bundle_path"
+    bundle_path="$version_less_bundle_path"
+fi
+
+# TODO linux
+# Other Linux systems will need a different set of manipulations + a way to know which ones to do.
+# If bundle_name is not set or empty, use the basename of $bundle_path
+if [ -z "${bundle_name}" ]; then
+    bundle_name=$(basename "${bundle_path}")
+fi
+# If bundle_name doesn't end in .deb, append it
+if [[ "$bundle_name" != *.deb ]]; then
+    bundle_name="$bundle_name.deb"
+fi
+
+pushd target/
+    rm -rf bundle/ 2>/dev/null || true
+    dpkg-deb -x "${bundle_path}" bundle/
+    dpkg-deb --control "${bundle_path}" bundle/DEBIAN
+    mkdir -p bundle/usr/local/bin/
+    mv bundle/usr/bin/Zed "bundle/usr/local/bin/zed-$channel"
+    cp "${target_dir}/cli" "bundle/usr/local/bin/cli-$channel"
+    ln -s "/usr/local/bin/cli-$channel" "bundle/usr/local/bin/zed"
+    rm -rf bundle/usr/bin/
+    dpkg-deb -b bundle/ "${target_dir}/${bundle_name}"
+    bundle_path="${PWD}/${target_dir}/${bundle_name}"
+popd
+echo "Bundled ${bundle_path}"

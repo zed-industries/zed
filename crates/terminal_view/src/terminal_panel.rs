@@ -31,7 +31,7 @@ use workspace::{
 
 use anyhow::Result;
 
-const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
+const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
 actions!(terminal_panel, [ToggleFocus]);
 
@@ -192,8 +192,8 @@ impl TerminalPanel {
             let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
                 panel.update(cx, |panel, cx| {
                     cx.notify();
-                    panel.height = serialized_panel.height;
-                    panel.width = serialized_panel.width;
+                    panel.height = serialized_panel.height.map(|h| h.round());
+                    panel.width = serialized_panel.width.map(|w| w.round());
                     panel.pane.update(cx, |_, cx| {
                         serialized_panel
                             .items
@@ -303,23 +303,25 @@ impl TerminalPanel {
             args: spawn_in_terminal.args.clone(),
             env: spawn_in_terminal.env.clone(),
         };
-        if spawn_in_terminal.separate_shell {
-            let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone()
-            {
-                Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, vec![])),
-                Shell::Program(shell) => Some((shell, vec![])),
-                Shell::WithArguments { program, args } => Some((program, args)),
-            }) else {
-                return;
-            };
+        // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
+        let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
+            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, vec![])),
+            Shell::Program(shell) => Some((shell, vec![])),
+            Shell::WithArguments { program, args } => Some((program, args)),
+        }) else {
+            return;
+        };
 
-            let command = std::mem::take(&mut spawn_task.command);
-            let args = std::mem::take(&mut spawn_task.args);
-            spawn_task.command = shell;
-            user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
-            user_args.extend(args);
-            spawn_task.args = user_args;
+        let mut command = std::mem::take(&mut spawn_task.command);
+        let args = std::mem::take(&mut spawn_task.args);
+        for arg in args {
+            command.push(' ');
+            command.push_str(&arg);
         }
+        spawn_task.command = shell;
+        user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
+        spawn_task.args = user_args;
+
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;

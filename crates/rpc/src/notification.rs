@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{map, Value};
 use strum::{EnumVariantNames, VariantNames as _};
 
-const KIND: &'static str = "kind";
-const ENTITY_ID: &'static str = "entity_id";
+const KIND: &str = "kind";
+const ENTITY_ID: &str = "entity_id";
 
 /// A notification that can be stored, associated with a given recipient.
 ///

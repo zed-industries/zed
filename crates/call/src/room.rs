@@ -1182,19 +1182,10 @@ impl Room {
     ) -> Task<Result<Model<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let role = self.local_participant.role;
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(move |this, mut cx| async move {
-            let project = Project::remote(
-                id,
-                client,
-                user_store,
-                language_registry,
-                fs,
-                role,
-                cx.clone(),
-            )
-            .await?;
+            let project =
+                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
 
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {

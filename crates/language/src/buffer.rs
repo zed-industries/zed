@@ -110,6 +110,7 @@ pub struct Buffer {
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
+    has_conflict: bool,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -698,6 +699,7 @@ impl Buffer {
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
+            has_conflict: false,
         }
     }
 
@@ -788,6 +790,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
+        self.has_conflict = false;
         self.file_fingerprint = fingerprint;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
@@ -819,7 +822,7 @@ impl Buffer {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
-
+                    this.has_conflict = false;
                     this.did_reload(
                         this.version(),
                         this.as_rope().fingerprint(),
@@ -828,6 +831,15 @@ impl Buffer {
                         cx,
                     );
                 } else {
+                    if !diff.edits.is_empty()
+                        || this
+                            .edits_since::<usize>(&diff.base_version)
+                            .next()
+                            .is_some()
+                    {
+                        this.has_conflict = true;
+                    }
+
                     this.did_reload(
                         prev_version,
                         Rope::text_fingerprint(&new_text),
@@ -918,8 +930,17 @@ impl Buffer {
     /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
-        self.git_diff_recalc(cx);
-        cx.emit(Event::DiffBaseChanged);
+        if let Some(recalc_task) = self.git_diff_recalc(cx) {
+            cx.spawn(|buffer, mut cx| async move {
+                recalc_task.await;
+                buffer
+                    .update(&mut cx, |_, cx| {
+                        cx.emit(Event::DiffBaseChanged);
+                    })
+                    .ok();
+            })
+            .detach();
+        }
     }
 
     /// Recomputes the Git diff status.
@@ -1328,7 +1349,7 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    /// Create a minimal edit that will cause the the given row to be indented
+    /// Create a minimal edit that will cause the given row to be indented
     /// with the given size. After applying this edit, the length of the line
     /// will always be at least `new_size.len`.
     pub fn edit_for_indent_size_adjustment(
@@ -1518,16 +1539,21 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
+    fn changed_since_saved_version(&self) -> bool {
+        self.edits_since::<usize>(&self.saved_version)
+            .next()
+            .is_some()
+    }
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.file_fingerprint != self.as_rope().fingerprint()
+        (self.has_conflict || self.changed_since_saved_version())
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
     /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
-        self.file_fingerprint != self.as_rope().fingerprint()
+        (self.has_conflict || self.changed_since_saved_version())
             && self
                 .file
                 .as_ref()
@@ -2839,10 +2865,10 @@ impl BufferSnapshot {
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + 'a {
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
@@ -2935,10 +2961,10 @@ impl BufferSnapshot {
     /// Returns anchor ranges for any matches of the redaction query.
     /// The buffer can be associated with multiple languages, and the redaction query associated with each
     /// will be run on the relevant section of the buffer.
-    pub fn redacted_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn redacted_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = Range<usize>> + 'a {
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar
@@ -3015,28 +3041,28 @@ impl BufferSnapshot {
 
     /// Returns all the Git diff hunks intersecting the given
     /// row range.
-    pub fn git_diff_hunks_in_row_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_in_row_range(
+        &self,
         range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_row_range(range, self)
     }
 
     /// Returns all the Git diff hunks intersecting the given
     /// range.
-    pub fn git_diff_hunks_intersecting_range<'a>(
-        &'a self,
+    pub fn git_diff_hunks_intersecting_range(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range(range, self)
     }
 
     /// Returns all the Git diff hunks intersecting the given
     /// range, in reverse order.
-    pub fn git_diff_hunks_intersecting_range_rev<'a>(
-        &'a self,
+    pub fn git_diff_hunks_intersecting_range_rev(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+    ) -> impl '_ + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 

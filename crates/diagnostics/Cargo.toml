@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/diagnostics.rs"
 doctest = false
@@ -18,13 +21,10 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
-postage.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
-smallvec.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

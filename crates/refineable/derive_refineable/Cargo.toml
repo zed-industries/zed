@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/derive_refineable.rs"
 proc-macro = true
