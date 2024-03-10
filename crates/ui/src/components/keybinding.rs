@@ -16,31 +16,54 @@ impl RenderOnce for KeyBinding {
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = Self::icon_for_key(keystroke);
+                #[cfg(target_os = "macos")]
+                {
+                    let key_icon = Self::icon_for_key(keystroke);
+                    return h_flex()
+                        .flex_none()
+                        .gap_0p5()
+                        .p_0p5()
+                        .rounded_sm()
+                        .text_color(cx.theme().colors().text_muted)
+                        .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
+                        .when(keystroke.modifiers.control, |el| {
+                            el.child(KeyIcon::new(IconName::Control))
+                        })
+                        .when(keystroke.modifiers.alt, |el| {
+                            el.child(KeyIcon::new(IconName::Option))
+                        })
+                        .when(keystroke.modifiers.command, |el| {
+                            el.child(KeyIcon::new(IconName::Command))
+                        })
+                        .when(keystroke.modifiers.shift, |el| {
+                            el.child(KeyIcon::new(IconName::Shift))
+                        })
+                        .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
+                        .when(key_icon.is_none(), |el| {
+                            el.child(Key::new(keystroke.key.to_uppercase().clone()))
+                        });
+                }
+
+                #[cfg(target_os = "linux")]
+                let win_key = "Super".to_owned();
+
+                #[cfg(target_os = "windows")]
+                let win_key = "Win".to_owned();
 
                 h_flex()
                     .flex_none()
-                    .gap_0p5()
-                    .p_0p5()
-                    .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
-                    .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                    .when(keystroke.modifiers.control, |el| {
-                        el.child(KeyIcon::new(IconName::Control))
-                    })
-                    .when(keystroke.modifiers.alt, |el| {
-                        el.child(KeyIcon::new(IconName::Option))
-                    })
-                    .when(keystroke.modifiers.command, |el| {
-                        el.child(KeyIcon::new(IconName::Command))
-                    })
-                    .when(keystroke.modifiers.shift, |el| {
-                        el.child(KeyIcon::new(IconName::Shift))
-                    })
-                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
-                    .when(key_icon.is_none(), |el| {
-                        el.child(Key::new(keystroke.key.to_uppercase().clone()))
-                    })
+                    .child(Key::new(
+                        format!(
+                            "{}{}{}{}{}{}",
+                            if keystroke.modifiers.control { "Ctrl+" } else { "" },
+                            if keystroke.modifiers.alt { "Alt+" } else { "" },
+                            if keystroke.modifiers.shift { "Shift+" } else { "" },
+                            if keystroke.modifiers.command { win_key + "+" } else { "".to_string() },
+                            if keystroke.modifiers.function { "Fn+" } else { "" },
+                            keystroke.key.to_uppercase()
+                        )
+                    ))
             }))
     }
 }
