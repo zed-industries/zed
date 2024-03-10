@@ -1,7 +1,6 @@
 use anyhow::{bail, Context, Result};
-use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
-use futures::{io::BufReader, StreamExt};
+use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
