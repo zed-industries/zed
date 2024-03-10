@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use ash::extensions::ext::DebugUtils;
 use ash::vk;
+use itertools::Itertools;
 
 use crate::Pixels;
 use crate::Scene;
@@ -58,10 +59,13 @@ pub(crate) struct VulkanRenderer {
     surface: vk::SurfaceKHR,
     debug_callback: vk::DebugUtilsMessengerEXT,
     device: ash::Device,
+    swapchain: vk::SwapchainKHR,
+    swapchain_image_views: Vec<vk::ImageView>,
     atlas: Arc<VulkanAtlas>,
 
     debug_utils_loader: DebugUtils,
     surface_loader: ash::extensions::khr::Surface,
+    swapchain_loader: ash::extensions::khr::Swapchain,
 
     viewport_size: Size<Pixels>,
 }
@@ -191,11 +195,11 @@ impl VulkanRenderer {
                 })
                 .max_by_key(|(_, queue_family)| queue_family.queue_count)
                 .unwrap()
-                .0;
+                .0 as u32;
 
         // Device
         let queue_create_info = vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(graphics_family as u32)
+            .queue_family_index(graphics_family)
             .queue_priorities(&[1.0])
             .build();
 
@@ -210,6 +214,105 @@ impl VulkanRenderer {
         // Surface
         let surface = surface_data.create_surface(&platform_surface_loader);
 
+        // Swapchain
+        let surface_capabilities = unsafe {
+            surface_loader.get_physical_device_surface_capabilities(physical_device, surface)
+        }
+        .unwrap();
+        let surface_format =
+            unsafe { surface_loader.get_physical_device_surface_formats(physical_device, surface) }
+                .unwrap()
+                .into_iter()
+                .find(|format| {
+                    format.format == vk::Format::B8G8R8A8_UNORM
+                        && [vk::ColorSpaceKHR::SRGB_NONLINEAR].contains(&format.color_space)
+                })
+                .unwrap_or_else(|| todo!("vulkan: support more surface formats"));
+        let present_mode = unsafe {
+            surface_loader.get_physical_device_surface_present_modes(physical_device, surface)
+        }
+        .unwrap()
+        .into_iter()
+        .sorted_by_key(|present_mode| {
+            [
+                vk::PresentModeKHR::MAILBOX,
+                vk::PresentModeKHR::FIFO,
+                vk::PresentModeKHR::FIFO_RELAXED,
+            ]
+            .iter()
+            .find_position(|target| &present_mode == target)
+            .map(|(idx, _)| idx)
+            .unwrap_or(100)
+        })
+        .next()
+        .unwrap();
+        let viewport_size: Size<Pixels> = Size {
+            width: viewport_size.width.clamp(
+                surface_capabilities.min_image_extent.width.into(),
+                surface_capabilities.max_image_extent.width.into(),
+            ),
+            height: viewport_size.height.clamp(
+                surface_capabilities.min_image_extent.height.into(),
+                surface_capabilities.max_image_extent.height.into(),
+            ),
+        };
+
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+            .surface(surface)
+            .min_image_count(
+                (surface_capabilities.min_image_count + 1)
+                    .min(surface_capabilities.max_image_count),
+            )
+            .image_format(surface_format.format)
+            .image_color_space(surface_format.color_space)
+            .image_extent(
+                vk::Extent2D::builder()
+                    .width(viewport_size.width.into())
+                    .height(viewport_size.height.into())
+                    .build(),
+            )
+            .image_array_layers(1)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(&[graphics_family])
+            .pre_transform(surface_capabilities.current_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            .clipped(true)
+            .build();
+        let swapchain_loader = ash::extensions::khr::Swapchain::new(&instance, &device);
+        let swapchain =
+            unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None) }.unwrap();
+        let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(swapchain) }.unwrap();
+        let swapchain_image_views = swapchain_images
+            .iter()
+            .map(|swapchain_image| {
+                let create_info = vk::ImageViewCreateInfo::builder()
+                    .image(*swapchain_image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(surface_format.format)
+                    .components(
+                        vk::ComponentMapping::builder()
+                            .r(vk::ComponentSwizzle::IDENTITY)
+                            .g(vk::ComponentSwizzle::IDENTITY)
+                            .b(vk::ComponentSwizzle::IDENTITY)
+                            .a(vk::ComponentSwizzle::A)
+                            .build(),
+                    )
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .base_mip_level(0)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(1)
+                            .build(),
+                    )
+                    .build();
+                unsafe { device.create_image_view(&create_info, None) }.unwrap()
+            })
+            .collect_vec();
+
         // Atlas
         let atlas = Arc::new(VulkanAtlas::new(device.clone(), memory_properties));
 
@@ -218,17 +321,25 @@ impl VulkanRenderer {
             surface,
             debug_callback,
             device,
+            swapchain,
+            swapchain_image_views,
             atlas,
             debug_utils_loader,
             surface_loader,
+            swapchain_loader,
             viewport_size,
         }
     }
 
-    pub fn destroy(&self) {
+    pub fn destroy(&mut self) {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.atlas.destroy();
+            self.swapchain_image_views
+                .drain(..)
+                .for_each(|image_view| self.device.destroy_image_view(image_view, None));
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             self.debug_utils_loader
