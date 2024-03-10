@@ -36,7 +36,7 @@ fn main() {
 // Associate actions using the `actions!` macro (or `impl_actions!` macro)
 actions!(set_menus, [Quit]);
 
-// Define the quit funciton that is registered with the AppContext
+// Define the quit function that is registered with the AppContext
 fn quit(_: &Quit, cx: &mut AppContext) {
     println!("Gracefully quitting the application . . .");
     cx.quit();
