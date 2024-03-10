@@ -312,3 +312,260 @@ impl PickerDelegate for OutlineViewDelegate {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext};
+    use indoc::indoc;
+    use language::{Language, LanguageConfig, LanguageMatcher};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use workspace::{AppState, Workspace};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": indoc!{"
+                    struct SingleLine; // display line 0
+                                       // display line 1
+                    struct MultiLine { // display line 2
+                        field_1: i32,  // display line 3
+                        field_2: i32,  // display line 4
+                    }                  // display line 5
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees().next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let ensure_outline_view_contents =
+            |outline_view: &View<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
+                assert_eq!(query(&outline_view, cx), "");
+                assert_eq!(
+                    outline_names(&outline_view, cx),
+                    vec![
+                        "struct SingleLine",
+                        "struct MultiLine",
+                        "field_1",
+                        "field_2"
+                    ],
+                );
+            };
+
+        let outline_view = open_outline_view(&workspace, cx);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Initially opened outline view should have no highlights"
+        );
+
+        cx.dispatch_action(menu::SelectNext);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![2, 3, 4, 5],
+            "Second struct's rows should be highlighted"
+        );
+
+        cx.dispatch_action(menu::SelectPrev);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![0],
+            "First struct's row should be highlighted"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "No rows should be highlighted after outline view is cancelled and closed"
+        );
+
+        let outline_view = open_outline_view(&workspace, cx);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Reopened outline view should have no highlights"
+        );
+
+        cx.dispatch_action(menu::SelectNext);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(highlighted_display_rows(&editor, cx), vec![2, 3, 4, 5]);
+
+        cx.dispatch_action(menu::Confirm);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "No rows should be highlighted after outline view is confirmed and closed"
+        );
+    }
+
+    fn open_outline_view(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> View<Picker<OutlineViewDelegate>> {
+        cx.dispatch_action(Toggle::default());
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<OutlineView>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        })
+    }
+
+    fn query(
+        outline_view: &View<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> String {
+        outline_view.update(cx, |outline_view, cx| outline_view.query(cx))
+    }
+
+    fn outline_names(
+        outline_view: &View<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        outline_view.update(cx, |outline_view, _| {
+            let items = &outline_view.delegate.outline.items;
+            outline_view
+                .delegate
+                .matches
+                .iter()
+                .map(|hit| items[hit.candidate_id].text.clone())
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
+        editor.update(cx, |editor, cx| {
+            editor.highlighted_display_rows(cx).into_keys().collect()
+        })
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            crate::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
+        })
+    }
+
+    fn rust_lang() -> Arc<Language> {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rs".to_string()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )
+            .with_outline_query(
+                r#"(struct_item
+            (visibility_modifier)? @context
+            "struct" @context
+            name: (_) @name) @item
+
+        (enum_item
+            (visibility_modifier)? @context
+            "enum" @context
+            name: (_) @name) @item
+
+        (enum_variant
+            (visibility_modifier)? @context
+            name: (_) @name) @item
+
+        (impl_item
+            "impl" @context
+            trait: (_)? @name
+            "for"? @context
+            type: (_) @name) @item
+
+        (trait_item
+            (visibility_modifier)? @context
+            "trait" @context
+            name: (_) @name) @item
+
+        (function_item
+            (visibility_modifier)? @context
+            (function_modifiers)? @context
+            "fn" @context
+            name: (_) @name) @item
+
+        (function_signature_item
+            (visibility_modifier)? @context
+            (function_modifiers)? @context
+            "fn" @context
+            name: (_) @name) @item
+
+        (macro_definition
+            . "macro_rules!" @context
+            name: (_) @name) @item
+
+        (mod_item
+            (visibility_modifier)? @context
+            "mod" @context
+            name: (_) @name) @item
+
+        (type_item
+            (visibility_modifier)? @context
+            "type" @context
+            name: (_) @name) @item
+
+        (associated_type
+            "type" @context
+            name: (_) @name) @item
+
+        (const_item
+            (visibility_modifier)? @context
+            "const" @context
+            name: (_) @name) @item
+
+        (field_declaration
+            (visibility_modifier)? @context
+            name: (_) @name) @item
+"#,
+            )
+            .unwrap(),
+        )
+    }
+}

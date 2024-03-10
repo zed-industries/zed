@@ -8967,7 +8967,6 @@ impl Editor {
         }
     }
 
-    // TODO kb tests that check highlight for outline and go to line modals' selections.
     pub fn clear_row_highlights<T: 'static>(&mut self) {
         self.highlighted_rows.remove(&TypeId::of::<T>());
     }
