@@ -118,8 +118,8 @@ pub struct ExtensionIndex {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexEntry {
-    manifest: Arc<ExtensionManifest>,
-    dev: bool,
+    pub manifest: Arc<ExtensionManifest>,
+    pub dev: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
@@ -348,6 +348,10 @@ impl ExtensionStore {
                 None => ExtensionStatus::NotInstalled,
             },
         }
+    }
+
+    pub fn installed_extensions(&self) -> &ExtensionIndex {
+        &self.extension_index
     }
 
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {

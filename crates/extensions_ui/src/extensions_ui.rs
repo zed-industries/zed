@@ -36,11 +36,11 @@ use serde::Deserialize;
 actions!(zed, [Extensions, InstallDevExtension]);
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct LanguageExtensions {
-    language_string: SharedString,
+struct ExtensionsWithQuery {
+    query: SharedString,
 }
 
-impl_actions!(zed, [LanguageExtensions]);
+impl_actions!(zed, [ExtensionsWithQuery]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
@@ -49,9 +49,9 @@ pub fn init(cx: &mut AppContext) {
                 let extensions_page = ExtensionsPage::new(workspace, cx, None);
                 workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
             })
-            .register_action(move |workspace, LanguageExtensions{language_string}: &LanguageExtensions, cx| {
+            .register_action(move |workspace, ExtensionsWithQuery{query}: &ExtensionsWithQuery, cx| {
 
-                let extensions_page = ExtensionsPage::new(workspace, cx, Some(language_string));
+                let extensions_page = ExtensionsPage::new(workspace, cx, Some(query));
                 workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
 
             })
