@@ -10871,7 +10871,6 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
- "cfg-if 1.0.0",
  "chrono",
  "gpui",
  "itertools 0.11.0",
