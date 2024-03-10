@@ -76,7 +76,27 @@ impl RenderOnce for KeyBinding {
                             keybinding_text.push_str("Fn+");
                         }
 
-                        keybinding_text.push_str(&keystroke.key.to_uppercase());
+                        let special_keys = match keystroke.key.as_str() {
+                            "left" => Some("Arrow Left"),
+                            "right" => Some("Arrow Right"),
+                            "up" => Some("Arrow Up"),
+                            "down" => Some("Arrow Down"),
+                            "backspace" => Some("Backspace"),
+                            "delete" => Some("Del"),
+                            "return" | "enter" => Some("Enter"),
+                            "tab" => Some("Tab"),
+                            "space" => Some("Space"),
+                            "escape" => Some("Esc"),
+                            "pagedown" => Some("PgDn"),
+                            "pageup" => Some("PgUp"),
+                            _ => None,
+                        };
+
+                        if let Some(special_key) = special_keys {
+                            keybinding_text.push_str(special_key);
+                        } else {
+                            keybinding_text.push_str(&keystroke.key.to_uppercase());
+                        }
 
                         h_flex()
                             .flex_none()
@@ -105,6 +125,8 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
+    // this is only used for Mac
+    #[cfg(target_os = "macos")]
     fn icon_for_key(keystroke: &Keystroke) -> Option<IconName> {
         match keystroke.key.as_str() {
             "left" => Some(IconName::ArrowLeft),
