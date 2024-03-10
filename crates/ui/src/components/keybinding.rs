@@ -45,25 +45,40 @@ impl RenderOnce for KeyBinding {
                 }
 
                 #[cfg(target_os = "linux")]
-                let win_key = "Super".to_owned();
+                let win_key = "Super";
 
                 #[cfg(target_os = "windows")]
-                let win_key = "Win".to_owned();
+                let win_key = "Win";
+
+                let mut keybinding_text = String::from("");
+
+                if keystroke.modifiers.control {
+                    keybinding_text.push_str("Ctrl+");
+                }
+
+                if keystroke.modifiers.alt {
+                    keybinding_text.push_str("Alt+");
+                }
+
+                if keystroke.modifiers.shift {
+                    keybinding_text.push_str("Shift+");
+                }
+
+                if keystroke.modifiers.command {
+                    keybinding_text.push_str(win_key);
+                    keybinding_text.push_str("+");
+                }
+
+                if keystroke.modifiers.function {
+                    keybinding_text.push_str("Fn+");
+                }
+
+                keybinding_text.push_str(&keystroke.key.to_uppercase());
 
                 h_flex()
                     .flex_none()
                     .text_color(cx.theme().colors().text_muted)
-                    .child(Key::new(
-                        format!(
-                            "{}{}{}{}{}{}",
-                            if keystroke.modifiers.control { "Ctrl+" } else { "" },
-                            if keystroke.modifiers.alt { "Alt+" } else { "" },
-                            if keystroke.modifiers.shift { "Shift+" } else { "" },
-                            if keystroke.modifiers.command { win_key + "+" } else { "".to_string() },
-                            if keystroke.modifiers.function { "Fn+" } else { "" },
-                            keystroke.key.to_uppercase()
-                        )
-                    ))
+                    .child(Key::new(keybinding_text))
             }))
     }
 }
