@@ -9,7 +9,7 @@ use blade_graphics as gpu;
 use gpu::Extent;
 
 #[cfg(feature = "vulkan-render")]
-use crate::platform::vulkan::{SurfaceExtensionLoader, VulkanRawWindow, VulkanRenderer};
+use crate::platform::vulkan::{VulkanExtensionLoader, VulkanRenderer, VulkanSurface};
 
 use crate::{
     size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -92,7 +92,14 @@ struct RawWindow {
 }
 
 #[cfg(feature = "vulkan-render")]
-impl VulkanRawWindow for RawWindow {
+impl VulkanExtensionLoader for ash::extensions::khr::XcbSurface {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[cfg(feature = "vulkan-render")]
+impl VulkanSurface for RawWindow {
     fn extension_name(&self) -> &std::ffi::CStr {
         ash::extensions::khr::XcbSurface::name()
     }
@@ -101,39 +108,43 @@ impl VulkanRawWindow for RawWindow {
         &self,
         entry: &ash::Entry,
         instance: &ash::Instance,
-    ) -> SurfaceExtensionLoader {
-        SurfaceExtensionLoader::XCB(ash::extensions::khr::XcbSurface::new(&entry, &instance))
+    ) -> Box<dyn VulkanExtensionLoader> {
+        Box::new(ash::extensions::khr::XcbSurface::new(entry, instance))
     }
 
-    fn create_surface(&self, loader: &SurfaceExtensionLoader) -> ash::vk::SurfaceKHR {
-        if let SurfaceExtensionLoader::XCB(loader) = loader {
-            let create_info = ash::vk::XcbSurfaceCreateInfoKHR::builder()
-                .connection(self.connection)
-                .window(self.window_id)
-                .build();
+    fn create_surface(&self, loader: &Box<dyn VulkanExtensionLoader>) -> ash::vk::SurfaceKHR {
+        let surface_create_info = ash::vk::XcbSurfaceCreateInfoKHR::builder()
+            .connection(self.connection)
+            .window(self.window_id)
+            .build();
 
-            unsafe { loader.create_xcb_surface(&create_info, None) }.unwrap()
-        } else {
-            unreachable!()
+        unsafe {
+            loader
+                .as_any()
+                .downcast_ref::<ash::extensions::khr::XcbSurface>()
+                .unwrap()
+                .create_xcb_surface(&surface_create_info, None)
+                .unwrap()
         }
     }
 
-    fn get_physical_device_presentation_support(
+    fn presentation_support(
         &self,
-        loader: &SurfaceExtensionLoader,
+        loader: &Box<dyn VulkanExtensionLoader>,
         physical_device: ash::vk::PhysicalDevice,
         queue_family_index: u32,
     ) -> bool {
-        match loader {
-            SurfaceExtensionLoader::XCB(loader) => unsafe {
-                loader.get_physical_device_xcb_presentation_support(
+        unsafe {
+            loader
+                .as_any()
+                .downcast_ref::<ash::extensions::khr::XcbSurface>()
+                .unwrap()
+                .get_physical_device_xcb_presentation_support(
                     physical_device,
                     queue_family_index,
                     &mut *self.connection,
                     self.visual_id,
                 )
-            },
-            _ => unreachable!(),
         }
     }
 }

@@ -13,7 +13,7 @@ use blade_graphics as gpu;
 use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 #[cfg(feature = "vulkan-render")]
-use crate::platform::vulkan::{SurfaceExtensionLoader, VulkanRawWindow, VulkanRenderer};
+use crate::platform::vulkan::{VulkanExtensionLoader, VulkanRenderer, VulkanSurface};
 
 use collections::HashSet;
 use futures::channel::oneshot::Receiver;
@@ -84,7 +84,14 @@ unsafe impl HasRawDisplayHandle for RawWindow {
 }
 
 #[cfg(feature = "vulkan-render")]
-impl VulkanRawWindow for RawWindow {
+impl VulkanExtensionLoader for ash::extensions::khr::WaylandSurface {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[cfg(feature = "vulkan-render")]
+impl VulkanSurface for RawWindow {
     fn extension_name(&self) -> &std::ffi::CStr {
         ash::extensions::khr::WaylandSurface::name()
     }
@@ -93,40 +100,42 @@ impl VulkanRawWindow for RawWindow {
         &self,
         entry: &ash::Entry,
         instance: &ash::Instance,
-    ) -> SurfaceExtensionLoader {
-        SurfaceExtensionLoader::Wayland(ash::extensions::khr::WaylandSurface::new(
-            &entry, &instance,
-        ))
+    ) -> Box<dyn VulkanExtensionLoader> {
+        Box::new(ash::extensions::khr::WaylandSurface::new(entry, instance))
     }
 
-    fn create_surface(&self, loader: &SurfaceExtensionLoader) -> ash::vk::SurfaceKHR {
-        if let SurfaceExtensionLoader::Wayland(loader) = loader {
-            let create_info = ash::vk::WaylandSurfaceCreateInfoKHR::builder()
-                .display(self.display)
-                .surface(self.window)
-                .build();
+    fn create_surface(&self, loader: &Box<dyn VulkanExtensionLoader>) -> ash::vk::SurfaceKHR {
+        let surface_create_info = ash::vk::WaylandSurfaceCreateInfoKHR::builder()
+            .surface(self.window)
+            .display(self.display)
+            .build();
 
-            unsafe { loader.create_wayland_surface(&create_info, None) }.unwrap()
-        } else {
-            unreachable!()
+        unsafe {
+            loader
+                .as_any()
+                .downcast_ref::<ash::extensions::khr::WaylandSurface>()
+                .unwrap()
+                .create_wayland_surface(&surface_create_info, None)
+                .unwrap()
         }
     }
 
-    fn get_physical_device_presentation_support(
+    fn presentation_support(
         &self,
-        loader: &SurfaceExtensionLoader,
+        loader: &Box<dyn VulkanExtensionLoader>,
         physical_device: ash::vk::PhysicalDevice,
         queue_family_index: u32,
     ) -> bool {
-        match loader {
-            SurfaceExtensionLoader::Wayland(loader) => unsafe {
-                loader.get_physical_device_wayland_presentation_support(
+        unsafe {
+            loader
+                .as_any()
+                .downcast_ref::<ash::extensions::khr::WaylandSurface>()
+                .unwrap()
+                .get_physical_device_wayland_presentation_support(
                     physical_device,
                     queue_family_index,
                     &mut *self.display,
                 )
-            },
-            _ => unreachable!(),
         }
     }
 }

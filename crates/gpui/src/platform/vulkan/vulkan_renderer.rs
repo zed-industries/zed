@@ -10,27 +10,7 @@ use crate::Scene;
 use crate::Size;
 
 use super::VulkanAtlas;
-
-pub(crate) enum SurfaceExtensionLoader {
-    XCB(ash::extensions::khr::XcbSurface),
-    Wayland(ash::extensions::khr::WaylandSurface),
-}
-
-pub(crate) trait VulkanRawWindow {
-    fn extension_name(&self) -> &CStr;
-    fn extension_loader(
-        &self,
-        entry: &ash::Entry,
-        instance: &ash::Instance,
-    ) -> SurfaceExtensionLoader;
-    fn create_surface(&self, loader: &SurfaceExtensionLoader) -> vk::SurfaceKHR;
-    fn get_physical_device_presentation_support(
-        &self,
-        loader: &SurfaceExtensionLoader,
-        physical_device: vk::PhysicalDevice,
-        queue_family_index: u32,
-    ) -> bool;
-}
+use super::VulkanSurface;
 
 unsafe extern "system" fn validation_layer_callback(
     severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -87,14 +67,14 @@ pub(crate) struct VulkanRenderer {
 }
 
 impl VulkanRenderer {
-    pub fn new(raw_window: Box<dyn VulkanRawWindow>, viewport_size: Size<Pixels>) -> Self {
+    pub fn new(surface_data: Box<dyn VulkanSurface>, viewport_size: Size<Pixels>) -> Self {
         // Entry point
         let entry = ash::Entry::linked();
 
         // Check instance extension support
         let required_instance_extensions = [
             DebugUtils::name(),
-            raw_window.extension_name(),
+            surface_data.extension_name(),
             ash::extensions::khr::Surface::name(),
         ];
         let available_instance_extensions =
@@ -141,7 +121,7 @@ impl VulkanRenderer {
         let instance = unsafe { entry.create_instance(&instance_create_info, None) }.unwrap();
 
         // Load extensions
-        let platform_surface_loader = raw_window.extension_loader(&entry, &instance);
+        let platform_surface_loader = surface_data.extension_loader(&entry, &instance);
         let surface_loader = ash::extensions::khr::Surface::new(&entry, &instance);
         let debug_utils_loader = DebugUtils::new(&entry, &instance);
 
@@ -175,7 +155,7 @@ impl VulkanRenderer {
 
                 queue_family_props.iter().enumerate().any(|(idx, props)| {
                     props.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-                        && raw_window.get_physical_device_presentation_support(
+                        && surface_data.presentation_support(
                             &platform_surface_loader,
                             *device,
                             idx as u32,
@@ -203,7 +183,7 @@ impl VulkanRenderer {
                 .enumerate()
                 .filter(|(idx, queue_family)| {
                     queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-                        && raw_window.get_physical_device_presentation_support(
+                        && surface_data.presentation_support(
                             &platform_surface_loader,
                             physical_device,
                             *idx as u32,
@@ -228,7 +208,7 @@ impl VulkanRenderer {
             unsafe { instance.create_device(physical_device, &device_create_info, None) }.unwrap();
 
         // Surface
-        let surface = raw_window.create_surface(&platform_surface_loader);
+        let surface = surface_data.create_surface(&platform_surface_loader);
 
         // Atlas
         let atlas = Arc::new(VulkanAtlas::new(device.clone(), memory_properties));
