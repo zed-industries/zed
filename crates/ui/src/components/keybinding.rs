@@ -103,6 +103,7 @@ impl RenderOnce for KeyBinding {
 
                         h_flex()
                             .flex_none()
+                            .ml_2p5()
                             .text_color(cx.theme().colors().text_muted)
                             .child(Key::new(keybinding_text))
                     }
