@@ -116,7 +116,7 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Arc<Languag
             workspace.show_notification(0, cx, |cx| {
                 cx.new_view(move |_cx| {
                     simple_message_notification::MessageNotification::new(
-                        format!("Language Extensions for {language} not installed", language = language.name())
+                        format!("Extensions for {language} not installed", language = language.name())
                     )
                         .with_click_message("View Extensions")
                         .on_click(move |cx| {
