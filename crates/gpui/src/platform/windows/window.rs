@@ -40,10 +40,9 @@ use windows::{
                 TD_INFORMATION_ICON, TD_WARNING_ICON,
             },
             Input::KeyboardAndMouse::{
-                GetKeyState, VIRTUAL_KEY, VK_0, VK_9, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
+                GetKeyState, VIRTUAL_KEY, VK_0, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
                 VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT,
-                VK_NUMPAD0, VK_NUMPAD9, VK_OEM_3, VK_OEM_MINUS, VK_OEM_PLUS, VK_PRIOR, VK_RETURN,
-                VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP, VK_Z,
+                VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
@@ -333,7 +332,7 @@ impl WindowsWindowInner {
         let modifiers = self.current_modifiers();
         if !modifiers.alt {
             // on Windows, F10 can trigger this event, not just the alt key
-            // and we just don't care F10
+            // and we just don't care about F10
             return None;
         }
 
@@ -444,7 +443,6 @@ impl WindowsWindowInner {
         let Some(ref mut func) = self.callbacks.borrow_mut().input else {
             return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
         };
-        println!("syskeydown: {:#?}", keystroke);
         let event = KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -465,7 +463,6 @@ impl WindowsWindowInner {
         let Some(ref mut func) = self.callbacks.borrow_mut().input else {
             return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
         };
-        println!("syskeyup: {:#?}", keystroke);
         let event = KeyUpEvent { keystroke };
         if func(PlatformInput::KeyUp(event)) {
             self.invalidate_client_area();
@@ -481,7 +478,6 @@ impl WindowsWindowInner {
         let Some(ref mut func) = self.callbacks.borrow_mut().input else {
             return LRESULT(1);
         };
-        println!("keydown: {:#?}", keystroke);
         let event = KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -516,7 +512,6 @@ impl WindowsWindowInner {
         let Some(ref mut func) = callbacks.input else {
             return LRESULT(1);
         };
-        println!("char: {:#?}", keystroke);
         let ime_key = keystroke.ime_key.clone();
         let event = KeyDownEvent {
             keystroke,
