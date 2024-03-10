@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use editor::{Editor, EditorMode};
-use extension::{ExtensionStore, ExtensionApiResponse};
-use gpui::{AppContext, ViewContext, VisualContext, Context};
+use extension::{ExtensionStore, ExtensionApiResponse, ExtensionIndexEntry};
+use gpui::{AppContext, ViewContext, VisualContext, SharedString};
 use language::Language;
 use workspace::{Workspace, notifications::simple_message_notification};
 use language::Event;
@@ -19,21 +18,27 @@ pub(crate) fn init(cx: &mut AppContext) {
         // Only if the editor is editing in a programming language
         if let EditorMode::Full = editor.mode() {
 
+
             // Get languages in the current editor
-            let languages = editor
+            let editor_language_info = editor
                 .buffer()
                 .read(cx)
                 .all_buffers()
                 .iter()
-                .flat_map(|buffer| 
-                    buffer
-                        .read(cx)
-                        .language()
-                        .cloned()
-                ).collect::<Vec<_>>();
+                .flat_map(|buffer| {
+                    let buffer = buffer.read(cx);
 
-            for language in languages {
-                check_and_suggest(cx, language)
+                    Some((
+                        match buffer.file()?.path().extension() {
+                            Some(extension) => SharedString::from(extension.to_str()?.to_string()),
+                            None => SharedString::from(buffer.file()?.path().to_str()?.to_string())
+                    },
+                        buffer.language().cloned()
+                    ))
+                }).collect::<Vec<_>>();
+
+            for (name_or_extension, language) in editor_language_info {
+                check_and_suggest(cx, language, Some(name_or_extension))
             }
 
 
@@ -52,7 +57,7 @@ pub(crate) fn init(cx: &mut AppContext) {
 
                             if let Some(language) = language_option.cloned() {
 
-                                check_and_suggest(cx, language);
+                                check_and_suggest(cx, Some(language), None);
                             }
 
                         },
@@ -69,31 +74,38 @@ pub(crate) fn init(cx: &mut AppContext) {
         .detach();
 }
 
-fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Arc<Language>) {
-
+fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, extension: Option<SharedString>) {
     let extension_store = ExtensionStore::global(cx);
 
     let store = extension_store.read(cx);
 
     let installed_extensions = &store.installed_extensions().extensions;
 
+    println!("Installed extensions: {:#?}", installed_extensions);
+
     // check if any extensions support the current language; this searches just the descriptions as a sort of hack right now
     let check = installed_extensions.iter()
         .any(|(_, ext)| 
-            ext.manifest.description.as_ref().map(|description| description.contains(&language.name().to_lowercase())) == Some(true)
+            ext.filter_by_language(language.as_deref(), extension.clone())
         );
 
     if !check {
-        suggest_extensions(cx, language);
+        suggest_extensions(cx, language, extension);
     }
 }
 
-fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Arc<Language>) -> Option<()> {
+fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_extension: Option<SharedString>) -> Option<()> {
+
     let extension_store = ExtensionStore::global(cx);
 
+    let search = match (language.clone(), file_extension.clone()) {
+        (Some(language), _) => Some(language.name().to_string()),
+        (None, Some(extension)) => Some(extension.to_string()),
+        (None, None) => return None
+    }?;
 
     let remote_extensions_task = extension_store.update(cx, |store, cx| {
-        store.fetch_extensions(Some(language.name().to_string().as_str()), cx)
+        store.fetch_extensions(Some(&search), cx)
     });
 
     cx.spawn(|_view, mut cx| async move {
@@ -101,11 +113,13 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Arc<Languag
         // Get the most downloaded extension for the language
         let all_extensions = remote_extensions_task.await.ok()?;
 
-
         let most_downloaded = all_extensions
             .into_iter()
-            .filter(|extension| extension.description.clone().is_some_and(|description| description.contains(&language.name().to_string())))
+            .filter(|extension| 
+                extension.filter_by_language(language.as_deref(), file_extension.clone().map(Into::into))
+            )
             .max_by_key(|extension| extension.download_count)?;
+
 
         // Make the notification
 
@@ -116,13 +130,13 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Arc<Languag
             workspace.show_notification(0, cx, |cx| {
                 cx.new_view(move |_cx| {
                     simple_message_notification::MessageNotification::new(
-                        format!("Extensions for {language} not installed", language = language.name())
+                        format!("Extensions for {language} not installed", language = search)
                     )
                         .with_click_message("View Extensions")
                         .on_click(move |cx| {
 
                             cx.dispatch_action(Box::new(ExtensionsWithQuery{
-                                query: language.name().to_string().into()
+                                query: search.clone().into()
                             }));
 
                         })
@@ -145,4 +159,42 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Arc<Languag
     }).detach();
 
     Some(())
+}
+
+
+trait LanguageFilterable {
+    /// Does an extension match the language of a file? TODO: Use a new backend extension API that has language data
+    fn filter_by_language(&self, language: Option<&Language>, file_extension: Option<SharedString>) -> bool;
+}
+
+impl LanguageFilterable for ExtensionIndexEntry {
+    fn filter_by_language(&self, language: Option<&Language>, file_extension: Option<SharedString>) -> bool {
+        self.manifest
+            .languages
+            .iter()
+            .any(|extension_language| 
+                extension_language.to_str().is_some_and(|extension_language| 
+                    language.is_some_and(|lang| 
+                        extension_language.to_lowercase().contains(&lang.name().to_string().to_lowercase())
+                        || lang.path_suffixes().iter().any(|suffix| extension_language.contains(suffix))
+                    )
+                || file_extension.clone().is_some_and(|ex| extension_language.to_lowercase().contains(&ex.to_string()))
+            ))
+    }
+}
+
+impl LanguageFilterable for ExtensionApiResponse {
+    fn filter_by_language(&self, language: Option<&Language>, file_extension: Option<SharedString>) -> bool {
+        language.is_some_and(|lang| 
+            self.description
+                .as_ref()
+                .is_some_and(|description| 
+                    description.to_lowercase().contains(&lang.name().to_lowercase())
+                    || file_extension.clone().is_some_and(|ex| description.to_lowercase().contains(&ex.to_string()))
+                )
+            || self.name.to_lowercase().contains(&lang.name().to_lowercase())
+        )
+        || file_extension.clone().is_some_and(|ex| self.name.to_lowercase().contains(&ex.to_string()))
+
+    }
 }
