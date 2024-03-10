@@ -87,7 +87,6 @@ impl WindowsWindowInner {
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
     ) -> Self {
-        platform_inner.raw_window_handles.write().push(hwnd);
         let origin = Cell::new(Point::new((cs.x as f64).into(), (cs.y as f64).into()));
         let size = Cell::new(Size {
             width: (cs.cx as f64).into(),
@@ -714,6 +713,10 @@ impl WindowsWindow {
             .window_handle_values
             .borrow_mut()
             .insert(wnd.inner.hwnd.0);
+        platform_inner
+            .raw_window_handles
+            .write()
+            .push(wnd.inner.hwnd);
 
         unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         wnd

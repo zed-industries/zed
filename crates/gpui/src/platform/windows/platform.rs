@@ -48,7 +48,7 @@ use windows::{
                 IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
                 IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
                 SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
             },
         },
     },
@@ -257,6 +257,10 @@ impl Platform for WindowsPlatform {
                     while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
                         if msg.message == WM_QUIT {
                             break 'a;
+                        }
+                        if msg.message == WM_SETTINGCHANGE {
+                            self.inner.settings.borrow_mut().update_all();
+                            continue;
                         }
                         TranslateMessage(&msg);
                         DispatchMessageW(&msg);
