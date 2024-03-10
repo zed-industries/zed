@@ -1,6 +1,9 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use cfg_if::cfg_if;
-use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, rems, Action, FocusHandle, IntoElement};
+
+#[cfg(target_os = "macos")]
+use gpui::Keystroke;
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
