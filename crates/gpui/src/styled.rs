@@ -692,7 +692,7 @@ pub trait Styled: Sized {
     fn non_italic(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .font_style = Some(FontStyle::Italic);
+            .font_style = Some(FontStyle::Normal);
         self
     }
 
