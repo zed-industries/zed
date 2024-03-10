@@ -848,7 +848,7 @@ async fn load_login_shell_environment() -> Result<()> {
     // in home directory.
     let shell_cmd_prefix = std::env::var_os("HOME")
         .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd {home};"));
+        .map(|home| format!("cd '{home}';"));
 
     // The `exit 0` is the result of hours of debugging, trying to find out
     // why running this command here, without `exit 0`, would mess
