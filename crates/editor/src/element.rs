@@ -665,52 +665,53 @@ impl EditorElement {
                 }
             }
 
-            let mut paint_highlight = |mut highlight_rows: Range<u32>, color| {
-                // TODO kb comment why do we need to do +1 here (b.c. we are using BTreeMap<u32, ..> rows and need to covnert those into exclusive ranges, and using mutable inclisive ranges is not possible)
-                highlight_rows.end += 1;
+            let mut paint_highlight = |highlight_row_start: u32, highlight_row_end: u32, color| {
                 let origin = point(
                     bounds.origin.x,
                     bounds.origin.y
-                        + (layout.position_map.line_height * highlight_rows.start as f32)
+                        + (layout.position_map.line_height * highlight_row_start as f32)
                         - scroll_top,
                 );
                 let size = size(
                     bounds.size.width,
-                    layout.position_map.line_height * highlight_rows.len() as f32,
+                    layout.position_map.line_height
+                        * (highlight_row_end + 1 - highlight_row_start) as f32,
                 );
                 cx.paint_quad(fill(Bounds { origin, size }, color));
             };
             let mut last_row = None;
-            let mut highlight_rows_range = 0_u32..0;
+            let mut highlight_row_start = 0u32;
+            let mut highlight_row_end = 0u32;
             for (&row, &color) in &layout.highlighted_rows {
                 let paint = last_row.map_or(false, |(last_row, last_color)| {
                     last_color != color || last_row + 1 < row
                 });
 
                 if paint {
-                    let paint_range_is_unfinished = highlight_rows_range.end == 0;
+                    let paint_range_is_unfinished = highlight_row_end == 0;
                     if paint_range_is_unfinished {
-                        highlight_rows_range.end = row;
+                        highlight_row_end = row;
                         last_row = None;
                     }
-                    paint_highlight(highlight_rows_range, color);
-                    highlight_rows_range = 0..0;
+                    paint_highlight(highlight_row_start, highlight_row_end, color);
+                    highlight_row_start = 0;
+                    highlight_row_end = 0;
                     if !paint_range_is_unfinished {
-                        highlight_rows_range.start = row;
+                        highlight_row_start = row;
                         last_row = Some((row, color));
                     }
                 } else {
                     if last_row.is_none() {
-                        highlight_rows_range.start = row;
+                        highlight_row_start = row;
                     } else {
-                        highlight_rows_range.end = row;
+                        highlight_row_end = row;
                     }
                     last_row = Some((row, color));
                 }
             }
             if let Some((row, hsla)) = last_row {
-                highlight_rows_range.end = row;
-                paint_highlight(highlight_rows_range, hsla);
+                highlight_row_end = row;
+                paint_highlight(highlight_row_start, highlight_row_end, hsla);
             }
 
             let scroll_left =

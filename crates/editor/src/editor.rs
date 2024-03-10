@@ -387,7 +387,6 @@ pub struct Editor {
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
-    // TODO kb comment how those are being merged in the end
     highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
@@ -8924,6 +8923,9 @@ impl Editor {
         }
     }
 
+    /// Adds or removes (on `None` color) a highlight for the rows corresponding to the anchor range given.
+    /// On matching anchor range, replaces the old highlight; does not clear the other existing highlights.
+    /// If multiple anchor ranges will produce highlights for the same row, the last range added will be used.
     pub fn highlight_rows<T: 'static>(
         &mut self,
         rows: Range<Anchor>,
@@ -8967,10 +8969,12 @@ impl Editor {
         }
     }
 
+    /// Clear all anchor ranges for a certain highlight context type, so no corresponding rows will be highlighted.
     pub fn clear_row_highlights<T: 'static>(&mut self) {
         self.highlighted_rows.remove(&TypeId::of::<T>());
     }
 
+    /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
     pub fn highlighted_rows<T: 'static>(
         &self,
     ) -> Option<impl Iterator<Item = (&Range<Anchor>, &Hsla)>> {
@@ -8982,7 +8986,8 @@ impl Editor {
         )
     }
 
-    // TODO kb better names + return a particular type for the display row
+    // Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
+    // Rerturns a map of display rows that are highlighted and their corresponding highlight color.
     pub fn highlighted_display_rows(&mut self, cx: &mut WindowContext) -> BTreeMap<u32, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
