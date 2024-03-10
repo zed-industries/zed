@@ -1,4 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
+use cfg_if::cfg_if;
 use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
@@ -16,69 +17,73 @@ impl RenderOnce for KeyBinding {
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                #[cfg(target_os = "macos")]
-                {
-                    let key_icon = Self::icon_for_key(keystroke);
-                    return h_flex()
-                        .flex_none()
-                        .gap_0p5()
-                        .p_0p5()
-                        .rounded_sm()
-                        .text_color(cx.theme().colors().text_muted)
-                        .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                        .when(keystroke.modifiers.control, |el| {
-                            el.child(KeyIcon::new(IconName::Control))
-                        })
-                        .when(keystroke.modifiers.alt, |el| {
-                            el.child(KeyIcon::new(IconName::Option))
-                        })
-                        .when(keystroke.modifiers.command, |el| {
-                            el.child(KeyIcon::new(IconName::Command))
-                        })
-                        .when(keystroke.modifiers.shift, |el| {
-                            el.child(KeyIcon::new(IconName::Shift))
-                        })
-                        .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
-                        .when(key_icon.is_none(), |el| {
-                            el.child(Key::new(keystroke.key.to_uppercase().clone()))
-                        });
+                cfg_if! {
+                    if #[cfg(target_os = "macos")] {
+                        let key_icon = Self::icon_for_key(keystroke);
+                        return h_flex()
+                            .flex_none()
+                            .gap_0p5()
+                            .p_0p5()
+                            .rounded_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
+                            .when(keystroke.modifiers.control, |el| {
+                                el.child(KeyIcon::new(IconName::Control))
+                            })
+                            .when(keystroke.modifiers.alt, |el| {
+                                el.child(KeyIcon::new(IconName::Option))
+                            })
+                            .when(keystroke.modifiers.command, |el| {
+                                el.child(KeyIcon::new(IconName::Command))
+                            })
+                            .when(keystroke.modifiers.shift, |el| {
+                                el.child(KeyIcon::new(IconName::Shift))
+                            })
+                            .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
+                            .when(key_icon.is_none(), |el| {
+                                el.child(Key::new(keystroke.key.to_uppercase().clone()))
+                            });
+                    } else {
+                        cfg_if! {
+                            if #[cfg(target_os = "windows")] {
+                                let win_key = "Win";
+                            } else {
+                                // windows/cmd key is `Super` on linux
+                                let win_key = "Super";
+                            }
+                        };
+
+                        let mut keybinding_text = String::from("");
+
+                        if keystroke.modifiers.control {
+                            keybinding_text.push_str("Ctrl+");
+                        }
+
+                        if keystroke.modifiers.alt {
+                            keybinding_text.push_str("Alt+");
+                        }
+
+                        if keystroke.modifiers.shift {
+                            keybinding_text.push_str("Shift+");
+                        }
+
+                        if keystroke.modifiers.command {
+                            keybinding_text.push_str(win_key);
+                            keybinding_text.push_str("+");
+                        }
+
+                        if keystroke.modifiers.function {
+                            keybinding_text.push_str("Fn+");
+                        }
+
+                        keybinding_text.push_str(&keystroke.key.to_uppercase());
+
+                        h_flex()
+                            .flex_none()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child(Key::new(keybinding_text))
+                    }
                 }
-
-                #[cfg(target_os = "linux")]
-                let win_key = "Super";
-
-                #[cfg(target_os = "windows")]
-                let win_key = "Win";
-
-                let mut keybinding_text = String::from("");
-
-                if keystroke.modifiers.control {
-                    keybinding_text.push_str("Ctrl+");
-                }
-
-                if keystroke.modifiers.alt {
-                    keybinding_text.push_str("Alt+");
-                }
-
-                if keystroke.modifiers.shift {
-                    keybinding_text.push_str("Shift+");
-                }
-
-                if keystroke.modifiers.command {
-                    keybinding_text.push_str(win_key);
-                    keybinding_text.push_str("+");
-                }
-
-                if keystroke.modifiers.function {
-                    keybinding_text.push_str("Fn+");
-                }
-
-                keybinding_text.push_str(&keystroke.key.to_uppercase());
-
-                h_flex()
-                    .flex_none()
-                    .text_color(cx.theme().colors().text_muted)
-                    .child(Key::new(keybinding_text))
             }))
     }
 }
