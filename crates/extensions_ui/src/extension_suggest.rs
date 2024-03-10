@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, hash::{DefaultHasher, Hash, Hasher}};
 
 use editor::{Editor, EditorMode};
 use extension::{ExtensionStore, ExtensionApiResponse, ExtensionIndexEntry};
@@ -81,8 +81,6 @@ fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<L
 
     let installed_extensions = &store.installed_extensions().extensions;
 
-    println!("Installed extensions: {:#?}", installed_extensions);
-
     // check if any extensions support the current language; this searches just the descriptions as a sort of hack right now
     let check = installed_extensions.iter()
         .any(|(_, ext)| 
@@ -95,7 +93,6 @@ fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<L
 }
 
 fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_extension: Option<SharedString>) -> Option<()> {
-
     let extension_store = ExtensionStore::global(cx);
 
     let search = match (language.clone(), file_extension.clone()) {
@@ -127,7 +124,11 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<
 
         let _ = workspace.update(&mut cx, |workspace, cx| {
 
-            workspace.show_notification(0, cx, |cx| {
+
+            let mut hasher = DefaultHasher::new();
+            search.hash(&mut hasher);
+            let id = hasher.finish();
+            workspace.show_notification(id as usize, cx, |cx| { // TODO: should we avoid using `as` here?
                 cx.new_view(move |_cx| {
                     simple_message_notification::MessageNotification::new(
                         format!("Extensions for {language} not installed", language = search)
