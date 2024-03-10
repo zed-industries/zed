@@ -53,8 +53,6 @@ pub(crate) fn init(cx: &mut AppContext) {
                             let buffer = emitter.read(cx);
                             let language_option = buffer.language();
 
-                            println!("Language changed/set to {:?}", language_option);
-
                             if let Some(language) = language_option.cloned() {
 
                                 check_and_suggest(cx, Some(language), None);
