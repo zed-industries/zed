@@ -14,7 +14,18 @@
   (list_marker_parenthesis)
 ] @punctuation.list_marker
 
-(emphasis_delimiter) @punctuation.delimiter
+[
+  (emphasis_delimiter)
+  (code_span_delimiter)
+  (fenced_code_block_delimiter)
+] @punctuation.delimiter
+
+[
+  "("
+  ")"
+  "["
+  "]"
+] @punctuation.bracket
 
 (code_span) @text.literal
 
