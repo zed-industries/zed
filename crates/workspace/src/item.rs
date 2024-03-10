@@ -548,6 +548,7 @@ impl<T: Item> ItemHandle for View<T> {
                                     Pane::autosave_item(&item, workspace.project().clone(), cx)
                                 });
                             }
+                            pane.update(cx, |pane, cx| pane.handle_item_edit(item.item_id(), cx));
                         }
 
                         _ => {}

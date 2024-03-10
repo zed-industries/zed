@@ -508,6 +508,14 @@ impl Pane {
         }
     }
 
+    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
+        if let Some(preview_item_id) = self.preview_item_id {
+            if preview_item_id == item_id {
+                self.set_preview_item_id(None, cx)
+            }
+        }
+    }
+
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
