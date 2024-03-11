@@ -242,8 +242,9 @@ impl PickerDelegate for OutlineViewDelegate {
                 .highlighted_rows::<OutlineRowHighlights>()
                 .and_then(|highlights| highlights.into_iter().next().map(|(rows, _)| rows.clone()))
             {
-                active_editor
-                    .change_selections(Some(Autoscroll::center()), cx, |s| s.select_ranges([rows]));
+                active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                    s.select_ranges([rows.start..rows.start])
+                });
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.focus(cx);
             }
@@ -385,6 +386,7 @@ mod tests {
             Vec::<u32>::new(),
             "Initially opened outline view should have no highlights"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         cx.dispatch_action(menu::SelectNext);
         ensure_outline_view_contents(&outline_view, cx);
@@ -393,6 +395,7 @@ mod tests {
             vec![2, 3, 4, 5],
             "Second struct's rows should be highlighted"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         cx.dispatch_action(menu::SelectPrev);
         ensure_outline_view_contents(&outline_view, cx);
@@ -401,6 +404,7 @@ mod tests {
             vec![0],
             "First struct's row should be highlighted"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         cx.dispatch_action(menu::Cancel);
         ensure_outline_view_contents(&outline_view, cx);
@@ -409,6 +413,7 @@ mod tests {
             Vec::<u32>::new(),
             "No rows should be highlighted after outline view is cancelled and closed"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         let outline_view = open_outline_view(&workspace, cx);
         ensure_outline_view_contents(&outline_view, cx);
@@ -417,11 +422,16 @@ mod tests {
             Vec::<u32>::new(),
             "Reopened outline view should have no highlights"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
+        let expected_first_highlighted_row = 2;
         cx.dispatch_action(menu::SelectNext);
         ensure_outline_view_contents(&outline_view, cx);
-        assert_eq!(highlighted_display_rows(&editor, cx), vec![2, 3, 4, 5]);
-
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![expected_first_highlighted_row, 3, 4, 5]
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
         cx.dispatch_action(menu::Confirm);
         ensure_outline_view_contents(&outline_view, cx);
         assert_eq!(
@@ -429,6 +439,8 @@ mod tests {
             Vec::<u32>::new(),
             "No rows should be highlighted after outline view is confirmed and closed"
         );
+        // On confirm, should place the caret on the first row of the highlighted rows range.
+        assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
     }
 
     fn open_outline_view(
@@ -567,5 +579,31 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    #[track_caller]
+    fn assert_single_caret_at_row(
+        editor: &View<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        let selections = editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .all::<rope::Point>(cx)
+                .into_iter()
+                .map(|s| s.start..s.end)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            selections.len() == 1,
+            "Expected one caret selection but got: {selections:?}"
+        );
+        let selection = &selections[0];
+        assert!(
+            selection.start == selection.end,
+            "Expected a single caret selection, but got: {selection:?}"
+        );
+        assert_eq!(selection.start.row, buffer_row);
     }
 }

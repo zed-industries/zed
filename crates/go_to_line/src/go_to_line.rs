@@ -278,6 +278,7 @@ mod tests {
             Vec::<u32>::new(),
             "Initially opened go to line modal should not highlight any rows"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         cx.simulate_input("1");
         assert_eq!(
@@ -285,6 +286,7 @@ mod tests {
             vec![0],
             "Go to line modal should highlight a row, corresponding to the query"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         cx.simulate_input("8");
         assert_eq!(
@@ -292,6 +294,7 @@ mod tests {
             vec![13],
             "If the query is too large, the last row should be highlighted"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         cx.dispatch_action(menu::Cancel);
         drop(go_to_line_view);
@@ -301,6 +304,7 @@ mod tests {
             Vec::<u32>::new(),
             "After cancelling and closing the modal, no rows should be highlighted"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
         let go_to_line_view = open_go_to_line_view(&workspace, cx);
         assert_eq!(
@@ -308,10 +312,15 @@ mod tests {
             Vec::<u32>::new(),
             "Reopened modal should not highlight any rows"
         );
+        assert_single_caret_at_row(&editor, 0, cx);
 
+        let expected_highlighted_row = 4;
         cx.simulate_input("5");
-        assert_eq!(highlighted_display_rows(&editor, cx), vec![4]);
-
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![expected_highlighted_row]
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
         cx.dispatch_action(menu::Confirm);
         drop(go_to_line_view);
         editor.update(cx, |_, _| {});
@@ -320,6 +329,8 @@ mod tests {
             Vec::<u32>::new(),
             "After confirming and closing the modal, no rows should be highlighted"
         );
+        // On confirm, should place the caret on the highlighted row.
+        assert_single_caret_at_row(&editor, expected_highlighted_row, cx);
     }
 
     fn open_go_to_line_view(
@@ -336,6 +347,32 @@ mod tests {
         editor.update(cx, |editor, cx| {
             editor.highlighted_display_rows(cx).into_keys().collect()
         })
+    }
+
+    #[track_caller]
+    fn assert_single_caret_at_row(
+        editor: &View<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        let selections = editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .all::<rope::Point>(cx)
+                .into_iter()
+                .map(|s| s.start..s.end)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            selections.len() == 1,
+            "Expected one caret selection but got: {selections:?}"
+        );
+        let selection = &selections[0];
+        assert!(
+            selection.start == selection.end,
+            "Expected a single caret selection, but got: {selection:?}"
+        );
+        assert_eq!(selection.start.row, buffer_row);
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
