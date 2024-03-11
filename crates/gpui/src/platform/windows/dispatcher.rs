@@ -15,7 +15,8 @@ use windows::Win32::{
     System::Threading::{
         CreateThreadpool, CreateThreadpoolWork, CreateTimerQueueTimer, DeleteTimerQueueTimer,
         SetEvent, SetThreadpoolThreadMinimum, SubmitThreadpoolWork, PTP_CALLBACK_INSTANCE,
-        PTP_POOL, PTP_WORK, WT_EXECUTEONLYONCE,
+        PTP_POOL, PTP_WORK, TP_CALLBACK_ENVIRON_V3, TP_CALLBACK_PRIORITY_NORMAL,
+        WT_EXECUTEONLYONCE,
     },
 };
 
@@ -43,24 +44,19 @@ impl WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_threadpool(
-        &self,
-        runnable: Runnable,
-        label: Option<TaskLabel>,
-    ) -> anyhow::Result<()> {
+    fn dispatch_on_threadpool(&self, runnable: Runnable) -> anyhow::Result<()> {
         unsafe {
             let ptr = Box::into_raw(Box::new(runnable));
-            let work = CreateThreadpoolWork(Some(threadpool_runner), Some(ptr as _), None)
-                .inspect_err(|_| {
+            let environment = get_threadpool_environment(self.threadpool);
+            let work =
+                CreateThreadpoolWork(Some(threadpool_runner), Some(ptr as _), Some(&environment))
+                    .inspect_err(|_| {
                     log::error!(
                         "unable to dispatch work on thread pool: {}",
                         std::io::Error::last_os_error()
                     )
                 })?;
             SubmitThreadpoolWork(work);
-            if let Some(label) = label {
-                log::debug!("TaskLabel: {label:?}");
-            }
         }
         Ok(())
     }
@@ -72,7 +68,10 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
-        let _ = self.dispatch_on_threadpool(runnable, label);
+        let _ = self.dispatch_on_threadpool(runnable);
+        if let Some(label) = label {
+            log::debug!("TaskLabel: {label:?}");
+        }
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
@@ -85,7 +84,7 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
         if duration.as_millis() == 0 {
-            let _ = self.dispatch_on_threadpool(runnable, None);
+            let _ = self.dispatch_on_threadpool(runnable);
             return;
         }
         unsafe {
@@ -102,7 +101,7 @@ impl PlatformDispatcher for WindowsDispatcher {
             )
             .inspect_err(|_| {
                 log::error!(
-                    "unable to dispatch timed task: {}",
+                    "unable to dispatch delayed task: {}",
                     std::io::Error::last_os_error()
                 )
             });
@@ -135,6 +134,7 @@ fn init() -> PTP_POOL {
         }
         let _ = SetThreadpoolThreadMinimum(threadpool, 1)
             .inspect_err(|_| log::error!("unable to configure thread pool"));
+
         threadpool
     }
 }
@@ -170,5 +170,16 @@ impl DelayedTask {
             runnable: Mutex::new(Some(runnable)),
             raw_timer_handle: AtomicIsize::new(0),
         }
+    }
+}
+
+#[inline]
+fn get_threadpool_environment(pool: PTP_POOL) -> TP_CALLBACK_ENVIRON_V3 {
+    TP_CALLBACK_ENVIRON_V3 {
+        Version: 3, // Win7+, otherwise this value should be 1
+        Pool: pool,
+        CallbackPriority: TP_CALLBACK_PRIORITY_NORMAL,
+        Size: std::mem::size_of::<TP_CALLBACK_ENVIRON_V3>() as _,
+        ..Default::default()
     }
 }
