@@ -261,20 +261,22 @@ impl ExtensionStore {
                 )
             });
 
+        let mut should_reload = true;
+
         if let Some(manifest_content) = manifest_content.log_err() {
             if let Some(manifest) = serde_json::from_str(&manifest_content).log_err() {
                 // TODO: don't detach
                 self.extensions_updated(manifest, cx).detach();
+
+                if let (Ok(Some(manifest_metadata)), Ok(Some(extensions_metadata))) =
+                    (manifest_metadata, extensions_metadata)
+                {
+                    if manifest_metadata.mtime > extensions_metadata.mtime {
+                        should_reload = false;
+                    }
+                }
             }
         }
-
-        let should_reload = if let (Ok(Some(manifest_metadata)), Ok(Some(extensions_metadata))) =
-            (manifest_metadata, extensions_metadata)
-        {
-            extensions_metadata.mtime > manifest_metadata.mtime
-        } else {
-            true
-        };
 
         if should_reload {
             self.reload(cx)
