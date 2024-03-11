@@ -11083,6 +11083,7 @@ dependencies = [
  "log",
  "parking_lot 0.11.2",
  "rand 0.8.5",
+ "regex",
  "rust-embed",
  "serde",
  "serde_json",

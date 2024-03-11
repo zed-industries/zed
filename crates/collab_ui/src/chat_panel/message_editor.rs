@@ -407,6 +407,23 @@ impl MessageEditor {
                     if next_char.is_none() || next_char.unwrap().is_whitespace() {
                         return Some(query.chars().rev().collect::<String>());
                     }
+
+                    // If the previous character is not a whitespace, we are in the middle of a word
+                    // and we only want to complete the shortcode if the word is made up of other emojis
+                    let mut containing_word = String::new();
+                    for ch in buffer
+                        .reversed_chars_at(end_offset - query.len() - 1)
+                        .take(100)
+                    {
+                        if ch.is_whitespace() {
+                            break;
+                        }
+                        containing_word.push(ch);
+                    }
+                    let containing_word = containing_word.chars().rev().collect::<String>();
+                    if util::word_consists_of_emojis(containing_word.as_str()) {
+                        return Some(query.chars().rev().collect::<String>());
+                    }
                     break;
                 }
                 if ch.is_whitespace() || !ch.is_ascii() {

@@ -2653,10 +2653,31 @@ impl Editor {
         let mut found_colon = false;
         for char in snapshot.reversed_chars_at(position).take(100) {
             // Found a possible emoji shortcode in the middle of the buffer
-            if found_colon && char.is_whitespace() {
-                chars.reverse();
-                return Some(chars.iter().collect());
+            if found_colon {
+                if char.is_whitespace() {
+                    chars.reverse();
+                    return Some(chars.iter().collect());
+                }
+                // If the previous character is not a whitespace, we are in the middle of a word
+                // and we only want to complete the shortcode if the word is made up of other emojis
+                let mut containing_word = String::new();
+                for ch in snapshot
+                    .reversed_chars_at(position)
+                    .skip(chars.len() + 1)
+                    .take(100)
+                {
+                    if ch.is_whitespace() {
+                        break;
+                    }
+                    containing_word.push(ch);
+                }
+                let containing_word = containing_word.chars().rev().collect::<String>();
+                if util::word_consists_of_emojis(containing_word.as_str()) {
+                    chars.reverse();
+                    return Some(chars.iter().collect());
+                }
             }
+
             if char.is_whitespace() || !char.is_ascii() {
                 return None;
             }

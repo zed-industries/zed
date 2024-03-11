@@ -28,6 +28,7 @@ lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
+regex.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
