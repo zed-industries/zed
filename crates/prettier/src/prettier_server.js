@@ -173,10 +173,15 @@ async function handleMessage(message, prettier) {
         if (params.options.filepath !== undefined) {
             resolvedConfig = (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
         }
+        
+        const plugins = Array.isArray(resolvedConfig?.plugins) && resolvedConfig.plugins.length > 0 ? 
+          resolvedConfig.plugins : 
+          params.options.plugins;
 
         const options = {
             ...(params.options.prettierOptions || prettier.config),
             ...resolvedConfig,
+            plugins,
             parser: params.options.parser,
             path: params.options.filepath,
         };
