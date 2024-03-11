@@ -79,7 +79,7 @@ impl super::LspAdapter for LuaLspAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo(windows)
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(

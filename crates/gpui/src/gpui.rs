@@ -70,6 +70,7 @@ mod app;
 
 mod arena;
 mod assets;
+mod bounds_tree;
 mod color;
 mod element;
 mod elements;

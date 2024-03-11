@@ -9601,7 +9601,8 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         });
 
     let command = format!(
-        "cd {dir:?};{} echo {marker}; /usr/bin/env -0; exit 0;",
+        "cd '{}';{} echo {marker}; /usr/bin/env -0; exit 0;",
+        dir.display(),
         additional_command.unwrap_or("")
     );
 

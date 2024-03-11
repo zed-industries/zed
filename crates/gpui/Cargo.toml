@@ -133,3 +133,7 @@ path = "examples/hello_world.rs"
 [[example]]
 name = "image"
 path = "examples/image/image.rs"
+
+[[example]]
+name = "set_menus"
+path = "examples/set_menus.rs"

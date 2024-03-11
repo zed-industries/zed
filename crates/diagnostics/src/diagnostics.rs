@@ -894,7 +894,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint, GutterDimensions,
     };
-    use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
+    use gpui::{px, Stateful, TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -1600,20 +1600,18 @@ mod tests {
                     let name: SharedString = match block {
                         TransformBlock::Custom(block) => cx.with_element_context({
                             |cx| -> Option<SharedString> {
-                                block
-                                    .render(&mut BlockContext {
-                                        context: cx,
-                                        anchor_x: px(0.),
-                                        gutter_dimensions: &GutterDimensions::default(),
-                                        line_height: px(0.),
-                                        em_width: px(0.),
-                                        max_width: px(0.),
-                                        block_id: ix,
-                                        editor_style: &editor::EditorStyle::default(),
-                                    })
-                                    .inner_id()?
-                                    .try_into()
-                                    .ok()
+                                let mut element = block.render(&mut BlockContext {
+                                    context: cx,
+                                    anchor_x: px(0.),
+                                    gutter_dimensions: &GutterDimensions::default(),
+                                    line_height: px(0.),
+                                    em_width: px(0.),
+                                    max_width: px(0.),
+                                    block_id: ix,
+                                    editor_style: &editor::EditorStyle::default(),
+                                });
+                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
+                                element.interactivity().element_id.clone()?.try_into().ok()
                             }
                         })?,
 

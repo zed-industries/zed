@@ -4,8 +4,8 @@ use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
     div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, ParentElement,
-    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    Render, SharedString, StyleRefinement, Styled, Subscription, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -563,8 +563,7 @@ impl Render for Dock {
                         cx.stop_propagation();
                     }
                 }))
-                .z_index(1)
-                .block_mouse();
+                .occlude();
 
             match self.position() {
                 DockPosition::Left => {
@@ -618,7 +617,12 @@ impl Render for Dock {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
-                        .child(entry.panel.to_any().cached()),
+                        .child(
+                            entry
+                                .panel
+                                .to_any()
+                                .cached(StyleRefinement::default().v_flex().size_full()),
+                        ),
                 )
                 .child(handle)
         } else {

@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementContext, ElementId, InteractiveElement, InteractiveElementState,
-    Interactivity, IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled,
+    Bounds, Element, ElementContext, Hitbox, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
@@ -27,28 +27,37 @@ impl Svg {
 }
 
 impl Element for Svg {
-    type State = InteractiveElementState;
+    type BeforeLayout = ();
+    type AfterLayout = Option<Hitbox>;
 
-    fn request_layout(
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+        let layout_id = self
+            .interactivity
+            .before_layout(cx, |style, cx| cx.request_layout(&style, None));
+        (layout_id, ())
+    }
+
+    fn after_layout(
         &mut self,
-        element_state: Option<Self::State>,
+        bounds: Bounds<Pixels>,
+        _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
-        self.interactivity.layout(element_state, cx, |style, cx| {
-            cx.request_layout(&style, None)
-        })
+    ) -> Option<Hitbox> {
+        self.interactivity
+            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::State,
+        _before_layout: &mut Self::BeforeLayout,
+        hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) where
         Self: Sized,
     {
         self.interactivity
-            .paint(bounds, bounds.size, element_state, cx, |style, _, cx| {
+            .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     cx.paint_svg(bounds, path.clone(), color).log_err();
                 }
@@ -58,10 +67,6 @@ impl Element for Svg {
 
 impl IntoElement for Svg {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
 
     fn into_element(self) -> Self::Element {
         self

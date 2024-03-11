@@ -404,7 +404,7 @@ impl TerminalBuilder {
         #[cfg(unix)]
         let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
 
-        // todo(windows)
+        // todo("windows")
         #[cfg(windows)]
         let (fd, shell_pid) = {
             let child = pty.child_watcher();

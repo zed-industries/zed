@@ -2756,7 +2756,6 @@ impl Workspace {
             Some(
                 div()
                     .absolute()
-                    .z_index(100)
                     .right_3()
                     .bottom_3()
                     .w_112()
@@ -3832,18 +3831,15 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(colors.border)
-                    .child(
-                        canvas({
-                            let this = cx.view().clone();
-                            move |bounds, cx| {
-                                this.update(cx, |this, _cx| {
-                                    this.bounds = *bounds;
-                                })
-                            }
-                        })
+                    .child({
+                        let this = cx.view().clone();
+                        canvas(
+                            move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
+                            |_, _, _| {},
+                        )
                         .absolute()
-                        .size_full(),
-                    )
+                        .size_full()
+                    })
                     .on_drag_move(
                         cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                             match e.drag(cx).0 {
@@ -3868,7 +3864,6 @@ impl Render for Workspace {
                             }
                         }),
                     )
-                    .child(self.modal_layer.clone())
                     .child(
                         div()
                             .flex()
@@ -3917,11 +3912,11 @@ impl Render for Workspace {
                                 },
                             )),
                     )
-                    .children(self.render_notifications(cx))
+                    .child(self.modal_layer.clone())
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
                         let div = div()
-                            .z_index(1)
+                            .occlude()
                             .absolute()
                             .overflow_hidden()
                             .border_color(colors.border)
@@ -3936,7 +3931,8 @@ impl Render for Workspace {
                             Some(DockPosition::Bottom) => div.top_2().border_t(),
                             None => div.top_2().bottom_2().left_2().right_2().border(),
                         })
-                    })),
+                    }))
+                    .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
             .children(if self.project.read(cx).is_disconnected() {
@@ -4662,13 +4658,10 @@ pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
-    type State = AnyElement;
+    type BeforeLayout = AnyElement;
+    type AfterLayout = ();
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::State>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4686,28 +4679,32 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.request_layout(cx), overlay)
+        (overlay.before_layout(cx), overlay)
+    }
+
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) {
+        cx.insert_hitbox(bounds, true);
+        overlay.after_layout(cx);
     }
 
     fn paint(
         &mut self,
-        bounds: Bounds<Pixels>,
-        overlay: &mut Self::State,
+        _: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        cx.with_z_index(u16::MAX, |cx| {
-            cx.add_opaque_layer(bounds);
-            overlay.paint(cx);
-        })
+        overlay.paint(cx)
     }
 }
 
 impl IntoElement for DisconnectedOverlay {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ui::prelude::ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
