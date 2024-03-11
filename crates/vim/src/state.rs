@@ -2,7 +2,6 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 
 use crate::motion::Motion;
 use collections::HashMap;
-use editor::MultiBufferSnapshot;
 use gpui::{Action, KeyContext};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
@@ -68,7 +67,7 @@ pub struct EditorState {
     pub post_count: Option<usize>,
 
     pub operator_stack: Vec<Operator>,
-    pub original_snapshot: MultiBufferSnapshot,
+    pub replacements: Vec<(Range<editor::Anchor>, String)>,
 }
 
 #[derive(Default, Clone, Debug)]
