@@ -12,12 +12,18 @@ use std::{
 };
 use util::paths::PathLikeWithPosition;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
     #[clap(short, long)]
     wait: bool,
+    /// Add files to the currently open workspace
+    #[clap(short, long, overrides_with = "new")]
+    add: bool,
+    /// Create a new workspace
+    #[clap(short, long, overrides_with = "add")]
+    new: bool,
     /// A sequence of space-separated paths that you want to open.
     ///
     /// Use `path:line:row` syntax to open a file at a specific location.
@@ -67,6 +73,13 @@ fn main() -> Result<()> {
     }
 
     let (tx, rx) = bundle.launch()?;
+    let open_new_workspace = if args.new {
+        Some(true)
+    } else if args.add {
+        Some(false)
+    } else {
+        None
+    };
 
     tx.send(CliRequest::Open {
         paths: args
@@ -81,6 +94,7 @@ fn main() -> Result<()> {
             })
             .collect::<Result<_>>()?,
         wait: args.wait,
+        open_new_workspace,
     })?;
 
     while let Ok(response) = rx.recv() {

@@ -11,11 +11,10 @@ use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::{path::PathBuf, sync::atomic::AtomicBool};
 use util::paths::PathLikeWithPosition;
 use util::ResultExt;
 use workspace::item::ItemHandle;
@@ -89,7 +88,6 @@ impl OpenRequest {
 
 pub struct OpenListener {
     tx: UnboundedSender<Vec<String>>,
-    pub triggered: AtomicBool,
 }
 
 struct GlobalOpenListener(Arc<OpenListener>);
@@ -107,17 +105,10 @@ impl OpenListener {
 
     pub fn new() -> (Self, UnboundedReceiver<Vec<String>>) {
         let (tx, rx) = mpsc::unbounded();
-        (
-            OpenListener {
-                tx,
-                triggered: AtomicBool::new(false),
-            },
-            rx,
-        )
+        (OpenListener { tx }, rx)
     }
 
     pub fn open_urls(&self, urls: Vec<String>) {
-        self.triggered.store(true, Ordering::Release);
         self.tx
             .unbounded_send(urls)
             .map_err(|_| anyhow!("no listener for open requests"))
@@ -157,6 +148,7 @@ fn connect_to_cli(
 pub async fn open_paths_with_positions(
     path_likes: &Vec<PathLikeWithPosition<PathBuf>>,
     app_state: Arc<AppState>,
+    open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<(
     WindowHandle<Workspace>,
@@ -180,7 +172,7 @@ pub async fn open_paths_with_positions(
         .collect::<Vec<_>>();
 
     let (workspace, items) = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, None, cx))?
+        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
         .await?;
 
     for (item, path) in items.iter().zip(&paths) {
@@ -215,22 +207,30 @@ pub async fn handle_cli_connection(
 ) {
     if let Some(request) = requests.next().await {
         match request {
-            CliRequest::Open { paths, wait } => {
+            CliRequest::Open {
+                paths,
+                wait,
+                open_new_workspace,
+            } => {
                 let paths = if paths.is_empty() {
-                    workspace::last_opened_workspace_paths()
-                        .await
-                        .map(|location| {
-                            location
-                                .paths()
-                                .iter()
-                                .map(|path| PathLikeWithPosition {
-                                    path_like: path.clone(),
-                                    row: None,
-                                    column: None,
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
+                    if open_new_workspace == Some(true) {
+                        vec![]
+                    } else {
+                        workspace::last_opened_workspace_paths()
+                            .await
+                            .map(|location| {
+                                location
+                                    .paths()
+                                    .iter()
+                                    .map(|path| PathLikeWithPosition {
+                                        path_like: path.clone(),
+                                        row: None,
+                                        column: None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default()
+                    }
                 } else {
                     paths
                         .into_iter()
@@ -250,7 +250,17 @@ pub async fn handle_cli_connection(
 
                 let mut errored = false;
 
-                match open_paths_with_positions(&paths, app_state, &mut cx).await {
+                match open_paths_with_positions(
+                    &paths,
+                    app_state,
+                    workspace::OpenOptions {
+                        open_new_workspace,
+                        ..Default::default()
+                    },
+                    &mut cx,
+                )
+                .await
+                {
                     Ok((workspace, items)) => {
                         let mut item_release_futures = Vec::new();
 
