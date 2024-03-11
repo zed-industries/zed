@@ -5,7 +5,7 @@ use rpc::proto::{
 };
 use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
 
-use crate::db::{worktree_entry, HostedProjectId, ProjectId};
+use crate::db::{buffer, worktree_entry, HostedProjectId, ProjectId};
 use crate::rpc::{Response, Session};
 use crate::Result;
 
@@ -42,14 +42,14 @@ impl ProjectRequest for proto::OpenBufferByPath {
         let worktree_id = self.worktree_id as i32;
         let path = self.path.clone();
 
-        let entry = session
+        let (entry, buffer) = session
             .db()
             .await
             .transaction({
                 let path = &path;
 
                 move |tx| async move {
-                    Ok(worktree_entry::Entity::find()
+                    let entry = worktree_entry::Entity::find()
                         .filter(
                             Condition::all()
                                 .add(worktree_entry::Column::ProjectId.eq(project_id))
@@ -57,11 +57,19 @@ impl ProjectRequest for proto::OpenBufferByPath {
                                 .add(worktree_entry::Column::Path.eq(path.clone())),
                         )
                         .one(&*tx)
-                        .await?)
+                        .await?
+                        .ok_or_else(|| anyhow!("no such file"))?;
+
+                    /// TODO: use a different column here?
+                    let buffer = buffer::Entity::find_by_id(BufferId(entry.inode))
+                        .one(&*tx)
+                        .await?
+                        .ok_or_else(|| anyhow!("no such buffer"))?;
+
+                    Ok((entry, buffer))
                 }
             })
-            .await?
-            .ok_or_else(|| anyhow!("no such file"))?;
+            .await?;
 
         response.send(OpenBufferResponse {
             buffer_id: entry.inode as u64,
