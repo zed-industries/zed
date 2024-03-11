@@ -97,37 +97,44 @@ impl RenderOnce for KeyBinding {
 
                 h_flex()
                     .flex_none()
-                    .gap_0p5()
+                    .map(|el| match self.display {
+                        KeyBindingDisplay::Mac => el.gap_0p5(),
+                        KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => el,
+                    })
                     .p_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| match self.display {
                         KeyBindingDisplay::Mac => el.child(Key::new("fn")),
                         KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
-                            el.child(Key::new("Fn"))
+                            el.child(Key::new("Fn")).child(Key::new("+"))
                         }
                     })
                     .when(keystroke.modifiers.control, |el| match self.display {
                         KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Control)),
                         KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
-                            el.child(Key::new("Ctrl"))
+                            el.child(Key::new("Ctrl")).child(Key::new("+"))
                         }
                     })
                     .when(keystroke.modifiers.alt, |el| match self.display {
                         KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Option)),
                         KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
-                            el.child(Key::new("Alt"))
+                            el.child(Key::new("Alt")).child(Key::new("+"))
                         }
                     })
                     .when(keystroke.modifiers.command, |el| match self.display {
                         KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Command)),
-                        KeyBindingDisplay::Linux => el.child(Key::new("Super")),
-                        KeyBindingDisplay::Windows => el.child(Key::new("Win")),
+                        KeyBindingDisplay::Linux => {
+                            el.child(Key::new("Super")).child(Key::new("+"))
+                        }
+                        KeyBindingDisplay::Windows => {
+                            el.child(Key::new("Win")).child(Key::new("+"))
+                        }
                     })
                     .when(keystroke.modifiers.shift, |el| match self.display {
                         KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Option)),
                         KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
-                            el.child(Key::new("Shift"))
+                            el.child(Key::new("Shift")).child(Key::new("+"))
                         }
                     })
                     .map(|el| match key_icon {
