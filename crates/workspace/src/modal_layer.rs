@@ -139,15 +139,21 @@ impl Render for ModalLayer {
             return div();
         };
 
-        div().absolute().size_full().top_0().left_0().child(
-            v_flex()
-                .h(px(0.0))
-                .top_20()
-                .flex()
-                .flex_col()
-                .items_center()
-                .track_focus(&active_modal.focus_handle)
-                .child(h_flex().child(active_modal.modal.view())),
-        )
+        div()
+            .occlude()
+            .absolute()
+            .size_full()
+            .top_0()
+            .left_0()
+            .child(
+                v_flex()
+                    .h(px(0.0))
+                    .top_20()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .track_focus(&active_modal.focus_handle)
+                    .child(h_flex().child(active_modal.modal.view())),
+            )
     }
 }
