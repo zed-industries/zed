@@ -418,6 +418,7 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[repr(C)]
 pub(crate) struct Quad {
     pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub background: Hsla,
@@ -448,6 +449,7 @@ impl From<Quad> for Primitive {
 #[repr(C)]
 pub(crate) struct Underline {
     pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -477,12 +479,11 @@ impl From<Underline> for Primitive {
 #[repr(C)]
 pub(crate) struct Shadow {
     pub order: DrawOrder,
+    pub blur_radius: ScaledPixels,
     pub bounds: Bounds<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
-    pub blur_radius: ScaledPixels,
-    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for Shadow {
@@ -507,6 +508,7 @@ impl From<Shadow> for Primitive {
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
     pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -538,12 +540,11 @@ impl From<MonochromeSprite> for Primitive {
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub order: DrawOrder,
+    pub grayscale: bool,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
-    pub grayscale: bool,
-    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for PolychromeSprite {
