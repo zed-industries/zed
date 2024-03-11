@@ -14,7 +14,7 @@ if [[ -n $apt ]]; then
     libxkbcommon-x11-dev
     libssl-dev
     libzstd-dev
-    libvulkan-dev
+    libvulkan1
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -31,7 +31,7 @@ if [[ -n $dnf ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    libvulkan-devel
+    vulkan-loader
   )
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
@@ -48,7 +48,7 @@ if [[ -n $zyp ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    libvulkan-devel
+    vulkan-loader
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -82,7 +82,7 @@ if [[ -n $xbps ]]; then
     libzstd-devel
     openssl-devel
     wayland-devel
-    libvulkan-devel
+    vulkan-loader
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
