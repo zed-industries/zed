@@ -8,12 +8,11 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, ElementContext, HitboxId, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    Element, ElementContext, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
     StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use smallvec::SmallVec;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 use taffy::style::Overflow;
@@ -97,11 +96,10 @@ struct LayoutItemsResponse {
     item_elements: VecDeque<AnyElement>,
 }
 
-/// Frame state used by the [List] element.
-#[derive(Default)]
-pub struct ListFrameState {
-    scroll_top: ListOffset,
-    items: SmallVec<[AnyElement; 32]>,
+/// Frame state used by the [List] element after layout.
+pub struct ListAfterLayoutState {
+    hitbox: Hitbox,
+    layout: LayoutItemsResponse,
 }
 
 #[derive(Clone)]
@@ -524,8 +522,8 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type BeforeLayout = ListFrameState;
-    type AfterLayout = HitboxId;
+    type BeforeLayout = ();
+    type AfterLayout = ListAfterLayoutState;
 
     fn before_layout(
         &mut self,
@@ -588,20 +586,22 @@ impl Element for List {
                 })
             }
         };
-        (layout_id, ListFrameState::default())
+        (layout_id, ())
     }
 
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
+        _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> HitboxId {
+    ) -> ListAfterLayoutState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
         let mut style = Style::default();
         style.refine(&self.style);
+
+        let hitbox = cx.insert_hitbox(bounds, false);
 
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
@@ -623,10 +623,9 @@ impl Element for List {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for mut item_element in layout_response.item_elements {
+                for mut item_element in &mut layout_response.item_elements {
                     let item_size = item_element.measure(layout_response.available_item_space, cx);
                     item_element.layout(item_origin, layout_response.available_item_space, cx);
-                    before_layout.items.push(item_element);
                     item_origin.y += item_size.height;
                 }
             });
@@ -634,27 +633,29 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
-
-        cx.insert_hitbox(bounds, false).id
+        ListAfterLayoutState {
+            hitbox,
+            layout: layout_response,
+        }
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        before_layout: &mut Self::BeforeLayout,
-        hitbox_id: &mut HitboxId,
+        _: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for item in &mut before_layout.items {
+            for item in &mut after_layout.layout.item_elements {
                 item.paint(cx);
             }
         });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = before_layout.scroll_top;
-        let hitbox_id = *hitbox_id;
+        let scroll_top = after_layout.layout.scroll_top;
+        let hitbox_id = after_layout.hitbox.id;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
                 list_state.0.borrow_mut().scroll(
