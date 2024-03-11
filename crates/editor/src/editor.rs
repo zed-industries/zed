@@ -43,7 +43,7 @@ use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
@@ -386,7 +386,8 @@ pub struct Editor {
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
-    highlighted_rows: Option<Range<u32>>,
+    highlight_order: usize,
+    highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
@@ -1523,7 +1524,8 @@ impl Editor {
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
-            highlighted_rows: None,
+            highlight_order: 0,
+            highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
@@ -8921,12 +8923,93 @@ impl Editor {
         }
     }
 
-    pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
-        self.highlighted_rows = rows;
+    /// Adds or removes (on `None` color) a highlight for the rows corresponding to the anchor range given.
+    /// On matching anchor range, replaces the old highlight; does not clear the other existing highlights.
+    /// If multiple anchor ranges will produce highlights for the same row, the last range added will be used.
+    pub fn highlight_rows<T: 'static>(
+        &mut self,
+        rows: Range<Anchor>,
+        color: Option<Hsla>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        match self.highlighted_rows.entry(TypeId::of::<T>()) {
+            hash_map::Entry::Occupied(o) => {
+                let row_highlights = o.into_mut();
+                let existing_highlight_index =
+                    row_highlights.binary_search_by(|(_, highlight_range, _)| {
+                        highlight_range
+                            .start
+                            .cmp(&rows.start, &multi_buffer_snapshot)
+                            .then(highlight_range.end.cmp(&rows.end, &multi_buffer_snapshot))
+                    });
+                match color {
+                    Some(color) => {
+                        let insert_index = match existing_highlight_index {
+                            Ok(i) => i,
+                            Err(i) => i,
+                        };
+                        row_highlights.insert(
+                            insert_index,
+                            (post_inc(&mut self.highlight_order), rows, color),
+                        );
+                    }
+                    None => {
+                        if let Ok(i) = existing_highlight_index {
+                            row_highlights.remove(i);
+                        }
+                    }
+                }
+            }
+            hash_map::Entry::Vacant(v) => {
+                if let Some(color) = color {
+                    v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
+                }
+            }
+        }
     }
 
-    pub fn highlighted_rows(&self) -> Option<Range<u32>> {
-        self.highlighted_rows.clone()
+    /// Clear all anchor ranges for a certain highlight context type, so no corresponding rows will be highlighted.
+    pub fn clear_row_highlights<T: 'static>(&mut self) {
+        self.highlighted_rows.remove(&TypeId::of::<T>());
+    }
+
+    /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
+    pub fn highlighted_rows<T: 'static>(
+        &self,
+    ) -> Option<impl Iterator<Item = (&Range<Anchor>, &Hsla)>> {
+        Some(
+            self.highlighted_rows
+                .get(&TypeId::of::<T>())?
+                .iter()
+                .map(|(_, range, color)| (range, color)),
+        )
+    }
+
+    // Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
+    // Rerturns a map of display rows that are highlighted and their corresponding highlight color.
+    pub fn highlighted_display_rows(&mut self, cx: &mut WindowContext) -> BTreeMap<u32, Hsla> {
+        let snapshot = self.snapshot(cx);
+        let mut used_highlight_orders = HashMap::default();
+        self.highlighted_rows
+            .iter()
+            .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
+            .fold(
+                BTreeMap::<u32, Hsla>::new(),
+                |mut unique_rows, (highlight_order, anchor_range, hsla)| {
+                    let start_row = anchor_range.start.to_display_point(&snapshot).row();
+                    let end_row = anchor_range.end.to_display_point(&snapshot).row();
+                    for row in start_row..=end_row {
+                        let used_index =
+                            used_highlight_orders.entry(row).or_insert(*highlight_order);
+                        if highlight_order >= used_index {
+                            *used_index = *highlight_order;
+                            unique_rows.insert(row, *hsla);
+                        }
+                    }
+                    unique_rows
+                },
+            )
     }
 
     pub fn highlight_background<T: 'static>(
