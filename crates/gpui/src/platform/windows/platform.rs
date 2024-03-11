@@ -72,13 +72,15 @@ pub(crate) struct WindowsPlatformSystemSettings {
     pub(crate) wheel_scroll_lines: u32,
 }
 
+type WindowHandleValues = HashSet<isize>;
+
 pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
-    pub(crate) window_handles: RefCell<HashSet<AnyWindowHandle>>,
+    pub(crate) window_handle_values: RefCell<WindowHandleValues>,
     pub(crate) event: HANDLE,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
@@ -165,7 +167,7 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(WindowsTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
-        let window_handles = RefCell::new(HashSet::new());
+        let window_handle_values = RefCell::new(HashSet::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
@@ -173,7 +175,7 @@ impl WindowsPlatform {
             main_receiver,
             text_system,
             callbacks,
-            window_handles,
+            window_handle_values,
             event,
             settings,
         });
@@ -186,6 +188,15 @@ impl WindowsPlatform {
         if msg.message == WM_SETTINGCHANGE {
             self.inner.settings.borrow_mut().update_all();
             return true;
+        }
+
+        if !self
+            .inner
+            .window_handle_values
+            .borrow()
+            .contains(&msg.hwnd.0)
+        {
+            return false;
         }
 
         if let Some(inner) = try_get_window_inner(msg.hwnd) {
@@ -202,7 +213,11 @@ impl WindowsPlatform {
     }
 }
 
-unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, _: LPARAM) -> BOOL {
+unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let window_handle_values = unsafe { &*(lparam.0 as *const WindowHandleValues) };
+    if !window_handle_values.contains(&hwnd.0) {
+        return TRUE;
+    }
     if let Some(inner) = try_get_window_inner(hwnd) {
         inner.invalidate_client_area();
     }
@@ -210,12 +225,12 @@ unsafe extern "system" fn invalidate_window_callback(hwnd: HWND, _: LPARAM) -> B
 }
 
 /// invalidates all windows belonging to a thread causing a paint message to be scheduled
-fn invalidate_thread_windows(win32_thread_id: u32) {
+fn invalidate_thread_windows(win32_thread_id: u32, window_handle_values: &WindowHandleValues) {
     unsafe {
         EnumThreadWindows(
             win32_thread_id,
             Some(invalidate_window_callback),
-            LPARAM::default(),
+            LPARAM(window_handle_values as *const _ as isize),
         )
     };
 }
@@ -244,7 +259,12 @@ impl Platform for WindowsPlatform {
 
             // compositor clock ticked so we should draw a frame
             if wait_result == 1 {
-                unsafe { invalidate_thread_windows(GetCurrentThreadId()) };
+                unsafe {
+                    invalidate_thread_windows(
+                        GetCurrentThreadId(),
+                        &self.inner.window_handle_values.borrow(),
+                    )
+                };
 
                 while unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE) }.as_bool()
                 {
