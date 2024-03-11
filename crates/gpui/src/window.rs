@@ -325,7 +325,7 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
             let center = cx.primary_display().bounds().center();
             let offset = DEFAULT_WINDOW_SIZE / 2.0;
             let origin = point(center.x - offset.width, center.y - offset.height);
-            Bounds::new(origin, DEFAULT_WINDOW_SIZE.into())
+            Bounds::new(origin, DEFAULT_WINDOW_SIZE)
         })
 }
 

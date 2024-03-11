@@ -209,7 +209,7 @@ impl Client for WaylandClient {
     }
 
     fn primary_display(&self) -> Rc<dyn PlatformDisplay> {
-        todo!()
+        unimplemented!()
     }
 
     fn open_window(
