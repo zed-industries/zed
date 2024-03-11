@@ -3,8 +3,7 @@ use gpui::Render;
 use itertools::Itertools;
 use story::Story;
 
-use crate::prelude::*;
-use crate::KeyBinding;
+use crate::{prelude::*, KeyBinding, KeyBindingDisplay};
 
 pub struct KeybindingStory;
 
@@ -54,5 +53,24 @@ impl Render for KeybindingStory {
             .child(Story::label("Chord with Modifier"))
             .child(KeyBinding::new(binding("ctrl-a shift-z")))
             .child(KeyBinding::new(binding("fn-s")))
+            .child(Story::label("Single Key with All Modifiers (Linux)"))
+            .child(
+                KeyBinding::new(binding("ctrl-alt-cmd-shift-z")).display(KeyBindingDisplay::Linux),
+            )
+            .child(Story::label("Chord (Linux)"))
+            .child(KeyBinding::new(binding("a z")).display(KeyBindingDisplay::Linux))
+            .child(Story::label("Chord with Modifier (Linux)"))
+            .child(KeyBinding::new(binding("ctrl-a shift-z")).display(KeyBindingDisplay::Linux))
+            .child(KeyBinding::new(binding("fn-s")).display(KeyBindingDisplay::Linux))
+            .child(Story::label("Single Key with All Modifiers (Windows)"))
+            .child(
+                KeyBinding::new(binding("ctrl-alt-cmd-shift-z"))
+                    .display(KeyBindingDisplay::Windows),
+            )
+            .child(Story::label("Chord (Windows)"))
+            .child(KeyBinding::new(binding("a z")).display(KeyBindingDisplay::Windows))
+            .child(Story::label("Chord with Modifier (Windows)"))
+            .child(KeyBinding::new(binding("ctrl-a shift-z")).display(KeyBindingDisplay::Windows))
+            .child(KeyBinding::new(binding("fn-s")).display(KeyBindingDisplay::Windows))
     }
 }
