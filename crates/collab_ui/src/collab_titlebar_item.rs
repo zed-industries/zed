@@ -329,24 +329,27 @@ impl Render for CollabTitlebarItem {
     }
 }
 
-fn render_color_ribbon(color: Hsla) -> gpui::Canvas {
-    canvas(move |bounds, cx| {
-        let height = bounds.size.height;
-        let horizontal_offset = height;
-        let vertical_offset = px(height.0 / 2.0);
-        let mut path = Path::new(bounds.lower_left());
-        path.curve_to(
-            bounds.origin + point(horizontal_offset, vertical_offset),
-            bounds.origin + point(px(0.0), vertical_offset),
-        );
-        path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
-        path.curve_to(
-            bounds.lower_right(),
-            bounds.upper_right() + point(px(0.0), vertical_offset),
-        );
-        path.line_to(bounds.lower_left());
-        cx.paint_path(path, color);
-    })
+fn render_color_ribbon(color: Hsla) -> impl Element {
+    canvas(
+        move |_, _| {},
+        move |bounds, _, cx| {
+            let height = bounds.size.height;
+            let horizontal_offset = height;
+            let vertical_offset = px(height.0 / 2.0);
+            let mut path = Path::new(bounds.lower_left());
+            path.curve_to(
+                bounds.origin + point(horizontal_offset, vertical_offset),
+                bounds.origin + point(px(0.0), vertical_offset),
+            );
+            path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+            path.curve_to(
+                bounds.lower_right(),
+                bounds.upper_right() + point(px(0.0), vertical_offset),
+            );
+            path.line_to(bounds.lower_left());
+            cx.paint_path(path, color);
+        },
+    )
     .h_1()
     .w_full()
 }

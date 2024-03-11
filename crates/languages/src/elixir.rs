@@ -350,7 +350,7 @@ impl LspAdapter for NextLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            // todo(windows)
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(

@@ -600,11 +600,9 @@ impl ChatPanel {
     ) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .child(
                 div()
                     .absolute()
-                    .z_index(1)
                     .right_8()
                     .w_6()
                     .rounded_tl_md()
@@ -638,7 +636,6 @@ impl ChatPanel {
             .child(
                 div()
                     .absolute()
-                    .z_index(1)
                     .right_2()
                     .w_6()
                     .rounded_tr_md()
@@ -855,7 +852,7 @@ impl Render for ChatPanel {
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_flex().z_index(1).child(
+                h_flex().child(
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()

@@ -1561,7 +1561,6 @@ impl Pane {
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .bottom_0()
             .right_0()
             .size_0()
@@ -1886,7 +1885,6 @@ impl Render for Pane {
                     .child(
                         // drag target
                         div()
-                            .z_index(1)
                             .invisible()
                             .absolute()
                             .bg(theme::color_alpha(

@@ -4,7 +4,7 @@ use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
     point, size, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton, Pixels,
-    Point, View, ViewContext,
+    Point, StyleRefinement, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -239,7 +239,10 @@ impl Member {
                     .relative()
                     .flex_1()
                     .size_full()
-                    .child(AnyView::from(pane.clone()).cached())
+                    .child(
+                        AnyView::from(pane.clone())
+                            .cached(StyleRefinement::default().v_flex().size_full()),
+                    )
                     .when_some(leader_border, |this, color| {
                         this.child(
                             div()
@@ -260,7 +263,6 @@ impl Member {
                                 .right_3()
                                 .elevation_2(cx)
                                 .p_1()
-                                .z_index(1)
                                 .child(status_box)
                                 .when_some(
                                     leader_join_data,
@@ -588,13 +590,15 @@ impl SplitDirection {
 
 mod element {
 
+    use std::mem;
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakView, WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, Element, IntoElement, MouseDownEvent,
+        MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style, WeakView,
+        WindowContext,
     };
+    use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
     use settings::Settings;
     use smallvec::SmallVec;
@@ -635,6 +639,22 @@ mod element {
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakView<Workspace>,
+    }
+
+    pub struct PaneAxisLayout {
+        dragged_handle: Rc<RefCell<Option<usize>>>,
+        children: Vec<PaneAxisChildLayout>,
+    }
+
+    struct PaneAxisChildLayout {
+        bounds: Bounds<Pixels>,
+        element: AnyElement,
+        handle: Option<PaneAxisHandleLayout>,
+    }
+
+    struct PaneAxisHandleLayout {
+        hitbox: Hitbox,
+        divider_bounds: Bounds<Pixels>,
     }
 
     impl PaneAxisElement {
@@ -733,16 +753,11 @@ mod element {
         }
 
         #[allow(clippy::too_many_arguments)]
-        fn push_handle(
-            flexes: Arc<Mutex<Vec<f32>>>,
-            dragged_handle: Rc<RefCell<Option<usize>>>,
+        fn layout_handle(
             axis: Axis,
-            ix: usize,
             pane_bounds: Bounds<Pixels>,
-            axis_bounds: Bounds<Pixels>,
-            workspace: WeakView<Workspace>,
             cx: &mut ElementContext,
-        ) {
+        ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
                     origin + pane_bounds.size.along(axis) - px(HANDLE_HITBOX_SIZE / 2.)
@@ -758,68 +773,15 @@ mod element {
                 size: pane_bounds.size.apply_along(axis, |_| px(DIVIDER_SIZE)),
             };
 
-            cx.with_z_index(3, |cx| {
-                if handle_bounds.contains(&cx.mouse_position()) {
-                    let stacking_order = cx.stacking_order().clone();
-                    let cursor_style = match axis {
-                        Axis::Vertical => CursorStyle::ResizeUpDown,
-                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
-                    };
-                    cx.set_cursor_style(cursor_style, stacking_order);
-                }
-
-                cx.add_opaque_layer(handle_bounds);
-                cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
-
-                cx.on_mouse_event({
-                    let dragged_handle = dragged_handle.clone();
-                    let flexes = flexes.clone();
-                    let workspace = workspace.clone();
-                    move |e: &MouseDownEvent, phase, cx| {
-                        if phase.bubble() && handle_bounds.contains(&e.position) {
-                            dragged_handle.replace(Some(ix));
-                            if e.click_count >= 2 {
-                                let mut borrow = flexes.lock();
-                                *borrow = vec![1.; borrow.len()];
-                                workspace
-                                    .update(cx, |this, cx| this.schedule_serialize(cx))
-                                    .log_err();
-
-                                cx.refresh();
-                            }
-                            cx.stop_propagation();
-                        }
-                    }
-                });
-                cx.on_mouse_event({
-                    let workspace = workspace.clone();
-                    move |e: &MouseMoveEvent, phase, cx| {
-                        let dragged_handle = dragged_handle.borrow();
-
-                        if phase.bubble() && *dragged_handle == Some(ix) {
-                            Self::compute_resize(
-                                &flexes,
-                                e,
-                                ix,
-                                axis,
-                                pane_bounds.origin,
-                                axis_bounds.size,
-                                workspace.clone(),
-                                cx,
-                            )
-                        }
-                    }
-                });
-            });
+            PaneAxisHandleLayout {
+                hitbox: cx.insert_hitbox(handle_bounds, true),
+                divider_bounds,
+            }
         }
     }
 
     impl IntoElement for PaneAxisElement {
         type Element = Self;
-
-        fn element_id(&self) -> Option<ui::prelude::ElementId> {
-            Some(self.basis.into())
-        }
 
         fn into_element(self) -> Self::Element {
             self
@@ -827,30 +789,37 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type State = Rc<RefCell<Option<usize>>>;
+        type BeforeLayout = ();
+        type AfterLayout = PaneAxisLayout;
 
-        fn request_layout(
+        fn before_layout(
             &mut self,
-            state: Option<Self::State>,
             cx: &mut ui::prelude::ElementContext,
-        ) -> (gpui::LayoutId, Self::State) {
+        ) -> (gpui::LayoutId, Self::BeforeLayout) {
             let mut style = Style::default();
             style.flex_grow = 1.;
             style.flex_shrink = 1.;
             style.flex_basis = relative(0.).into();
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
-            let layout_id = cx.request_layout(&style, None);
-            let dragged_pane = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
-            (layout_id, dragged_pane)
+            (cx.request_layout(&style, None), ())
         }
 
-        fn paint(
+        fn after_layout(
             &mut self,
-            bounds: gpui::Bounds<ui::prelude::Pixels>,
-            state: &mut Self::State,
-            cx: &mut ui::prelude::ElementContext,
-        ) {
+            bounds: Bounds<Pixels>,
+            _state: &mut Self::BeforeLayout,
+            cx: &mut ElementContext,
+        ) -> PaneAxisLayout {
+            let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
+                Some(self.basis.into()),
+                |state, _cx| {
+                    let state = state
+                        .unwrap()
+                        .unwrap_or_else(|| Rc::new(RefCell::new(None)));
+                    (state.clone(), Some(state))
+                },
+            );
             let flexes = self.flexes.lock().clone();
             let len = self.children.len();
             debug_assert!(flexes.len() == len);
@@ -875,7 +844,11 @@ mod element {
             let mut bounding_boxes = self.bounding_boxes.lock();
             bounding_boxes.clear();
 
-            for (ix, child) in self.children.iter_mut().enumerate() {
+            let mut layout = PaneAxisLayout {
+                dragged_handle: dragged_handle.clone(),
+                children: Vec::new(),
+            };
+            for (ix, mut child) in mem::take(&mut self.children).into_iter().enumerate() {
                 let child_flex = active_pane_magnification
                     .map(|magnification| {
                         if self.active_pane_ix == Some(ix) {
@@ -896,40 +869,105 @@ mod element {
                     size: child_size,
                 };
                 bounding_boxes.push(Some(child_bounds));
-                cx.with_z_index(0, |cx| {
-                    child.draw(origin, child_size.into(), cx);
-                });
+                child.layout(origin, child_size.into(), cx);
 
+                origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
+                layout.children.push(PaneAxisChildLayout {
+                    bounds: child_bounds,
+                    element: child,
+                    handle: None,
+                })
+            }
+
+            for (ix, child_layout) in layout.children.iter_mut().enumerate() {
                 if active_pane_magnification.is_none() {
-                    cx.with_z_index(1, |cx| {
-                        if ix < len - 1 {
-                            Self::push_handle(
-                                self.flexes.clone(),
-                                state.clone(),
-                                self.axis,
-                                ix,
-                                child_bounds,
-                                bounds,
-                                self.workspace.clone(),
-                                cx,
-                            );
+                    if ix < len - 1 {
+                        child_layout.handle =
+                            Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
+                    }
+                }
+            }
+
+            layout
+        }
+
+        fn paint(
+            &mut self,
+            bounds: gpui::Bounds<ui::prelude::Pixels>,
+            _: &mut Self::BeforeLayout,
+            layout: &mut Self::AfterLayout,
+            cx: &mut ui::prelude::ElementContext,
+        ) {
+            for child in &mut layout.children {
+                child.element.paint(cx);
+            }
+
+            for (ix, child) in &mut layout.children.iter_mut().enumerate() {
+                if let Some(handle) = child.handle.as_mut() {
+                    let cursor_style = match self.axis {
+                        Axis::Vertical => CursorStyle::ResizeUpDown,
+                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                    };
+                    cx.set_cursor_style(cursor_style, &handle.hitbox);
+                    cx.paint_quad(gpui::fill(
+                        handle.divider_bounds,
+                        cx.theme().colors().border,
+                    ));
+
+                    cx.on_mouse_event({
+                        let dragged_handle = layout.dragged_handle.clone();
+                        let flexes = self.flexes.clone();
+                        let workspace = self.workspace.clone();
+                        let handle_hitbox = handle.hitbox.clone();
+                        move |e: &MouseDownEvent, phase, cx| {
+                            if phase.bubble() && handle_hitbox.is_hovered(cx) {
+                                dragged_handle.replace(Some(ix));
+                                if e.click_count >= 2 {
+                                    let mut borrow = flexes.lock();
+                                    *borrow = vec![1.; borrow.len()];
+                                    workspace
+                                        .update(cx, |this, cx| this.schedule_serialize(cx))
+                                        .log_err();
+
+                                    cx.refresh();
+                                }
+                                cx.stop_propagation();
+                            }
+                        }
+                    });
+                    cx.on_mouse_event({
+                        let workspace = self.workspace.clone();
+                        let dragged_handle = layout.dragged_handle.clone();
+                        let flexes = self.flexes.clone();
+                        let child_bounds = child.bounds;
+                        let axis = self.axis;
+                        move |e: &MouseMoveEvent, phase, cx| {
+                            let dragged_handle = dragged_handle.borrow();
+                            if phase.bubble() && *dragged_handle == Some(ix) {
+                                Self::compute_resize(
+                                    &flexes,
+                                    e,
+                                    ix,
+                                    axis,
+                                    child_bounds.origin,
+                                    bounds.size,
+                                    workspace.clone(),
+                                    cx,
+                                )
+                            }
                         }
                     });
                 }
-
-                origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
             }
 
-            cx.with_z_index(1, |cx| {
-                cx.on_mouse_event({
-                    let state = state.clone();
-                    move |_: &MouseUpEvent, phase, _cx| {
-                        if phase.bubble() {
-                            state.replace(None);
-                        }
+            cx.on_mouse_event({
+                let dragged_handle = layout.dragged_handle.clone();
+                move |_: &MouseUpEvent, phase, _cx| {
+                    if phase.bubble() {
+                        dragged_handle.replace(None);
                     }
-                });
-            })
+                }
+            });
         }
     }
 

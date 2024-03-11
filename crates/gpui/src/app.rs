@@ -20,7 +20,6 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
 pub use model_context::*;
-use refineable::Refineable;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{
@@ -34,8 +33,8 @@ use crate::{
     DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
     PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
+    WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -216,7 +215,6 @@ pub struct AppContext {
     pub(crate) svg_renderer: SvgRenderer,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
-    pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -278,7 +276,6 @@ impl AppContext {
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_source,
                 image_cache: ImageCache::new(http_client),
-                text_style_stack: Vec::new(),
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -829,15 +826,6 @@ impl AppContext {
         &self.text_system
     }
 
-    /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
-    pub fn text_style(&self) -> TextStyle {
-        let mut style = TextStyle::default();
-        for refinement in &self.text_style_stack {
-            style.refine(refinement);
-        }
-        style
-    }
-
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
@@ -1021,14 +1009,6 @@ impl AppContext {
         inner(&mut self.keystroke_observers, Box::new(f))
     }
 
-    pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
-        self.text_style_stack.push(text_style);
-    }
-
-    pub(crate) fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
-    }
-
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
@@ -1127,16 +1107,19 @@ impl AppContext {
     /// Checks if the given action is bound in the current context, as defined by the app's current focus,
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
+        let mut action_available = false;
         if let Some(window) = self.active_window() {
             if let Ok(window_action_available) =
                 window.update(self, |_, cx| cx.is_action_available(action))
             {
-                return window_action_available;
+                action_available = window_action_available;
             }
         }
 
-        self.global_action_listeners
-            .contains_key(&action.as_any().type_id())
+        action_available
+            || self
+                .global_action_listeners
+                .contains_key(&action.as_any().type_id())
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
@@ -1152,14 +1135,41 @@ impl AppContext {
                 .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
                 .log_err();
         } else {
-            self.propagate_event = true;
+            self.dispatch_global_action(action);
+        }
+    }
 
+    pub(crate) fn dispatch_global_action(&mut self, action: &dyn Action) {
+        self.propagate_event = true;
+
+        if let Some(mut global_listeners) = self
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in &global_listeners {
+                listener(action.as_any(), DispatchPhase::Capture, self);
+                if !self.propagate_event {
+                    break;
+                }
+            }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
+
+        if self.propagate_event {
             if let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
             {
-                for listener in &global_listeners {
-                    listener(action.as_any(), DispatchPhase::Capture, self);
+                for listener in global_listeners.iter().rev() {
+                    listener(action.as_any(), DispatchPhase::Bubble, self);
                     if !self.propagate_event {
                         break;
                     }
@@ -1173,29 +1183,6 @@ impl AppContext {
 
                 self.global_action_listeners
                     .insert(action.as_any().type_id(), global_listeners);
-            }
-
-            if self.propagate_event {
-                if let Some(mut global_listeners) = self
-                    .global_action_listeners
-                    .remove(&action.as_any().type_id())
-                {
-                    for listener in global_listeners.iter().rev() {
-                        listener(action.as_any(), DispatchPhase::Bubble, self);
-                        if !self.propagate_event {
-                            break;
-                        }
-                    }
-
-                    global_listeners.extend(
-                        self.global_action_listeners
-                            .remove(&action.as_any().type_id())
-                            .unwrap_or_default(),
-                    );
-
-                    self.global_action_listeners
-                        .insert(action.as_any().type_id(), global_listeners);
-                }
             }
         }
     }

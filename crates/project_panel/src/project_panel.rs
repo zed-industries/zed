@@ -1378,7 +1378,7 @@ impl ProjectPanel {
         let is_selected = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
-        let width = self.width.unwrap_or(px(0.));
+        let width = self.size(cx);
 
         let filename_text_color = details
             .git_status
