@@ -37,7 +37,3 @@ brackets = [
     ] },
 ]
 collapsed_placeholder = "# ..."
-word_characters = ["_", "$", "=", "@", "!", "?"]
-
-[overrides.simple_symbol]
-word_characters = [":"]
