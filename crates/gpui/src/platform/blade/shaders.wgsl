@@ -168,6 +168,7 @@ fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
 
 struct Quad {
     order: u32,
+    pad: u32,
     bounds: Bounds,
     content_mask: Bounds,
     background: Hsla,
