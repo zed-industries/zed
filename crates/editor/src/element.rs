@@ -2083,11 +2083,9 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
-        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
-            for cursor in &mut layout.cursors {
-                cursor.paint(layout.content_origin, cx);
-            }
-        });
+        for cursor in &mut layout.cursors {
+            cursor.paint(layout.content_origin, cx);
+        }
     }
 
     fn paint_scrollbar(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
