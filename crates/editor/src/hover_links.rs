@@ -554,6 +554,11 @@ pub fn show_link_definition(
                                 .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
                         }
                     } else {
+                        dbg!(
+                            any_definition_does_not_contain_current_location,
+                            "TODO kb here we do not show the underline because it's the same definition we're hovering. \
+                            Now, we want to allow `find all references` for this case and need to underline"
+                        );
                         this.hide_hovered_link(cx);
                     }
                 }

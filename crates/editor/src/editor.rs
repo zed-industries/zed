@@ -7733,6 +7733,7 @@ impl Editor {
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                            dbg!("TODO kb check that the definition clicked and selected are the same (range contains the point clicked?) and call `find all references`");
                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                                 s.select_ranges([range]);
                             });
