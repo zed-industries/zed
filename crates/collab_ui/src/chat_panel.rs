@@ -467,10 +467,6 @@ impl ChatPanel {
             .group("")
             .when(!is_continuation_from_previous, |this| this.pt_2())
             .child(
-                self.render_popover_buttons(&cx, message_id, can_delete_message)
-                    .neg_mt_2p5(),
-            )
-            .child(
                 div()
                     .group("")
                     .bg(background)
@@ -582,6 +578,10 @@ impl ChatPanel {
                             .child(div().w_full().h_0p5().bg(cx.theme().colors().border)),
                     )
                 },
+            )
+            .child(
+                self.render_popover_buttons(&cx, message_id, can_delete_message)
+                    .neg_mt_2p5(),
             )
     }
 
