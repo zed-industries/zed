@@ -110,8 +110,8 @@ fn get_os_format_keybinding(keystroke: Keystroke) -> KeybindingChildren {
             key_icons.push(KeyIcon::new(IconName::Shift));
         }
 
-        if let Some(key) = key_icon {
-            key_icons.push(KeyIcon::new(key_icon));
+        if let Some(icon) = key_icon {
+            key_icons.push(KeyIcon::new(icon));
         } else {
             postfix_key = Some(Key::new(keystroke.key.to_uppercase().clone()));
         }
