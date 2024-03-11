@@ -58,12 +58,9 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
-
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
         Self { key_binding }
     }
-
-
 }
 
 fn icon_for_key(keystroke: &Keystroke) -> Option<IconName> {
@@ -113,8 +110,8 @@ fn get_os_format_keybinding(keystroke: Keystroke) -> KeybindingChildren {
             key_icons.push(KeyIcon::new(IconName::Shift));
         }
 
-        if key_icon.is_some() {
-            key_icons.push(KeyIcon::new(key_icon.unwrap()));
+        if let Some(key) = key_icon {
+            key_icons.push(KeyIcon::new(key_icon));
         } else {
             postfix_key = Some(Key::new(keystroke.key.to_uppercase().clone()));
         }
