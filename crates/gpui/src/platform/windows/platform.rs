@@ -32,7 +32,10 @@ use windows::{
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
-            Threading::{CreateEventW, GetCurrentThreadId, SetEvent, INFINITE},
+            Threading::{
+                CreateEventW, CreateThreadpoolWork, GetCurrentThreadId, SetEvent,
+                SubmitThreadpoolWork, INFINITE, PTP_CALLBACK_INSTANCE, PTP_WORK,
+            },
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
         UI::{
@@ -226,19 +229,8 @@ impl Platform for WindowsPlatform {
         on_finish_launching();
         let tick_event = unsafe { CreateEventW(None, false, false, None).unwrap() };
         let dispatch_event = self.inner.event;
-        let thread_id = unsafe { GetCurrentThreadId() };
-        let thread = std::thread::spawn(move || unsafe {
-            loop {
-                DCompositionWaitForCompositorClock(None, INFINITE);
-                SetEvent(tick_event).expect(
-                    format!(
-                        "unable to trigger event: {}",
-                        std::io::Error::last_os_error()
-                    )
-                    .as_str(),
-                );
-            }
-        });
+        generate_compositor_tick(tick_event);
+
         'a: loop {
             let event = unsafe {
                 MsgWaitForMultipleObjects(
@@ -682,4 +674,41 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     }
 
     Ok(dialog)
+}
+
+fn generate_compositor_tick(tick_event: HANDLE) {
+    unsafe {
+        let Ok(work) =
+            CreateThreadpoolWork(Some(compositor_tick_runner), Some(tick_event.0 as _), None)
+                .inspect_err(|_| {
+                    log::error!(
+                        "unable to create threadpool work for comppositor: {}",
+                        std::io::Error::last_os_error()
+                    )
+                })
+        else {
+            return;
+        };
+        SubmitThreadpoolWork(work);
+    }
+}
+
+extern "system" fn compositor_tick_runner(
+    _: PTP_CALLBACK_INSTANCE,
+    ptr: *mut std::ffi::c_void,
+    _: PTP_WORK,
+) {
+    unsafe {
+        let tick_event = HANDLE(ptr as isize);
+        loop {
+            DCompositionWaitForCompositorClock(None, INFINITE);
+            SetEvent(tick_event).expect(
+                format!(
+                    "unable to trigger tick event: {}",
+                    std::io::Error::last_os_error()
+                )
+                .as_str(),
+            );
+        }
+    }
 }
