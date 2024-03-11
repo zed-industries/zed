@@ -439,7 +439,7 @@ impl AnyElement {
         self.0.measure(available_space, cx)
     }
 
-    /// Initializes this element, performs layout if needed and commits its bounds.
+    /// Initializes this element, performs layout if needed and commits its bounds for hitbox purposes.
     pub fn layout(
         &mut self,
         absolute_offset: Point<Pixels>,

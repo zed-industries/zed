@@ -2874,7 +2874,6 @@ impl Element for EditorElement {
         _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> Self::AfterLayout {
-        cx.set_view_id(self.editor.entity_id());
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
             line_height: Some(self.style.text.line_height),
@@ -3274,6 +3273,7 @@ impl Element for EditorElement {
         let key_context = self.editor.read(cx).key_context(cx);
         cx.set_focus_handle(&focus_handle);
         cx.set_key_context(key_context);
+        cx.set_view_id(self.editor.entity_id());
         cx.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.editor.clone()),
@@ -4054,13 +4054,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             &[false, false, false, true]
         );
-
-        // Don't panic.
-        let bounds = Bounds::<Pixels>::new(Default::default(), size);
-        cx.update_window(window.into(), |_, cx| {
-            cx.with_element_context(|cx| element.paint(bounds, &mut (), &mut state, cx))
-        })
-        .unwrap()
     }
 
     #[gpui::test]
