@@ -153,15 +153,13 @@ unsafe fn build_classes() {
     }
 }
 
-extern "C" fn test(_this: &Object, _cmd: Sel, _sender: *mut Object) {
-    println!("here {_cmd:?} {_sender:?}");
+extern "C" fn test(_this: &Object, _cmd: Sel, sender: id) {
+    unsafe {
+        println!("here");
+    }
 }
 
-extern "C" fn application_dock_menu(
-    this: &mut Object,
-    _cmd: Sel,
-    _sender: *mut Object,
-) -> *mut Object {
+extern "C" fn application_dock_menu(this: &mut Object, _cmd: Sel, _sender: id) -> id {
     unsafe { *this.get_ivar::<id>(DOCK_MENU_IVAR) }
 }
 
@@ -793,7 +791,8 @@ impl Platform for MacPlatform {
     fn set_dock_menu(&self, paths: Vec<&str>) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            let menu = NSMenu::new(nil).autorelease();
+            // can't autorelease here; any other way to avoid a leak?
+            let menu = NSMenu::new(nil);
             for path in paths {
                 let item = NSMenuItem::alloc(nil)
                     .initWithTitle_action_keyEquivalent_(
@@ -805,8 +804,7 @@ impl Platform for MacPlatform {
                 item.setTarget_(app.delegate());
                 menu.addItem_(item);
             }
-            // this needs to be changed if DOCK_MENU_IVAR is changed
-            let _: () = msg_send![app, setDockMenu:menu];
+            (*app.delegate()).set_ivar(DOCK_MENU_IVAR, menu);
         }
     }
 
