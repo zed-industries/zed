@@ -130,9 +130,9 @@ impl RenderOnce for KeyBinding {
                             el.child(Key::new("Shift"))
                         }
                     })
-                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
-                    .when(key_icon.is_none(), |el| {
-                        el.child(Key::new(keystroke.key.to_uppercase().clone()))
+                    .map(|el| match key_icon {
+                        Some(icon) => el.child(KeyIcon::new(icon)),
+                        None => el.child(Key::new(keystroke.key.to_uppercase())),
                     })
             }))
     }
