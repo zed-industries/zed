@@ -178,7 +178,6 @@ async function handleMessage(message, prettier) {
             ...(params.options.prettierOptions || prettier.config),
             ...resolvedConfig,
             parser: params.options.parser,
-            plugins: params.options.plugins,
             path: params.options.filepath,
         };
         process.stderr.write(
