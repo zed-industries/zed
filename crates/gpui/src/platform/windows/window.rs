@@ -276,8 +276,6 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.close.take() {
             callback()
         }
-        let mut window_handles = self.platform_inner.window_handle_values.borrow_mut();
-        window_handles.remove(&self.hwnd.0);
         let index = self
             .platform_inner
             .raw_window_handles
@@ -286,7 +284,7 @@ impl WindowsWindowInner {
             .position(|handle| *handle == self.hwnd)
             .unwrap();
         self.platform_inner.raw_window_handles.write().remove(index);
-        if window_handles.is_empty() {
+        if self.platform_inner.raw_window_handles.read().is_empty() {
             self.platform_inner
                 .foreground_executor
                 .spawn(async {
@@ -707,10 +705,6 @@ impl WindowsWindow {
             inner: context.inner.unwrap(),
             drag_drop_handler,
         };
-        platform_inner
-            .window_handle_values
-            .borrow_mut()
-            .insert(wnd.inner.hwnd.0);
         platform_inner
             .raw_window_handles
             .write()

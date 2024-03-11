@@ -18,6 +18,7 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
+use smallvec::SmallVec;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::{
@@ -87,8 +88,7 @@ pub(crate) struct WindowsPlatformInner {
     main_receiver: flume::Receiver<Runnable>,
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
-    pub(crate) window_handle_values: RefCell<WindowHandleValues>,
-    pub raw_window_handles: RwLock<Vec<HWND>>,
+    pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) event: HANDLE,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
@@ -175,8 +175,7 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(WindowsTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
-        let window_handle_values = RefCell::new(HashSet::new());
-        let raw_window_handles = RwLock::new(Vec::new());
+        let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
@@ -184,7 +183,6 @@ impl WindowsPlatform {
             main_receiver,
             text_system,
             callbacks,
-            window_handle_values,
             raw_window_handles,
             event,
             settings,
