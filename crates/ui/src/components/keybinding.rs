@@ -96,7 +96,12 @@ impl RenderOnce for KeyBinding {
 
                     h_flex()
                         .flex_none()
+                        .py_0()
+                        // HACK to center the keybinding (it was 1 pixel too high up)
+                        .mb_0()
+                        .mt(rems(1. / 16.))
                         .ml_2p5()
+                        .content_center()
                         .child(Key::new(keybinding_text))
                 }
             }))
@@ -155,6 +160,7 @@ impl RenderOnce for Key {
 
         div()
             .py_0()
+            .content_center()
             .map(|this| {
                 if single_char {
                     this.w(rems(14. / 16.)).flex().flex_none().justify_center()
