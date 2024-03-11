@@ -538,14 +538,12 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = Pixels::from(lparam.signed_loword() as f32);
             let y = Pixels::from(lparam.signed_hiword() as f32);
-            let start = std::time::Instant::now();
             let event = MouseDownEvent {
                 button,
                 position: Point { x, y },
                 modifiers: self.current_modifiers(),
                 click_count: 1,
             };
-            let cost = start.elapsed();
             if callback(PlatformInput::MouseDown(event)) {
                 return LRESULT(0);
             }
