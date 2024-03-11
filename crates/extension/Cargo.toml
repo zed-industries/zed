@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/extension_store.rs"
+doctest = false
 
 [[bin]]
 name = "extension_json_schemas"
