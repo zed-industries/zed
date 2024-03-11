@@ -1,10 +1,9 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use gpui::{AsyncAppContext, Task};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use serde_json::json;
-use std::{any::Any, ffi::OsString, path::PathBuf, sync::Arc};
+use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
 
@@ -12,10 +11,6 @@ pub struct RubyLanguageServer;
 impl LspAdapter for RubyLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("ruby-lsp".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "ruby-lsp"
     }
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
@@ -29,23 +24,17 @@ impl LspAdapter for RubyLanguageServer {
         }))
     }
 
-    fn check_if_user_installed(
+    async fn check_if_user_installed(
         &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
-        let delegate = delegate.clone();
-
-        Some(cx.spawn(|cx| async move {
-            match cx.update(|cx| delegate.which_command(OsString::from("ruby-lsp"), cx)) {
-                Ok(task) => task.await.map(|(path, env)| LanguageServerBinary {
-                    path,
-                    arguments: vec![],
-                    env: Some(env),
-                }),
-                Err(_) => None,
-            }
-        }))
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let env = delegate.shell_env().await;
+        let path = delegate.which("ruby-lsp".as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: Some(env),
+        })
     }
 
     async fn fetch_latest_server_version(
