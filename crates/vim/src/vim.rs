@@ -457,8 +457,8 @@ impl Vim {
     }
 
     fn pop_operator(&mut self, cx: &mut WindowContext) -> Operator {
-        let popped_operator = self.update_state( |state| state.operator_stack.pop()
-        )            .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
+        let popped_operator = self.update_state(|state| state.operator_stack.pop())
+            .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
         self.sync_vim_settings(cx);
         popped_operator
     }

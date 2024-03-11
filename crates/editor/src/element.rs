@@ -1723,20 +1723,55 @@ impl EditorElement {
                     }
                 }
 
-                if let Some(highlighted_rows) = &layout.highlighted_rows {
-                    let origin = point(
-                        layout.hitbox.origin.x,
-                        layout.hitbox.origin.y
-                            + (layout.position_map.line_height * highlighted_rows.start as f32)
-                            - scroll_top,
-                    );
-                    let size = size(
-                        layout.hitbox.size.width,
-                        layout.position_map.line_height * highlighted_rows.len() as f32,
-                    );
-                    let highlighted_line_bg =
-                        cx.theme().colors().editor_highlighted_line_background;
-                    cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
+                let mut paint_highlight =
+                    |highlight_row_start: u32, highlight_row_end: u32, color| {
+                        let origin = point(
+                            layout.hitbox.origin.x,
+                            layout.hitbox.origin.y
+                                + (layout.position_map.line_height * highlight_row_start as f32)
+                                - scroll_top,
+                        );
+                        let size = size(
+                            layout.hitbox.size.width,
+                            layout.position_map.line_height
+                                * (highlight_row_end + 1 - highlight_row_start) as f32,
+                        );
+                        cx.paint_quad(fill(Bounds { origin, size }, color));
+                    };
+
+                let mut last_row = None;
+                let mut highlight_row_start = 0u32;
+                let mut highlight_row_end = 0u32;
+                for (&row, &color) in &layout.highlighted_rows {
+                    let paint = last_row.map_or(false, |(last_row, last_color)| {
+                        last_color != color || last_row + 1 < row
+                    });
+
+                    if paint {
+                        let paint_range_is_unfinished = highlight_row_end == 0;
+                        if paint_range_is_unfinished {
+                            highlight_row_end = row;
+                            last_row = None;
+                        }
+                        paint_highlight(highlight_row_start, highlight_row_end, color);
+                        highlight_row_start = 0;
+                        highlight_row_end = 0;
+                        if !paint_range_is_unfinished {
+                            highlight_row_start = row;
+                            last_row = Some((row, color));
+                        }
+                    } else {
+                        if last_row.is_none() {
+                            highlight_row_start = row;
+                        } else {
+                            highlight_row_end = row;
+                        }
+                        last_row = Some((row, color));
+                    }
+                }
+                if let Some((row, hsla)) = last_row {
+                    highlight_row_end = row;
+                    paint_highlight(highlight_row_start, highlight_row_end, hsla);
                 }
 
                 let scroll_left =
@@ -2989,7 +3024,9 @@ impl Element for EditorElement {
                     )
                 };
 
-                let highlighted_rows = self.editor.read(cx).highlighted_rows();
+                let highlighted_rows = self
+                    .editor
+                    .update(cx, |editor, cx| editor.highlighted_display_rows(cx));
                 let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
                     start_anchor..end_anchor,
                     &snapshot.display_snapshot,
@@ -3331,7 +3368,7 @@ pub struct EditorLayout {
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
-    highlighted_rows: Option<Range<u32>>,
+    highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     folds: Vec<FoldLayout>,

@@ -1,4 +1,4 @@
-use crate::InlayId;
+use crate::{HighlightStyles, InlayId};
 use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
@@ -215,8 +215,7 @@ pub struct InlayChunks<'a> {
     inlay_chunk: Option<&'a str>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
-    inlay_highlight_style: Option<HighlightStyle>,
-    suggestion_highlight_style: Option<HighlightStyle>,
+    highlight_styles: HighlightStyles,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
     highlights: Highlights<'a>,
@@ -307,8 +306,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 }
 
                 let mut highlight_style = match inlay.id {
-                    InlayId::Suggestion(_) => self.suggestion_highlight_style,
-                    InlayId::Hint(_) => self.inlay_highlight_style,
+                    InlayId::Suggestion(_) => self.highlight_styles.suggestion,
+                    InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -1052,8 +1051,7 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            inlay_highlight_style: highlights.inlay_highlight_style,
-            suggestion_highlight_style: highlights.suggestion_highlight_style,
+            highlight_styles: highlights.styles,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
             highlights,
