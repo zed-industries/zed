@@ -140,6 +140,15 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // What to do when multibuffer is double clicked in some of its excerpts
+  // (parts of singleton buffers).
+  // May take 2 values:
+  //  1. Behave as a regular buffer and select the whole word.
+  //         "double_click_in_multibuffer": "select"
+  //  2. Open the excerpt clicked as a new buffer in the new tab (default).
+  //         "double_click_in_multibuffer": "open",
+  // For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
+  "double_click_in_multibuffer": "open",
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
