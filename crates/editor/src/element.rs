@@ -3,7 +3,7 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
         TransformBlock,
     },
-    editor_settings::ShowScrollbar,
+    editor_settings::{DoubleClickInMultibuffer, ShowScrollbar},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -392,12 +392,31 @@ impl EditorElement {
         }
 
         let mut click_count = event.click_count;
-        let modifiers = event.modifiers;
+        let mut modifiers = event.modifiers;
 
         if gutter_hitbox.is_hovered(cx) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(cx) {
             return;
+        }
+
+        if click_count == 2 {
+            match EditorSettings::get_global(cx).double_click_in_multibuffer {
+                DoubleClickInMultibuffer::Select => {
+                    // do nothing special on double click, all selection logic is below
+                }
+                DoubleClickInMultibuffer::Open => {
+                    if modifiers.alt {
+                        // if double click is made with alt, pretend it's a regular double click without opening and alt,
+                        // and run the selection logic.
+                        modifiers.alt = false;
+                    } else {
+                        // if double click is made without alt, open the corresponding excerp
+                        editor.open_excerpts(&OpenExcerpts, cx);
+                        return;
+                    }
+                }
+            }
         }
 
         let point_for_position =
