@@ -856,7 +856,8 @@ impl EditorElement {
                     };
 
                     let x = cursor_character_x - scroll_pixel_position.x;
-                    let y = cursor_position.row() as f32 * line_height - scroll_pixel_position.y;
+                    let y = (cursor_position.row() as f32 - scroll_pixel_position.y / line_height)
+                        * line_height;
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1692,8 +1693,7 @@ impl EditorElement {
 
     fn paint_background(&self, layout: &EditorLayout, cx: &mut ElementContext) {
         cx.paint_layer(layout.hitbox.bounds, |cx| {
-            let scroll_top =
-                layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
+            let scroll_top = layout.position_map.snapshot.scroll_position().y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             cx.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
             cx.paint_quad(fill(layout.text_hitbox.bounds, self.style.background));
@@ -1713,8 +1713,8 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (layout.position_map.line_height * *start_row as f32)
-                                - scroll_top,
+                                + (*start_row as f32 - scroll_top)
+                                    * layout.position_map.line_height,
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -1730,8 +1730,8 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (layout.position_map.line_height * highlight_row_start as f32)
-                                - scroll_top,
+                                + (highlight_row_start as f32 - scroll_top)
+                                    * layout.position_map.line_height,
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -2779,7 +2779,8 @@ impl LineWithInvisibles {
         cx: &mut ElementContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = line_height * row as f32 - layout.position_map.scroll_pixel_position.y;
+        let line_y =
+            line_height * (row as f32 - layout.position_map.scroll_pixel_position.y / line_height);
 
         self.line
             .paint(
