@@ -1,7 +1,4 @@
-use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, DisplayPoint, Editor,
-    EditorMode, ToPoint,
-};
+use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
     actions, div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -121,7 +118,7 @@ impl OutlineViewDelegate {
 
     fn restore_active_editor(&mut self, cx: &mut WindowContext) {
         self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
+            editor.clear_row_highlights::<OutlineRowHighlights>();
             if let Some(scroll_position) = self.prev_scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
             }
@@ -141,18 +138,19 @@ impl OutlineViewDelegate {
             let outline_item = &self.outline.items[selected_match.candidate_id];
 
             self.active_editor.update(cx, |active_editor, cx| {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let buffer_snapshot = &snapshot.buffer_snapshot;
-                let start = outline_item.range.start.to_point(buffer_snapshot);
-                let end = outline_item.range.end.to_point(buffer_snapshot);
-                let display_rows = start.to_display_point(&snapshot).row()
-                    ..end.to_display_point(&snapshot).row() + 1;
-                active_editor.highlight_rows(Some(display_rows));
+                active_editor.clear_row_highlights::<OutlineRowHighlights>();
+                active_editor.highlight_rows::<OutlineRowHighlights>(
+                    outline_item.range.clone(),
+                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    cx,
+                );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
     }
 }
+
+enum OutlineRowHighlights {}
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
@@ -240,13 +238,14 @@ impl PickerDelegate for OutlineViewDelegate {
         self.prev_scroll_position.take();
 
         self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(rows) = active_editor.highlighted_rows() {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
+            if let Some(rows) = active_editor
+                .highlighted_rows::<OutlineRowHighlights>()
+                .and_then(|highlights| highlights.into_iter().next().map(|(rows, _)| rows.clone()))
+            {
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                    s.select_ranges([position..position])
+                    s.select_ranges([rows.start..rows.start])
                 });
-                active_editor.highlight_rows(None);
+                active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.focus(cx);
             }
         });
@@ -312,5 +311,299 @@ impl PickerDelegate for OutlineViewDelegate {
                         .child(styled_text),
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext};
+    use indoc::indoc;
+    use language::{Language, LanguageConfig, LanguageMatcher};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use workspace::{AppState, Workspace};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": indoc!{"
+                    struct SingleLine; // display line 0
+                                       // display line 1
+                    struct MultiLine { // display line 2
+                        field_1: i32,  // display line 3
+                        field_2: i32,  // display line 4
+                    }                  // display line 5
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees().next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let ensure_outline_view_contents =
+            |outline_view: &View<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
+                assert_eq!(query(&outline_view, cx), "");
+                assert_eq!(
+                    outline_names(&outline_view, cx),
+                    vec![
+                        "struct SingleLine",
+                        "struct MultiLine",
+                        "field_1",
+                        "field_2"
+                    ],
+                );
+            };
+
+        let outline_view = open_outline_view(&workspace, cx);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Initially opened outline view should have no highlights"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::SelectNext);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![2, 3, 4, 5],
+            "Second struct's rows should be highlighted"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::SelectPrev);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![0],
+            "First struct's row should be highlighted"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::Cancel);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "No rows should be highlighted after outline view is cancelled and closed"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        let outline_view = open_outline_view(&workspace, cx);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Reopened outline view should have no highlights"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        let expected_first_highlighted_row = 2;
+        cx.dispatch_action(menu::SelectNext);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![expected_first_highlighted_row, 3, 4, 5]
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+        cx.dispatch_action(menu::Confirm);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "No rows should be highlighted after outline view is confirmed and closed"
+        );
+        // On confirm, should place the caret on the first row of the highlighted rows range.
+        assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
+    }
+
+    fn open_outline_view(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> View<Picker<OutlineViewDelegate>> {
+        cx.dispatch_action(Toggle::default());
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<OutlineView>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        })
+    }
+
+    fn query(
+        outline_view: &View<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> String {
+        outline_view.update(cx, |outline_view, cx| outline_view.query(cx))
+    }
+
+    fn outline_names(
+        outline_view: &View<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        outline_view.update(cx, |outline_view, _| {
+            let items = &outline_view.delegate.outline.items;
+            outline_view
+                .delegate
+                .matches
+                .iter()
+                .map(|hit| items[hit.candidate_id].text.clone())
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
+        editor.update(cx, |editor, cx| {
+            editor.highlighted_display_rows(cx).into_keys().collect()
+        })
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            crate::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
+        })
+    }
+
+    fn rust_lang() -> Arc<Language> {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rs".to_string()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )
+            .with_outline_query(
+                r#"(struct_item
+            (visibility_modifier)? @context
+            "struct" @context
+            name: (_) @name) @item
+
+        (enum_item
+            (visibility_modifier)? @context
+            "enum" @context
+            name: (_) @name) @item
+
+        (enum_variant
+            (visibility_modifier)? @context
+            name: (_) @name) @item
+
+        (impl_item
+            "impl" @context
+            trait: (_)? @name
+            "for"? @context
+            type: (_) @name) @item
+
+        (trait_item
+            (visibility_modifier)? @context
+            "trait" @context
+            name: (_) @name) @item
+
+        (function_item
+            (visibility_modifier)? @context
+            (function_modifiers)? @context
+            "fn" @context
+            name: (_) @name) @item
+
+        (function_signature_item
+            (visibility_modifier)? @context
+            (function_modifiers)? @context
+            "fn" @context
+            name: (_) @name) @item
+
+        (macro_definition
+            . "macro_rules!" @context
+            name: (_) @name) @item
+
+        (mod_item
+            (visibility_modifier)? @context
+            "mod" @context
+            name: (_) @name) @item
+
+        (type_item
+            (visibility_modifier)? @context
+            "type" @context
+            name: (_) @name) @item
+
+        (associated_type
+            "type" @context
+            name: (_) @name) @item
+
+        (const_item
+            (visibility_modifier)? @context
+            "const" @context
+            name: (_) @name) @item
+
+        (field_declaration
+            (visibility_modifier)? @context
+            name: (_) @name) @item
+"#,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[track_caller]
+    fn assert_single_caret_at_row(
+        editor: &View<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        let selections = editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .all::<rope::Point>(cx)
+                .into_iter()
+                .map(|s| s.start..s.end)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            selections.len() == 1,
+            "Expected one caret selection but got: {selections:?}"
+        );
+        let selection = &selections[0];
+        assert!(
+            selection.start == selection.end,
+            "Expected a single caret selection, but got: {selection:?}"
+        );
+        assert_eq!(selection.start.row, buffer_row);
     }
 }

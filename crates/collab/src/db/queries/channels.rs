@@ -1,5 +1,8 @@
 use super::*;
-use rpc::{proto::channel_member::Kind, ErrorCode, ErrorCodeExt};
+use rpc::{
+    proto::{channel_member::Kind, ChannelBufferVersion, VectorClockEntry},
+    ErrorCode, ErrorCodeExt,
+};
 use sea_orm::TryGetableMany;
 
 impl Database {
@@ -441,9 +444,9 @@ impl Database {
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<MembershipUpdated> {
-        let new_channels = self.get_user_channels(user_id, Some(channel), &*tx).await?;
+        let new_channels = self.get_user_channels(user_id, Some(channel), tx).await?;
         let removed_channels = self
-            .get_channel_descendants_excluding_self([channel], &*tx)
+            .get_channel_descendants_excluding_self([channel], tx)
             .await?
             .into_iter()
             .map(|channel| channel.id)
@@ -564,16 +567,16 @@ impl Database {
 
         let channel_memberships = channel_member::Entity::find()
             .filter(filter)
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         let channels = channel::Entity::find()
             .filter(channel::Column::Id.is_in(channel_memberships.iter().map(|m| m.channel_id)))
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         let mut descendants = self
-            .get_channel_descendants_excluding_self(channels.iter(), &*tx)
+            .get_channel_descendants_excluding_self(channels.iter(), tx)
             .await?;
 
         for channel in channels {
@@ -614,7 +617,7 @@ impl Database {
                 .column(room::Column::ChannelId)
                 .column(room_participant::Column::UserId)
                 .into_values::<_, QueryUserIdsAndChannelIds>()
-                .stream(&*tx)
+                .stream(tx)
                 .await?;
             while let Some(row) = rows.next().await {
                 let row: (ChannelId, UserId) = row?;
@@ -625,32 +628,44 @@ impl Database {
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
 
         let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut latest_buffer_versions: Vec<ChannelBufferVersion> = vec![];
         let mut rows = buffer::Entity::find()
             .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
-            .stream(&*tx)
+            .stream(tx)
             .await?;
         while let Some(row) = rows.next().await {
             let row = row?;
             channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+            latest_buffer_versions.push(ChannelBufferVersion {
+                channel_id: row.channel_id.0 as u64,
+                epoch: row.latest_operation_epoch.unwrap_or_default() as u64,
+                version: if let Some((latest_lamport_timestamp, latest_replica_id)) = row
+                    .latest_operation_lamport_timestamp
+                    .zip(row.latest_operation_replica_id)
+                {
+                    vec![VectorClockEntry {
+                        timestamp: latest_lamport_timestamp as u32,
+                        replica_id: latest_replica_id as u32,
+                    }]
+                } else {
+                    vec![]
+                },
+            });
         }
         drop(rows);
 
-        let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, &*tx)
-            .await?;
-
-        let latest_channel_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
+        let latest_channel_messages = self.latest_channel_messages(&channel_ids, tx).await?;
 
         let observed_buffer_versions = self
-            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, &*tx)
+            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, tx)
             .await?;
 
         let observed_channel_messages = self
-            .observed_channel_messages(&channel_ids, user_id, &*tx)
+            .observed_channel_messages(&channel_ids, user_id, tx)
             .await?;
 
         let hosted_projects = self
-            .get_hosted_projects(&channel_ids, &roles_by_channel_id, &*tx)
+            .get_hosted_projects(&channel_ids, &roles_by_channel_id, tx)
             .await?;
 
         Ok(ChannelsForUser {
@@ -778,7 +793,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<Vec<UserId>> {
         let participants = self
-            .get_channel_participant_details_internal(channel, &*tx)
+            .get_channel_participant_details_internal(channel, tx)
             .await?;
         Ok(participants
             .into_iter()
@@ -855,7 +870,7 @@ impl Database {
             .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
             .filter(channel_member::Column::UserId.eq(user_id))
             .filter(channel_member::Column::Accepted.eq(false))
-            .one(&*tx)
+            .one(tx)
             .await?;
 
         Ok(row)
@@ -875,7 +890,7 @@ impl Database {
                     .and(channel_member::Column::UserId.eq(user_id))
                     .and(channel_member::Column::Accepted.eq(true)),
             )
-            .one(&*tx)
+            .one(tx)
             .await?;
 
         let Some(membership) = membership else {
@@ -930,7 +945,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<channel::Model> {
         Ok(channel::Entity::find_by_id(channel_id)
-            .one(&*tx)
+            .one(tx)
             .await?
             .ok_or_else(|| proto::ErrorCode::NoSuchChannel.anyhow())?)
     }
@@ -943,7 +958,7 @@ impl Database {
     ) -> Result<RoomId> {
         let room = room::Entity::find()
             .filter(room::Column::ChannelId.eq(channel_id))
-            .one(&*tx)
+            .one(tx)
             .await?;
 
         let room_id = if let Some(room) = room {
@@ -954,7 +969,7 @@ impl Database {
                 live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
                 ..Default::default()
             })
-            .exec(&*tx)
+            .exec(tx)
             .await?;
 
             result.last_insert_id

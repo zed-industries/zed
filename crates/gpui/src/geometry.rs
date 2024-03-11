@@ -828,6 +828,28 @@ where
             y: self.origin.y.clone() + self.size.height.clone().half(),
         }
     }
+
+    /// Calculates the half perimeter of a rectangle defined by the bounds.
+    ///
+    /// The half perimeter is calculated as the sum of the width and the height of the rectangle.
+    /// This method is generic over the type `T` which must implement the `Sub` trait to allow
+    /// calculation of the width and height from the bounds' origin and size, as well as the `Add` trait
+    /// to sum the width and height for the half perimeter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let half_perimeter = bounds.half_perimeter();
+    /// assert_eq!(half_perimeter, 30);
+    /// ```
+    pub fn half_perimeter(&self) -> T {
+        self.size.width.clone() + self.size.height.clone()
+    }
 }
 
 impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
@@ -1142,6 +1164,22 @@ where
             origin: self.origin.map(&f),
             size: self.size.map(f),
         }
+    }
+}
+
+/// Checks if the bounds represent an empty area.
+///
+/// # Returns
+///
+/// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
+impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
+    /// Checks if the bounds represent an empty area.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
+    pub fn is_empty(&self) -> bool {
+        self.size.width <= T::default() || self.size.height <= T::default()
     }
 }
 
@@ -2615,6 +2653,12 @@ pub trait Half {
     ///
     /// A new instance of the implementing type, representing half of the original value.
     fn half(&self) -> Self;
+}
+
+impl Half for i32 {
+    fn half(&self) -> Self {
+        self / 2
+    }
 }
 
 impl Half for f32 {

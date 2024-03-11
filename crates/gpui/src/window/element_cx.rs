@@ -16,69 +16,120 @@ use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
     mem,
+    ops::Range,
     rc::Rc,
     sync::Arc,
 };
 
 use anyhow::Result;
-use collections::{FxHashMap, FxHashSet};
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
-use util::post_inc;
 
 use crate::{
-    prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
-    Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
-    EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
-    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
-    StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
+    ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
+    DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
+    GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
+    LineLayoutIndex, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler,
+    Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, TextStyleRefinement, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
-type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
-
-pub(crate) struct RequestedInputHandler {
-    pub(crate) view_id: EntityId,
-    pub(crate) handler: Option<PlatformInputHandler>,
-}
-
-pub(crate) struct TooltipRequest {
-    pub(crate) view_id: EntityId,
-    pub(crate) tooltip: AnyTooltip,
-}
+pub(crate) type AnyMouseListener =
+    Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
+    pub(crate) hitbox_id: HitboxId,
     pub(crate) style: CursorStyle,
-    stacking_order: StackingOrder,
+}
+
+/// An identifier for a [Hitbox].
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct HitboxId(usize);
+
+impl HitboxId {
+    /// Checks if the hitbox with this id is currently hovered.
+    pub fn is_hovered(&self, cx: &WindowContext) -> bool {
+        cx.window.mouse_hit_test.0.contains(self)
+    }
+}
+
+/// A rectangular region that potentially blocks hitboxes inserted prior.
+/// See [ElementContext::insert_hitbox] for more details.
+#[derive(Clone, Debug, Eq, PartialEq, Deref)]
+pub struct Hitbox {
+    /// A unique identifier for the hitbox
+    pub id: HitboxId,
+    /// The bounds of the hitbox
+    #[deref]
+    pub bounds: Bounds<Pixels>,
+    /// Whether the hitbox occludes other hitboxes inserted prior.
+    pub opaque: bool,
+}
+
+impl Hitbox {
+    /// Checks if the hitbox is currently hovered.
+    pub fn is_hovered(&self, cx: &WindowContext) -> bool {
+        self.id.is_hovered(cx)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
+
+pub(crate) struct DeferredDraw {
+    priority: usize,
+    parent_node: DispatchNodeId,
+    element_id_stack: GlobalElementId,
+    text_style_stack: Vec<TextStyleRefinement>,
+    element: Option<AnyElement>,
+    absolute_offset: Point<Pixels>,
+    layout_range: Range<AfterLayoutIndex>,
+    paint_range: Range<PaintIndex>,
 }
 
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
-    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
-    pub(crate) mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
+    pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
+    accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
-    pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_ids: Vec<u16>,
-    pub(crate) next_root_z_index: u16,
+    pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    pub(crate) requested_input_handler: Option<RequestedInputHandler>,
-    pub(crate) tooltip_request: Option<TooltipRequest>,
-    pub(crate) cursor_styles: FxHashMap<EntityId, CursorStyleRequest>,
-    pub(crate) requested_cursor_style: Option<CursorStyleRequest>,
-    pub(crate) view_stack: Vec<EntityId>,
-    pub(crate) reused_views: FxHashSet<EntityId>,
-
+    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
+    pub(crate) tooltip_requests: Vec<Option<AnyTooltip>>,
+    pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct AfterLayoutIndex {
+    hitboxes_index: usize,
+    tooltips_index: usize,
+    deferred_draws_index: usize,
+    dispatch_tree_index: usize,
+    accessed_element_states_index: usize,
+    line_layout_index: LineLayoutIndex,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct PaintIndex {
+    scene_index: usize,
+    mouse_listeners_index: usize,
+    input_handlers_index: usize,
+    cursor_styles_index: usize,
+    accessed_element_states_index: usize,
+    line_layout_index: LineLayoutIndex,
 }
 
 impl Frame {
@@ -87,21 +138,17 @@ impl Frame {
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
-            mouse_listeners: FxHashMap::default(),
+            accessed_element_states: Vec::new(),
+            mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
-            depth_map: Vec::new(),
-            z_index_stack: StackingOrder::default(),
-            next_stacking_order_ids: vec![0],
-            next_root_z_index: 0,
+            hitboxes: Vec::new(),
+            deferred_draws: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
-            requested_input_handler: None,
-            tooltip_request: None,
-            cursor_styles: FxHashMap::default(),
-            requested_cursor_style: None,
-            view_stack: Vec::new(),
-            reused_views: FxHashSet::default(),
+            input_handlers: Vec::new(),
+            tooltip_requests: Vec::new(),
+            cursor_styles: Vec::new(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -110,18 +157,28 @@ impl Frame {
 
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
-        self.mouse_listeners.values_mut().for_each(Vec::clear);
+        self.accessed_element_states.clear();
+        self.mouse_listeners.clear();
         self.dispatch_tree.clear();
-        self.depth_map.clear();
-        self.next_stacking_order_ids = vec![0];
-        self.next_root_z_index = 0;
-        self.reused_views.clear();
         self.scene.clear();
-        self.requested_input_handler.take();
-        self.tooltip_request.take();
+        self.input_handlers.clear();
+        self.tooltip_requests.clear();
         self.cursor_styles.clear();
-        self.requested_cursor_style.take();
-        debug_assert_eq!(self.view_stack.len(), 0);
+        self.hitboxes.clear();
+        self.deferred_draws.clear();
+    }
+
+    pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        let mut hit_test = HitTest::default();
+        for hitbox in self.hitboxes.iter().rev() {
+            if hitbox.bounds.contains(&position) {
+                hit_test.0.push(hitbox.id);
+                if hitbox.opaque {
+                    break;
+                }
+            }
+        }
+        hit_test
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -131,38 +188,13 @@ impl Frame {
     }
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
-        // Reuse mouse listeners that didn't change since the last frame.
-        for (type_id, listeners) in &mut prev_frame.mouse_listeners {
-            let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
-            for (order, view_id, listener) in listeners.drain(..) {
-                if self.reused_views.contains(&view_id) {
-                    next_listeners.push((order, view_id, listener));
-                }
+        for element_state_key in &self.accessed_element_states {
+            if let Some(element_state) = prev_frame.element_states.remove(element_state_key) {
+                self.element_states
+                    .insert(element_state_key.clone(), element_state);
             }
         }
 
-        // Reuse entries in the depth map that didn't change since the last frame.
-        for (order, view_id, bounds) in prev_frame.depth_map.drain(..) {
-            if self.reused_views.contains(&view_id) {
-                match self
-                    .depth_map
-                    .binary_search_by(|(level, _, _)| order.cmp(level))
-                {
-                    Ok(i) | Err(i) => self.depth_map.insert(i, (order, view_id, bounds)),
-                }
-            }
-        }
-
-        // Retain element states for views that didn't change since the last frame.
-        for (element_id, state) in prev_frame.element_states.drain() {
-            if self.reused_views.contains(&state.parent_view_id) {
-                self.element_states.entry(element_id).or_insert(state);
-            }
-        }
-
-        // Reuse geometry that didn't change since the last frame.
-        self.scene
-            .reuse_views(&self.reused_views, &mut prev_frame.scene);
         self.scene.finish();
     }
 }
@@ -316,68 +348,218 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
-    pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
-        let view_id = self.parent_view_id();
-        let grafted_view_ids = self
-            .cx
-            .window
-            .next_frame
-            .dispatch_tree
-            .reuse_view(view_id, &mut self.cx.window.rendered_frame.dispatch_tree);
-        for view_id in grafted_view_ids {
-            assert!(self.window.next_frame.reused_views.insert(view_id));
+    pub(crate) fn draw_roots(&mut self) {
+        self.window.draw_phase = DrawPhase::Layout;
 
-            // Reuse the previous input handler requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .requested_input_handler
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.requested_input_handler =
-                    self.window.rendered_frame.requested_input_handler.take();
-            }
+        // Layout all root elements.
+        let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
+        root_element.layout(Point::default(), self.window.viewport_size.into(), self);
 
-            // Reuse the tooltip previously requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .tooltip_request
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.tooltip_request =
-                    self.window.rendered_frame.tooltip_request.take();
-            }
-
-            // Reuse the cursor styles previously requested during painting of the reused view.
-            if let Some(cursor_style_request) =
-                self.window.rendered_frame.cursor_styles.remove(&view_id)
-            {
-                self.set_cursor_style(
-                    cursor_style_request.style,
-                    cursor_style_request.stacking_order,
-                );
-            }
+        let mut prompt_element = None;
+        let mut active_drag_element = None;
+        let mut tooltip_element = None;
+        if let Some(prompt) = self.window.prompt.take() {
+            let mut element = prompt.view.any_view().into_any();
+            element.layout(Point::default(), self.window.viewport_size.into(), self);
+            prompt_element = Some(element);
+            self.window.prompt = Some(prompt);
+        } else if let Some(active_drag) = self.app.active_drag.take() {
+            let mut element = active_drag.view.clone().into_any();
+            let offset = self.mouse_position() - active_drag.cursor_offset;
+            element.layout(offset, AvailableSpace::min_size(), self);
+            active_drag_element = Some(element);
+            self.app.active_drag = Some(active_drag);
+        } else if let Some(tooltip_request) =
+            self.window.next_frame.tooltip_requests.last().cloned()
+        {
+            let tooltip_request = tooltip_request.unwrap();
+            let mut element = tooltip_request.view.clone().into_any();
+            let offset = tooltip_request.cursor_offset;
+            element.layout(offset, AvailableSpace::min_size(), self);
+            tooltip_element = Some(element);
         }
 
-        debug_assert!(
-            next_stacking_order_id
-                >= self
-                    .window
-                    .next_frame
-                    .next_stacking_order_ids
-                    .last()
-                    .copied()
-                    .unwrap()
+        let mut sorted_deferred_draws =
+            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
+        sorted_deferred_draws
+            .sort_unstable_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+        self.layout_deferred_draws(&sorted_deferred_draws);
+
+        self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
+
+        // Now actually paint the elements.
+        self.window.draw_phase = DrawPhase::Paint;
+        root_element.paint(self);
+
+        if let Some(mut prompt_element) = prompt_element {
+            prompt_element.paint(self)
+        } else if let Some(mut drag_element) = active_drag_element {
+            drag_element.paint(self);
+        } else if let Some(mut tooltip_element) = tooltip_element {
+            tooltip_element.paint(self);
+        }
+
+        self.paint_deferred_draws(&sorted_deferred_draws);
+    }
+
+    fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+        assert_eq!(self.window.element_id_stack.len(), 0);
+
+        let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
+        for deferred_draw_ix in deferred_draw_indices {
+            let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
+            self.window.text_style_stack = deferred_draw.text_style_stack.clone();
+            self.window
+                .next_frame
+                .dispatch_tree
+                .set_active_node(deferred_draw.parent_node);
+
+            let layout_start = self.after_layout_index();
+            if let Some(element) = deferred_draw.element.as_mut() {
+                self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
+                    element.after_layout(cx)
+                });
+            } else {
+                self.reuse_after_layout(deferred_draw.layout_range.clone());
+            }
+            let layout_end = self.after_layout_index();
+            deferred_draw.layout_range = layout_start..layout_end;
+        }
+        assert_eq!(
+            self.window.next_frame.deferred_draws.len(),
+            0,
+            "cannot call defer_draw during deferred drawing"
         );
-        *self
-            .window
-            .next_frame
-            .next_stacking_order_ids
-            .last_mut()
-            .unwrap() = next_stacking_order_id;
+        self.window.next_frame.deferred_draws = deferred_draws;
+        self.window.element_id_stack.clear();
+    }
+
+    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+        assert_eq!(self.window.element_id_stack.len(), 0);
+
+        let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
+        for deferred_draw_ix in deferred_draw_indices {
+            let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
+            self.window
+                .next_frame
+                .dispatch_tree
+                .set_active_node(deferred_draw.parent_node);
+
+            let paint_start = self.paint_index();
+            if let Some(element) = deferred_draw.element.as_mut() {
+                element.paint(self);
+            } else {
+                self.reuse_paint(deferred_draw.paint_range.clone());
+            }
+            let paint_end = self.paint_index();
+            deferred_draw.paint_range = paint_start..paint_end;
+        }
+        self.window.next_frame.deferred_draws = deferred_draws;
+        self.window.element_id_stack.clear();
+    }
+
+    pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
+        AfterLayoutIndex {
+            hitboxes_index: self.window.next_frame.hitboxes.len(),
+            tooltips_index: self.window.next_frame.tooltip_requests.len(),
+            deferred_draws_index: self.window.next_frame.deferred_draws.len(),
+            dispatch_tree_index: self.window.next_frame.dispatch_tree.len(),
+            accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+            line_layout_index: self.window.text_system.layout_index(),
+        }
+    }
+
+    pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
+        let window = &mut self.window;
+        window.next_frame.hitboxes.extend(
+            window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
+                .iter()
+                .cloned(),
+        );
+        window.next_frame.tooltip_requests.extend(
+            window.rendered_frame.tooltip_requests
+                [range.start.tooltips_index..range.end.tooltips_index]
+                .iter_mut()
+                .map(|request| request.take()),
+        );
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .cloned(),
+        );
+        window
+            .text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+
+        let reused_subtree = window.next_frame.dispatch_tree.reuse_subtree(
+            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+            &mut window.rendered_frame.dispatch_tree,
+        );
+        window.next_frame.deferred_draws.extend(
+            window.rendered_frame.deferred_draws
+                [range.start.deferred_draws_index..range.end.deferred_draws_index]
+                .iter()
+                .map(|deferred_draw| DeferredDraw {
+                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
+                    element_id_stack: deferred_draw.element_id_stack.clone(),
+                    text_style_stack: deferred_draw.text_style_stack.clone(),
+                    priority: deferred_draw.priority,
+                    element: None,
+                    absolute_offset: deferred_draw.absolute_offset,
+                    layout_range: deferred_draw.layout_range.clone(),
+                    paint_range: deferred_draw.paint_range.clone(),
+                }),
+        );
+    }
+
+    pub(crate) fn paint_index(&self) -> PaintIndex {
+        PaintIndex {
+            scene_index: self.window.next_frame.scene.len(),
+            mouse_listeners_index: self.window.next_frame.mouse_listeners.len(),
+            input_handlers_index: self.window.next_frame.input_handlers.len(),
+            cursor_styles_index: self.window.next_frame.cursor_styles.len(),
+            accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+            line_layout_index: self.window.text_system.layout_index(),
+        }
+    }
+
+    pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        let window = &mut self.cx.window;
+
+        window.next_frame.cursor_styles.extend(
+            window.rendered_frame.cursor_styles
+                [range.start.cursor_styles_index..range.end.cursor_styles_index]
+                .iter()
+                .cloned(),
+        );
+        window.next_frame.input_handlers.extend(
+            window.rendered_frame.input_handlers
+                [range.start.input_handlers_index..range.end.input_handlers_index]
+                .iter_mut()
+                .map(|handler| handler.take()),
+        );
+        window.next_frame.mouse_listeners.extend(
+            window.rendered_frame.mouse_listeners
+                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
+                .iter_mut()
+                .map(|listener| listener.take()),
+        );
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .cloned(),
+        );
+        window
+            .text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        window.next_frame.scene.replay(
+            range.start.scene_index..range.end.scene_index,
+            &window.rendered_frame.scene,
+        );
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
@@ -387,9 +569,9 @@ impl<'a> ElementContext<'a> {
         F: FnOnce(&mut Self) -> R,
     {
         if let Some(style) = style {
-            self.push_text_style(style);
+            self.window.text_style_stack.push(style);
             let result = f(self);
-            self.pop_text_style();
+            self.window.text_style_stack.pop();
             result
         } else {
             f(self)
@@ -397,33 +579,19 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Updates the cursor style at the platform level.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, stacking_order: StackingOrder) {
-        let view_id = self.parent_view_id();
-        let style_request = CursorStyleRequest {
-            style,
-            stacking_order,
-        };
-        if self
-            .window
-            .next_frame
-            .requested_cursor_style
-            .as_ref()
-            .map_or(true, |prev_style_request| {
-                style_request.stacking_order >= prev_style_request.stacking_order
-            })
-        {
-            self.window.next_frame.requested_cursor_style = Some(style_request.clone());
-        }
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.window
             .next_frame
             .cursor_styles
-            .insert(view_id, style_request);
+            .push(CursorStyleRequest {
+                hitbox_id: hitbox.id,
+                style,
+            });
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
-        let view_id = self.parent_view_id();
-        self.window.next_frame.tooltip_request = Some(TooltipRequest { view_id, tooltip });
+        self.window.next_frame.tooltip_requests.push(Some(tooltip));
     }
 
     /// Pushes the given element id onto the global stack and invokes the given closure
@@ -463,65 +631,6 @@ impl<'a> ElementContext<'a> {
         } else {
             f(self)
         }
-    }
-
-    /// Invoke the given function with the content mask reset to that
-    /// of the window.
-    pub fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let mask = ContentMask {
-            bounds: Bounds {
-                origin: Point::default(),
-                size: self.window().viewport_size,
-            },
-        };
-
-        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
-        let new_stacking_order_id = post_inc(
-            self.window_mut()
-                .next_frame
-                .next_stacking_order_ids
-                .last_mut()
-                .unwrap(),
-        );
-        let new_context = StackingContext {
-            z_index: new_root_z_index,
-            id: new_stacking_order_id,
-        };
-
-        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
-
-        self.window_mut().next_frame.z_index_stack.push(new_context);
-        self.window_mut().next_frame.content_mask_stack.push(mask);
-        let result = f(self);
-        self.window_mut().next_frame.content_mask_stack.pop();
-        self.window_mut().next_frame.z_index_stack = old_stacking_order;
-
-        result
-    }
-
-    /// Called during painting to invoke the given closure in a new stacking context. The given
-    /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
-        let new_stacking_order_id = post_inc(
-            self.window_mut()
-                .next_frame
-                .next_stacking_order_ids
-                .last_mut()
-                .unwrap(),
-        );
-        self.window_mut().next_frame.next_stacking_order_ids.push(0);
-        let new_context = StackingContext {
-            z_index,
-            id: new_stacking_order_id,
-        };
-
-        self.window_mut().next_frame.z_index_stack.push(new_context);
-        let result = f(self);
-        self.window_mut().next_frame.z_index_stack.pop();
-
-        self.window_mut().next_frame.next_stacking_order_ids.pop();
-
-        result
     }
 
     /// Updates the global element offset relative to the current offset. This is used to implement
@@ -592,30 +701,37 @@ impl<'a> ElementContext<'a> {
     /// when drawing the next frame.
     pub fn with_element_state<S, R>(
         &mut self,
-        id: ElementId,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+        element_id: Option<ElementId>,
+        f: impl FnOnce(Option<Option<S>>, &mut Self) -> (R, Option<S>),
     ) -> R
     where
         S: 'static,
     {
-        self.with_element_id(Some(id), |cx| {
+        let id_is_none = element_id.is_none();
+        self.with_element_id(element_id, |cx| {
+            if id_is_none {
+                let (result, state) = f(None, cx);
+                debug_assert!(state.is_none(), "you must not return an element state when passing None for the element id");
+                result
+            } else {
                 let global_id = cx.window().element_id_stack.clone();
+                let key = (global_id, TypeId::of::<S>());
+                cx.window.next_frame.accessed_element_states.push(key.clone());
 
                 if let Some(any) = cx
                     .window_mut()
                     .next_frame
                     .element_states
-                    .remove(&global_id)
+                    .remove(&key)
                     .or_else(|| {
                         cx.window_mut()
                             .rendered_frame
                             .element_states
-                            .remove(&global_id)
+                            .remove(&key)
                     })
                 {
                     let ElementStateBox {
                         inner,
-                        parent_view_id,
                         #[cfg(debug_assertions)]
                         type_name
                     } = any;
@@ -646,29 +762,26 @@ impl<'a> ElementContext<'a> {
                     // Requested: () <- AnyElement
                     let state = state_box
                         .take()
-                        .expect("element state is already on the stack");
-                    let (result, state) = f(Some(state), cx);
-                    state_box.replace(state);
+                        .expect("reentrant call to with_element_state for the same state type and element id");
+                    let (result, state) = f(Some(Some(state)), cx);
+                    state_box.replace(state.expect("you must return "));
                     cx.window_mut()
                         .next_frame
                         .element_states
-                        .insert(global_id, ElementStateBox {
+                        .insert(key, ElementStateBox {
                             inner: state_box,
-                            parent_view_id,
                             #[cfg(debug_assertions)]
                             type_name
                         });
                     result
                 } else {
-                    let (result, state) = f(None, cx);
-                    let parent_view_id = cx.parent_view_id();
+                    let (result, state) = f(Some(None), cx);
                     cx.window_mut()
                         .next_frame
                         .element_states
-                        .insert(global_id,
+                        .insert(key,
                             ElementStateBox {
-                                inner: Box::new(Some(state)),
-                                parent_view_id,
+                                inner: Box::new(Some(state.expect("you must return Some<State> when you pass some element id"))),
                                 #[cfg(debug_assertions)]
                                 type_name: std::any::type_name::<S>()
                             }
@@ -676,8 +789,61 @@ impl<'a> ElementContext<'a> {
                         );
                     result
                 }
-            })
+            }
+        })
     }
+
+    /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
+    /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
+    /// with higher values being drawn on top.
+    pub fn defer_draw(
+        &mut self,
+        element: AnyElement,
+        absolute_offset: Point<Pixels>,
+        priority: usize,
+    ) {
+        let window = &mut self.cx.window;
+        assert_eq!(
+            window.draw_phase,
+            DrawPhase::Layout,
+            "defer_draw can only be called during before_layout or after_layout"
+        );
+        let parent_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
+        window.next_frame.deferred_draws.push(DeferredDraw {
+            parent_node,
+            element_id_stack: window.element_id_stack.clone(),
+            text_style_stack: window.text_style_stack.clone(),
+            priority,
+            element: Some(element),
+            absolute_offset,
+            layout_range: AfterLayoutIndex::default()..AfterLayoutIndex::default(),
+            paint_range: PaintIndex::default()..PaintIndex::default(),
+        });
+    }
+
+    /// Creates a new painting layer for the specified bounds. A "layer" is a batch
+    /// of geometry that are non-overlapping and have the same draw order. This is typically used
+    /// for performance reasons.
+    pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        let clipped_bounds = bounds.intersect(&content_mask.bounds);
+        if !clipped_bounds.is_empty() {
+            self.window
+                .next_frame
+                .scene
+                .push_layer(clipped_bounds.scale(scale_factor));
+        }
+
+        let result = f(self);
+
+        if !clipped_bounds.is_empty() {
+            self.window.next_frame.scene.pop_layer();
+        }
+
+        result
+    }
+
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
     pub fn paint_shadows(
         &mut self,
@@ -687,26 +853,18 @@ impl<'a> ElementContext<'a> {
     ) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-        let window = &mut *self.window;
         for shadow in shadows {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                Shadow {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds: shadow_bounds.scale(scale_factor),
-                    content_mask: content_mask.scale(scale_factor),
-                    corner_radii: corner_radii.scale(scale_factor),
-                    color: shadow.color,
-                    blur_radius: shadow.blur_radius.scale(scale_factor),
-                    pad: 0,
-                },
-            );
+            self.window.next_frame.scene.insert_primitive(Shadow {
+                order: 0,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
+                bounds: shadow_bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                corner_radii: corner_radii.scale(scale_factor),
+                color: shadow.color,
+            });
         }
     }
 
@@ -716,39 +874,28 @@ impl<'a> ElementContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Quad {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: quad.bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                background: quad.background,
-                border_color: quad.border_color,
-                corner_radii: quad.corner_radii.scale(scale_factor),
-                border_widths: quad.border_widths.scale(scale_factor),
-            },
-        );
+        self.window.next_frame.scene.insert_primitive(Quad {
+            order: 0,
+            pad: 0,
+            bounds: quad.bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            background: quad.background,
+            border_color: quad.border_color,
+            corner_radii: quad.corner_radii.scale(scale_factor),
+            border_widths: quad.border_widths.scale(scale_factor),
+        });
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
         path.content_mask = content_mask;
         path.color = color.into();
-        path.view_id = view_id.into();
-        let window = &mut *self.window;
-        window
+        self.window
             .next_frame
             .scene
-            .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
+            .insert_primitive(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -769,22 +916,16 @@ impl<'a> ElementContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                color: style.color.unwrap_or_default(),
-                thickness: style.thickness.scale(scale_factor),
-                wavy: style.wavy,
-            },
-        );
+        self.window.next_frame.scene.insert_primitive(Underline {
+            order: 0,
+            pad: 0,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            color: style.color.unwrap_or_default(),
+            thickness: style.thickness.scale(scale_factor),
+            wavy: style.wavy,
+        });
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -801,22 +942,16 @@ impl<'a> ElementContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                thickness: style.thickness.scale(scale_factor),
-                color: style.color.unwrap_or_default(),
-                wavy: false,
-            },
-        );
+        self.window.next_frame.scene.insert_primitive(Underline {
+            order: 0,
+            pad: 0,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            thickness: style.thickness.scale(scale_factor),
+            color: style.color.unwrap_or_default(),
+            wavy: false,
+        });
     }
 
     /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
@@ -862,20 +997,17 @@ impl<'a> ElementContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id();
-            let window = &mut *self.window;
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                MonochromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
+            self.window
+                .next_frame
+                .scene
+                .insert_primitive(MonochromeSprite {
                     order: 0,
+                    pad: 0,
                     bounds,
                     content_mask,
                     color,
                     tile,
-                },
-            );
+                });
         }
         Ok(())
     }
@@ -919,23 +1051,18 @@ impl<'a> ElementContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id();
-            let window = &mut *self.window;
 
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                PolychromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
+            self.window
+                .next_frame
+                .scene
+                .insert_primitive(PolychromeSprite {
                     order: 0,
+                    grayscale: false,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
-                    grayscale: false,
-                    pad: 0,
-                },
-            );
+                });
         }
         Ok(())
     }
@@ -965,21 +1092,18 @@ impl<'a> ElementContext<'a> {
                     Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            MonochromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(MonochromeSprite {
                 order: 0,
+                pad: 0,
                 bounds,
                 content_mask,
                 color,
                 tile,
-            },
-        );
+            });
 
         Ok(())
     }
@@ -1004,23 +1128,18 @@ impl<'a> ElementContext<'a> {
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
-        let view_id = self.parent_view_id();
 
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            PolychromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(PolychromeSprite {
                 order: 0,
+                grayscale,
                 bounds,
                 content_mask,
                 corner_radii,
                 tile,
-                grayscale,
-                pad: 0,
-            },
-        );
+            });
         Ok(())
     }
 
@@ -1030,19 +1149,15 @@ impl<'a> ElementContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id();
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            crate::Surface {
-                view_id: view_id.into(),
-                layer_id: 0,
+        self.window
+            .next_frame
+            .scene
+            .insert_primitive(crate::Surface {
                 order: 0,
                 bounds,
                 content_mask,
                 image_buffer,
-            },
-        );
+            });
     }
 
     #[must_use]
@@ -1063,7 +1178,7 @@ impl<'a> ElementContext<'a> {
             .layout_engine
             .as_mut()
             .unwrap()
-            .request_layout(style, rem_size, &self.cx.app.layout_id_buffer)
+            .before_layout(style, rem_size, &self.cx.app.layout_id_buffer)
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -1111,81 +1226,44 @@ impl<'a> ElementContext<'a> {
         bounds
     }
 
-    pub(crate) fn layout_style(&self, layout_id: LayoutId) -> Option<&Style> {
-        self.window
-            .layout_engine
-            .as_ref()
-            .unwrap()
-            .requested_style(layout_id)
-    }
-
-    /// Called during painting to track which z-index is on top at each pixel position
-    pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        let stacking_order = self.window.next_frame.z_index_stack.clone();
-        let view_id = self.parent_view_id();
-        let depth_map = &mut self.window.next_frame.depth_map;
-        match depth_map.binary_search_by(|(level, _, _)| stacking_order.cmp(level)) {
-            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, view_id, bounds)),
-        }
-    }
-
-    /// Invoke the given function with the given focus handle present on the key dispatch stack.
-    /// If you want an element to participate in key dispatch, use this method to push its key context and focus handle into the stack during paint.
-    pub fn with_key_dispatch<R>(
-        &mut self,
-        context: Option<KeyContext>,
-        focus_handle: Option<FocusHandle>,
-        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
-    ) -> R {
+    /// This method should be called during `after_layout`. You can use
+    /// the returned [Hitbox] during `paint` or in an event handler
+    /// to determine whether the inserted hitbox was the topmost.
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+        let content_mask = self.content_mask();
         let window = &mut self.window;
-        let focus_id = focus_handle.as_ref().map(|handle| handle.id);
-        window
+        let id = window.next_hitbox_id;
+        window.next_hitbox_id.0 += 1;
+        let hitbox = Hitbox {
+            id,
+            bounds: bounds.intersect(&content_mask.bounds),
+            opaque,
+        };
+        window.next_frame.hitboxes.push(hitbox.clone());
+        hitbox
+    }
+
+    /// Sets the key context for the current element. This context will be used to translate
+    /// keybindings into actions.
+    pub fn set_key_context(&mut self, context: KeyContext) {
+        self.window
             .next_frame
             .dispatch_tree
-            .push_node(context.clone(), focus_id, None);
-
-        let result = f(focus_handle, self);
-
-        self.window.next_frame.dispatch_tree.pop_node();
-
-        result
+            .set_key_context(context);
     }
 
-    /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to layout views.
-    pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                f(self)
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                let result = f(self);
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
+    /// Sets the focus handle for the current element. This handle will be used to manage focus state
+    /// and keyboard event dispatch for the element.
+    pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .set_focus_id(focus_handle.id);
     }
 
-    /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to paint views.
-    pub fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                f(self)
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                self.window
-                    .next_frame
-                    .dispatch_tree
-                    .push_node(None, None, Some(view_id));
-                let result = f(self);
-                self.window.next_frame.dispatch_tree.pop_node();
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
+    /// Sets the view id for the current element, which will be used to manage view caching.
+    pub fn set_view_id(&mut self, view_id: EntityId) {
+        self.window.next_frame.dispatch_tree.set_view_id(view_id);
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -1196,14 +1274,11 @@ impl<'a> ElementContext<'a> {
     /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
         if focus_handle.is_focused(self) {
-            let view_id = self.parent_view_id();
-            self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
-                view_id,
-                handler: Some(PlatformInputHandler::new(
-                    self.to_async(),
-                    Box::new(input_handler),
-                )),
-            })
+            let cx = self.to_async();
+            self.window
+                .next_frame
+                .input_handlers
+                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
         }
     }
 
@@ -1214,22 +1289,13 @@ impl<'a> ElementContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
-        let view_id = self.parent_view_id();
-        let order = self.window.next_frame.z_index_stack.clone();
-        self.window
-            .next_frame
-            .mouse_listeners
-            .entry(TypeId::of::<Event>())
-            .or_default()
-            .push((
-                order,
-                view_id,
-                Box::new(
-                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
-                        handler(event.downcast_ref().unwrap(), phase, cx)
-                    },
-                ),
-            ))
+        self.window.next_frame.mouse_listeners.push(Some(Box::new(
+            move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
+                if let Some(event) = event.downcast_ref() {
+                    handler(event, phase, cx)
+                }
+            },
+        )));
     }
 
     /// Register a key event listener on the window for the next frame. The type of event

@@ -408,7 +408,7 @@ message JoinProject {
 }
 
 message JoinHostedProject {
-    uint64 id = 1;
+    uint64 project_id = 1;
 }
 
 message JoinProjectResponse {
@@ -1067,7 +1067,7 @@ message ChannelParticipants {
 }
 
 message HostedProject {
-    uint64 id = 1;
+    uint64 project_id = 1;
     uint64 channel_id = 2;
     string name = 3;
     ChannelVisibility visibility = 4;

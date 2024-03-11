@@ -493,7 +493,7 @@ impl Item for ProjectSearchView {
             });
         let tab_name = last_query
             .filter(|query| !query.is_empty())
-            .unwrap_or_else(|| "Project search".into());
+            .unwrap_or_else(|| "Project Search".into());
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).color(if selected {

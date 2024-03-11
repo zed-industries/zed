@@ -630,7 +630,7 @@ impl Pane {
         self.items.len()
     }
 
-    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
+    pub fn items(&self) -> impl DoubleEndedIterator<Item = &Box<dyn ItemHandle>> {
         self.items.iter()
     }
 
@@ -1164,7 +1164,7 @@ impl Pane {
                     matches!(
                         WorkspaceSettings::get_global(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-                    ) && Self::can_autosave_item(&*item, cx)
+                    ) && Self::can_autosave_item(item, cx)
                 })?;
                 if !will_autosave {
                     let answer = pane.update(cx, |pane, cx| {
@@ -1561,7 +1561,6 @@ impl Pane {
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .bottom_0()
             .right_0()
             .size_0()
@@ -1886,7 +1885,6 @@ impl Render for Pane {
                     .child(
                         // drag target
                         div()
-                            .z_index(1)
                             .invisible()
                             .absolute()
                             .bg(theme::color_alpha(

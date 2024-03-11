@@ -3,9 +3,12 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{anyhow, Context};
 use aws_sdk_s3::primitives::ByteStream;
 use axum::{
-    body::Bytes, headers::Header, http::HeaderName, routing::post, Extension, Router, TypedHeader,
+    body::Bytes,
+    headers::Header,
+    http::{HeaderMap, HeaderName, StatusCode},
+    routing::post,
+    Extension, Router, TypedHeader,
 };
-use hyper::{HeaderMap, StatusCode};
 use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use telemetry_events::{
@@ -81,8 +84,8 @@ impl Header for CloudflareIpCountryHeader {
 
 pub async fn post_crash(
     Extension(app): Extension<Arc<AppState>>,
-    body: Bytes,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Result<()> {
     static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
 

@@ -60,6 +60,7 @@ pub unsafe fn new_renderer(
             gpu::ContextDesc {
                 validation: cfg!(debug_assertions),
                 capture: false,
+                overlay: false,
             },
         )
         .unwrap(),

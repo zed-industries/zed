@@ -43,8 +43,8 @@ impl From<axum::Error> for Error {
     }
 }
 
-impl From<hyper::Error> for Error {
-    fn from(error: hyper::Error) -> Self {
+impl From<axum::http::Error> for Error {
+    fn from(error: axum::http::Error) -> Self {
         Self::Internal(error.into())
     }
 }

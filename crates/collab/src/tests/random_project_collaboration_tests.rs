@@ -1483,10 +1483,10 @@ fn project_for_root_name(
     root_name: &str,
     cx: &TestAppContext,
 ) -> Option<Model<Project>> {
-    if let Some(ix) = project_ix_for_root_name(&*client.local_projects().deref(), root_name, cx) {
+    if let Some(ix) = project_ix_for_root_name(client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
-    if let Some(ix) = project_ix_for_root_name(&*client.remote_projects().deref(), root_name, cx) {
+    if let Some(ix) = project_ix_for_root_name(client.remote_projects().deref(), root_name, cx) {
         return Some(client.remote_projects()[ix].clone());
     }
     None

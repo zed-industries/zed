@@ -171,7 +171,7 @@ impl Database {
             .filter(channel_message_mention::Column::MessageId.is_in(messages.iter().map(|m| m.id)))
             .order_by_asc(channel_message_mention::Column::MessageId)
             .order_by_asc(channel_message_mention::Column::StartOffset)
-            .stream(&*tx)
+            .stream(tx)
             .await?;
 
         let mut message_ix = 0;
@@ -384,7 +384,7 @@ impl Database {
             .to_owned(),
         )
         // TODO: Try to upgrade SeaORM so we don't have to do this hack around their bug
-        .exec_without_returning(&*tx)
+        .exec_without_returning(tx)
         .await?;
         Ok(())
     }
@@ -401,7 +401,7 @@ impl Database {
                 observed_channel_messages::Column::ChannelId
                     .is_in(channel_ids.iter().map(|id| id.0)),
             )
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         Ok(rows
@@ -452,7 +452,7 @@ impl Database {
 
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
         let mut last_messages = channel_message::Model::find_by_statement(stmt)
-            .stream(&*tx)
+            .stream(tx)
             .await?;
 
         let mut results = Vec::new();

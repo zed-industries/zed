@@ -8,7 +8,7 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, ElementContext, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    Element, ElementContext, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
     StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
@@ -94,6 +94,12 @@ struct LayoutItemsResponse {
     scroll_top: ListOffset,
     available_item_space: Size<AvailableSpace>,
     item_elements: VecDeque<AnyElement>,
+}
+
+/// Frame state used by the [List] element after layout.
+pub struct ListAfterLayoutState {
+    hitbox: Hitbox,
+    layout: LayoutItemsResponse,
 }
 
 #[derive(Clone)]
@@ -241,7 +247,7 @@ impl ListState {
             let mut cursor = state.items.cursor::<ListItemSummary>();
             cursor.seek(&Count(ix + 1), Bias::Right, &());
             let bottom = cursor.start().height + padding.top;
-            let goal_top = px(0.).max(bottom - height);
+            let goal_top = px(0.).max(bottom - height + padding.bottom);
 
             cursor.seek(&Height(goal_top), Bias::Left, &());
             let start_ix = cursor.start().count;
@@ -302,7 +308,6 @@ impl StateInner {
         height: Pixels,
         delta: Point<Pixels>,
         cx: &mut WindowContext,
-        padding: Edges<Pixels>,
     ) {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
@@ -310,6 +315,7 @@ impl StateInner {
             return;
         }
 
+        let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
         let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
@@ -516,13 +522,13 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type State = ();
+    type BeforeLayout = ();
+    type AfterLayout = ListAfterLayoutState;
 
-    fn request_layout(
+    fn before_layout(
         &mut self,
-        _state: Option<Self::State>,
         cx: &mut crate::ElementContext,
-    ) -> (crate::LayoutId, Self::State) {
+    ) -> (crate::LayoutId, Self::BeforeLayout) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();
@@ -583,17 +589,19 @@ impl Element for List {
         (layout_id, ())
     }
 
-    fn paint(
+    fn after_layout(
         &mut self,
-        bounds: Bounds<crate::Pixels>,
-        _state: &mut Self::State,
-        cx: &mut crate::ElementContext,
-    ) {
+        bounds: Bounds<Pixels>,
+        _: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> ListAfterLayoutState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
         let mut style = Style::default();
         style.refine(&self.style);
+
+        let hitbox = cx.insert_hitbox(bounds, false);
 
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
@@ -615,33 +623,46 @@ impl Element for List {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for item_element in &mut layout_response.item_elements {
-                    let item_height = item_element
-                        .measure(layout_response.available_item_space, cx)
-                        .height;
-                    item_element.draw(item_origin, layout_response.available_item_space, cx);
-                    item_origin.y += item_height;
+                for mut item_element in &mut layout_response.item_elements {
+                    let item_size = item_element.measure(layout_response.available_item_space, cx);
+                    item_element.layout(item_origin, layout_response.available_item_space, cx);
+                    item_origin.y += item_size.height;
                 }
             });
         }
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
+        ListAfterLayoutState {
+            hitbox,
+            layout: layout_response,
+        }
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<crate::Pixels>,
+        _: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
+        cx: &mut crate::ElementContext,
+    ) {
+        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+            for item in &mut after_layout.layout.item_elements {
+                item.paint(cx);
+            }
+        });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-
+        let scroll_top = after_layout.layout.scroll_top;
+        let hitbox_id = after_layout.hitbox.id;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-            if phase == DispatchPhase::Bubble
-                && bounds.contains(&event.position)
-                && cx.was_top_layer(&event.position, cx.stacking_order())
-            {
+            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
                 list_state.0.borrow_mut().scroll(
-                    &layout_response.scroll_top,
+                    &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
                     cx,
-                    padding,
                 )
             }
         });
@@ -650,10 +671,6 @@ impl Element for List {
 
 impl IntoElement for List {
     type Element = Self;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
@@ -761,7 +778,7 @@ mod test {
         cx.draw(
             point(px(0.), px(0.)),
             size(px(100.), px(20.)).into(),
-            |_| list(state.clone()).w_full().h_full().z_index(10).into_any(),
+            |_| list(state.clone()).w_full().h_full().into_any(),
         );
 
         // Reset

@@ -183,7 +183,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         msg: &str,
         detail: Option<&str>,
         answers: &[&str],
-    ) -> oneshot::Receiver<usize>;
+    ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);

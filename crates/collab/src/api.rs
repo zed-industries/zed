@@ -11,7 +11,7 @@ use crate::{
 use anyhow::anyhow;
 use axum::{
     body::Body,
-    extract::{Path, Query},
+    extract::{self, Path, Query},
     http::{self, Request, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
@@ -26,7 +26,7 @@ use tower::ServiceBuilder;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
 
-pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -176,8 +176,8 @@ async fn check_is_contributor(
 }
 
 async fn add_contributor(
-    Json(params): Json<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
+    extract::Json(params): extract::Json<AuthenticatedUserParams>,
 ) -> Result<()> {
     app.db
         .add_contributor(

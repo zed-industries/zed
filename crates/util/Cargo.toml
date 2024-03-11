@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/util.rs"
 doctest = true
@@ -25,6 +28,7 @@ lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
+regex.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true

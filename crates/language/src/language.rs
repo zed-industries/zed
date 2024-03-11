@@ -40,7 +40,7 @@ use smol::future::FutureExt as _;
 use std::{
     any::Any,
     cell::RefCell,
-    ffi::OsString,
+    ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -277,7 +277,8 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
-    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)>;
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
 }
 

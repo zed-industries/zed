@@ -98,7 +98,7 @@ impl Database {
                     .add(server::Column::Environment.eq(environment))
                     .add(server::Column::Id.ne(new_server_id)),
             )
-            .all(&*tx)
+            .all(tx)
             .await?;
         Ok(stale_servers.into_iter().map(|server| server.id).collect())
     }

@@ -114,12 +114,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    // Highlight the selected symbol using a background highlight
-                    this.highlight_inlay_background::<HoverState>(
-                        vec![inlay_hover.range],
-                        |theme| theme.element_hover, // todo("use a proper background here")
-                        cx,
-                    );
+                    // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popover = Some(hover_popover);
                     cx.notify();
                 })?;
@@ -294,18 +289,19 @@ fn show_hover(
             let hover_popover = match hover_result {
                 Some(hover_result) if !hover_result.is_empty() => {
                     // Create symbol range of anchors for highlighting and filtering of future requests.
-                    let range = if let Some(range) = hover_result.range {
-                        let start = snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id, range.start);
-                        let end = snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id, range.end);
+                    let range = hover_result
+                        .range
+                        .and_then(|range| {
+                            let start = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, range.start)?;
+                            let end = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, range.end)?;
 
-                        start..end
-                    } else {
-                        anchor..anchor
-                    };
+                            Some(start..end)
+                        })
+                        .unwrap_or_else(|| anchor..anchor);
 
                     let language_registry =
                         project.update(&mut cx, |p, _| p.languages().clone())?;
@@ -503,9 +499,10 @@ impl InfoPopover {
             .overflow_y_scroll()
             .max_w(max_size.width)
             .max_h(max_size.height)
-            // Prevent a mouse move on the popover from being propagated to the editor,
+            // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,
@@ -567,6 +564,7 @@ impl DiagnosticPopover {
 
         div()
             .id("diagnostic")
+            .block()
             .elevation_2(cx)
             .overflow_y_scroll()
             .px_2()
@@ -606,11 +604,10 @@ mod tests {
     use super::*;
     use crate::{
         editor_tests::init_test,
-        element::PointForPosition,
         hover_links::update_inlay_link_and_hover_points,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
-        InlayId,
+        InlayId, PointForPosition,
     };
     use collections::BTreeSet;
     use gpui::{FontWeight, HighlightStyle, UnderlineStyle};

@@ -88,6 +88,22 @@ You can see the bindings that are enabled by default in vim mode [here](https://
 
 The details of the context are a little out of scope for this doc, but suffice to say that `menu` is true when a menu is open (e.g. the completions menu), `VimWaiting` is true after you type `f` or `t` when we’re waiting for a new key (and you probably don’t want bindings to happen). Please reach out on [GitHub](https://github.com/zed-industries/zed) if you want help making a key bindings work.
 
+## Subword motion
+
+Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
+
+```json
+  {
+    "context": "Editor && VimControl && !VimWaiting && !menu",
+    "bindings": {
+      "w": "vim::NextSubwordStart",
+      "b": "vim::PreviousSubwordStart",
+      "e": "vim::NextSubwordEnd",
+      "g e": "vim::PreviousSubwordEnd"
+    }
+  },
+```
+
 ## Command palette
 
 Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
@@ -156,7 +172,9 @@ Some vim settings are available to modify the default vim behavior:
     // "on_yank": use system clipboard for yank operations
     "use_system_clipboard": "always",
     // Enable multi-line find for `f` and `t` motions
-    "use_multiline_find": false
+    "use_multiline_find": false,
+    // Enable smartcase find for `f` and `t` motions
+    "use_smartcase_find": false
   }
 }
 ```

@@ -1,16 +1,17 @@
+blank_issues_enabled: false
 contact_links:
-    - name: Language Request
-      url: https://github.com/zed-industries/extensions/issues/new?assignees=&labels=language&projects=&template=1_language_request.yml&title=%3Cname_of_language%3E
-      about: Request a language in the extensions repository
-    - name: Theme Request
-      url: https://github.com/zed-industries/extensions/issues/new?assignees=&labels=theme&projects=&template=0_theme_request.yml&title=%3Cname_of_theme%3E+theme
-      about: Request a theme in the extensions repository
-    - name: Top-Ranking Issues
-      url: https://github.com/zed-industries/zed/issues/5393
-      about: See an overview of the most popular Zed issues
-    - name: Platform Support
-      url: https://github.com/zed-industries/zed/issues/5391
-      about: A quick note on platform support
-    - name: Positive Feedback
-      url: https://github.com/zed-industries/zed/discussions/5397
-      about: A central location for kind words about Zed
+  - name: Language Request
+    url: https://github.com/zed-industries/extensions/issues/new?assignees=&labels=language&projects=&template=1_language_request.yml&title=%3Cname_of_language%3E
+    about: Request a language in the extensions repository
+  - name: Theme Request
+    url: https://github.com/zed-industries/extensions/issues/new?assignees=&labels=theme&projects=&template=0_theme_request.yml&title=%3Cname_of_theme%3E+theme
+    about: Request a theme in the extensions repository
+  - name: Top-Ranking Issues
+    url: https://github.com/zed-industries/zed/issues/5393
+    about: See an overview of the most popular Zed issues
+  - name: Platform Support
+    url: https://github.com/zed-industries/zed/issues/5391
+    about: A quick note on platform support
+  - name: Positive Feedback
+    url: https://github.com/zed-industries/zed/discussions/5397
+    about: A central location for kind words about Zed

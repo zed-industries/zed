@@ -36,14 +36,14 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use ::git::diff::DiffHunk;
+use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
@@ -51,7 +51,9 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
 use element::LineWithInvisibles;
-pub use element::{Cursor, EditorElement, HighlightedRange, HighlightedRangeLine};
+pub use element::{
+    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
+};
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
@@ -60,9 +62,9 @@ use gpui::{
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakView, WhiteSpace, WindowContext,
+    ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -89,6 +91,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::Item;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
@@ -110,7 +113,6 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
-use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
     observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
@@ -248,7 +250,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewFile, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -257,7 +259,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -322,7 +324,7 @@ pub struct EditorStyle {
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
-    pub inlays_style: HighlightStyle,
+    pub inlay_hints_style: HighlightStyle,
     pub suggestions_style: HighlightStyle,
 }
 
@@ -338,7 +340,7 @@ impl Default for EditorStyle {
             // We should look into removing the status colors from the editor
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
-            inlays_style: HighlightStyle::default(),
+            inlay_hints_style: HighlightStyle::default(),
             suggestions_style: HighlightStyle::default(),
         }
     }
@@ -350,7 +352,6 @@ type CompletionId = usize;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
-type InlayBackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<InlayHighlight>);
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -387,9 +388,9 @@ pub struct Editor {
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
-    highlighted_rows: Option<Range<u32>>,
+    highlight_order: usize,
+    highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
-    inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -424,6 +425,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -928,6 +930,15 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
+
+                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                                        highlight.strikethrough = Some(StrikethroughStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        });
+                                        highlight.color = Some(cx.theme().colors().text_muted);
+                                    }
+
                                     (range, highlight)
                                 },
                             ),
@@ -1213,6 +1224,7 @@ impl CodeActionsMenu {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
@@ -1514,9 +1526,9 @@ impl Editor {
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
-            highlighted_rows: None,
+            highlight_order: 0,
+            highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
-            inlay_background_highlights: Default::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -1538,6 +1550,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1826,6 +1839,10 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
+        self.auto_replace_emoji_shortcode = auto_replace;
     }
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
@@ -2504,6 +2521,47 @@ impl Editor {
                 }
             }
 
+            if self.auto_replace_emoji_shortcode
+                && selection.is_empty()
+                && text.as_ref().ends_with(':')
+            {
+                if let Some(possible_emoji_short_code) =
+                    Self::find_possible_emoji_shortcode_at_position(&snapshot, selection.start)
+                {
+                    if !possible_emoji_short_code.is_empty() {
+                        if let Some(emoji) = emojis::get_by_shortcode(&possible_emoji_short_code) {
+                            let emoji_shortcode_start = Point::new(
+                                selection.start.row,
+                                selection.start.column - possible_emoji_short_code.len() as u32 - 1,
+                            );
+
+                            // Remove shortcode from buffer
+                            edits.push((
+                                emoji_shortcode_start..selection.start,
+                                "".to_string().into(),
+                            ));
+                            new_selections.push((
+                                Selection {
+                                    id: selection.id,
+                                    start: snapshot.anchor_after(emoji_shortcode_start),
+                                    end: snapshot.anchor_before(selection.start),
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                                0,
+                            ));
+
+                            // Insert emoji
+                            let selection_start_anchor = snapshot.anchor_after(selection.start);
+                            new_selections.push((selection.map(|_| selection_start_anchor), 0));
+                            edits.push((selection.start..selection.end, emoji.to_string().into()));
+
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
@@ -2585,6 +2643,53 @@ impl Editor {
                 this.refresh_copilot_suggestions(true, cx);
             }
         });
+    }
+
+    fn find_possible_emoji_shortcode_at_position(
+        snapshot: &MultiBufferSnapshot,
+        position: Point,
+    ) -> Option<String> {
+        let mut chars = Vec::new();
+        let mut found_colon = false;
+        for char in snapshot.reversed_chars_at(position).take(100) {
+            // Found a possible emoji shortcode in the middle of the buffer
+            if found_colon {
+                if char.is_whitespace() {
+                    chars.reverse();
+                    return Some(chars.iter().collect());
+                }
+                // If the previous character is not a whitespace, we are in the middle of a word
+                // and we only want to complete the shortcode if the word is made up of other emojis
+                let mut containing_word = String::new();
+                for ch in snapshot
+                    .reversed_chars_at(position)
+                    .skip(chars.len() + 1)
+                    .take(100)
+                {
+                    if ch.is_whitespace() {
+                        break;
+                    }
+                    containing_word.push(ch);
+                }
+                let containing_word = containing_word.chars().rev().collect::<String>();
+                if util::word_consists_of_emojis(containing_word.as_str()) {
+                    chars.reverse();
+                    return Some(chars.iter().collect());
+                }
+            }
+
+            if char.is_whitespace() || !char.is_ascii() {
+                return None;
+            }
+            if char == ':' {
+                found_colon = true;
+            } else {
+                chars.push(char);
+            }
+        }
+        // Found a possible emoji shortcode at the beginning of the buffer
+        chars.reverse();
+        Some(chars.iter().collect())
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
@@ -3040,7 +3145,7 @@ impl Editor {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
                     self.inlay_hint_cache.clear();
-                    self.splice_inlay_hints(
+                    self.splice_inlays(
                         self.visible_inlay_hints(cx)
                             .iter()
                             .map(|inlay| inlay.id)
@@ -3062,7 +3167,7 @@ impl Editor {
                         to_remove,
                         to_insert,
                     })) => {
-                        self.splice_inlay_hints(to_remove, to_insert, cx);
+                        self.splice_inlays(to_remove, to_insert, cx);
                         return;
                     }
                     ControlFlow::Break(None) => return,
@@ -3075,7 +3180,7 @@ impl Editor {
                     to_insert,
                 }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
                 {
-                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                    self.splice_inlays(to_remove, to_insert, cx);
                 }
                 return;
             }
@@ -3098,7 +3203,7 @@ impl Editor {
             ignore_debounce,
             cx,
         ) {
-            self.splice_inlay_hints(to_remove, to_insert, cx);
+            self.splice_inlays(to_remove, to_insert, cx);
         }
     }
 
@@ -3106,9 +3211,7 @@ impl Editor {
         self.display_map
             .read(cx)
             .current_inlays()
-            .filter(move |inlay| {
-                Some(inlay.id) != self.copilot_state.suggestion.as_ref().map(|h| h.id)
-            })
+            .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
             .cloned()
             .collect()
     }
@@ -3179,7 +3282,7 @@ impl Editor {
         }
     }
 
-    fn splice_inlay_hints(
+    fn splice_inlays(
         &self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -4087,7 +4190,10 @@ impl Editor {
     }
 
     fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
-        self.copilot_state = Default::default();
+        if let Some(old_suggestion) = self.copilot_state.suggestion.take() {
+            self.splice_inlays(vec![old_suggestion.id], Vec::new(), cx);
+        }
+        self.copilot_state = CopilotState::default();
         self.discard_copilot_suggestion(cx);
     }
 
@@ -4119,14 +4225,14 @@ impl Editor {
     }
 
     pub fn render_fold_indicators(
-        &self,
+        &mut self,
         fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
         _style: &EditorStyle,
         gutter_hovered: bool,
         _line_height: Pixels,
         _gutter_margin: Pixels,
-        editor_view: View<Editor>,
-    ) -> Vec<Option<IconButton>> {
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Option<AnyElement>> {
         fold_data
             .iter()
             .enumerate()
@@ -4135,24 +4241,20 @@ impl Editor {
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
                             IconButton::new(ix, ui::IconName::ChevronDown)
-                                .on_click({
-                                    let view = editor_view.clone();
-                                    move |_e, cx| {
-                                        view.update(cx, |editor, cx| match fold_status {
-                                            FoldStatus::Folded => {
-                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                            }
-                                            FoldStatus::Foldable => {
-                                                editor.fold_at(&FoldAt { buffer_row }, cx);
-                                            }
-                                        })
+                                .on_click(cx.listener(move |this, _e, cx| match fold_status {
+                                    FoldStatus::Folded => {
+                                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
                                     }
-                                })
+                                    FoldStatus::Foldable => {
+                                        this.fold_at(&FoldAt { buffer_row }, cx);
+                                    }
+                                }))
                                 .icon_color(ui::Color::Muted)
                                 .icon_size(ui::IconSize::Small)
                                 .selected(fold_status == FoldStatus::Folded)
                                 .selected_icon(ui::IconName::ChevronRight)
                                 .size(ui::ButtonSize::None)
+                                .into_any_element()
                         })
                     })
                     .flatten()
@@ -4834,6 +4936,105 @@ impl Editor {
         })
     }
 
+    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
+        let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.buffer().update(cx, |multi_buffer, cx| {
+                    for (buffer_id, buffer_revert_ranges) in revert_changes {
+                        if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(buffer_revert_ranges, None, cx);
+                            });
+                        }
+                    }
+                });
+                editor.change_selections(None, cx, |selections| selections.refresh());
+            });
+        }
+    }
+
+    fn gather_revert_changes(
+        &mut self,
+        selections: &[Selection<Anchor>],
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>> {
+        let mut revert_changes = HashMap::default();
+        self.buffer.update(cx, |multi_buffer, cx| {
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let selected_multi_buffer_rows = selections.iter().map(|selection| {
+                let head = selection.head();
+                let tail = selection.tail();
+                let start = tail.to_point(&multi_buffer_snapshot).row;
+                let end = head.to_point(&multi_buffer_snapshot).row;
+                if start > end {
+                    end..start
+                } else {
+                    start..end
+                }
+            });
+
+            let mut processed_buffer_rows =
+                HashMap::<BufferId, HashSet<Range<text::Anchor>>>::default();
+            for selected_multi_buffer_rows in selected_multi_buffer_rows {
+                let query_rows =
+                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+                for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+                    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+                    // when the caret is just above or just below the deleted hunk.
+                    let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                    let related_to_selection = if allow_adjacent {
+                        hunk.associated_range.overlaps(&query_rows)
+                            || hunk.associated_range.start == query_rows.end
+                            || hunk.associated_range.end == query_rows.start
+                    } else {
+                        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                        // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+                        hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                            || selected_multi_buffer_rows.end == hunk.associated_range.start
+                    };
+                    if related_to_selection {
+                        if !processed_buffer_rows
+                            .entry(hunk.buffer_id)
+                            .or_default()
+                            .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                        {
+                            continue;
+                        }
+                        Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
+                    }
+                }
+            }
+        });
+        revert_changes
+    }
+
+    fn prepare_revert_change(
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>,
+        multi_buffer: &MultiBuffer,
+        hunk: &DiffHunk<u32>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
+        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
+        let original_text = buffer.diff_base()?.get(hunk.diff_base_byte_range.clone())?;
+        let buffer_snapshot = buffer.snapshot();
+        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
+        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
+            probe
+                .0
+                .start
+                .cmp(&hunk.buffer_range.start, &buffer_snapshot)
+                .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
+                .then(probe.1.as_ref().cmp(original_text))
+        }) {
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), Arc::from(original_text)));
+            Some(())
+        } else {
+            None
+        }
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, cx: &mut ViewContext<Self>) {
         self.manipulate_lines(cx, |lines| lines.reverse())
     }
@@ -5031,7 +5232,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5052,14 +5253,20 @@ impl Editor {
                 }
             }
 
-            // Copy the text from the selected row region and splice it at the start of the region.
+            // Copy the text from the selected row region and splice it either at the start
+            // or end of the region.
             let start = Point::new(rows.start, 0);
             let end = Point::new(rows.end - 1, buffer.line_len(rows.end - 1));
             let text = buffer
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start..start, text));
+            let insert_location = if action.move_upwards {
+                Point::new(rows.end, 0)
+            } else {
+                start
+            };
+            edits.push((insert_location..insert_location, text));
         }
 
         self.transact(cx, |this, cx| {
@@ -7958,7 +8165,7 @@ impl Editor {
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
                                                 status: cx.editor_style.status.clone(),
-                                                inlays_style: HighlightStyle {
+                                                inlay_hints_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
                                                     ..HighlightStyle::default()
@@ -8657,22 +8864,23 @@ impl Editor {
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         use git::permalink::{build_permalink, BuildPermalinkParams};
 
-        let project = self.project.clone().ok_or_else(|| anyhow!("no project"))?;
-        let project = project.read(cx);
-
-        let worktree = project
-            .visible_worktrees(cx)
-            .next()
-            .ok_or_else(|| anyhow!("no worktree"))?;
-
-        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-        cwd.push(".git");
+        let (path, repo) = maybe!({
+            let project_handle = self.project.as_ref()?.clone();
+            let project = project_handle.read(cx);
+            let buffer = self.buffer().read(cx).as_singleton()?;
+            let path = buffer
+                .read(cx)
+                .file()?
+                .as_local()?
+                .path()
+                .to_str()?
+                .to_string();
+            let repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
+            Some((path, repo))
+        })
+        .ok_or_else(|| anyhow!("unable to open git repository"))?;
 
         const REMOTE_NAME: &str = "origin";
-        let repo = project
-            .fs()
-            .open_repo(&cwd)
-            .ok_or_else(|| anyhow!("no Git repo"))?;
         let origin_url = repo
             .lock()
             .remote_url(REMOTE_NAME)
@@ -8681,14 +8889,6 @@ impl Editor {
             .lock()
             .head_sha()
             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-
-        let path = maybe!({
-            let buffer = self.buffer().read(cx).as_singleton()?;
-            let file = buffer.read(cx).file().and_then(|f| f.as_local())?;
-            file.path().to_str().map(|path| path.to_string())
-        })
-        .ok_or_else(|| anyhow!("failed to determine file path"))?;
-
         let selections = self.selections.all::<Point>(cx);
         let selection = selections.iter().peekable().next();
 
@@ -8726,7 +8926,7 @@ impl Editor {
 
         match permalink {
             Ok(permalink) => {
-                cx.open_url(&permalink.to_string());
+                cx.open_url(permalink.as_ref());
             }
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");
@@ -8742,12 +8942,93 @@ impl Editor {
         }
     }
 
-    pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
-        self.highlighted_rows = rows;
+    /// Adds or removes (on `None` color) a highlight for the rows corresponding to the anchor range given.
+    /// On matching anchor range, replaces the old highlight; does not clear the other existing highlights.
+    /// If multiple anchor ranges will produce highlights for the same row, the last range added will be used.
+    pub fn highlight_rows<T: 'static>(
+        &mut self,
+        rows: Range<Anchor>,
+        color: Option<Hsla>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        match self.highlighted_rows.entry(TypeId::of::<T>()) {
+            hash_map::Entry::Occupied(o) => {
+                let row_highlights = o.into_mut();
+                let existing_highlight_index =
+                    row_highlights.binary_search_by(|(_, highlight_range, _)| {
+                        highlight_range
+                            .start
+                            .cmp(&rows.start, &multi_buffer_snapshot)
+                            .then(highlight_range.end.cmp(&rows.end, &multi_buffer_snapshot))
+                    });
+                match color {
+                    Some(color) => {
+                        let insert_index = match existing_highlight_index {
+                            Ok(i) => i,
+                            Err(i) => i,
+                        };
+                        row_highlights.insert(
+                            insert_index,
+                            (post_inc(&mut self.highlight_order), rows, color),
+                        );
+                    }
+                    None => {
+                        if let Ok(i) = existing_highlight_index {
+                            row_highlights.remove(i);
+                        }
+                    }
+                }
+            }
+            hash_map::Entry::Vacant(v) => {
+                if let Some(color) = color {
+                    v.insert(vec![(post_inc(&mut self.highlight_order), rows, color)]);
+                }
+            }
+        }
     }
 
-    pub fn highlighted_rows(&self) -> Option<Range<u32>> {
-        self.highlighted_rows.clone()
+    /// Clear all anchor ranges for a certain highlight context type, so no corresponding rows will be highlighted.
+    pub fn clear_row_highlights<T: 'static>(&mut self) {
+        self.highlighted_rows.remove(&TypeId::of::<T>());
+    }
+
+    /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
+    pub fn highlighted_rows<T: 'static>(
+        &self,
+    ) -> Option<impl Iterator<Item = (&Range<Anchor>, &Hsla)>> {
+        Some(
+            self.highlighted_rows
+                .get(&TypeId::of::<T>())?
+                .iter()
+                .map(|(_, range, color)| (range, color)),
+        )
+    }
+
+    // Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
+    // Rerturns a map of display rows that are highlighted and their corresponding highlight color.
+    pub fn highlighted_display_rows(&mut self, cx: &mut WindowContext) -> BTreeMap<u32, Hsla> {
+        let snapshot = self.snapshot(cx);
+        let mut used_highlight_orders = HashMap::default();
+        self.highlighted_rows
+            .iter()
+            .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
+            .fold(
+                BTreeMap::<u32, Hsla>::new(),
+                |mut unique_rows, (highlight_order, anchor_range, hsla)| {
+                    let start_row = anchor_range.start.to_display_point(&snapshot).row();
+                    let end_row = anchor_range.end.to_display_point(&snapshot).row();
+                    for row in start_row..=end_row {
+                        let used_index =
+                            used_highlight_orders.entry(row).or_insert(*highlight_order);
+                        if highlight_order >= used_index {
+                            *used_index = *highlight_order;
+                            unique_rows.insert(row, *hsla);
+                        }
+                    }
+                    unique_rows
+                },
+            )
     }
 
     pub fn highlight_background<T: 'static>(
@@ -8772,29 +9053,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub(crate) fn highlight_inlay_background<T: 'static>(
-        &mut self,
-        ranges: Vec<InlayHighlight>,
-        color_fetcher: fn(&ThemeColors) -> Hsla,
-        cx: &mut ViewContext<Self>,
-    ) {
-        // TODO: no actual highlights happen for inlays currently, find a way to do that
-        self.inlay_background_highlights
-            .insert(Some(TypeId::of::<T>()), (color_fetcher, ranges));
-        cx.notify();
-    }
-
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
-        let inlay_highlights = self
-            .inlay_background_highlights
-            .remove(&Some(TypeId::of::<T>()));
-        if text_highlights.is_some() || inlay_highlights.is_some() {
-            cx.notify();
-        }
         text_highlights
     }
 
@@ -8971,7 +9234,7 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        cx: &mut ViewContext<Self>,
+        cx: &WindowContext,
     ) -> Vec<Range<DisplayPoint>> {
         display_snapshot
             .buffer_snapshot
@@ -9742,7 +10005,7 @@ impl EditorSnapshot {
         self.is_focused
     }
 
-    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&Arc<str>> {
+    pub fn placeholder_text(&self) -> Option<&Arc<str>> {
         self.placeholder_text.as_ref()
     }
 
@@ -9906,7 +10169,7 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlays_style: HighlightStyle {
+                inlay_hints_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
                     ..HighlightStyle::default()
                 },

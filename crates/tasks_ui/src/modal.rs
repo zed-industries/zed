@@ -2,9 +2,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
@@ -18,7 +18,16 @@ use workspace::{ModalView, Workspace};
 
 use crate::schedule_task;
 use serde::Deserialize;
-actions!(task, [Spawn]);
+
+/// Spawn a task with name or open tasks modal
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct Spawn {
+    #[serde(default)]
+    /// Name of the task to spawn.
+    /// If it is not set, a modal with a list of available tasks is opened instead.
+    /// Defaults to None.
+    pub task_name: Option<String>,
+}
 
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -31,7 +40,7 @@ pub struct Rerun {
     pub reevaluate_context: bool,
 }
 
-impl_actions!(task, [Rerun]);
+impl_actions!(task, [Rerun, Spawn]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
@@ -426,7 +435,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<TasksModalDelegate>> {
-        cx.dispatch_action(crate::modal::Spawn);
+        cx.dispatch_action(crate::modal::Spawn::default());
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<TasksModal>(cx)

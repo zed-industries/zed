@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [dependencies]
 gpui.workspace = true
 once_cell = "1.19.0"

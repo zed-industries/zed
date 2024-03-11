@@ -7,12 +7,12 @@ use anyhow::{anyhow, Context as _};
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     extract::{Path, Query},
+    http::StatusCode,
     response::Redirect,
     routing::get,
     Extension, Json, Router,
 };
 use collections::HashMap;
-use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;

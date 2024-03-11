@@ -186,7 +186,7 @@ impl Database {
                     .update_column(worktree::Column::RootName)
                     .to_owned(),
             )
-            .exec(&*tx)
+            .exec(tx)
             .await?;
         }
 
@@ -194,7 +194,7 @@ impl Database {
             .filter(worktree::Column::ProjectId.eq(project_id).and(
                 worktree::Column::Id.is_not_in(worktrees.iter().map(|worktree| worktree.id as i64)),
             ))
-            .exec(&*tx)
+            .exec(tx)
             .await?;
 
         Ok(())
@@ -512,17 +512,29 @@ impl Database {
     /// Adds the given connection to the specified hosted project
     pub async fn join_hosted_project(
         &self,
-        id: HostedProjectId,
+        id: ProjectId,
         user_id: UserId,
         connection: ConnectionId,
     ) -> Result<(Project, ReplicaId)> {
         self.transaction(|tx| async move {
-            let (hosted_project, role) = self.get_hosted_project(id, user_id, &tx).await?;
-            let project = project::Entity::find()
-                .filter(project::Column::HostedProjectId.eq(hosted_project.id))
+            let (project, hosted_project) = project::Entity::find_by_id(id)
+                .find_also_related(hosted_project::Entity)
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("hosted project is no longer shared"))?;
+
+            let Some(hosted_project) = hosted_project else {
+                return Err(anyhow!("project is not hosted"))?;
+            };
+
+            let channel = channel::Entity::find_by_id(hosted_project.channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+
+            let role = self
+                .check_user_is_channel_participant(&channel, user_id, &tx)
+                .await?;
 
             self.join_project_internal(project, user_id, connection, role, &tx)
                 .await
@@ -584,7 +596,7 @@ impl Database {
     ) -> Result<(Project, ReplicaId)> {
         let mut collaborators = project
             .find_related(project_collaborator::Entity)
-            .all(&*tx)
+            .all(tx)
             .await?;
         let replica_ids = collaborators
             .iter()
@@ -603,11 +615,11 @@ impl Database {
             is_host: ActiveValue::set(false),
             ..Default::default()
         }
-        .insert(&*tx)
+        .insert(tx)
         .await?;
         collaborators.push(new_collaborator);
 
-        let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
+        let db_worktrees = project.find_related(worktree::Entity).all(tx).await?;
         let mut worktrees = db_worktrees
             .into_iter()
             .map(|db_worktree| {
@@ -637,7 +649,7 @@ impl Database {
                         .add(worktree_entry::Column::ProjectId.eq(project.id))
                         .add(worktree_entry::Column::IsDeleted.eq(false)),
                 )
-                .stream(&*tx)
+                .stream(tx)
                 .await?;
             while let Some(db_entry) = db_entries.next().await {
                 let db_entry = db_entry?;
@@ -668,7 +680,7 @@ impl Database {
                         .add(worktree_repository::Column::ProjectId.eq(project.id))
                         .add(worktree_repository::Column::IsDeleted.eq(false)),
                 )
-                .stream(&*tx)
+                .stream(tx)
                 .await?;
             while let Some(db_repository_entry) = db_repository_entries.next().await {
                 let db_repository_entry = db_repository_entry?;
@@ -689,7 +701,7 @@ impl Database {
         {
             let mut db_summaries = worktree_diagnostic_summary::Entity::find()
                 .filter(worktree_diagnostic_summary::Column::ProjectId.eq(project.id))
-                .stream(&*tx)
+                .stream(tx)
                 .await?;
             while let Some(db_summary) = db_summaries.next().await {
                 let db_summary = db_summary?;
@@ -710,7 +722,7 @@ impl Database {
         {
             let mut db_settings_files = worktree_settings_file::Entity::find()
                 .filter(worktree_settings_file::Column::ProjectId.eq(project.id))
-                .stream(&*tx)
+                .stream(tx)
                 .await?;
             while let Some(db_settings_file) = db_settings_files.next().await {
                 let db_settings_file = db_settings_file?;
@@ -726,7 +738,7 @@ impl Database {
         // Populate language servers.
         let language_servers = project
             .find_related(language_server::Entity)
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         let project = Project {

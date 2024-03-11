@@ -153,7 +153,8 @@
         }
       ],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
-      "cmd-;": "editor::ToggleLineNumbers"
+      "cmd-;": "editor::ToggleLineNumbers",
+      "cmd-alt-z": "editor::RevertSelectedHunks"
     }
   },
   {
@@ -315,6 +316,18 @@
       "cmd-ctrl-p": "editor::AddSelectionAbove",
       "cmd-alt-down": "editor::AddSelectionBelow",
       "cmd-ctrl-n": "editor::AddSelectionBelow",
+      "cmd-shift-k": "editor::DeleteLine",
+      "alt-up": "editor::MoveLineUp",
+      "alt-down": "editor::MoveLineDown",
+      "alt-shift-up": [
+        "editor::DuplicateLine",
+        {
+          "move_upwards": true
+        }
+      ],
+      "alt-shift-down": "editor::DuplicateLine",
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
       "cmd-d": [
         "editor::SelectNext",
         {
@@ -347,8 +360,6 @@
           "advance_downwards": false
         }
       ],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
@@ -454,11 +465,7 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-k": "editor::DeleteLine",
-      "cmd-shift-d": "editor::DuplicateLine",
       "ctrl-j": "editor::JoinLines",
-      "ctrl-cmd-up": "editor::MoveLineUp",
-      "ctrl-cmd-down": "editor::MoveLineDown",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",

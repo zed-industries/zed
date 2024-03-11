@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/editor.rs"
 doctest = false
@@ -33,11 +36,12 @@ collections.workspace = true
 convert_case = "0.6.0"
 copilot.workspace = true
 db.workspace = true
+emojis.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
-indoc = "1.0.4"
+indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 lazy_static.workspace = true
