@@ -268,26 +268,30 @@ impl Client for WaylandClient {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
+        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
+        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
+        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
         let cursor_icon_name = match style {
-            CursorStyle::Arrow => "arrow".to_string(),
-            CursorStyle::IBeam => "text".to_string(),
-            CursorStyle::Crosshair => "crosshair".to_string(),
-            CursorStyle::ClosedHand => "grabbing".to_string(),
-            CursorStyle::OpenHand => "openhand".to_string(),
-            CursorStyle::PointingHand => "hand".to_string(),
-            CursorStyle::ResizeLeft => "w-resize".to_string(),
-            CursorStyle::ResizeRight => "e-resize".to_string(),
-            CursorStyle::ResizeLeftRight => "ew-resize".to_string(),
-            CursorStyle::ResizeUp => "n-resize".to_string(),
-            CursorStyle::ResizeDown => "s-resize".to_string(),
-            CursorStyle::ResizeUpDown => "ns-resize".to_string(),
-            CursorStyle::DisappearingItem => "grabbing".to_string(), // todo(linux) - couldn't find equivalent icon in linux
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
-            CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
-            CursorStyle::DragLink => "dnd-link".to_string(),
-            CursorStyle::DragCopy => "dnd-copy".to_string(),
-            CursorStyle::ContextualMenu => "context-menu".to_string(),
-        };
+            CursorStyle::Arrow => "arrow",
+            CursorStyle::IBeam => "text",
+            CursorStyle::Crosshair => "crosshair",
+            CursorStyle::ClosedHand => "grabbing",
+            CursorStyle::OpenHand => "grab",
+            CursorStyle::PointingHand => "pointer",
+            CursorStyle::ResizeLeft => "w-resize",
+            CursorStyle::ResizeRight => "e-resize",
+            CursorStyle::ResizeLeftRight => "ew-resize",
+            CursorStyle::ResizeUp => "n-resize",
+            CursorStyle::ResizeDown => "s-resize",
+            CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
+            CursorStyle::OperationNotAllowed => "not-allowed",
+            CursorStyle::DragLink => "alias",
+            CursorStyle::DragCopy => "copy",
+            CursorStyle::ContextualMenu => "context-menu",
+        }
+        .to_string();
 
         let mut cursor_state = self.state.cursor_state.borrow_mut();
         cursor_state.cursor_icon_name = cursor_icon_name;
