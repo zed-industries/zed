@@ -322,10 +322,19 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
         .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
-            let center = cx.primary_display().bounds().center();
-            let offset = DEFAULT_WINDOW_SIZE / 2.0;
-            let origin = point(center.x - offset.width, center.y - offset.height);
-            Bounds::new(origin, DEFAULT_WINDOW_SIZE)
+            cx.primary_display()
+                .map(|display| {
+                    let center = display.bounds().center();
+                    let offset = DEFAULT_WINDOW_SIZE / 2.0;
+                    let origin = point(center.x - offset.width, center.y - offset.height);
+                    Bounds::new(origin, DEFAULT_WINDOW_SIZE)
+                })
+                .unwrap_or_else(|| {
+                    Bounds::new(
+                        point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                        DEFAULT_WINDOW_SIZE,
+                    )
+                })
         })
 }
 

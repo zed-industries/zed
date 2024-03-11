@@ -8,7 +8,7 @@ use crate::{AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, WindowPara
 
 pub trait Client {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
-    fn primary_display(&self) -> Rc<dyn PlatformDisplay>;
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn open_window(
         &self,

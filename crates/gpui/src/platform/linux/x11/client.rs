@@ -297,11 +297,11 @@ impl Client for X11Client {
         Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)?))
     }
 
-    fn primary_display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(
             X11Display::new(&self.xcb_connection, self.x_root_index)
                 .expect("There should always be a root index"),
-        )
+        ))
     }
 
     fn open_window(

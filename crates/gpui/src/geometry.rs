@@ -678,11 +678,18 @@ impl Bounds<GlobalPixels> {
     /// Generate a centered bounds for the primary display
     pub fn centered(size: impl Into<Size<GlobalPixels>>, cx: &mut AppContext) -> Self {
         let size = size.into();
-        let center = cx.primary_display().bounds().center();
-        Bounds {
-            origin: point(center.x - size.width / 2.0, center.y - size.height / 2.0),
-            size,
-        }
+        cx.primary_display()
+            .map(|display| {
+                let center = display.bounds().center();
+                Bounds {
+                    origin: point(center.x - size.width / 2.0, center.y - size.height / 2.0),
+                    size,
+                }
+            })
+            .unwrap_or_else(|| Bounds {
+                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                size,
+            })
     }
 }
 

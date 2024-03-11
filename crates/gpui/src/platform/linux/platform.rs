@@ -156,7 +156,7 @@ impl Platform for LinuxPlatform {
     // todo(linux)
     fn unhide_other_apps(&self) {}
 
-    fn primary_display(&self) -> Rc<dyn PlatformDisplay> {
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.client.primary_display()
     }
 

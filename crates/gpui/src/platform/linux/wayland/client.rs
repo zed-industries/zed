@@ -208,8 +208,8 @@ impl Client for WaylandClient {
         unimplemented!()
     }
 
-    fn primary_display(&self) -> Rc<dyn PlatformDisplay> {
-        unimplemented!()
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        None
     }
 
     fn open_window(

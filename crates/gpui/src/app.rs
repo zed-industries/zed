@@ -521,7 +521,7 @@ impl AppContext {
     }
 
     /// Returns the primary display that will be used for new windows.
-    pub fn primary_display(&self) -> Rc<dyn PlatformDisplay> {
+    pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
     }
 

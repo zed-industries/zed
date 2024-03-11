@@ -161,8 +161,8 @@ impl Platform for TestPlatform {
         vec![self.active_display.clone()]
     }
 
-    fn primary_display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
-        self.active_display.clone()
+    fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        Some(self.active_display.clone())
     }
 
     fn display(&self, id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {

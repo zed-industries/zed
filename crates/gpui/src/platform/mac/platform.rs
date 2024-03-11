@@ -477,8 +477,8 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn primary_display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(MacDisplay::primary())
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(MacDisplay::primary()))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
