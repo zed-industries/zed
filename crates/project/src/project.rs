@@ -3900,9 +3900,12 @@ impl Project {
                     let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
                         if let Some(abs_path) = tree.abs_path().to_str() {
                             let relative_glob_pattern = match &watcher.glob_pattern {
-                                lsp::GlobPattern::String(s) => s
-                                    .strip_prefix(abs_path)
-                                    .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR)),
+                                lsp::GlobPattern::String(s) => Some(
+                                    s.strip_prefix(abs_path)
+                                        .unwrap_or(s)
+                                        .strip_prefix(std::path::MAIN_SEPARATOR)
+                                        .unwrap_or(s),
+                                ),
                                 lsp::GlobPattern::Relative(rp) => {
                                     let base_uri = match &rp.base_uri {
                                         lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
