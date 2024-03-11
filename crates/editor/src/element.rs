@@ -800,9 +800,9 @@ impl EditorElement {
         line_height: Pixels,
         em_width: Pixels,
         cx: &mut ElementContext,
-    ) -> SmallVec<[CursorLayout; 32]> {
+    ) -> Vec<CursorLayout> {
         self.editor.update(cx, |editor, cx| {
-            let mut cursors = SmallVec::new();
+            let mut cursors = Vec::new();
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
@@ -3375,7 +3375,7 @@ pub struct EditorLayout {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
-    cursors: SmallVec<[CursorLayout; 32]>,
+    cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     max_row: u32,
     code_actions_indicator: Option<AnyElement>,
