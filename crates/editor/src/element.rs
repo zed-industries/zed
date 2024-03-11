@@ -4066,7 +4066,7 @@ mod tests {
             .unwrap();
 
         let mut element = EditorElement::new(&editor, style);
-        let mut state = cx
+        let state = cx
             .update_window(window.into(), |_view, cx| {
                 cx.with_element_context(|cx| {
                     element.after_layout(
@@ -4080,7 +4080,6 @@ mod tests {
                 })
             })
             .unwrap();
-        let size = state.position_map.size;
 
         assert_eq!(state.position_map.line_layouts.len(), 4);
         assert_eq!(
