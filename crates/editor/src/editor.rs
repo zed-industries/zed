@@ -1196,6 +1196,7 @@ impl CodeActionsMenu {
                                     }
                                 }),
                             )
+                            .whitespace_nowrap()
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                             .child(SharedString::from(action.lsp_action.title.clone()))
                     })
