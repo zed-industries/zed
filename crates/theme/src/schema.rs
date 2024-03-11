@@ -92,6 +92,12 @@ impl ThemeStyleContent {
                             .color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
+                        font_style: style
+                            .font_style
+                            .map(|font_style| FontStyle::from(font_style)),
+                        font_weight: style
+                            .font_weight
+                            .map(|font_weight| FontWeight::from(font_weight)),
                         ..Default::default()
                     },
                 )
