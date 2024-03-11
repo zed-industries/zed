@@ -16,97 +16,30 @@ impl RenderOnce for KeyBinding {
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                if cfg!(target_os = "macos") {
-                    let key_icon = Self::icon_for_key(keystroke);
-                    h_flex()
-                        .flex_none()
-                        .gap_0p5()
-                        .p_0p5()
-                        .rounded_sm()
-                        .text_color(cx.theme().colors().text_muted)
-                        .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                        .when(keystroke.modifiers.control, |el| {
-                            el.child(KeyIcon::new(IconName::Control))
-                        })
-                        .when(keystroke.modifiers.alt, |el| {
-                            el.child(KeyIcon::new(IconName::Option))
-                        })
-                        .when(keystroke.modifiers.command, |el| {
-                            el.child(KeyIcon::new(IconName::Command))
-                        })
-                        .when(keystroke.modifiers.shift, |el| {
-                            el.child(KeyIcon::new(IconName::Shift))
-                        })
-                        .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
-                        .when(key_icon.is_none(), |el| {
-                            el.child(Key::new(keystroke.key.to_uppercase().clone()))
-                        })
-                } else {
-                    let win_key = if cfg!(target_os = "windows") {
-                        "Win"
-                    } else {
-                        // windows/cmd key is `Super` on linux and BSD
-                        "Super"
-                    };
+                let keybinding_children = get_os_format_keybinding(keystroke.clone());
 
-                    let mut keybinding_text = String::from("");
-
-                    if keystroke.modifiers.control {
-                        keybinding_text.push_str("Ctrl+");
-                    }
-
-                    if keystroke.modifiers.alt {
-                        keybinding_text.push_str("Alt+");
-                    }
-
-                    if keystroke.modifiers.shift {
-                        keybinding_text.push_str("Shift+");
-                    }
-
-                    if keystroke.modifiers.command {
-                        keybinding_text.push_str(win_key);
-                        keybinding_text.push_str("+");
-                    }
-
-                    if keystroke.modifiers.function {
-                        keybinding_text.push_str("Fn+");
-                    }
-
-                    let special_keys = match keystroke.key.as_str() {
-                        "left" => Some("Arrow Left"),
-                        "right" => Some("Arrow Right"),
-                        "up" => Some("Arrow Up"),
-                        "down" => Some("Arrow Down"),
-                        "backspace" => Some("Backspace"),
-                        "delete" => Some("Del"),
-                        "return" | "enter" => Some("Enter"),
-                        "tab" => Some("Tab"),
-                        "space" => Some("Space"),
-                        "escape" => Some("Esc"),
-                        "pagedown" => Some("PgDn"),
-                        "pageup" => Some("PgUp"),
-                        _ => None,
-                    };
-
-                    if let Some(special_key) = special_keys {
-                        keybinding_text.push_str(special_key);
-                    } else {
-                        keybinding_text.push_str(&keystroke.key.to_uppercase());
-                    }
-
-                    h_flex()
-                        .flex_none()
-                        .py_0()
-                        // HACK to center the keybinding (it was 1 pixel too high up)
-                        .mb_0()
-                        .mt(rems(1. / 16.))
-                        .ml_2p5()
-                        .content_center()
-                        .child(Key::new(keybinding_text))
-                }
+                h_flex()
+                    .flex_none()
+                    .gap_0p5()
+                    .p_0p5()
+                    .rounded_sm()
+                    .text_color(cx.theme().colors().text_muted)
+                    .when(keybinding_children.0.is_some(), |el| {
+                        el.child(keybinding_children.0.unwrap())
+                    })
+                    .children(keybinding_children.1)
+                    .when(keybinding_children.2.is_some(), |el| {
+                        el.child(keybinding_children.2.unwrap())
+                    })
             }))
     }
 }
+
+// Children for a Keybinding.
+// The first Key is used for `fn` on macOS, None otherwise
+// The Vec is for key icons (macOS only)
+// The Option<Key> is for the last character, None if it is a symbol (macOS), or the combination (all other OSes)
+struct KeybindingChildren(Option<Key>, Vec<KeyIcon>, Option<Key>);
 
 impl KeyBinding {
     pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
@@ -125,28 +58,124 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
-    fn icon_for_key(keystroke: &Keystroke) -> Option<IconName> {
-        match keystroke.key.as_str() {
-            "left" => Some(IconName::ArrowLeft),
-            "right" => Some(IconName::ArrowRight),
-            "up" => Some(IconName::ArrowUp),
-            "down" => Some(IconName::ArrowDown),
-            "backspace" => Some(IconName::Backspace),
-            "delete" => Some(IconName::Delete),
-            "return" => Some(IconName::Return),
-            "enter" => Some(IconName::Return),
-            "tab" => Some(IconName::Tab),
-            "space" => Some(IconName::Space),
-            "escape" => Some(IconName::Escape),
-            "pagedown" => Some(IconName::PageDown),
-            "pageup" => Some(IconName::PageUp),
-            _ => None,
-        }
-    }
 
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
         Self { key_binding }
     }
+
+
+}
+
+fn icon_for_key(keystroke: &Keystroke) -> Option<IconName> {
+    match keystroke.key.as_str() {
+        "left" => Some(IconName::ArrowLeft),
+        "right" => Some(IconName::ArrowRight),
+        "up" => Some(IconName::ArrowUp),
+        "down" => Some(IconName::ArrowDown),
+        "backspace" => Some(IconName::Backspace),
+        "delete" => Some(IconName::Delete),
+        "return" => Some(IconName::Return),
+        "enter" => Some(IconName::Return),
+        "tab" => Some(IconName::Tab),
+        "space" => Some(IconName::Space),
+        "escape" => Some(IconName::Escape),
+        "pagedown" => Some(IconName::PageDown),
+        "pageup" => Some(IconName::PageUp),
+        _ => None,
+    }
+}
+
+fn get_os_format_keybinding(keystroke: Keystroke) -> KeybindingChildren {
+    let mut prefix_key: Option<Key> = None;
+    let mut key_icons: Vec<KeyIcon> = vec![];
+    let mut postfix_key: Option<Key> = None;
+
+    if cfg!(target_os = "macos") {
+        let key_icon = icon_for_key(&keystroke);
+
+        if keystroke.modifiers.function {
+            prefix_key = Some(Key::new("fn"));
+        }
+
+        if keystroke.modifiers.control {
+            key_icons.push(KeyIcon::new(IconName::Control));
+        }
+
+        if keystroke.modifiers.alt {
+            key_icons.push(KeyIcon::new(IconName::Option));
+        }
+
+        if keystroke.modifiers.command {
+            key_icons.push(KeyIcon::new(IconName::Command));
+        }
+
+        if keystroke.modifiers.shift {
+            key_icons.push(KeyIcon::new(IconName::Shift));
+        }
+
+        if key_icon.is_some() {
+            key_icons.push(KeyIcon::new(key_icon.unwrap()));
+        } else {
+            postfix_key = Some(Key::new(keystroke.key.to_uppercase().clone()));
+        }
+    } else {
+        let win_key = if cfg!(target_os = "windows") {
+            "Win"
+        } else {
+            // windows/cmd key is `Super` on linux and BSD
+            "Super"
+        };
+
+        let mut keybinding_text = String::from("");
+
+        if keystroke.modifiers.control {
+            keybinding_text.push_str("Ctrl+");
+        }
+
+        if keystroke.modifiers.alt {
+            keybinding_text.push_str("Alt+");
+        }
+
+        if keystroke.modifiers.shift {
+            keybinding_text.push_str("Shift+");
+        }
+
+        if keystroke.modifiers.command {
+            keybinding_text.push_str(win_key);
+            keybinding_text.push_str("+");
+        }
+
+        if keystroke.modifiers.function {
+            keybinding_text.push_str("Fn+");
+        }
+
+        let special_keys = match keystroke.key.as_str() {
+            "left" => Some("Arrow Left"),
+            "right" => Some("Arrow Right"),
+            "up" => Some("Arrow Up"),
+            "down" => Some("Arrow Down"),
+            "backspace" => Some("Backspace"),
+            "delete" => Some("Del"),
+            "return" | "enter" => Some("Enter"),
+            "tab" => Some("Tab"),
+            "space" => Some("Space"),
+            "escape" => Some("Esc"),
+            "pagedown" => Some("PgDn"),
+            "pageup" => Some("PgUp"),
+            "home" => Some("Home"),
+            "end" => Some("End"),
+            _ => None,
+        };
+
+        if let Some(special_key) = special_keys {
+            keybinding_text.push_str(special_key);
+        } else {
+            keybinding_text.push_str(&keystroke.key.to_uppercase());
+        }
+
+        postfix_key = Some(Key::new(keybinding_text))
+    }
+    KeybindingChildren(prefix_key, key_icons, postfix_key)
 }
 
 #[derive(IntoElement)]
