@@ -543,6 +543,8 @@ impl EditorElement {
             if let Some(point) = point_for_position.as_valid() {
                 hover_at(editor, Some(point), cx);
                 Self::update_visible_cursor(editor, point, position_map, cx);
+            } else {
+                hover_at(editor, None, cx);
             }
         } else {
             editor.hide_hovered_link(cx);
