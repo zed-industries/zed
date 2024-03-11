@@ -33,8 +33,8 @@ use windows::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
             Threading::{
-                CreateEventW, CreateThreadpoolWork, GetCurrentThreadId, SetEvent,
-                SubmitThreadpoolWork, INFINITE, PTP_CALLBACK_INSTANCE, PTP_WORK,
+                CreateEventW, CreateThreadpoolWork, SetEvent, SubmitThreadpoolWork, INFINITE,
+                PTP_CALLBACK_INSTANCE, PTP_WORK,
             },
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
@@ -682,7 +682,7 @@ fn generate_compositor_tick(tick_event: HANDLE) {
             CreateThreadpoolWork(Some(compositor_tick_runner), Some(tick_event.0 as _), None)
                 .inspect_err(|_| {
                     log::error!(
-                        "unable to create threadpool work for comppositor: {}",
+                        "unable to create threadpool work for compositor: {}",
                         std::io::Error::last_os_error()
                     )
                 })
