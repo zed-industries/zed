@@ -381,8 +381,7 @@ impl<'a> ElementContext<'a> {
 
         let mut sorted_deferred_draws =
             (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws
-            .sort_unstable_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+        sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
         self.layout_deferred_draws(&sorted_deferred_draws);
 
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
