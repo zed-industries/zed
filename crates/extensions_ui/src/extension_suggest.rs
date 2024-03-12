@@ -1,5 +1,7 @@
 use std::{sync::Arc, hash::{DefaultHasher, Hash, Hasher}};
 
+use db::kvp::KEY_VALUE_STORE;
+
 use editor::{Editor, EditorMode};
 use extension::{ExtensionStore, ExtensionApiResponse, ExtensionIndexEntry};
 use gpui::{AppContext, ViewContext, VisualContext, SharedString};
@@ -75,8 +77,40 @@ pub(crate) fn init(cx: &mut AppContext) {
         .detach();
 }
 
+fn language_extension_key(file_context: &str) -> String {
+    format!("{}_extension_suggest", file_context)
+}
+
+
 /// Query the installed extensions to check if any match the language of the document; if none do, call the `suggest_extensions` function
+/// This accepts language and file_context as options, becuase for a language request, there either could be no language associated with
+/// a buffer or no file associated with a buffer
 fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_context: Option<SharedString>) {
+    if let Some(ref f_context) = file_context {
+        let key = language_extension_key(f_context);
+
+        let value = KEY_VALUE_STORE.read_kvp(&key);
+
+        if let Ok(Some(value)) = value {
+            if value == "some" {
+                return
+            }
+        }
+    }
+
+
+    if let Some(ref language) = language {
+        let key = language_extension_key(&language.name());
+
+        let value = KEY_VALUE_STORE.read_kvp(&key);
+
+        if let Ok(Some(value)) = value {
+            if value == "some" {
+                return
+            }
+        }
+    }
+
     let extension_store = ExtensionStore::global(cx);
 
     let store = extension_store.read(cx);
@@ -159,6 +193,15 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<
                 })
             })
         });
+
+        // state in the local database that the language was suggested
+        if let Some(ref f_context) = file_context {
+            let _ = KEY_VALUE_STORE.write_kvp(language_extension_key(f_context), "some".into()).await;
+        } 
+        // write to both because either could be None; when checking for keys, we check for both
+        if let Some(ref language) = language {
+            let _ = KEY_VALUE_STORE.write_kvp(language_extension_key(&language.name()), "some".into()).await;
+        }
 
         Some(())
     }).detach();
