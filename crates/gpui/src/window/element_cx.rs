@@ -61,7 +61,7 @@ impl HitboxId {
 
 /// A rectangular region that potentially blocks hitboxes inserted prior.
 /// See [ElementContext::insert_hitbox] for more details.
-#[derive(Clone, Debug, Eq, PartialEq, Deref)]
+#[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox
     pub id: HitboxId,
