@@ -1,7 +1,7 @@
 use crate::{
     hover_popover::{self, InlayHover},
-    Anchor, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId, PointForPosition,
-    SelectPhase,
+    Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
+    PointForPosition, SelectPhase,
 };
 use gpui::{px, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -13,7 +13,7 @@ use project::{
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
-use util::{maybe, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -138,7 +138,8 @@ impl Editor {
                     cx.focus(&self.focus_handle);
                 }
 
-                self.navigate_to_hover_links(None, hovered_link_state.links, modifiers.alt, cx);
+                self.navigate_to_hover_links(None, hovered_link_state.links, modifiers.alt, cx)
+                    .detach_and_log_err(cx);
                 return;
             }
         }
@@ -157,8 +158,10 @@ impl Editor {
         if point.as_valid().is_some() {
             if modifiers.shift {
                 self.go_to_type_definition(&GoToTypeDefinition, cx)
+                    .detach_and_log_err(cx)
             } else {
                 self.go_to_definition(&GoToDefinition, cx)
+                    .detach_and_log_err(cx)
             }
         }
     }
@@ -491,37 +494,33 @@ pub fn show_link_definition(
 
                     // Only show highlight if there exists a definition to jump to that doesn't contain
                     // the current location.
-                    let any_definition_does_not_contain_current_location =
-                        definitions.iter().any(|definition| {
-                            match &definition {
-                                HoverLink::Text(link) => {
-                                    if link.target.buffer == buffer {
-                                        let range = &link.target.range;
-                                        // Expand range by one character as lsp definition ranges include positions adjacent
-                                        // but not contained by the symbol range
-                                        let start = buffer_snapshot.clip_offset(
-                                            range
-                                                .start
-                                                .to_offset(&buffer_snapshot)
-                                                .saturating_sub(1),
-                                            Bias::Left,
-                                        );
-                                        let end = buffer_snapshot.clip_offset(
-                                            range.end.to_offset(&buffer_snapshot) + 1,
-                                            Bias::Right,
-                                        );
-                                        let offset = buffer_position.to_offset(&buffer_snapshot);
-                                        !(start <= offset && end >= offset)
-                                    } else {
-                                        true
-                                    }
+                    let underline_hovered_link = definitions.iter().any(|definition| {
+                        match &definition {
+                            HoverLink::Text(link) => {
+                                if link.target.buffer == buffer {
+                                    let range = &link.target.range;
+                                    // Expand range by one character as lsp definition ranges include positions adjacent
+                                    // but not contained by the symbol range
+                                    let start = buffer_snapshot.clip_offset(
+                                        range.start.to_offset(&buffer_snapshot).saturating_sub(1),
+                                        Bias::Left,
+                                    );
+                                    let end = buffer_snapshot.clip_offset(
+                                        range.end.to_offset(&buffer_snapshot) + 1,
+                                        Bias::Right,
+                                    );
+                                    let offset = buffer_position.to_offset(&buffer_snapshot);
+                                    !(start <= offset && end >= offset)
+                                } else {
+                                    true
                                 }
-                                HoverLink::InlayHint(_, _) => true,
-                                HoverLink::Url(_) => true,
                             }
-                        });
+                            HoverLink::InlayHint(_, _) => true,
+                            HoverLink::Url(_) => true,
+                        }
+                    });
 
-                    if any_definition_does_not_contain_current_location {
+                    if underline_hovered_link {
                         let style = gpui::HighlightStyle {
                             underline: Some(gpui::UnderlineStyle {
                                 thickness: px(1.),
@@ -554,11 +553,6 @@ pub fn show_link_definition(
                                 .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
                         }
                     } else {
-                        dbg!(
-                            any_definition_does_not_contain_current_location,
-                            "TODO kb here we do not show the underline because it's the same definition we're hovering. \
-                            Now, we want to allow `find all references` for this case and need to underline"
-                        );
                         this.hide_hovered_link(cx);
                     }
                 }

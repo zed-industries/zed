@@ -258,12 +258,28 @@ impl EditorElement {
         register_action(view, cx, Editor::go_to_prev_diagnostic);
         register_action(view, cx, Editor::go_to_hunk);
         register_action(view, cx, Editor::go_to_prev_hunk);
-        register_action(view, cx, Editor::go_to_definition);
-        register_action(view, cx, Editor::go_to_definition_split);
-        register_action(view, cx, Editor::go_to_implementation);
-        register_action(view, cx, Editor::go_to_implementation_split);
-        register_action(view, cx, Editor::go_to_type_definition);
-        register_action(view, cx, Editor::go_to_type_definition_split);
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_definition(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_definition_split(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_implementation(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor
+                .go_to_implementation_split(a, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_type_definition(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor
+                .go_to_type_definition_split(a, cx)
+                .detach_and_log_err(cx);
+        });
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
