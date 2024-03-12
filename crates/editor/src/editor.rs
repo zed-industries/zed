@@ -77,6 +77,7 @@ use language::{
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
+use std::cell::RefCell;
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -100,6 +101,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
+
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -902,6 +904,12 @@ impl CompletionsMenu {
         } else {
             None
         };
+        let max_completion_len = px(510.);
+        // let mut min_completion_len = px(190.);
+
+        // let min_completion_len = Arc::new(Mutex::new(190.));
+        // let min_completion_len_for_closure = Arc::clone(&min_completion_len);
+        let min_completion_len = RefCell::new(190.);
 
         let list = uniform_list(
             cx.view().clone(),
@@ -915,6 +923,8 @@ impl CompletionsMenu {
                     .iter()
                     .enumerate()
                     .map(|(ix, mat)| {
+                        // test.lock
+                        // test.lock().u
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
                         let completion = completions_guard[candidate_id].clone();
@@ -925,18 +935,24 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let max_completion_len = px(510.);
-                        let (completion_label, documentation_label) = Self::truncate_completion(
-                            &style,
-                            cx,
-                            mat,
-                            &mut completion.clone(),
-                            documentation,
-                            max_completion_len,
-                        );
-                        let min_completion_len = max_completion_len;
+                        let (completion_width, completion_label, documentation_label) =
+                            Self::truncate_completion(
+                                &style,
+                                cx,
+                                mat,
+                                &mut completion.clone(),
+                                documentation,
+                                max_completion_len,
+                            );
+
+                        let mut min_completion_len = min_completion_len.borrow_mut();
+
+                        if completion_width.0 > *min_completion_len {
+                            *min_completion_len = completion_width.0;
+                        }
+                        println!("{}, {}", completion_width.0, *min_completion_len);
                         div()
-                            .min_w(min_completion_len + px(30.))
+                            .min_w(completion_width + px(32.))
                             .max_w(max_completion_len + px(30.))
                             .child(
                                 ListItem::new(mat.candidate_id)
@@ -964,6 +980,7 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
+        // println!("Max num: {}", *min_completion_len.borrow());
         Popover::new()
             .child(list)
             .when_some(multiline_docs, |popover, multiline_docs| {
@@ -979,7 +996,7 @@ impl CompletionsMenu {
         completion: &mut Completion,
         documentation: &Option<Documentation>,
         max_completion_len: Pixels,
-    ) -> (StyledText, StyledText) {
+    ) -> (Pixels, StyledText, StyledText) {
         let highlights = gpui::combine_highlights(
             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
             styled_runs_for_code_label(&completion.label, &style.syntax).map(
@@ -1026,6 +1043,8 @@ impl CompletionsMenu {
         let mut variable_name_end = completion.label.filter_range.end;
         let mut completion_label_text = completion.label.text.clone();
         let mut variable_name_length_truncated: i32 = 0;
+
+        let mut actual_width: Pixels = px(0.);
         if let Ok(ellipsis_width) =
             cx.text_system()
                 .layout_line("…", font_size, &[style.text.to_run("…".len())])
@@ -1038,6 +1057,7 @@ impl CompletionsMenu {
                         if completion_layout_line.width + documentation_layout_line.width
                             > max_completion_len
                         {
+                            actual_width = max_completion_len;
                             let width_of_variable_name = completion_layout_line
                                 .x_for_index(completion.label.filter_range.end);
                             let width_of_documentation =
@@ -1114,9 +1134,13 @@ impl CompletionsMenu {
                                     }
                                 }
                             }
+                        } else {
+                            actual_width =
+                                completion_layout_line.width + documentation_layout_line.width;
                         }
                     } else {
                         if completion_layout_line.width > max_completion_len {
+                            actual_width = max_completion_len;
                             let width_of_variable_name = completion_layout_line
                                 .x_for_index(completion.label.filter_range.end);
                             let width_of_type_annotation =
@@ -1190,6 +1214,8 @@ impl CompletionsMenu {
                                     }
                                 }
                             }
+                        } else {
+                            actual_width = completion_layout_line.width;
                         }
                     }
                 }
@@ -1231,6 +1257,8 @@ impl CompletionsMenu {
             ),
         );
 
+        println!("Completion_Text: {}", completion_label_text);
+
         let completion_label =
             StyledText::new(completion_label_text).with_highlights(&style.text, highlights);
 
@@ -1249,7 +1277,7 @@ impl CompletionsMenu {
 
         let documentation_label = StyledText::new(documentation_text)
             .with_highlights(&documentation_style, documentation_highlights);
-        (completion_label, documentation_label)
+        (actual_width, completion_label, documentation_label)
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
@@ -3475,7 +3503,7 @@ impl Editor {
             .text_anchor_for_position(position, cx)?;
 
         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
-        // hence we do LSP request & edit on host side only — add formats to host's history.
+        // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
         let push_to_client_history = project.read(cx).is_remote();
