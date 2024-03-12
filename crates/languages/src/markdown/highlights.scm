@@ -33,5 +33,7 @@
   (info_string
     (language) @text.literal))
 
+(image_description) @link_text
+
 (link_destination) @link_uri
 (link_text) @link_text
