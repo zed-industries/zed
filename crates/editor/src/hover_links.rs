@@ -11,7 +11,8 @@ use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
     ResolveState,
 };
-use std::ops::Range;
+use std::{cmp, ops::Range};
+use text::Point;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
 
@@ -157,37 +158,95 @@ impl Editor {
 
         if point.as_valid().is_some() {
             cx.spawn(|editor, mut cx| async move {
-                let Some(go_to_definition) = editor
+                let Some((before_revealing, go_to_definition)) = editor
                     .update(&mut cx, |editor, cx| {
-                        if modifiers.shift {
+                        let selection_before_revealing = editor.selections.newest::<Point>(cx);
+                        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let before_revealing_head = selection_before_revealing.head();
+                        let before_revealing_tail = selection_before_revealing.tail();
+                        let before_revealing =
+                            match before_revealing_tail.cmp(&before_revealing_head) {
+                                cmp::Ordering::Equal | cmp::Ordering::Less => {
+                                    multi_buffer_snapshot.anchor_after(before_revealing_head)
+                                        ..multi_buffer_snapshot.anchor_before(before_revealing_tail)
+                                }
+                                cmp::Ordering::Greater => {
+                                    multi_buffer_snapshot.anchor_before(before_revealing_tail)
+                                        ..multi_buffer_snapshot.anchor_after(before_revealing_head)
+                                }
+                            };
+
+                        let task = if modifiers.shift {
                             editor.go_to_type_definition(&GoToTypeDefinition, cx)
                         } else {
                             editor.go_to_definition(&GoToDefinition, cx)
-                        }
+                        };
+                        (before_revealing, task)
                     })
                     .ok()
                 else {
                     return;
                 };
+
                 let definition_revealed = go_to_definition.await.log_err().unwrap_or(false);
 
-                // TODO kb instead of the revealed check, need to check the selections.head() and ensure that's intersecting the previous selection.
-                if !definition_revealed {
-                    let find_references = editor
-                        .update(&mut cx, |editor, cx| {
-                            // TODO kb docs + a add highlights for such clickable elements?
-                            editor.find_all_references(&FindAllReferences, cx)
-                        })
-                        .ok()
-                        .flatten();
-                    if let Some(find_references) = find_references {
-                        find_references.await.log_err();
-                    }
+                let find_references = editor
+                    .update(&mut cx, |editor, cx| {
+                        if definition_revealed && revealed_elsewhere(editor, before_revealing, cx) {
+                            return None;
+                        }
+                        // TODO kb docs + add underlines for such clickable elements
+                        editor.find_all_references(&FindAllReferences, cx)
+                    })
+                    .ok()
+                    .flatten();
+                if let Some(find_references) = find_references {
+                    find_references.await.log_err();
                 }
             })
             .detach();
         }
     }
+}
+
+fn revealed_elsewhere(
+    editor: &mut Editor,
+    before_revealing: Range<Anchor>,
+    cx: &mut ViewContext<'_, Editor>,
+) -> bool {
+    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+
+    let selection_after_revealing = editor.selections.newest::<Point>(cx);
+    let after_revealing_head = selection_after_revealing.head();
+    let after_revealing_tail = selection_after_revealing.tail();
+    let after_revealing = match after_revealing_tail.cmp(&after_revealing_head) {
+        cmp::Ordering::Equal | cmp::Ordering::Less => {
+            multi_buffer_snapshot.anchor_after(after_revealing_tail)
+                ..multi_buffer_snapshot.anchor_before(after_revealing_head)
+        }
+        cmp::Ordering::Greater => {
+            multi_buffer_snapshot.anchor_after(after_revealing_head)
+                ..multi_buffer_snapshot.anchor_before(after_revealing_tail)
+        }
+    };
+
+    let before_intersects_after_range = (before_revealing
+        .start
+        .cmp(&after_revealing.start, &multi_buffer_snapshot)
+        .is_ge()
+        && before_revealing
+            .start
+            .cmp(&after_revealing.end, &multi_buffer_snapshot)
+            .is_le())
+        || (before_revealing
+            .end
+            .cmp(&after_revealing.start, &multi_buffer_snapshot)
+            .is_ge()
+            && before_revealing
+                .end
+                .cmp(&after_revealing.end, &multi_buffer_snapshot)
+                .is_le());
+    !before_intersects_after_range
 }
 
 pub fn update_inlay_link_and_hover_points(
