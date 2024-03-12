@@ -4124,6 +4124,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 }
 
 actions!(collab, [OpenChannelNotes]);
+actions!(zed, [OpenLog]);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
