@@ -1,10 +1,11 @@
 #![cfg_attr(target_os = "linux", allow(dead_code))]
 
 use anyhow::{anyhow, Context, Result};
-use clap::Parser;
+use clap::{Error, ErrorKind, Parser};
 use cli::{CliRequest, CliResponse};
 use serde::Deserialize;
 use std::{
+    env,
     ffi::OsStr,
     fs::{self, OpenOptions},
     io,
@@ -62,15 +63,15 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    for path in args
-        .paths_with_position
-        .iter()
-        .map(|path_with_position| &path_with_position.path_like)
-    {
-        if !path.exists() {
-            touch(path.as_path())?;
-        }
-    }
+    // for path in args
+    //     .paths_with_position
+    //     .iter()
+    //     .map(|path_with_position| &path_with_position.path_like)
+    // {
+    //     if !path.exists() {
+    //         touch(path.as_path())?;
+    //     }
+    // }
 
     let (tx, rx) = bundle.launch()?;
     let open_new_workspace = if args.new {
@@ -81,21 +82,35 @@ fn main() -> Result<()> {
         None
     };
 
-    tx.send(CliRequest::Open {
+    tx.send(dbg!(CliRequest::Open {
         paths: args
             .paths_with_position
             .into_iter()
             .map(|path_with_position| {
-                let path_with_position = path_with_position.map_path_like(|path| {
-                    fs::canonicalize(&path)
-                        .with_context(|| format!("path {path:?} canonicalization"))
-                })?;
+                let path_with_position =
+                    path_with_position.map_path_like(|path| match fs::canonicalize(&path) {
+                        Ok(path) => Ok(path),
+                        Err(e) => {
+                            if let Some(mut parent) = path.parent() {
+                                let curdir = env::current_dir()?;
+                                if parent == Path::new("") {
+                                    parent = &curdir;
+                                }
+                                match fs::canonicalize(parent) {
+                                    Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
+                                    Err(_) => Err(e),
+                                }
+                            } else {
+                                Err(e)
+                            }
+                        }
+                    })?;
                 Ok(path_with_position.to_string(|path| path.display().to_string()))
             })
             .collect::<Result<_>>()?,
         wait: args.wait,
         open_new_workspace,
-    })?;
+    }))?;
 
     while let Ok(response) = rx.recv() {
         match response {
