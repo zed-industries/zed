@@ -100,7 +100,7 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<
     }?;
 
     let remote_extensions_task = extension_store.update(cx, |store, cx| {
-        store.fetch_extensions(Some(&search), cx)
+        store.fetch_extensions(None, cx)
     });
 
     cx.spawn(|_view, mut cx| async move {
