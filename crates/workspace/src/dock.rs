@@ -2,10 +2,10 @@ use crate::persistence::model::DockData;
 use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -551,7 +551,7 @@ impl Render for Dock {
             let size = entry.panel.size(cx);
 
             let position = self.position;
-            let mut handle = div()
+            let handle = div()
                 .id("resize-handle")
                 .on_drag(DraggedDock(position), |dock, cx| {
                     cx.stop_propagation();
@@ -564,36 +564,35 @@ impl Render for Dock {
                     }
                 }))
                 .occlude();
-
-            match self.position() {
-                DockPosition::Left => {
-                    handle = handle
+            let handle = match self.position() {
+                DockPosition::Left => deferred(
+                    handle
                         .absolute()
-                        .right(px(0.))
+                        .right(-RESIZE_HANDLE_SIZE / 2.)
                         .top(px(0.))
                         .h_full()
                         .w(RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize();
-                }
-                DockPosition::Bottom => {
-                    handle = handle
+                        .cursor_col_resize(),
+                ),
+                DockPosition::Bottom => deferred(
+                    handle
                         .absolute()
-                        .top(px(0.))
+                        .top(-RESIZE_HANDLE_SIZE / 2.)
                         .left(px(0.))
                         .w_full()
                         .h(RESIZE_HANDLE_SIZE)
-                        .cursor_row_resize();
-                }
-                DockPosition::Right => {
-                    handle = handle
+                        .cursor_row_resize(),
+                ),
+                DockPosition::Right => deferred(
+                    handle
                         .absolute()
                         .top(px(0.))
-                        .left(px(0.))
+                        .left(-RESIZE_HANDLE_SIZE / 2.)
                         .h_full()
                         .w(RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize();
-                }
-            }
+                        .cursor_col_resize(),
+                ),
+            };
 
             div()
                 .key_context(dispatch_context)
