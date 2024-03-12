@@ -417,7 +417,6 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
-                window.surface.commit();
             }
             wl_surface::Event::Leave { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -435,12 +434,10 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
-                window.surface.commit();
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
                 window.rescale(factor as f32);
                 surface.set_buffer_scale(factor);
-                window.surface.commit();
             }
             _ => {}
         }
