@@ -691,6 +691,16 @@ impl Bounds<GlobalPixels> {
                 size,
             })
     }
+
+    /// Generate maximized bounds for the primary display
+    pub fn maximized(cx: &mut AppContext) -> Self {
+        cx.primary_display()
+            .map(|display| display.bounds())
+            .unwrap_or_else(|| Bounds {
+                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                size: size(GlobalPixels(1024.0), GlobalPixels(768.0)),
+            })
+    }
 }
 
 impl<T> Bounds<T>
