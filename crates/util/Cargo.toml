@@ -30,8 +30,8 @@ regex.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-async-fs = "1.6"
-futures-lite = "1.13"
+async-fs.workspace = true
+futures-lite.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true

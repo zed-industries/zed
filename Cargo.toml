@@ -198,6 +198,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
@@ -216,6 +217,7 @@ derive_more = "0.99.17"
 emojis = "0.6.1"
 env_logger = "0.9"
 futures = "0.3"
+futures-lite = "1.13"
 git2 = { version = "0.15", default-features = false }
 globset = "0.4"
 hex = "0.4.3"
