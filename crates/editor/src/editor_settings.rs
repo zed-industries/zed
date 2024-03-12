@@ -38,8 +38,8 @@ pub enum SeedQuerySetting {
 #[serde(rename_all = "snake_case")]
 pub enum DoubleClickInMultibuffer {
     /// Behave as a regular buffer and select the whole word.
-    Select,
     #[default]
+    Select,
     /// Open the excerpt clicked as a new buffer in the new tab, if no `alt` modifier was pressed during double click.
     /// Otherwise, behave as a regular buffer and select the whole word.
     Open,
@@ -145,7 +145,7 @@ pub struct EditorSettingsContent {
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).
     ///
-    /// Default: open
+    /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
 }
 

@@ -143,12 +143,12 @@
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).
   // May take 2 values:
-  //  1. Behave as a regular buffer and select the whole word.
+  //  1. Behave as a regular buffer and select the whole word (default).
   //         "double_click_in_multibuffer": "select"
-  //  2. Open the excerpt clicked as a new buffer in the new tab (default).
+  //  2. Open the excerpt clicked as a new buffer in the new tab.
   //         "double_click_in_multibuffer": "open",
   // For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
-  "double_click_in_multibuffer": "open",
+  "double_click_in_multibuffer": "select",
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
