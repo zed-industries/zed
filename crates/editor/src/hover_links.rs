@@ -195,7 +195,7 @@ impl Editor {
                         if definition_revealed && revealed_elsewhere(editor, before_revealing, cx) {
                             return None;
                         }
-                        // TODO kb docs + add underlines for such clickable elements
+                        // TODO kb docs + tests
                         editor.find_all_references(&FindAllReferences, cx)
                     })
                     .ok()
@@ -571,72 +571,35 @@ pub fn show_link_definition(
 
                 if let Some((symbol_range, definitions)) = result {
                     hovered_link_state.links = definitions.clone();
-
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-
-                    // Only show highlight if there exists a definition to jump to that doesn't contain
-                    // the current location.
-                    let underline_hovered_link = definitions.iter().any(|definition| {
-                        match &definition {
-                            HoverLink::Text(link) => {
-                                if link.target.buffer == buffer {
-                                    let range = &link.target.range;
-                                    // Expand range by one character as lsp definition ranges include positions adjacent
-                                    // but not contained by the symbol range
-                                    let start = buffer_snapshot.clip_offset(
-                                        range.start.to_offset(&buffer_snapshot).saturating_sub(1),
-                                        Bias::Left,
-                                    );
-                                    let end = buffer_snapshot.clip_offset(
-                                        range.end.to_offset(&buffer_snapshot) + 1,
-                                        Bias::Right,
-                                    );
-                                    let offset = buffer_position.to_offset(&buffer_snapshot);
-                                    // TODO kb which property to pick to make it clear that it's not a keyword but a definition/type/etc?
-                                    !(start <= offset && end >= offset)
-                                } else {
-                                    true
-                                }
-                            }
-                            HoverLink::InlayHint(_, _) => true,
-                            HoverLink::Url(_) => true,
+                    let style = gpui::HighlightStyle {
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: px(1.),
+                            ..Default::default()
+                        }),
+                        color: Some(cx.theme().colors().link_text_hover),
+                        ..Default::default()
+                    };
+                    let highlight_range = symbol_range.unwrap_or_else(|| match &trigger_point {
+                        TriggerPoint::Text(trigger_anchor) => {
+                            // If no symbol range returned from language server, use the surrounding word.
+                            let (offset_range, _) = snapshot.surrounding_word(*trigger_anchor);
+                            RangeInEditor::Text(
+                                snapshot.anchor_before(offset_range.start)
+                                    ..snapshot.anchor_after(offset_range.end),
+                            )
+                        }
+                        TriggerPoint::InlayHint(highlight, _, _) => {
+                            RangeInEditor::Inlay(highlight.clone())
                         }
                     });
 
-                    if underline_hovered_link {
-                        let style = gpui::HighlightStyle {
-                            underline: Some(gpui::UnderlineStyle {
-                                thickness: px(1.),
-                                ..Default::default()
-                            }),
-                            color: Some(cx.theme().colors().link_text_hover),
-                            ..Default::default()
-                        };
-                        let highlight_range =
-                            symbol_range.unwrap_or_else(|| match &trigger_point {
-                                TriggerPoint::Text(trigger_anchor) => {
-                                    // If no symbol range returned from language server, use the surrounding word.
-                                    let (offset_range, _) =
-                                        snapshot.surrounding_word(*trigger_anchor);
-                                    RangeInEditor::Text(
-                                        snapshot.anchor_before(offset_range.start)
-                                            ..snapshot.anchor_after(offset_range.end),
-                                    )
-                                }
-                                TriggerPoint::InlayHint(highlight, _, _) => {
-                                    RangeInEditor::Inlay(highlight.clone())
-                                }
-                            });
-
-                        match highlight_range {
-                            RangeInEditor::Text(text_range) => {
-                                this.highlight_text::<HoveredLinkState>(vec![text_range], style, cx)
-                            }
-                            RangeInEditor::Inlay(highlight) => this
-                                .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
+                    match highlight_range {
+                        RangeInEditor::Text(text_range) => {
+                            this.highlight_text::<HoveredLinkState>(vec![text_range], style, cx)
                         }
-                    } else {
-                        this.hide_hovered_link(cx);
+                        RangeInEditor::Inlay(highlight) => {
+                            this.highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx)
+                        }
                     }
                 }
             })?;
