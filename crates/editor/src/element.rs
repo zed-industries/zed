@@ -400,7 +400,7 @@ impl EditorElement {
             return;
         }
 
-        if click_count == 2 {
+        if click_count == 2 && !editor.buffer().read(cx).is_singleton() {
             match EditorSettings::get_global(cx).double_click_in_multibuffer {
                 DoubleClickInMultibuffer::Select => {
                     // do nothing special on double click, all selection logic is below
