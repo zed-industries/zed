@@ -10,12 +10,13 @@ use language::Event;
 use crate::ExtensionsWithQuery;
 
 
+/// Function to initialize subscriptions to Editor Open and Buffer Language Change; called in the Extensions UI init function
 pub(crate) fn init(cx: &mut AppContext) {
 
     // Watch when the editor is opened
     cx.observe_new_views(move |editor: &mut Editor, cx| {
 
-        // Only if the editor is editing in a programming language
+        // Only check if the editor is editing in a programming language
         if let EditorMode::Full = editor.mode() {
 
 
@@ -37,6 +38,7 @@ pub(crate) fn init(cx: &mut AppContext) {
                     ))
                 }).collect::<Vec<_>>();
 
+            // Check extensions for all languages
             for (name_or_extension, language) in editor_language_info {
                 check_and_suggest(cx, language, Some(name_or_extension))
             }
@@ -72,6 +74,7 @@ pub(crate) fn init(cx: &mut AppContext) {
         .detach();
 }
 
+/// Query the installed extensions to check if any match the language of the document; if none do, call the `suggest_extensions` function
 fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, extension: Option<SharedString>) {
     let extension_store = ExtensionStore::global(cx);
 
@@ -90,6 +93,8 @@ fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<L
     }
 }
 
+/// Query for all remote extensions; filter for the ones that match `language`; get the highest downloaded match; send a notification with
+/// An option to install the that extensions and also to go to the extensions page to find all extensions matching the language
 fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_extension: Option<SharedString>) -> Option<()> {
     let extension_store = ExtensionStore::global(cx);
 
