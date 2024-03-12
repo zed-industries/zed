@@ -132,6 +132,48 @@ impl Editor {
         modifiers: Modifiers,
         cx: &mut ViewContext<Editor>,
     ) {
+        let selection_before_revealing = self.selections.newest::<Point>(cx);
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let before_revealing_head = selection_before_revealing.head();
+        let before_revealing_tail = selection_before_revealing.tail();
+        let before_revealing = match before_revealing_tail.cmp(&before_revealing_head) {
+            cmp::Ordering::Equal | cmp::Ordering::Less => {
+                multi_buffer_snapshot.anchor_after(before_revealing_head)
+                    ..multi_buffer_snapshot.anchor_before(before_revealing_tail)
+            }
+            cmp::Ordering::Greater => {
+                multi_buffer_snapshot.anchor_before(before_revealing_tail)
+                    ..multi_buffer_snapshot.anchor_after(before_revealing_head)
+            }
+        };
+        drop(multi_buffer_snapshot);
+
+        let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
+        cx.spawn(|editor, mut cx| async move {
+            let definition_revealed = reveal_task.await.log_err().unwrap_or(false);
+            let find_references = editor
+                .update(&mut cx, |editor, cx| {
+                    if definition_revealed && revealed_elsewhere(editor, before_revealing, cx) {
+                        return None;
+                    }
+                    // TODO kb docs + tests
+                    editor.find_all_references(&FindAllReferences, cx)
+                })
+                .ok()
+                .flatten();
+            if let Some(find_references) = find_references {
+                find_references.await.log_err();
+            }
+        })
+        .detach();
+    }
+
+    fn cmd_click_reveal_task(
+        &mut self,
+        point: PointForPosition,
+        modifiers: Modifiers,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<bool>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
@@ -139,9 +181,12 @@ impl Editor {
                     cx.focus(&self.focus_handle);
                 }
 
-                self.navigate_to_hover_links(None, hovered_link_state.links, modifiers.alt, cx)
-                    .detach_and_log_err(cx);
-                return;
+                return self.navigate_to_hover_links(
+                    None,
+                    hovered_link_state.links,
+                    modifiers.alt,
+                    cx,
+                );
             }
         }
 
@@ -157,54 +202,13 @@ impl Editor {
         );
 
         if point.as_valid().is_some() {
-            cx.spawn(|editor, mut cx| async move {
-                let Some((before_revealing, go_to_definition)) = editor
-                    .update(&mut cx, |editor, cx| {
-                        let selection_before_revealing = editor.selections.newest::<Point>(cx);
-                        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let before_revealing_head = selection_before_revealing.head();
-                        let before_revealing_tail = selection_before_revealing.tail();
-                        let before_revealing =
-                            match before_revealing_tail.cmp(&before_revealing_head) {
-                                cmp::Ordering::Equal | cmp::Ordering::Less => {
-                                    multi_buffer_snapshot.anchor_after(before_revealing_head)
-                                        ..multi_buffer_snapshot.anchor_before(before_revealing_tail)
-                                }
-                                cmp::Ordering::Greater => {
-                                    multi_buffer_snapshot.anchor_before(before_revealing_tail)
-                                        ..multi_buffer_snapshot.anchor_after(before_revealing_head)
-                                }
-                            };
-
-                        let task = if modifiers.shift {
-                            editor.go_to_type_definition(&GoToTypeDefinition, cx)
-                        } else {
-                            editor.go_to_definition(&GoToDefinition, cx)
-                        };
-                        (before_revealing, task)
-                    })
-                    .ok()
-                else {
-                    return;
-                };
-
-                let definition_revealed = go_to_definition.await.log_err().unwrap_or(false);
-
-                let find_references = editor
-                    .update(&mut cx, |editor, cx| {
-                        if definition_revealed && revealed_elsewhere(editor, before_revealing, cx) {
-                            return None;
-                        }
-                        // TODO kb docs + tests
-                        editor.find_all_references(&FindAllReferences, cx)
-                    })
-                    .ok()
-                    .flatten();
-                if let Some(find_references) = find_references {
-                    find_references.await.log_err();
-                }
-            })
-            .detach();
+            if modifiers.shift {
+                self.go_to_type_definition(&GoToTypeDefinition, cx)
+            } else {
+                self.go_to_definition(&GoToDefinition, cx)
+            }
+        } else {
+            Task::ready(Ok(false))
         }
     }
 }
