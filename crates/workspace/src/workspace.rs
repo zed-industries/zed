@@ -262,7 +262,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(move |cx| async move {
                     if let Some(paths) = paths.await.log_err().flatten() {
                         cx.update(|cx| {
-                            open_paths(&paths, app_state, None, cx).detach_and_log_err(cx)
+                            open_paths(&paths, app_state, OpenOptions::default(), cx)
+                                .detach_and_log_err(cx)
                         })
                         .ok();
                     }
@@ -1414,8 +1415,18 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            cx.update(|cx| open_paths(&paths, app_state, window_to_replace, cx))?
-                .await?;
+            cx.update(|cx| {
+                open_paths(
+                    &paths,
+                    app_state,
+                    OpenOptions {
+                        replace_window: window_to_replace,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })?
+            .await?;
             Ok(())
         })
     }
@@ -4361,6 +4372,13 @@ pub async fn get_any_active_workspace(
 
 fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
+        if let Some(workspace_window) = cx
+            .active_window()
+            .and_then(|window| window.downcast::<Workspace>())
+        {
+            return Some(workspace_window);
+        }
+
         for window in cx.windows() {
             if let Some(workspace_window) = window.downcast::<Workspace>() {
                 workspace_window
@@ -4375,11 +4393,17 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
     .flatten()
 }
 
+#[derive(Default)]
+pub struct OpenOptions {
+    pub open_new_workspace: Option<bool>,
+    pub replace_window: Option<WindowHandle<Workspace>>,
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    requesting_window: Option<WindowHandle<Workspace>>,
+    open_options: OpenOptions,
     cx: &mut AppContext,
 ) -> Task<
     anyhow::Result<(
@@ -4388,24 +4412,62 @@ pub fn open_paths(
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
-    // Open paths in existing workspace if possible
-    let existing = activate_workspace_for_project(cx, {
-        let abs_paths = abs_paths.clone();
-        move |project, cx| project.contains_paths(&abs_paths, cx)
-    });
+    let mut existing = None;
+    let mut best_match = None;
+    let mut open_visible = OpenVisible::All;
+
+    if open_options.open_new_workspace != Some(true) {
+        for window in cx.windows() {
+            let Some(handle) = window.downcast::<Workspace>() else {
+                continue;
+            };
+            if let Ok(workspace) = handle.read(cx) {
+                let m = workspace
+                    .project()
+                    .read(cx)
+                    .visibility_for_paths(&abs_paths, cx);
+                if m > best_match {
+                    existing = Some(handle);
+                    best_match = m;
+                } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
+                    existing = Some(handle)
+                }
+            }
+        }
+    }
+
     cx.spawn(move |mut cx| async move {
+        if open_options.open_new_workspace.is_none() && existing.is_none() {
+            let all_files = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            if futures::future::join_all(all_files)
+                .await
+                .into_iter()
+                .filter_map(|result| result.ok().flatten())
+                .all(|file| !file.is_dir)
+            {
+                existing = activate_any_workspace_window(&mut cx);
+                open_visible = OpenVisible::None;
+            }
+        }
+
         if let Some(existing) = existing {
             Ok((
                 existing,
                 existing
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
+                        cx.activate_window();
+                        workspace.open_paths(abs_paths, open_visible, None, cx)
                     })?
                     .await,
             ))
         } else {
             cx.update(move |cx| {
-                Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
+                Workspace::new_local(
+                    abs_paths,
+                    app_state.clone(),
+                    open_options.replace_window,
+                    cx,
+                )
             })?
             .await
         }

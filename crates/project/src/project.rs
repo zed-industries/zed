@@ -1145,18 +1145,24 @@ impl Project {
             .map(|worktree| worktree.read(cx).id())
     }
 
-    pub fn contains_paths(&self, paths: &[PathBuf], cx: &AppContext) -> bool {
-        paths.iter().all(|path| self.contains_path(path, cx))
+    pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
+        paths
+            .iter()
+            .map(|path| self.visibility_for_path(path, cx))
+            .max()
+            .flatten()
     }
 
-    pub fn contains_path(&self, path: &Path, cx: &AppContext) -> bool {
-        for worktree in self.worktrees() {
-            let worktree = worktree.read(cx).as_local();
-            if worktree.map_or(false, |w| w.contains_abs_path(path)) {
-                return true;
-            }
-        }
-        false
+    pub fn visibility_for_path(&self, path: &Path, cx: &AppContext) -> Option<bool> {
+        self.worktrees()
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree
+                    .as_local()?
+                    .contains_abs_path(path)
+                    .then(|| worktree.is_visible())
+            })
+            .max()
     }
 
     pub fn create_entry(
