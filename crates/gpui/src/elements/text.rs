@@ -1,8 +1,10 @@
+mod editable;
+
 use crate::{
-    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementContext, ElementId,
-    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
-    TOOLTIP_DELAY,
+    ActiveTooltip, AnyTooltip, AnyView, Bounds, CursorStyle, DispatchPhase, Element,
+    ElementContext, ElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle,
+    WhiteSpace, WindowContext, WrappedLine, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -15,6 +17,8 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt;
+
+pub use editable::*;
 
 impl Element for &'static str {
     type BeforeLayout = TextState;
@@ -322,6 +326,62 @@ impl TextState {
 
         None
     }
+
+    fn closest_index_for_position(
+        &self,
+        bounds: Bounds<Pixels>,
+        mut position: Point<Pixels>,
+    ) -> Option<usize> {
+        // Correct any position that is out of bounds.
+        if position.y > bounds.origin.y + bounds.size.height {
+            // Position is below text bounds.
+            position.y = bounds.origin.y + bounds.size.height;
+        } else if position.y < bounds.origin.y {
+            // Position is above text bounds.
+            position.y = bounds.origin.y;
+        } else if position.x > bounds.origin.x + bounds.size.width {
+            // Position is right of text bounds.
+            position.x = bounds.origin.x + bounds.size.width;
+        } else if position.x < bounds.origin.x {
+            // Position is left of text bounds.
+            position.x = bounds.origin.x;
+        }
+
+        self.index_for_position(bounds, position)
+    }
+
+    fn position_for_index(&self, bounds: Bounds<Pixels>, index: usize) -> Option<Point<Pixels>> {
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+
+        let mut line_start_ix = 0;
+
+        for (line_ix, line) in element_state.lines.iter().enumerate() {
+            let line_end_ix = line_start_ix + line.len();
+
+            if (line_start_ix..=line_end_ix).contains(&index) {
+                let x = line.unwrapped_layout.x_for_index(index - line_start_ix);
+
+                return Some(Point {
+                    x: bounds.origin.x + x,
+                    y: bounds.origin.y + element_state.line_height * line_ix,
+                });
+            }
+
+            line_start_ix += line.len() + 1;
+        }
+
+        None
+    }
+
+    fn line_height(&self) -> Pixels {
+        self.lock()
+            .as_ref()
+            .expect("measurement has not been performed")
+            .line_height
+    }
 }
 
 /// A text element that can be interacted with.
@@ -331,10 +391,13 @@ pub struct InteractiveText {
     click_listener:
         Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
     hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut WindowContext<'_>)>>,
+    selection_change_listener: Option<Rc<dyn Fn(usize, usize, &mut WindowContext<'_>)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut WindowContext<'_>) -> Option<AnyView>>>,
     clickable_ranges: Vec<Range<usize>>,
+    cursor_style: Option<CursorStyle>,
 }
 
+#[derive(Debug, Clone)]
 struct InteractiveTextClickEvent {
     mouse_down_index: usize,
     mouse_up_index: usize,
@@ -357,8 +420,10 @@ impl InteractiveText {
             text,
             click_listener: None,
             hover_listener: None,
+            selection_change_listener: None,
             tooltip_builder: None,
             clickable_ranges: Vec::new(),
+            cursor_style: None,
         }
     }
 
@@ -399,6 +464,19 @@ impl InteractiveText {
         self.tooltip_builder = Some(Rc::new(builder));
         self
     }
+
+    fn cursor_style(mut self, cursor_style: CursorStyle) -> Self {
+        self.cursor_style = Some(cursor_style);
+        self
+    }
+
+    fn on_selection_change(
+        mut self,
+        listener: impl Fn(usize, usize, &mut WindowContext<'_>) + 'static,
+    ) -> Self {
+        self.selection_change_listener = Some(Rc::new(listener));
+        self
+    }
 }
 
 impl Element for InteractiveText {
@@ -430,7 +508,7 @@ impl Element for InteractiveText {
             Some(self.element_id.clone()),
             |interactive_state, cx| {
                 let mut interactive_state = interactive_state.unwrap().unwrap_or_default();
-                if let Some(click_listener) = self.click_listener.take() {
+                if self.click_listener.is_some() || self.selection_change_listener.is_some() {
                     let mouse_position = cx.mouse_position();
                     if let Some(ix) = text_state.index_for_position(bounds, mouse_position) {
                         if self
@@ -438,7 +516,7 @@ impl Element for InteractiveText {
                             .iter()
                             .any(|range| range.contains(&ix))
                         {
-                            cx.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
+                            cx.set_cursor_style(CursorStyle::PointingHand, hitbox)
                         }
                     }
 
@@ -447,19 +525,36 @@ impl Element for InteractiveText {
                     if let Some(mouse_down_index) = mouse_down.get() {
                         let hitbox = hitbox.clone();
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
+                        let click_listener = self.click_listener.take();
+                        let selection_change_listener = self.selection_change_listener.clone();
+
                         cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                             if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                                 if let Some(mouse_up_index) =
                                     text_state.index_for_position(bounds, event.position)
                                 {
-                                    click_listener(
-                                        &clickable_ranges,
-                                        InteractiveTextClickEvent {
-                                            mouse_down_index,
-                                            mouse_up_index,
-                                        },
-                                        cx,
-                                    )
+                                    let interactive_text_click_event = InteractiveTextClickEvent {
+                                        mouse_up_index,
+                                        mouse_down_index,
+                                    };
+
+                                    if let Some(click_listener) = &click_listener {
+                                        click_listener(
+                                            &clickable_ranges,
+                                            interactive_text_click_event.clone(),
+                                            cx,
+                                        )
+                                    }
+
+                                    if let Some(selection_change_listener) =
+                                        &selection_change_listener
+                                    {
+                                        selection_change_listener(
+                                            interactive_text_click_event.mouse_down_index,
+                                            interactive_text_click_event.mouse_up_index,
+                                            cx,
+                                        )
+                                    }
                                 }
 
                                 mouse_down.take();
@@ -481,11 +576,19 @@ impl Element for InteractiveText {
                     }
                 }
 
+                if let Some(cursor_style) = self.cursor_style {
+                    cx.set_cursor_style(cursor_style, hitbox);
+                }
+
                 cx.on_mouse_event({
                     let mut hover_listener = self.hover_listener.take();
                     let hitbox = hitbox.clone();
                     let text_state = text_state.clone();
                     let hovered_index = interactive_state.hovered_index.clone();
+
+                    let mouse_down = interactive_state.mouse_down_index.clone();
+                    let mut selection_change_listener = self.selection_change_listener.clone();
+
                     move |event: &MouseMoveEvent, phase, cx| {
                         if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                             let current = hovered_index.get();
@@ -494,6 +597,20 @@ impl Element for InteractiveText {
                                 hovered_index.set(updated);
                                 if let Some(hover_listener) = hover_listener.as_ref() {
                                     hover_listener(updated, event.clone(), cx);
+                                }
+                                cx.refresh();
+                            }
+                        }
+
+                        if phase == DispatchPhase::Bubble && selection_change_listener.is_some() {
+                            let selection_change_listener =
+                                selection_change_listener.as_ref().unwrap();
+
+                            if let Some(mouse_down) = mouse_down.get() {
+                                if let Some(updated) =
+                                    text_state.closest_index_for_position(bounds, event.position)
+                                {
+                                    selection_change_listener(mouse_down, updated, cx);
                                 }
                                 cx.refresh();
                             }
