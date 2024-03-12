@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use smol::{fs, stream::StreamExt};
-
 use crate::ResultExt;
+use async_fs as fs;
+use futures_lite::StreamExt;
 
 /// Removes all files and directories matching the given predicate
 pub async fn remove_matching<F>(dir: &Path, predicate: F)
