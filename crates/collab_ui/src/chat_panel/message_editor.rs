@@ -624,7 +624,7 @@ mod tests {
             MessageEditorSettings::register(cx);
         });
 
-        let language_registry = Arc::new(LanguageRegistry::test());
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         language_registry.add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Markdown".into(),

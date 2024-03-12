@@ -9619,7 +9619,8 @@ impl Editor {
             .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
+        let copilot_enabled =
+            all_language_settings(file.map(|f| f.as_ref().into()), cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)

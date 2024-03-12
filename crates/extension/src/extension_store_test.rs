@@ -249,7 +249,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         .collect(),
     };
 
-    let language_registry = Arc::new(LanguageRegistry::test());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let node_runtime = FakeNodeRuntime::new();
 

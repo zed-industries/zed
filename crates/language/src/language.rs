@@ -1571,8 +1571,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor());
+        let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         languages.register_native_grammars([
             ("json", tree_sitter_json::language()),

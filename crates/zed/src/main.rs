@@ -142,9 +142,9 @@ fn main() {
         ));
 
         let client = client::Client::new(clock, http.clone(), cx);
-        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        let mut languages =
+            LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         let copilot_language_server_id = languages.next_language_server_id();
-        languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());

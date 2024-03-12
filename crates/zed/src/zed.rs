@@ -2832,8 +2832,7 @@ mod tests {
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         let settings = cx.update(|cx| SettingsStore::test(cx));
         cx.set_global(settings);
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor().clone());
+        let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::FakeNodeRuntime::new();
         cx.update(|cx| {

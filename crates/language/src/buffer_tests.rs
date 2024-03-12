@@ -70,7 +70,7 @@ fn test_line_endings(cx: &mut gpui::AppContext) {
 
 #[gpui::test]
 fn test_select_language(cx: &mut AppContext) {
-    let registry = Arc::new(LanguageRegistry::test());
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
@@ -145,8 +145,7 @@ fn test_select_language(cx: &mut AppContext) {
 
 #[gpui::test(iterations = 10)]
 async fn test_first_line_pattern(cx: &mut TestAppContext) {
-    let mut languages = LanguageRegistry::test();
-    languages.set_executor(cx.executor());
+    let languages = LanguageRegistry::test(cx.executor());
     let languages = Arc::new(languages);
 
     languages.register_test_language(LanguageConfig {
@@ -178,6 +177,68 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         .as_ref(),
         "JavaScript"
     );
+}
+
+#[gpui::test]
+async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |settings| {
+            settings.file_types.extend([
+                ("TypeScript".into(), vec!["js".into()]),
+                ("C++".into(), vec!["c".into()]),
+            ]);
+        })
+    });
+
+    let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+
+    for config in [
+        LanguageConfig {
+            name: "JavaScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "C++".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["cpp".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "C".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["c".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    ] {
+        languages.add(Arc::new(Language::new(config, None)));
+    }
+
+    let language = cx
+        .read(|cx| languages.language_for_file(settings_location("foo.js"), None, cx))
+        .await
+        .unwrap();
+    assert_eq!(language.name().as_ref(), "TypeScript");
+    let language = cx
+        .read(|cx| languages.language_for_file(settings_location("foo.c"), None, cx))
+        .await
+        .unwrap();
+    assert_eq!(language.name().as_ref(), "C++");
 }
 
 fn settings_location(path: &str) -> SettingsLocation {
@@ -1619,7 +1680,7 @@ fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
 
     let javascript_language = Arc::new(javascript_lang());
 
-    let language_registry = Arc::new(LanguageRegistry::test());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     language_registry.add(html_language.clone());
     language_registry.add(javascript_language.clone());
 
@@ -1939,7 +2000,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
         "#
         .unindent();
 
-        let language_registry = Arc::new(LanguageRegistry::test());
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         language_registry.add(Arc::new(ruby_lang()));
         language_registry.add(Arc::new(html_lang()));
         language_registry.add(Arc::new(erb_lang()));
