@@ -229,6 +229,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
                             });
+                            let language_registry = project.read(cx).languages().clone();
 
                             let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -240,6 +241,7 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 editor,
                                 workspace_handle,
                                 Some(tab_description),
+                                language_registry,
                                 cx,
                             );
                             workspace.add_item_to_active_pane(Box::new(view.clone()), cx);
