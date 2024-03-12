@@ -166,6 +166,10 @@ impl WindowsWindowInner {
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
+            WM_TIMER => {
+                self.invalidate_client_area();
+                LRESULT(0)
+            }
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_PAINT => self.handle_paint_msg(),
@@ -1224,3 +1228,4 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+const FRAME_TIME: u32 = 16; // draw at 60fps
