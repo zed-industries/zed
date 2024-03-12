@@ -188,20 +188,33 @@ impl MarkdownPreviewView {
     }
 
     fn get_block_index_under_cursor(&self, selection_range: Range<usize>) -> usize {
-        let mut block_index = 0;
+        let mut block_index = None;
         let cursor = selection_range.start;
 
+        let mut last_end = 0;
         if let Some(content) = &self.contents {
             for (i, block) in content.children.iter().enumerate() {
                 let Range { start, end } = block.source_range();
-                if start <= cursor && end >= cursor {
-                    block_index = i;
+
+                // Check if the cursor is between the last block and the current block
+                if last_end > cursor && cursor < start {
+                    block_index = Some(i.saturating_sub(1));
                     break;
                 }
+
+                if start <= cursor && end >= cursor {
+                    block_index = Some(i);
+                    break;
+                }
+                last_end = end;
+            }
+
+            if block_index.is_none() && last_end < cursor {
+                block_index = Some(content.children.len().saturating_sub(1));
             }
         }
 
-        block_index
+        block_index.unwrap_or_default()
     }
 }
 
