@@ -748,6 +748,7 @@ impl Drop for WindowsWindow {
     fn drop(&mut self) {
         unsafe {
             let _ = RevokeDragDrop(self.inner.hwnd);
+            let _ = KillTimer(self.inner.hwnd, 1);
         }
     }
 }
