@@ -132,7 +132,7 @@ impl RenderOnce for KeyBinding {
                         }
                     })
                     .when(keystroke.modifiers.shift, |el| match self.display {
-                        KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Option)),
+                        KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Shift)),
                         KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
                             el.child(Key::new("Shift")).child(Key::new("+"))
                         }
