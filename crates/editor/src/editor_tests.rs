@@ -4567,13 +4567,13 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_always_handle_autoclosed_character_skip_over(cx: &mut gpui::TestAppContext) {
+async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.always_handle_autoclosed_character = Some(true);
+        settings.defaults.always_treat_brackets_as_autoclosed = Some(true);
     });
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.update_editor(|view, _cx| view.set_always_handle_autoclosed_character(true));
+    cx.update_editor(|view, _cx| view.set_always_treat_brackets_as_autoclosed(true));
 
     let language = Arc::new(Language::new(
         LanguageConfig {
@@ -5278,13 +5278,13 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_always_handle_autoclosed_character_delete(cx: &mut gpui::TestAppContext) {
+async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.always_handle_autoclosed_character = Some(true);
+        settings.defaults.always_treat_brackets_as_autoclosed = Some(true);
     });
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.update_editor(|view, _cx| view.set_always_handle_autoclosed_character(true));
+    cx.update_editor(|view, _cx| view.set_always_treat_brackets_as_autoclosed(true));
 
     let language = Arc::new(Language::new(
         LanguageConfig {

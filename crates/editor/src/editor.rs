@@ -430,7 +430,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
-    always_handle_autoclosed_character: bool,
+    always_treat_brackets_as_autoclosed: bool,
     auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
         Box<
@@ -1558,7 +1558,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
-            always_handle_autoclosed_character: false,
+            always_treat_brackets_as_autoclosed: false,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -1851,11 +1851,11 @@ impl Editor {
         self.use_autoclose = autoclose;
     }
 
-    pub fn set_always_handle_autoclosed_character(
+    pub fn set_always_treat_brackets_as_autoclosed(
         &mut self,
-        always_handle_autoclosed_character: bool,
+        always_treat_brackets_as_autoclosed: bool,
     ) {
-        self.always_handle_autoclosed_character = always_handle_autoclosed_character;
+        self.always_treat_brackets_as_autoclosed = always_treat_brackets_as_autoclosed;
     }
 
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
@@ -2521,16 +2521,16 @@ impl Editor {
                             }
                         }
 
-                        let always_handle_autoclosed_character = self
-                            .always_handle_autoclosed_character
+                        let always_treat_brackets_as_autoclosed = self
+                            .always_treat_brackets_as_autoclosed
                             && snapshot
                                 .settings_at(selection.start, cx)
-                                .always_handle_autoclosed_character;
-                        if always_handle_autoclosed_character
+                                .always_treat_brackets_as_autoclosed;
+                        if always_treat_brackets_as_autoclosed
                             && is_bracket_pair_end
                             && snapshot.contains_str_at(selection.end, text.as_ref())
                         {
-                            // Otherwise, when `always_handle_autoclosed_character` is set to `true
+                            // Otherwise, when `always_treat_brackets_as_autoclosed` is set to `true
                             // and the inserted text is a closing bracket and the selection is followed
                             // by the closing bracket then move the selection past the closing bracket.
                             let anchor = snapshot.anchor_after(selection.end);
@@ -3082,12 +3082,12 @@ impl Editor {
                     }
                 }
 
-                let always_handle_autoclosed_character = self.always_handle_autoclosed_character
+                let always_treat_brackets_as_autoclosed = self.always_treat_brackets_as_autoclosed
                     && buffer
                         .settings_at(selection.start, cx)
-                        .always_handle_autoclosed_character;
+                        .always_treat_brackets_as_autoclosed;
 
-                if !always_handle_autoclosed_character {
+                if !always_treat_brackets_as_autoclosed {
                     return selection;
                 }
 

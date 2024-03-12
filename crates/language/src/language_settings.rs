@@ -106,7 +106,7 @@ pub struct LanguageSettings {
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
     // Controls how the editor handles the autoclosed characters.
-    pub always_handle_autoclosed_character: bool,
+    pub always_treat_brackets_as_autoclosed: bool,
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
@@ -245,7 +245,7 @@ pub struct LanguageSettingsContent {
     // no matter how they were inserted.
     ///
     /// Default: false
-    pub always_handle_autoclosed_character: Option<bool>,
+    pub always_treat_brackets_as_autoclosed: Option<bool>,
 }
 
 /// The contents of the GitHub Copilot settings.
@@ -613,8 +613,8 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(
-        &mut settings.always_handle_autoclosed_character,
-        src.always_handle_autoclosed_character,
+        &mut settings.always_treat_brackets_as_autoclosed,
+        src.always_treat_brackets_as_autoclosed,
     );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());

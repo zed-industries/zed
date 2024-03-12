@@ -97,7 +97,7 @@
   // happen only for auto-inserted characters.
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
-  "always_handle_autoclosed_character": false,
+  "always_treat_brackets_as_autoclosed": false,
   // Controls whether copilot provides suggestion immediately
   // or waits for a `copilot::Toggle`
   "show_copilot_suggestions": true,
