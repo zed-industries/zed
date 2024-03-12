@@ -29,6 +29,7 @@ pub(crate) fn init(cx: &mut AppContext) {
                 .flat_map(|buffer| {
                     let buffer = buffer.read(cx);
 
+                    // Get the file extension or file name if there is no extension
                     Some((
                         match buffer.file()?.path().extension() {
                             Some(extension) => SharedString::from(extension.to_str()?.to_string()),
@@ -39,8 +40,8 @@ pub(crate) fn init(cx: &mut AppContext) {
                 }).collect::<Vec<_>>();
 
             // Check extensions for all languages
-            for (name_or_extension, language) in editor_language_info {
-                check_and_suggest(cx, language, Some(name_or_extension))
+            for (file_name_or_extension, language) in editor_language_info {
+                check_and_suggest(cx, language, Some(file_name_or_extension))
             }
 
 
@@ -75,7 +76,7 @@ pub(crate) fn init(cx: &mut AppContext) {
 }
 
 /// Query the installed extensions to check if any match the language of the document; if none do, call the `suggest_extensions` function
-fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, extension: Option<SharedString>) {
+fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_context: Option<SharedString>) {
     let extension_store = ExtensionStore::global(cx);
 
     let store = extension_store.read(cx);
@@ -85,20 +86,20 @@ fn check_and_suggest<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<L
     // check if any extensions support the current language; this searches just the descriptions as a sort of hack right now
     let check = installed_extensions.iter()
         .any(|(_, ext)| 
-            ext.filter_by_language(language.as_deref(), extension.clone())
+            ext.filter_by_language(language.as_deref(), file_context.clone())
         );
 
     if !check {
-        suggest_extensions(cx, language, extension);
+        suggest_extensions(cx, language, file_context);
     }
 }
 
 /// Query for all remote extensions; filter for the ones that match `language`; get the highest downloaded match; send a notification with
 /// An option to install the that extensions and also to go to the extensions page to find all extensions matching the language
-fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_extension: Option<SharedString>) -> Option<()> {
+fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<Language>>, file_context: Option<SharedString>) -> Option<()> {
     let extension_store = ExtensionStore::global(cx);
 
-    let search = match (language.clone(), file_extension.clone()) {
+    let search = match (language.clone(), file_context.clone()) {
         (Some(language), _) => Some(language.name().to_string()),
         (None, Some(extension)) => Some(extension.to_string()),
         (None, None) => return None
@@ -116,7 +117,7 @@ fn suggest_extensions<T: 'static>(cx: &mut ViewContext<T>, language: Option<Arc<
         let most_downloaded = all_extensions
             .into_iter()
             .filter(|extension| 
-                extension.filter_by_language(language.as_deref(), file_extension.clone().map(Into::into))
+                extension.filter_by_language(language.as_deref(), file_context.clone().map(Into::into))
             )
             .max_by_key(|extension| extension.download_count)?;
 
