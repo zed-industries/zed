@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, HitboxId, IntoElement,
-    LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
-    WindowContext,
+    div, overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
+    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, HitboxId, InteractiveElement,
+    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
+    VisualContext, WindowContext,
 };
 
 use crate::{Clickable, Selectable};
@@ -184,7 +184,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                     );
                 }
 
-                let mut element = overlay.child(menu.clone()).into_any();
+                let mut element = overlay
+                    .child(div().occlude().child(menu.clone()))
+                    .into_any();
                 menu_layout_id = Some(element.before_layout(cx));
                 element
             });

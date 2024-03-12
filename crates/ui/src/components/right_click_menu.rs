@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
-    ElementContext, ElementId, Hitbox, IntoElement, LayoutId, ManagedView, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    div, overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
+    ElementContext, ElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, ManagedView,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -109,7 +109,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 }
                 overlay = overlay.position(*element_state.position.borrow());
 
-                let mut element = overlay.child(menu.clone()).into_any();
+                let mut element = overlay
+                    .child(div().occlude().child(menu.clone()))
+                    .into_any();
                 menu_layout_id = Some(element.before_layout(cx));
                 element
             });
