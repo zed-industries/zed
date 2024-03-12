@@ -1,6 +1,30 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
+/// The way a [`KeyBinding`] should be displayed.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum KeyBindingDisplay {
+    /// Display in macOS style.
+    Mac,
+    /// Display in Linux style.
+    Linux,
+    /// Display in Windows style.
+    Windows,
+}
+
+impl KeyBindingDisplay {
+    /// Returns the [`KeyBindingDisplay`] for the current platform.
+    pub const fn platform() -> Self {
+        if cfg!(target_os = "linux") {
+            KeyBindingDisplay::Linux
+        } else if cfg!(target_os = "windows") {
+            KeyBindingDisplay::Windows
+        } else {
+            KeyBindingDisplay::Mac
+        }
+    }
+}
+
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
@@ -8,41 +32,9 @@ pub struct KeyBinding {
     ///
     /// This should always contain at least one element.
     key_binding: gpui::KeyBinding,
-}
 
-impl RenderOnce for KeyBinding {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .flex_none()
-            .gap_2()
-            .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = Self::icon_for_key(keystroke);
-
-                h_flex()
-                    .flex_none()
-                    .gap_0p5()
-                    .p_0p5()
-                    .rounded_sm()
-                    .text_color(cx.theme().colors().text_muted)
-                    .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                    .when(keystroke.modifiers.control, |el| {
-                        el.child(KeyIcon::new(IconName::Control))
-                    })
-                    .when(keystroke.modifiers.alt, |el| {
-                        el.child(KeyIcon::new(IconName::Option))
-                    })
-                    .when(keystroke.modifiers.command, |el| {
-                        el.child(KeyIcon::new(IconName::Command))
-                    })
-                    .when(keystroke.modifiers.shift, |el| {
-                        el.child(KeyIcon::new(IconName::Shift))
-                    })
-                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
-                    .when(key_icon.is_none(), |el| {
-                        el.child(Key::new(keystroke.key.to_uppercase().clone()))
-                    })
-            }))
-    }
+    /// How keybindings should be displayed.
+    display: KeyBindingDisplay,
 }
 
 impl KeyBinding {
@@ -82,7 +74,74 @@ impl KeyBinding {
     }
 
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
-        Self { key_binding }
+        Self {
+            key_binding,
+            display: KeyBindingDisplay::platform(),
+        }
+    }
+
+    /// Sets how this [`KeyBinding`] should be displayed.
+    pub fn display(mut self, display: KeyBindingDisplay) -> Self {
+        self.display = display;
+        self
+    }
+}
+
+impl RenderOnce for KeyBinding {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .flex_none()
+            .gap_2()
+            .children(self.key_binding.keystrokes().iter().map(|keystroke| {
+                let key_icon = Self::icon_for_key(keystroke);
+
+                h_flex()
+                    .flex_none()
+                    .map(|el| match self.display {
+                        KeyBindingDisplay::Mac => el.gap_0p5(),
+                        KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => el,
+                    })
+                    .p_0p5()
+                    .rounded_sm()
+                    .text_color(cx.theme().colors().text_muted)
+                    .when(keystroke.modifiers.function, |el| match self.display {
+                        KeyBindingDisplay::Mac => el.child(Key::new("fn")),
+                        KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
+                            el.child(Key::new("Fn")).child(Key::new("+"))
+                        }
+                    })
+                    .when(keystroke.modifiers.control, |el| match self.display {
+                        KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Control)),
+                        KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
+                            el.child(Key::new("Ctrl")).child(Key::new("+"))
+                        }
+                    })
+                    .when(keystroke.modifiers.alt, |el| match self.display {
+                        KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Option)),
+                        KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
+                            el.child(Key::new("Alt")).child(Key::new("+"))
+                        }
+                    })
+                    .when(keystroke.modifiers.command, |el| match self.display {
+                        KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Command)),
+                        KeyBindingDisplay::Linux => {
+                            el.child(Key::new("Super")).child(Key::new("+"))
+                        }
+                        KeyBindingDisplay::Windows => {
+                            el.child(Key::new("Win")).child(Key::new("+"))
+                        }
+                    })
+                    .when(keystroke.modifiers.shift, |el| match self.display {
+                        KeyBindingDisplay::Mac => el.child(KeyIcon::new(IconName::Option)),
+                        KeyBindingDisplay::Linux | KeyBindingDisplay::Windows => {
+                            el.child(Key::new("Shift")).child(Key::new("+"))
+                        }
+                    })
+                    .map(|el| match key_icon {
+                        Some(icon) => el.child(KeyIcon::new(icon)),
+                        None => el.child(Key::new(keystroke.key.to_uppercase())),
+                    })
+            }))
     }
 }
 

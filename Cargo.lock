@@ -7225,11 +7225,11 @@ dependencies = [
  "postage",
  "prettier",
  "pretty_assertions",
- "project_core",
  "rand 0.8.5",
  "regex",
  "release_channel",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -7242,40 +7242,7 @@ dependencies = [
  "unindent",
  "util",
  "which 6.0.0",
-]
-
-[[package]]
-name = "project_core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "clock",
- "collections",
- "fs",
- "futures 0.3.28",
- "fuzzy",
- "git",
- "git2",
- "gpui",
- "ignore",
- "itertools 0.11.0",
- "language",
- "log",
- "lsp",
- "parking_lot 0.11.2",
- "postage",
- "pretty_assertions",
- "rand 0.8.5",
- "rpc",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "sum_tree",
- "text",
- "util",
+ "worktree",
 ]
 
 [[package]]
@@ -12495,6 +12462,40 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+]
+
+[[package]]
+name = "worktree"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "clock",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "git",
+ "git2",
+ "gpui",
+ "ignore",
+ "itertools 0.11.0",
+ "language",
+ "log",
+ "lsp",
+ "parking_lot 0.11.2",
+ "postage",
+ "pretty_assertions",
+ "rand 0.8.5",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "sum_tree",
+ "text",
+ "util",
 ]
 
 [[package]]

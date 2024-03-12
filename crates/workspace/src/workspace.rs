@@ -3912,7 +3912,6 @@ impl Render for Workspace {
                                 },
                             )),
                     )
-                    .child(self.modal_layer.clone())
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
                         let div = div()
@@ -3932,6 +3931,7 @@ impl Render for Workspace {
                             None => div.top_2().bottom_2().left_2().right_2().border(),
                         })
                     }))
+                    .child(self.modal_layer.clone())
                     .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())

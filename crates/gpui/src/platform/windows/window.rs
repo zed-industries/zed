@@ -302,8 +302,8 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.close.take() {
             callback()
         }
-        let mut window_handles = self.platform_inner.window_handles.borrow_mut();
-        window_handles.remove(&self.handle);
+        let mut window_handles = self.platform_inner.window_handle_values.borrow_mut();
+        window_handles.remove(&self.hwnd.0);
         if window_handles.is_empty() {
             self.platform_inner
                 .foreground_executor
@@ -680,7 +680,10 @@ impl WindowsWindow {
             inner: context.inner.unwrap(),
             drag_drop_handler,
         };
-        platform_inner.window_handles.borrow_mut().insert(handle);
+        platform_inner
+            .window_handle_values
+            .borrow_mut()
+            .insert(wnd.inner.hwnd.0);
         match options.bounds {
             WindowBounds::Fullscreen => wnd.toggle_full_screen(),
             WindowBounds::Maximized => wnd.maximize(),

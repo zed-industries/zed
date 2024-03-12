@@ -2,6 +2,7 @@ pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 mod prettier_support;
+pub mod project_settings;
 pub mod search;
 mod task_inventory;
 pub mod terminals;
@@ -56,9 +57,9 @@ use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_core::project_settings::{LspSettings, ProjectSettings};
-pub use project_core::{DiagnosticSummary, ProjectEntryId};
+use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use worktree::LocalSnapshot;
 
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
@@ -96,16 +97,20 @@ use util::{
     paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
     post_inc, ResultExt, TryFutureExt as _,
 };
+use worktree::{Snapshot, Traversal};
 
 pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-pub use project_core::project_settings;
-pub use project_core::worktree::{self, *};
 #[cfg(feature = "test-support")]
 pub use task_inventory::test_inventory::*;
 pub use task_inventory::{Inventory, TaskSourceKind};
+pub use worktree::{
+    DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
+    RepositoryEntry, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
+    WorktreeSettings, FS_WATCH_LATENCY,
+};
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -131,6 +136,7 @@ pub struct Project {
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
+    language_server_watched_paths: HashMap<LanguageServerId, HashMap<WorktreeId, GlobSet>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
@@ -305,7 +311,6 @@ pub enum LanguageServerState {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
-        watched_paths: HashMap<WorktreeId, GlobSet>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
 }
@@ -492,6 +497,7 @@ impl SearchMatchCandidate {
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
+        WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
     }
 
@@ -601,6 +607,7 @@ impl Project {
                 language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
+                language_server_watched_paths: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -732,6 +739,7 @@ impl Project {
                     })
                     .collect(),
                 last_workspace_edits_by_language_server: Default::default(),
+                language_server_watched_paths: HashMap::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
@@ -3317,7 +3325,6 @@ impl Project {
             LanguageServerState::Running {
                 adapter: adapter.clone(),
                 language: language.clone(),
-                watched_paths: Default::default(),
                 server: language_server.clone(),
                 simulate_disk_based_diagnostics_completion: None,
             },
@@ -3462,13 +3469,14 @@ impl Project {
                 }
             }
 
+            self.language_server_watched_paths.remove(&server_id);
             self.language_server_statuses.remove(&server_id);
             cx.notify();
 
             let server_state = self.language_servers.remove(&server_id);
             cx.emit(Event::LanguageServerRemoved(server_id));
-            cx.spawn(move |this, cx| async move {
-                Self::shutdown_language_server(this, server_state, name, server_id, cx).await;
+            cx.spawn(move |_, cx| async move {
+                Self::shutdown_language_server(server_state, name, cx).await;
                 orphaned_worktrees
             })
         } else {
@@ -3477,11 +3485,9 @@ impl Project {
     }
 
     async fn shutdown_language_server(
-        this: WeakModel<Project>,
         server_state: Option<LanguageServerState>,
         name: Arc<str>,
-        server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) {
         let server = match server_state {
             Some(LanguageServerState::Starting(task)) => {
@@ -3511,14 +3517,6 @@ impl Project {
             if let Some(shutdown) = server.shutdown() {
                 shutdown.await;
             }
-        }
-
-        if let Some(this) = this.upgrade() {
-            this.update(&mut cx, |this, cx| {
-                this.language_server_statuses.remove(&server_id);
-                cx.notify();
-            })
-            .ok();
         }
     }
 
@@ -3890,64 +3888,66 @@ impl Project {
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some(LanguageServerState::Running { watched_paths, .. }) =
-            self.language_servers.get_mut(&language_server_id)
-        {
-            let mut builders = HashMap::default();
-            for watcher in params.watchers {
-                for worktree in &self.worktrees {
-                    if let Some(worktree) = worktree.upgrade() {
-                        let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
-                            if let Some(abs_path) = tree.abs_path().to_str() {
-                                let relative_glob_pattern = match &watcher.glob_pattern {
-                                    lsp::GlobPattern::String(s) => s
-                                        .strip_prefix(abs_path)
-                                        .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR)),
-                                    lsp::GlobPattern::Relative(rp) => {
-                                        let base_uri = match &rp.base_uri {
-                                            lsp::OneOf::Left(workspace_folder) => {
-                                                &workspace_folder.uri
-                                            }
-                                            lsp::OneOf::Right(base_uri) => base_uri,
-                                        };
-                                        base_uri.to_file_path().ok().and_then(|file_path| {
-                                            (file_path.to_str() == Some(abs_path))
-                                                .then_some(rp.pattern.as_str())
-                                        })
-                                    }
-                                };
-                                if let Some(relative_glob_pattern) = relative_glob_pattern {
-                                    let literal_prefix = glob_literal_prefix(relative_glob_pattern);
-                                    tree.as_local_mut()
-                                        .unwrap()
-                                        .add_path_prefix_to_scan(Path::new(literal_prefix).into());
-                                    if let Some(glob) = Glob::new(relative_glob_pattern).log_err() {
-                                        builders
-                                            .entry(tree.id())
-                                            .or_insert_with(|| GlobSetBuilder::new())
-                                            .add(glob);
-                                    }
-                                    return true;
+        let watched_paths = self
+            .language_server_watched_paths
+            .entry(language_server_id)
+            .or_default();
+
+        let mut builders = HashMap::default();
+        for watcher in params.watchers {
+            for worktree in &self.worktrees {
+                if let Some(worktree) = worktree.upgrade() {
+                    let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
+                        if let Some(abs_path) = tree.abs_path().to_str() {
+                            let relative_glob_pattern = match &watcher.glob_pattern {
+                                lsp::GlobPattern::String(s) => Some(
+                                    s.strip_prefix(abs_path)
+                                        .unwrap_or(s)
+                                        .strip_prefix(std::path::MAIN_SEPARATOR)
+                                        .unwrap_or(s),
+                                ),
+                                lsp::GlobPattern::Relative(rp) => {
+                                    let base_uri = match &rp.base_uri {
+                                        lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
+                                        lsp::OneOf::Right(base_uri) => base_uri,
+                                    };
+                                    base_uri.to_file_path().ok().and_then(|file_path| {
+                                        (file_path.to_str() == Some(abs_path))
+                                            .then_some(rp.pattern.as_str())
+                                    })
                                 }
+                            };
+                            if let Some(relative_glob_pattern) = relative_glob_pattern {
+                                let literal_prefix = glob_literal_prefix(relative_glob_pattern);
+                                tree.as_local_mut()
+                                    .unwrap()
+                                    .add_path_prefix_to_scan(Path::new(literal_prefix).into());
+                                if let Some(glob) = Glob::new(relative_glob_pattern).log_err() {
+                                    builders
+                                        .entry(tree.id())
+                                        .or_insert_with(|| GlobSetBuilder::new())
+                                        .add(glob);
+                                }
+                                return true;
                             }
-                            false
-                        });
-                        if glob_is_inside_worktree {
-                            break;
                         }
+                        false
+                    });
+                    if glob_is_inside_worktree {
+                        break;
                     }
                 }
             }
-
-            watched_paths.clear();
-            for (worktree_id, builder) in builders {
-                if let Ok(globset) = builder.build() {
-                    watched_paths.insert(worktree_id, globset);
-                }
-            }
-
-            cx.notify();
         }
+
+        watched_paths.clear();
+        for (worktree_id, builder) in builders {
+            if let Ok(globset) = builder.build() {
+                watched_paths.insert(worktree_id, globset);
+            }
+        }
+
+        cx.notify();
     }
 
     async fn on_lsp_workspace_edit(
@@ -6731,6 +6731,8 @@ impl Project {
             self.language_server_ids
                 .remove(&(id_to_remove, server_name));
             self.language_server_statuses.remove(&server_id_to_remove);
+            self.language_server_watched_paths
+                .remove(&server_id_to_remove);
             self.last_workspace_edits_by_language_server
                 .remove(&server_id_to_remove);
             self.language_servers.remove(&server_id_to_remove);
@@ -6985,13 +6987,14 @@ impl Project {
 
         let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
-            if let Some(LanguageServerState::Running {
-                server,
-                watched_paths,
-                ..
-            }) = self.language_servers.get(server_id)
+            if let Some(LanguageServerState::Running { server, .. }) =
+                self.language_servers.get(server_id)
             {
-                if let Some(watched_paths) = watched_paths.get(&worktree_id) {
+                if let Some(watched_paths) = self
+                    .language_server_watched_paths
+                    .get(&server_id)
+                    .and_then(|paths| paths.get(&worktree_id))
+                {
                     let params = lsp::DidChangeWatchedFilesParams {
                         changes: changes
                             .iter()
@@ -7013,7 +7016,6 @@ impl Project {
                             })
                             .collect(),
                     };
-
                     if !params.changes.is_empty() {
                         server
                             .notify::<lsp::notification::DidChangeWatchedFiles>(params)

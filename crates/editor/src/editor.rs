@@ -1196,6 +1196,7 @@ impl CodeActionsMenu {
                                     }
                                 }),
                             )
+                            .whitespace_nowrap()
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                             .child(SharedString::from(action.lsp_action.title.clone()))
                     })
@@ -3244,7 +3245,7 @@ impl Editor {
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
                 let buffer = buffer_handle.read(cx);
-                let buffer_file = project::worktree::File::from_dyn(buffer.file())?;
+                let buffer_file = project::File::from_dyn(buffer.file())?;
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
                 let worktree_entry = buffer_worktree
                     .read(cx)
@@ -10699,32 +10700,23 @@ pub fn styled_runs_for_code_label<'a>(
 }
 
 pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {
-    let mut index = 0;
-    let mut codepoints = text.char_indices().peekable();
-
-    std::iter::from_fn(move || {
-        let start_index = index;
-        while let Some((new_index, codepoint)) = codepoints.next() {
-            index = new_index + codepoint.len_utf8();
-            let current_upper = codepoint.is_uppercase();
-            let next_upper = codepoints
-                .peek()
-                .map(|(_, c)| c.is_uppercase())
-                .unwrap_or(false);
-
-            if !current_upper && next_upper {
-                return Some(&text[start_index..index]);
+    let mut prev_index = 0;
+    let mut prev_codepoint: Option<char> = None;
+    text.char_indices()
+        .chain([(text.len(), '\0')])
+        .filter_map(move |(index, codepoint)| {
+            let prev_codepoint = prev_codepoint.replace(codepoint)?;
+            let is_boundary = index == text.len()
+                || !prev_codepoint.is_uppercase() && codepoint.is_uppercase()
+                || !prev_codepoint.is_alphanumeric() && codepoint.is_alphanumeric();
+            if is_boundary {
+                let chunk = &text[prev_index..index];
+                prev_index = index;
+                Some(chunk)
+            } else {
+                None
             }
-        }
-
-        index = text.len();
-        if start_index < text.len() {
-            return Some(&text[start_index..]);
-        }
-        None
-    })
-    .flat_map(|word| word.split_inclusive('_'))
-    .flat_map(|word| word.split_inclusive('-'))
+        })
 }
 
 trait RangeToAnchorExt {

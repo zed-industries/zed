@@ -260,13 +260,6 @@ impl ExtensionBuilder {
             .args(["fetch", "--depth", "1", "origin", &rev])
             .output()
             .context("failed to execute `git fetch`")?;
-        if !fetch_output.status.success() {
-            bail!(
-                "failed to fetch revision {} in directory '{}'",
-                rev,
-                directory.display()
-            );
-        }
 
         let checkout_output = Command::new("git")
             .arg("--git-dir")
@@ -276,6 +269,13 @@ impl ExtensionBuilder {
             .output()
             .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
+            if !fetch_output.status.success() {
+                bail!(
+                    "failed to fetch revision {} in directory '{}'",
+                    rev,
+                    directory.display()
+                );
+            }
             bail!(
                 "failed to checkout revision {} in directory '{}'",
                 rev,

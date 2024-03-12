@@ -9,9 +9,9 @@ use std::{
 use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::Itertools;
-use project_core::worktree::WorktreeId;
 use task::{Task, TaskContext, TaskId, TaskSource};
 use util::{post_inc, NumericPrefixWithSuffix};
+use worktree::WorktreeId;
 
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
@@ -230,8 +230,8 @@ pub mod test_inventory {
     use std::{path::Path, sync::Arc};
 
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
-    use project_core::worktree::WorktreeId;
     use task::{Task, TaskContext, TaskId, TaskSource};
+    use worktree::WorktreeId;
 
     use crate::Inventory;
 

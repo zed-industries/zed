@@ -7442,6 +7442,8 @@ fn test_split_words() {
     assert_eq!(split("Hello_World"), &["Hello_", "World"]);
     assert_eq!(split("helloWOrld"), &["hello", "WOrld"]);
     assert_eq!(split("helloworld"), &["helloworld"]);
+
+    assert_eq!(split(":do_the_thing"), &[":", "do_", "the_", "thing"]);
 }
 
 #[gpui::test]

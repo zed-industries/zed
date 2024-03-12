@@ -100,6 +100,8 @@ impl RenderOnce for Checkbox {
 
         h_flex()
             .id(self.id)
+            .justify_center()
+            .items_center()
             // Rather than adding `px_1()` to add some space around the checkbox,
             // we use a larger parent element to create a slightly larger
             // click area for the checkbox.
