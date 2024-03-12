@@ -74,7 +74,7 @@ use std::{
     env,
     ffi::OsStr,
     hash::Hash,
-    mem,
+    io, mem,
     num::NonZeroU32,
     ops::Range,
     path::{self, Component, Path, PathBuf},
@@ -1828,12 +1828,28 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         let buffer_id = self.next_buffer_id.next();
+        let path2 = path.clone();
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
             worktree.load_buffer(buffer_id, path, cx)
         });
         cx.spawn(move |this, mut cx| async move {
-            let buffer = load_buffer.await?;
+            let buffer = match load_buffer.await {
+                Ok(buffer) => Ok(buffer),
+                Err(error) => {
+                    dbg!(&path2, error.root_cause());
+                    // if let Some(io_error) = error.root_cause().downcast_ref::<io::Error>() {
+                    // if io_error.kind() == io::ErrorKind::NotFound {
+                    let text_buffer = text::Buffer::new(0, buffer_id, "".into());
+                    cx.new_model(|_| Buffer::build(text_buffer, None, None, Capability::ReadWrite))
+                    //     } else {
+                    //         Err(error)
+                    //     }
+                    // } else {
+                    //     Err(error)
+                    // }
+                }
+            }?;
             this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))??;
             Ok(buffer)
         })

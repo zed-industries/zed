@@ -795,6 +795,7 @@ impl Workspace {
             app_state.fs.clone(),
             cx,
         );
+        dbg!("new_local", &abs_paths);
 
         cx.spawn(|mut cx| async move {
             let serialized_workspace: Option<SerializedWorkspace> =
@@ -814,12 +815,15 @@ impl Workspace {
                     .await
                     .log_err()
                 {
+                    dbg!("got project_path_for_path");
                     worktree_roots.extend(worktree.update(&mut cx, |tree, _| tree.abs_path()).ok());
                     project_paths.push((path, Some(project_entry)));
                 } else {
+                    dbg!("NO project_path_for_path");
                     project_paths.push((path, None));
                 }
             }
+            dbg!(&project_paths);
 
             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
                 serialized_workspace.id
@@ -3740,19 +3744,21 @@ fn open_items(
                         let fs = app_state.fs.clone();
                         async move {
                             let file_project_path = project_path?;
-                            if fs.is_file(&abs_path).await {
-                                Some((
-                                    ix,
-                                    workspace
-                                        .update(&mut cx, |workspace, cx| {
-                                            workspace.open_path(file_project_path, None, true, cx)
-                                        })
-                                        .log_err()?
-                                        .await,
-                                ))
-                            } else {
-                                None
-                            }
+                            // if fs.metadata(&abs_path).await.is_ok_and(|metadata| {
+                            //     metadata.is_none() || !metadata.unwrap().is_dir
+                            // }) {
+                            Some((
+                                ix,
+                                workspace
+                                    .update(&mut cx, |workspace, cx| {
+                                        workspace.open_path(file_project_path, None, true, cx)
+                                    })
+                                    .log_err()?
+                                    .await,
+                            ))
+                            // } else {
+                            //     None
+                            // }
                         }
                     })
                 });

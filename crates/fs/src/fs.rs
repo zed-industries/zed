@@ -500,7 +500,12 @@ impl FakeFsState {
     fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
             .try_read_path(target, true)
-            .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
+            .ok_or_else(|| {
+                anyhow!(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("not found: {}", target.display())
+                ))
+            })?
             .0)
     }
 

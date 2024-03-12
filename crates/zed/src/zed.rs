@@ -878,6 +878,41 @@ mod tests {
     };
 
     #[gpui::test]
+    async fn test_open_non_existing_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                    },
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/root/a/new")],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+
+        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
+        workspace
+            .update(cx, |workspace, cx| {
+                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_open_paths_action(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
