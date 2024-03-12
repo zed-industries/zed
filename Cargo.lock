@@ -2493,6 +2493,7 @@ dependencies = [
  "fs",
  "gpui",
  "language",
+ "menu",
  "settings",
  "ui",
  "util",
