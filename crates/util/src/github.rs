@@ -111,7 +111,7 @@ pub async fn github_release_with_tag(
                 "GitHub API response text: {:?}",
                 String::from_utf8_lossy(body.as_slice())
             );
-            return Err(anyhow!("error deserializing latest release"));
+            Err(anyhow!("error deserializing latest release"))
         }
     }
 }
