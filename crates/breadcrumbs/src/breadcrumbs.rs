@@ -46,15 +46,15 @@ impl Render for Breadcrumbs {
             prefix_end_ix,
             segments.len().saturating_sub(MAX_SEGMENTS / 2),
         );
-        let ellipsis = if suffix_start_ix == prefix_end_ix {
-            None
-        } else {
-            Some(BreadcrumbText {
-                text: "⋯".into(),
-                highlights: None,
-            })
-        };
-        segments.splice(prefix_end_ix..suffix_start_ix, ellipsis);
+        if suffix_start_ix > prefix_end_ix {
+            segments.splice(
+                prefix_end_ix..suffix_start_ix,
+                Some(BreadcrumbText {
+                    text: "⋯".into(),
+                    highlights: None,
+                }),
+            );
+        }
 
         let highlighted_segments = segments.into_iter().map(|segment| {
             let mut text_style = cx.text_style();
