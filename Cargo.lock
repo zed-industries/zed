@@ -99,7 +99,7 @@ dependencies = [
  "log",
  "matrixmultiply",
  "ordered-float 2.10.0",
- "parking_lot 0.11.2",
+ "parking_lot",
  "parse_duration",
  "postage",
  "rand 0.8.5",
@@ -122,7 +122,7 @@ dependencies = [
  "libc",
  "log",
  "miow 0.6.0",
- "parking_lot 0.12.1",
+ "parking_lot",
  "piper",
  "polling 3.3.2",
  "regex-automata 0.4.5",
@@ -382,7 +382,7 @@ checksum = "6d26004fe83b2d1cd3a97609b21e39f9a31535822210fe83205d2ce48866ea61"
 dependencies = [
  "event-listener 2.5.3",
  "futures-core",
- "parking_lot 0.12.1",
+ "parking_lot",
 ]
 
 [[package]]
@@ -823,7 +823,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
- "parking_lot 0.11.2",
+ "parking_lot",
  "rodio",
  "util",
 ]
@@ -2120,7 +2120,7 @@ dependencies = [
  "lazy_static",
  "log",
  "once_cell",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "rand 0.8.5",
  "release_channel",
@@ -2157,7 +2157,7 @@ name = "clock"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "parking_lot 0.11.2",
+ "parking_lot",
  "smallvec",
 ]
 
@@ -2253,7 +2253,7 @@ dependencies = [
  "nanoid",
  "node_runtime",
  "notifications",
- "parking_lot 0.11.2",
+ "parking_lot",
  "pretty_assertions",
  "project",
  "prometheus",
@@ -2311,7 +2311,7 @@ dependencies = [
  "lazy_static",
  "menu",
  "notifications",
- "parking_lot 0.11.2",
+ "parking_lot",
  "picker",
  "pretty_assertions",
  "project",
@@ -2475,7 +2475,7 @@ dependencies = [
  "language",
  "lsp",
  "node_runtime",
- "parking_lot 0.11.2",
+ "parking_lot",
  "rpc",
  "serde",
  "settings",
@@ -2641,7 +2641,7 @@ dependencies = [
  "ndk-context",
  "oboe",
  "once_cell",
- "parking_lot 0.12.1",
+ "parking_lot",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -2970,7 +2970,7 @@ dependencies = [
  "hashbrown 0.14.0",
  "lock_api",
  "once_cell",
- "parking_lot_core 0.9.8",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -3279,7 +3279,7 @@ dependencies = [
  "lsp",
  "multi_buffer",
  "ordered-float 2.10.0",
- "parking_lot 0.11.2",
+ "parking_lot",
  "project",
  "rand 0.8.5",
  "release_channel",
@@ -3528,7 +3528,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "parking_lot 0.11.2",
+ "parking_lot",
  "project",
  "schemars",
  "serde",
@@ -3909,7 +3909,7 @@ dependencies = [
  "libc",
  "log",
  "notify",
- "parking_lot 0.11.2",
+ "parking_lot",
  "rope",
  "serde",
  "serde_derive",
@@ -3940,7 +3940,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.4.2",
  "fsevent-sys 3.1.0",
- "parking_lot 0.11.2",
+ "parking_lot",
  "tempfile",
 ]
 
@@ -4050,7 +4050,7 @@ checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
 dependencies = [
  "futures-core",
  "lock_api",
- "parking_lot 0.12.1",
+ "parking_lot",
 ]
 
 [[package]]
@@ -4378,7 +4378,7 @@ dependencies = [
  "oo7",
  "open",
  "parking",
- "parking_lot 0.11.2",
+ "parking_lot",
  "pathfinder_geometry",
  "postage",
  "profiling",
@@ -5187,7 +5187,7 @@ dependencies = [
  "lazy_static",
  "log",
  "lsp",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "pulldown-cmark",
  "rand 0.8.5",
@@ -5275,7 +5275,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "parking_lot 0.11.2",
+ "parking_lot",
  "project",
  "regex",
  "rope",
@@ -5508,7 +5508,7 @@ dependencies = [
  "log",
  "media",
  "nanoid",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "serde",
  "serde_json",
@@ -5566,7 +5566,7 @@ dependencies = [
  "gpui",
  "log",
  "lsp-types",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "release_channel",
  "serde",
@@ -5915,7 +5915,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
- "parking_lot 0.11.2",
+ "parking_lot",
  "rand 0.8.5",
  "settings",
  "sum_tree",
@@ -6708,37 +6708,12 @@ checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
 
 [[package]]
 name = "parking_lot"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
-dependencies = [
- "instant",
- "lock_api",
- "parking_lot_core 0.8.6",
-]
-
-[[package]]
-name = "parking_lot"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
 dependencies = [
  "lock_api",
- "parking_lot_core 0.9.8",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60a2cfe6f0ad2bfc16aefa463b497d5c7a5ecd44a23efa72aa342d90177356dc"
-dependencies = [
- "cfg-if 1.0.0",
- "instant",
- "libc",
- "redox_syscall 0.2.16",
- "smallvec",
- "winapi 0.3.9",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -7058,7 +7033,7 @@ dependencies = [
  "crossbeam-queue",
  "futures 0.3.28",
  "log",
- "parking_lot 0.12.1",
+ "parking_lot",
  "pin-project",
  "pollster",
  "static_assertions",
@@ -7083,7 +7058,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "parking_lot 0.11.2",
+ "parking_lot",
  "serde",
  "serde_json",
  "util",
@@ -7212,7 +7187,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "prettier",
  "pretty_assertions",
@@ -7295,7 +7270,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "memchr",
- "parking_lot 0.12.1",
+ "parking_lot",
  "protobuf",
  "thiserror",
 ]
@@ -7986,7 +7961,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "gpui",
- "parking_lot 0.11.2",
+ "parking_lot",
  "prost 0.8.0",
  "prost-build",
  "rand 0.8.5",
@@ -8556,7 +8531,7 @@ dependencies = [
  "log",
  "ndarray",
  "ordered-float 2.10.0",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "pretty_assertions",
  "project",
@@ -9095,7 +9070,7 @@ dependencies = [
  "indoc",
  "lazy_static",
  "libsqlite3-sys",
- "parking_lot 0.11.2",
+ "parking_lot",
  "smol",
  "thread_local",
  "util",
@@ -9802,7 +9777,7 @@ dependencies = [
  "gpui",
  "lazy_static",
  "log",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "rand 0.8.5",
  "regex",
@@ -9831,7 +9806,7 @@ dependencies = [
  "gpui",
  "indexmap 1.9.3",
  "palette",
- "parking_lot 0.11.2",
+ "parking_lot",
  "refineable",
  "schemars",
  "serde",
@@ -9936,7 +9911,7 @@ dependencies = [
  "bstr",
  "fancy-regex",
  "lazy_static",
- "parking_lot 0.12.1",
+ "parking_lot",
  "rustc-hash",
 ]
 
@@ -10032,7 +10007,7 @@ dependencies = [
  "libc",
  "mio 0.8.11",
  "num_cpus",
- "parking_lot 0.12.1",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.5.4",
@@ -11030,22 +11005,21 @@ name = "util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "backtrace",
+ "async-fs 1.6.0",
  "collections",
  "dirs 3.0.2",
  "futures 0.3.28",
+ "futures-lite 1.13.0",
  "git2",
  "globset",
  "isahc",
  "lazy_static",
  "log",
- "parking_lot 0.11.2",
  "rand 0.8.5",
  "regex",
  "rust-embed",
  "serde",
  "serde_json",
- "smol",
  "take-until",
  "tempfile",
  "tendril",
@@ -11149,7 +11123,7 @@ dependencies = [
  "log",
  "lsp",
  "nvim-rs",
- "parking_lot 0.11.2",
+ "parking_lot",
  "regex",
  "release_channel",
  "schemars",
@@ -12458,7 +12432,7 @@ dependencies = [
  "lazy_static",
  "log",
  "node_runtime",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "project",
  "schemars",
@@ -12493,7 +12467,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
- "parking_lot 0.11.2",
+ "parking_lot",
  "postage",
  "pretty_assertions",
  "rand 0.8.5",
@@ -12832,7 +12806,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "outline",
- "parking_lot 0.11.2",
+ "parking_lot",
  "profiling",
  "project",
  "project_panel",
