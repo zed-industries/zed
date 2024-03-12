@@ -156,13 +156,36 @@ impl Editor {
         );
 
         if point.as_valid().is_some() {
-            if modifiers.shift {
-                self.go_to_type_definition(&GoToTypeDefinition, cx)
-                    .detach_and_log_err(cx)
-            } else {
-                self.go_to_definition(&GoToDefinition, cx)
-                    .detach_and_log_err(cx)
-            }
+            cx.spawn(|editor, mut cx| async move {
+                let Some(go_to_definition) = editor
+                    .update(&mut cx, |editor, cx| {
+                        if modifiers.shift {
+                            editor.go_to_type_definition(&GoToTypeDefinition, cx)
+                        } else {
+                            editor.go_to_definition(&GoToDefinition, cx)
+                        }
+                    })
+                    .ok()
+                else {
+                    return;
+                };
+                let definition_revealed = go_to_definition.await.log_err().unwrap_or(false);
+
+                // TODO kb instead of the revealed check, need to check the selections.head() and ensure that's intersecting the previous selection.
+                if !definition_revealed {
+                    let find_references = editor
+                        .update(&mut cx, |editor, cx| {
+                            // TODO kb docs + a add highlights for such clickable elements?
+                            editor.find_all_references(&FindAllReferences, cx)
+                        })
+                        .ok()
+                        .flatten();
+                    if let Some(find_references) = find_references {
+                        find_references.await.log_err();
+                    }
+                }
+            })
+            .detach();
         }
     }
 }
@@ -510,6 +533,7 @@ pub fn show_link_definition(
                                         Bias::Right,
                                     );
                                     let offset = buffer_position.to_offset(&buffer_snapshot);
+                                    // TODO kb which property to pick to make it clear that it's not a keyword but a definition/type/etc?
                                     !(start <= offset && end >= offset)
                                 } else {
                                     true
