@@ -12,7 +12,7 @@ use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
-use settings::SettingsStore;
+use settings::{SettingsLocation, SettingsStore};
 use std::{
     env,
     ops::Range,
@@ -69,7 +69,7 @@ fn test_line_endings(cx: &mut gpui::AppContext) {
 }
 
 #[gpui::test]
-fn test_select_language() {
+fn test_select_language(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test());
     registry.add(Arc::new(Language::new(
         LanguageConfig {
@@ -97,14 +97,14 @@ fn test_select_language() {
     // matching file extension
     assert_eq!(
         registry
-            .language_for_file("zed/lib.rs".as_ref(), None)
+            .language_for_file(settings_location("src/lib.rs"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Rust".into())
     );
     assert_eq!(
         registry
-            .language_for_file("zed/lib.mk".as_ref(), None)
+            .language_for_file(settings_location("src/lib.mk"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -113,7 +113,7 @@ fn test_select_language() {
     // matching filename
     assert_eq!(
         registry
-            .language_for_file("zed/Makefile".as_ref(), None)
+            .language_for_file(settings_location("src/Makefile"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -122,25 +122,69 @@ fn test_select_language() {
     // matching suffix that is not the full file extension or filename
     assert_eq!(
         registry
-            .language_for_file("zed/cars".as_ref(), None)
+            .language_for_file(settings_location("zed/cars"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file("zed/a.cars".as_ref(), None)
+            .language_for_file(settings_location("zed/a.cars"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file("zed/sumk".as_ref(), None)
+            .language_for_file(settings_location("zed/sumk"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_first_line_pattern(cx: &mut TestAppContext) {
+    let mut languages = LanguageRegistry::test();
+    languages.set_executor(cx.executor());
+    let languages = Arc::new(languages);
+
+    languages.register_test_language(LanguageConfig {
+        name: "JavaScript".into(),
+        matcher: LanguageMatcher {
+            path_suffixes: vec!["js".into()],
+            first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+        },
+        ..Default::default()
+    });
+
+    cx.read(|cx| languages.language_for_file(settings_location("the/script"), None, cx))
+        .await
+        .unwrap_err();
+    cx.read(|cx| {
+        languages.language_for_file(settings_location("the/script"), Some(&"nothing".into()), cx)
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(
+        cx.read(|cx| languages.language_for_file(
+            settings_location("the/script"),
+            Some(&"#!/bin/env node".into()),
+            cx
+        ))
+        .await
+        .unwrap()
+        .name()
+        .as_ref(),
+        "JavaScript"
+    );
+}
+
+fn settings_location(path: &str) -> SettingsLocation {
+    SettingsLocation {
+        path: Path::new(path),
+        worktree_id: 0,
+    }
 }
 
 #[gpui::test]

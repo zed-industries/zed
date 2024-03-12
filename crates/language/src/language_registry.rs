@@ -1,6 +1,7 @@
 use crate::{
-    CachedLspAdapter, Language, LanguageConfig, LanguageContextProvider, LanguageId,
-    LanguageMatcher, LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    language_settings::all_language_settings, CachedLspAdapter, Language, LanguageConfig,
+    LanguageContextProvider, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
+    LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -13,6 +14,7 @@ use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::{LanguageServerBinary, LanguageServerId};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
+use settings::SettingsLocation;
 use std::{
     borrow::Cow,
     ffi::OsStr,
@@ -374,16 +376,40 @@ impl LanguageRegistry {
 
     pub fn language_for_file(
         self: &Arc<Self>,
+        file: SettingsLocation,
+        content: Option<&Rope>,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<Arc<Language>>> {
+        let user_file_types = all_language_settings(Some(file), cx);
+        self.language_for_file_internal(file.path, content, Some(&user_file_types.file_types))
+    }
+
+    pub fn language_for_file_path(
+        self: &Arc<Self>,
+        path: &Path,
+    ) -> impl Future<Output = Result<Arc<Language>>> {
+        self.language_for_file_internal(path, None, None)
+    }
+
+    fn language_for_file_internal(
+        self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
+        user_file_types: Option<&HashMap<Arc<str>, Vec<String>>>,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
-        let rx = self.get_or_load_language(move |_, config| {
+
+        let rx = self.get_or_load_language(move |language_name, config| {
+            let empty = Vec::new();
+            let custom_suffixes = user_file_types
+                .and_then(|types| types.get(language_name))
+                .unwrap_or(&empty);
             let path_matches = config
                 .path_suffixes
                 .iter()
+                .chain(custom_suffixes.iter())
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
                 false,

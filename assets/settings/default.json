@@ -532,6 +532,19 @@
     "enable": false
   },
   "code_actions_on_format": {},
+  // An object whose keys are language names, and whose values
+  // are arrays of filenames or extensions of files that should
+  // use those languages.
+  //
+  // For example, to treat files like `foo.notjs` as JavaScript,
+  // and 'Embargo.lock' as TOML:
+  //
+  // {
+  //   "JavaScript": ["notjs"],
+  //   "TOML": ["Embargo.lock"]
+  // }
+  //
+  "file_types": {},
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {
