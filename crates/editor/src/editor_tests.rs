@@ -4592,22 +4592,10 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
                         newline: true,
                     },
                     BracketPair {
-                        start: "/*".to_string(),
-                        end: " */".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                    BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
                         newline: true,
-                    },
-                    BracketPair {
-                        start: "\"".to_string(),
-                        end: "\"".to_string(),
-                        close: true,
-                        newline: false,
                     },
                 ],
                 ..Default::default()
@@ -5303,22 +5291,10 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
                         newline: true,
                     },
                     BracketPair {
-                        start: "/*".to_string(),
-                        end: " */".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                    BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
                         newline: true,
-                    },
-                    BracketPair {
-                        start: "\"".to_string(),
-                        end: "\"".to_string(),
-                        close: true,
-                        newline: false,
                     },
                 ],
                 ..Default::default()
