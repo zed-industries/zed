@@ -7,7 +7,7 @@ use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
-use editor::{Editor, MultiBuffer};
+use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
     TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
@@ -41,7 +41,7 @@ use vim::VimModeSetting;
 use welcome::BaseKeymap;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new, AppState, NewFile, NewWindow, Toast, Workspace, WorkspaceSettings,
+    open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
@@ -62,7 +62,6 @@ actions!(
         OpenLicenses,
         OpenLocalSettings,
         OpenLocalTasks,
-        OpenLog,
         OpenTasks,
         OpenTelemetryLog,
         ResetBufferFontSize,
@@ -561,21 +560,25 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                         };
                         let project = workspace.project().clone();
                         let buffer = project
-                            .update(cx, |project, cx| project.create_buffer("", None, cx))
+                            .update(cx, |project, cx| project.create_buffer(&log, None, cx))
                             .expect("creating buffers on a local workspace always succeeds");
-                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
-                        workspace.add_item_to_active_pane(
-                            Box::new(
-                                cx.new_view(|cx| {
-                                    Editor::for_multibuffer(buffer, Some(project), cx)
-                                }),
-                            ),
-                            cx,
-                        );
+                        let editor =
+                            cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
+
+                        editor.update(cx, |editor, cx| {
+                            let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges(Some(
+                                    last_multi_buffer_offset..last_multi_buffer_offset,
+                                ));
+                            })
+                        });
+
+                        workspace.add_item_to_active_pane(Box::new(editor), cx);
                     })
                     .log_err();
             })
