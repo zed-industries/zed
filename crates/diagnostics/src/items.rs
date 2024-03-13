@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
-    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, WeakView,
+    rems, Animation, AnimationExt as _, EventEmitter, IntoElement, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
