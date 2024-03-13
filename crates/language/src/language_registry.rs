@@ -465,7 +465,6 @@ impl LanguageRegistry {
             .iter()
             .filter_map(|language| {
                 let score = callback(&language.name, &language.matcher);
-                dbg!(&language.name, score);
                 if score > 0 {
                     Some((language.clone(), score))
                 } else {
@@ -478,8 +477,6 @@ impl LanguageRegistry {
             let _ = tx.send(Err(anyhow!("language not found")));
             return rx;
         };
-
-        dbg!(&language.name);
 
         // If the language is already loaded, resolve with it immediately.
         for loaded_language in state.languages.iter() {
