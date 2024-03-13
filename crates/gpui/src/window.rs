@@ -468,6 +468,7 @@ impl Window {
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(cx));
+                        cx.refresh();
                     })
                     .log_err();
             }
