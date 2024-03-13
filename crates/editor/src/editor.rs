@@ -9644,22 +9644,16 @@ impl Editor {
         telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn report_editor_event(
-        &self,
-        _operation: &'static str,
-        _file_extension: Option<String>,
-        _cx: &AppContext,
-    ) {
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
+        if cfg!(any(test, feature = "test-support")) {
+            return;
+        }
+
         let Some(project) = &self.project else { return };
 
         // If None, we are in a file without an extension
@@ -9679,8 +9673,7 @@ impl Editor {
             .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let copilot_enabled =
-            all_language_settings(file.map(|f| f.as_ref().into()), cx).copilot_enabled(None, None);
+        let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
