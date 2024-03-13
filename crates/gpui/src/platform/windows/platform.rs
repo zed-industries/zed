@@ -76,8 +76,6 @@ pub(crate) struct WindowsPlatformSystemSettings {
     pub(crate) wheel_scroll_lines: u32,
 }
 
-type WindowHandleValues = HashSet<isize>;
-
 pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
