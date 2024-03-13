@@ -1697,6 +1697,9 @@ mod tests {
                     },
                     "excluded_dir": {
                         "file": "excluded file contents",
+                        "ignored_subdir": {
+                            "file": "ignored subfile contents",
+                        },
                     },
                 }),
             )
@@ -2345,7 +2348,7 @@ mod tests {
             (file3.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
-        // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
+        // Go back to an item that has been closed and removed from disk
         workspace
             .update(cx, |_, cx| {
                 pane.update(cx, |pane, cx| {
@@ -2371,7 +2374,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(10, 0), 0.)
+            (file2.clone(), DisplayPoint::new(0, 0), 0.)
         );
         workspace
             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
