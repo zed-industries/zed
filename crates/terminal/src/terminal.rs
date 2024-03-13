@@ -2,6 +2,7 @@ pub mod mappings;
 
 pub use alacritty_terminal;
 
+mod pty_info;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
@@ -34,18 +35,14 @@ use mappings::mouse::{
 
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
-use procinfo::LocalProcessInfo;
+use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-#[cfg(target_os = "windows")]
-use std::num::NonZeroU32;
 use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
-#[cfg(target_os = "windows")]
-use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use std::{
     cmp::{self, min},
@@ -56,9 +53,6 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-
-#[cfg(unix)]
-use std::os::unix::prelude::AsRawFd;
 
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
@@ -401,19 +395,7 @@ impl TerminalBuilder {
             }
         };
 
-        #[cfg(unix)]
-        let (fd, shell_pid) = (pty.file().as_raw_fd(), pty.child().id());
-
-        // todo("windows")
-        #[cfg(windows)]
-        let (fd, shell_pid) = {
-            let child = pty.child_watcher();
-            let handle = child.raw_handle();
-            let pid = child.pid().unwrap_or_else(|| unsafe {
-                NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle)))
-            });
-            (handle, u32::from(pid))
-        };
+        let pty_info = PtyProcessInfo::new(&pty);
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -441,9 +423,7 @@ impl TerminalBuilder {
             last_mouse: None,
             matches: Vec::new(),
             selection_head: None,
-            shell_fd: fd as u32,
-            shell_pid,
-            foreground_process_info: None,
+            pty_info,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             last_mouse_position: None,
@@ -598,9 +578,7 @@ pub struct Terminal {
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
-    shell_pid: u32,
-    shell_fd: u32,
-    pub foreground_process_info: Option<LocalProcessInfo>,
+    pub pty_info: PtyProcessInfo,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -660,7 +638,7 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if self.update_process_info() {
+                if self.pty_info.has_changed() {
                     cx.emit(Event::TitleChanged);
                 }
             }
@@ -675,56 +653,8 @@ impl Terminal {
         self.selection_phase == SelectionPhase::Selecting
     }
 
-    /// Updates the cached process info, returns whether the Zed-relevant info has changed
-    fn update_process_info(&mut self) -> bool {
-        #[cfg(unix)]
-        let pid = {
-            let ret = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
-            if ret < 0 {
-                self.shell_pid as i32
-            } else {
-                ret
-            }
-        };
-
-        #[cfg(windows)]
-        let pid = {
-            let ret = unsafe { GetProcessId(HANDLE(self.shell_fd as _)) };
-            // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
-            if ret == 0 {
-                // in the builder process, there is a small chance, almost negligible,
-                // that this value could be zero, which means child_watcher returns None,
-                // GetProcessId returns 0.
-                if self.shell_pid == 0 {
-                    return false;
-                }
-                self.shell_pid
-            } else {
-                ret
-            }
-        } as i32;
-
-        if let Some(process_info) = LocalProcessInfo::with_root_pid(pid as u32) {
-            let res = self
-                .foreground_process_info
-                .as_ref()
-                .map(|old_info| {
-                    process_info.cwd != old_info.cwd || process_info.name != old_info.name
-                })
-                .unwrap_or(true);
-
-            self.foreground_process_info = Some(process_info.clone());
-
-            res
-        } else {
-            false
-        }
-    }
-
-    fn get_cwd(&self) -> Option<PathBuf> {
-        self.foreground_process_info
-            .as_ref()
-            .map(|info| info.cwd.clone())
+    pub fn get_cwd(&self) -> Option<PathBuf> {
+        self.pty_info.current.as_ref().map(|info| info.cwd.clone())
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view
@@ -1402,7 +1332,8 @@ impl Terminal {
                 }
             }
             None => self
-                .foreground_process_info
+                .pty_info
+                .current
                 .as_ref()
                 .map(|fpi| {
                     let process_file = fpi
@@ -1410,11 +1341,13 @@ impl Terminal {
                         .file_name()
                         .map(|name| name.to_string_lossy().to_string())
                         .unwrap_or_default();
+
+                    let argv = fpi.argv.clone();
                     let process_name = format!(
                         "{}{}",
                         fpi.name,
-                        if fpi.argv.len() >= 1 {
-                            format!(" {}", (fpi.argv[1..]).join(" "))
+                        if argv.len() >= 1 {
+                            format!(" {}", (argv[1..]).join(" "))
                         } else {
                             "".to_string()
                         }

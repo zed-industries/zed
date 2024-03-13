@@ -3,7 +3,7 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
         TransformBlock,
     },
-    editor_settings::ShowScrollbar,
+    editor_settings::{DoubleClickInMultibuffer, ShowScrollbar},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -392,12 +392,31 @@ impl EditorElement {
         }
 
         let mut click_count = event.click_count;
-        let modifiers = event.modifiers;
+        let mut modifiers = event.modifiers;
 
         if gutter_hitbox.is_hovered(cx) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(cx) {
             return;
+        }
+
+        if click_count == 2 && !editor.buffer().read(cx).is_singleton() {
+            match EditorSettings::get_global(cx).double_click_in_multibuffer {
+                DoubleClickInMultibuffer::Select => {
+                    // do nothing special on double click, all selection logic is below
+                }
+                DoubleClickInMultibuffer::Open => {
+                    if modifiers.alt {
+                        // if double click is made with alt, pretend it's a regular double click without opening and alt,
+                        // and run the selection logic.
+                        modifiers.alt = false;
+                    } else {
+                        // if double click is made without alt, open the corresponding excerp
+                        editor.open_excerpts(&OpenExcerpts, cx);
+                        return;
+                    }
+                }
+            }
         }
 
         let point_for_position =
@@ -856,7 +875,8 @@ impl EditorElement {
                     };
 
                     let x = cursor_character_x - scroll_pixel_position.x;
-                    let y = cursor_position.row() as f32 * line_height - scroll_pixel_position.y;
+                    let y = (cursor_position.row() as f32 - scroll_pixel_position.y / line_height)
+                        * line_height;
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1692,8 +1712,7 @@ impl EditorElement {
 
     fn paint_background(&self, layout: &EditorLayout, cx: &mut ElementContext) {
         cx.paint_layer(layout.hitbox.bounds, |cx| {
-            let scroll_top =
-                layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
+            let scroll_top = layout.position_map.snapshot.scroll_position().y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             cx.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
             cx.paint_quad(fill(layout.text_hitbox.bounds, self.style.background));
@@ -1713,8 +1732,8 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (layout.position_map.line_height * *start_row as f32)
-                                - scroll_top,
+                                + (*start_row as f32 - scroll_top)
+                                    * layout.position_map.line_height,
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -1730,8 +1749,8 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (layout.position_map.line_height * highlight_row_start as f32)
-                                - scroll_top,
+                                + (highlight_row_start as f32 - scroll_top)
+                                    * layout.position_map.line_height,
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -2083,11 +2102,9 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
-        cx.paint_layer(layout.text_hitbox.bounds, |cx| {
-            for cursor in &mut layout.cursors {
-                cursor.paint(layout.content_origin, cx);
-            }
-        });
+        for cursor in &mut layout.cursors {
+            cursor.paint(layout.content_origin, cx);
+        }
     }
 
     fn paint_scrollbar(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
@@ -2779,7 +2796,8 @@ impl LineWithInvisibles {
         cx: &mut ElementContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = line_height * row as f32 - layout.position_map.scroll_pixel_position.y;
+        let line_y =
+            line_height * (row as f32 - layout.position_map.scroll_pixel_position.y / line_height);
 
         self.line
             .paint(

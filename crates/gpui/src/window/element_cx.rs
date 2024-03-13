@@ -61,7 +61,7 @@ impl HitboxId {
 
 /// A rectangular region that potentially blocks hitboxes inserted prior.
 /// See [ElementContext::insert_hitbox] for more details.
-#[derive(Clone, Debug, Eq, PartialEq, Deref)]
+#[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox
     pub id: HitboxId,
@@ -381,8 +381,7 @@ impl<'a> ElementContext<'a> {
 
         let mut sorted_deferred_draws =
             (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws
-            .sort_unstable_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+        sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
         self.layout_deferred_draws(&sorted_deferred_draws);
 
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
@@ -859,12 +858,11 @@ impl<'a> ElementContext<'a> {
             shadow_bounds.dilate(shadow.spread_radius);
             self.window.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: shadow_bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
-                pad: 0,
             });
         }
     }
@@ -877,6 +875,7 @@ impl<'a> ElementContext<'a> {
         let content_mask = self.content_mask();
         self.window.next_frame.scene.insert_primitive(Quad {
             order: 0,
+            pad: 0,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             background: quad.background,
@@ -919,6 +918,7 @@ impl<'a> ElementContext<'a> {
 
         self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
+            pad: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default(),
@@ -944,6 +944,7 @@ impl<'a> ElementContext<'a> {
 
         self.window.next_frame.scene.insert_primitive(Underline {
             order: 0,
+            pad: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
@@ -1000,6 +1001,7 @@ impl<'a> ElementContext<'a> {
                 .scene
                 .insert_primitive(MonochromeSprite {
                     order: 0,
+                    pad: 0,
                     bounds,
                     content_mask,
                     color,
@@ -1054,12 +1056,11 @@ impl<'a> ElementContext<'a> {
                 .scene
                 .insert_primitive(PolychromeSprite {
                     order: 0,
+                    grayscale: false,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
-                    grayscale: false,
-                    pad: 0,
                 });
         }
         Ok(())
@@ -1096,6 +1097,7 @@ impl<'a> ElementContext<'a> {
             .scene
             .insert_primitive(MonochromeSprite {
                 order: 0,
+                pad: 0,
                 bounds,
                 content_mask,
                 color,
@@ -1131,12 +1133,11 @@ impl<'a> ElementContext<'a> {
             .scene
             .insert_primitive(PolychromeSprite {
                 order: 0,
+                grayscale,
                 bounds,
                 content_mask,
                 corner_radii,
                 tile,
-                grayscale,
-                pad: 0,
             });
         Ok(())
     }

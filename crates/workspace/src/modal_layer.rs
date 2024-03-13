@@ -147,7 +147,7 @@ impl Render for ModalLayer {
                 .flex_col()
                 .items_center()
                 .track_focus(&active_modal.focus_handle)
-                .child(h_flex().child(active_modal.modal.view())),
+                .child(h_flex().occlude().child(active_modal.modal.view())),
         )
     }
 }

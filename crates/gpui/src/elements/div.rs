@@ -185,7 +185,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, cx| {
-                if phase == DispatchPhase::Capture && !hitbox.is_hovered(cx) {
+                if phase == DispatchPhase::Capture && !hitbox.contains(&cx.mouse_position()) {
                     (listener)(event, cx)
                 }
             }));
@@ -1306,6 +1306,7 @@ impl Interactivity {
                             || self.group.is_some()
                             || self.has_hover_styles()
                             || self.has_mouse_listeners()
+                            || self.scroll_offset.is_some()
                         {
                             Some(cx.insert_hitbox(bounds, self.occlude_mouse))
                         } else {

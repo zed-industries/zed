@@ -941,19 +941,25 @@ mod element {
                         let flexes = self.flexes.clone();
                         let child_bounds = child.bounds;
                         let axis = self.axis;
+                        let handle_hitbox = handle.hitbox.clone();
+                        let was_hovered = handle_hitbox.is_hovered(cx);
                         move |e: &MouseMoveEvent, phase, cx| {
                             let dragged_handle = dragged_handle.borrow();
-                            if phase.bubble() && *dragged_handle == Some(ix) {
-                                Self::compute_resize(
-                                    &flexes,
-                                    e,
-                                    ix,
-                                    axis,
-                                    child_bounds.origin,
-                                    bounds.size,
-                                    workspace.clone(),
-                                    cx,
-                                )
+                            if phase.bubble() {
+                                if *dragged_handle == Some(ix) {
+                                    Self::compute_resize(
+                                        &flexes,
+                                        e,
+                                        ix,
+                                        axis,
+                                        child_bounds.origin,
+                                        bounds.size,
+                                        workspace.clone(),
+                                        cx,
+                                    )
+                                } else if was_hovered != handle_hitbox.is_hovered(cx) {
+                                    cx.refresh();
+                                }
                             }
                         }
                     });

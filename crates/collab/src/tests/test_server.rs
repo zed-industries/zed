@@ -265,7 +265,7 @@ impl TestServer {
             workspace_store,
             languages: Arc::new(language_registry),
             fs: fs.clone(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
 

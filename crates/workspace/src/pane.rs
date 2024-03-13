@@ -2108,7 +2108,11 @@ impl NavHistoryState {
 fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     let path = buffer_path
         .as_ref()
-        .and_then(|p| p.path.to_str())
+        .and_then(|p| {
+            p.path
+                .to_str()
+                .and_then(|s| if s == "" { None } else { Some(s) })
+        })
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")

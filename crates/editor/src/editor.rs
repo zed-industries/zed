@@ -395,6 +395,7 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
@@ -1196,6 +1197,7 @@ impl CodeActionsMenu {
                                     }
                                 }),
                             )
+                            .whitespace_nowrap()
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                             .child(SharedString::from(action.lsp_action.title.clone()))
                     })
@@ -1533,6 +1535,7 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
+            find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
@@ -2653,10 +2656,31 @@ impl Editor {
         let mut found_colon = false;
         for char in snapshot.reversed_chars_at(position).take(100) {
             // Found a possible emoji shortcode in the middle of the buffer
-            if found_colon && char.is_whitespace() {
-                chars.reverse();
-                return Some(chars.iter().collect());
+            if found_colon {
+                if char.is_whitespace() {
+                    chars.reverse();
+                    return Some(chars.iter().collect());
+                }
+                // If the previous character is not a whitespace, we are in the middle of a word
+                // and we only want to complete the shortcode if the word is made up of other emojis
+                let mut containing_word = String::new();
+                for ch in snapshot
+                    .reversed_chars_at(position)
+                    .skip(chars.len() + 1)
+                    .take(100)
+                {
+                    if ch.is_whitespace() {
+                        break;
+                    }
+                    containing_word.push(ch);
+                }
+                let containing_word = containing_word.chars().rev().collect::<String>();
+                if util::word_consists_of_emojis(containing_word.as_str()) {
+                    chars.reverse();
+                    return Some(chars.iter().collect());
+                }
             }
+
             if char.is_whitespace() || !char.is_ascii() {
                 return None;
             }
@@ -3223,7 +3247,7 @@ impl Editor {
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
                 let buffer = buffer_handle.read(cx);
-                let buffer_file = project::worktree::File::from_dyn(buffer.file())?;
+                let buffer_file = project::File::from_dyn(buffer.file())?;
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
                 let worktree_entry = buffer_worktree
                     .read(cx)
@@ -7865,15 +7889,40 @@ impl Editor {
         _: &FindAllReferences,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let buffer = self.buffer.read(cx);
-        let head = self.selections.newest::<usize>(cx).head();
-        let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
-        let replica_id = self.replica_id(cx);
+        let multi_buffer = self.buffer.read(cx);
+        let selection = self.selections.newest::<usize>(cx);
+        let head = selection.head();
 
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head_anchor = multi_buffer_snapshot.anchor_at(
+            head,
+            if head < selection.tail() {
+                Bias::Right
+            } else {
+                Bias::Left
+            },
+        );
+        match self
+            .find_all_references_task_sources
+            .binary_search_by(|task_anchor| task_anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+        {
+            Ok(_) => {
+                log::info!(
+                    "Ignoring repeated FindAllReferences invocation with the position of already running task"
+                );
+                return None;
+            }
+            Err(i) => {
+                self.find_all_references_task_sources.insert(i, head_anchor);
+            }
+        }
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let replica_id = self.replica_id(cx);
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn(|editor, mut cx| async move {
+        let open_task = cx.spawn(|editor, mut cx| async move {
             let mut locations = references.await?;
             let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
             let head_offset = text::ToOffset::to_offset(&head, &snapshot);
@@ -7955,6 +8004,21 @@ impl Editor {
             })?;
 
             Ok(())
+        });
+        Some(cx.spawn(|editor, mut cx| async move {
+            open_task.await?;
+            editor.update(&mut cx, |editor, _| {
+                if let Ok(i) =
+                    editor
+                        .find_all_references_task_sources
+                        .binary_search_by(|task_anchor| {
+                            task_anchor.cmp(&head_anchor, &multi_buffer_snapshot)
+                        })
+                {
+                    editor.find_all_references_task_sources.remove(i);
+                }
+            })?;
+            anyhow::Ok(())
         }))
     }
 
@@ -10678,32 +10742,23 @@ pub fn styled_runs_for_code_label<'a>(
 }
 
 pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {
-    let mut index = 0;
-    let mut codepoints = text.char_indices().peekable();
-
-    std::iter::from_fn(move || {
-        let start_index = index;
-        while let Some((new_index, codepoint)) = codepoints.next() {
-            index = new_index + codepoint.len_utf8();
-            let current_upper = codepoint.is_uppercase();
-            let next_upper = codepoints
-                .peek()
-                .map(|(_, c)| c.is_uppercase())
-                .unwrap_or(false);
-
-            if !current_upper && next_upper {
-                return Some(&text[start_index..index]);
+    let mut prev_index = 0;
+    let mut prev_codepoint: Option<char> = None;
+    text.char_indices()
+        .chain([(text.len(), '\0')])
+        .filter_map(move |(index, codepoint)| {
+            let prev_codepoint = prev_codepoint.replace(codepoint)?;
+            let is_boundary = index == text.len()
+                || !prev_codepoint.is_uppercase() && codepoint.is_uppercase()
+                || !prev_codepoint.is_alphanumeric() && codepoint.is_alphanumeric();
+            if is_boundary {
+                let chunk = &text[prev_index..index];
+                prev_index = index;
+                Some(chunk)
+            } else {
+                None
             }
-        }
-
-        index = text.len();
-        if start_index < text.len() {
-            return Some(&text[start_index..]);
-        }
-        None
-    })
-    .flat_map(|word| word.split_inclusive('_'))
-    .flat_map(|word| word.split_inclusive('-'))
+        })
 }
 
 trait RangeToAnchorExt {

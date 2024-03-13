@@ -25,7 +25,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
     Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, Task, WindowOptions,
+    SemanticVersion, Task, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -156,6 +156,10 @@ impl Platform for LinuxPlatform {
     // todo(linux)
     fn unhide_other_apps(&self) {}
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.client.primary_display()
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.client.displays()
     }
@@ -172,7 +176,7 @@ impl Platform for LinuxPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         self.client.open_window(handle, options)
     }

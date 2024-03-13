@@ -7,8 +7,7 @@ mod story_selector;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
-    WindowOptions,
+    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowOptions,
 };
 use log::LevelFilter;
 use settings::{default_settings, KeymapFile, Settings, SettingsStore};
@@ -85,12 +84,11 @@ fn main() {
         load_storybook_keymap(cx);
         cx.set_menus(app_menus());
 
+        let size = size(px(1500.), px(780.));
+        let bounds = Bounds::centered(size, cx);
         let _window = cx.open_window(
             WindowOptions {
-                bounds: WindowBounds::Fixed(Bounds {
-                    origin: Default::default(),
-                    size: size(px(1500.), px(780.)).into(),
-                }),
+                bounds: Some(bounds),
                 ..Default::default()
             },
             move |cx| {

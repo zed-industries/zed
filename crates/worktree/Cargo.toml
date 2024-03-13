@@ -1,14 +1,17 @@
 [package]
-name = "project_core"
+name = "worktree"
 version = "0.1.0"
 edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lib]
+path = "src/worktree.rs"
+doctest = false
+
 [lints]
 workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 test-support = [
     "client/test-support",
