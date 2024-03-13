@@ -257,7 +257,7 @@ impl ChannelChat {
 
         let nonce: u128 = self.rng.gen();
 
-        let response = self.rpc.request(proto::UpdateChannelMessage {
+        let request = self.rpc.request(proto::UpdateChannelMessage {
             channel_id: self.channel_id.0,
             message_id: id,
             body: message.text,
@@ -265,7 +265,7 @@ impl ChannelChat {
             mentions: mentions_to_proto(&message.mentions),
         });
         Ok(cx.spawn(move |_, _| async move {
-            response.await?;
+            request.await?;
             Ok(())
         }))
     }
