@@ -637,6 +637,7 @@ struct Callbacks {
 pub(crate) struct WindowsWindow {
     inner: Rc<WindowsWindowInner>,
     drag_drop_handler: IDropTarget,
+    display: Rc<WindowsDisplay>,
 }
 
 struct WindowCreateContext {
@@ -701,9 +702,12 @@ impl WindowsWindow {
             };
             drag_drop_handler
         };
+        // todo(windows) move window to target monitor
+        // options.display_id
         let wnd = Self {
             inner: context.inner.unwrap(),
             drag_drop_handler,
+            display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
         };
         platform_inner
             .raw_window_handles
@@ -780,9 +784,8 @@ impl PlatformWindow for WindowsWindow {
         WindowAppearance::Dark
     }
 
-    // todo(windows)
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(WindowsDisplay::new())
+        self.display.clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {

@@ -284,19 +284,24 @@ impl Platform for WindowsPlatform {
         unimplemented!()
     }
 
-    // todo(windows)
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        vec![Rc::new(WindowsDisplay::new())]
+        WindowsDisplay::displays()
     }
 
-    // todo(windows)
     fn display(&self, id: crate::DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(Rc::new(WindowsDisplay::new()))
+        if let Some(display) = WindowsDisplay::new(id) {
+            Some(Rc::new(display) as Rc<dyn PlatformDisplay>)
+        } else {
+            None
+        }
     }
 
-    // todo(windows)
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(Rc::new(WindowsDisplay::new()))
+        if let Some(display) = WindowsDisplay::primary_monitor() {
+            Some(Rc::new(display) as Rc<dyn PlatformDisplay>)
+        } else {
+            None
+        }
     }
 
     // todo(windows)
