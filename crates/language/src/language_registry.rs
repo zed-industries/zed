@@ -11,7 +11,7 @@ use futures::{
     Future, FutureExt as _,
 };
 use gpui::{AppContext, BackgroundExecutor, Task};
-use lsp::{LanguageServerBinary, LanguageServerId};
+use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use std::{
@@ -31,10 +31,6 @@ pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
     login_shell_env_loaded: Shared<Task<()>>,
-    #[allow(clippy::type_complexity)]
-    lsp_binary_paths: Mutex<
-        HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
-    >,
     executor: BackgroundExecutor,
     lsp_binary_status_tx: LspBinaryStatusSender,
 }
@@ -123,11 +119,11 @@ struct LspBinaryStatusSender {
 
 impl LanguageRegistry {
     pub fn new(login_shell_env_loaded: Task<()>, executor: BackgroundExecutor) -> Self {
-        Self {
+        let this = Self {
             state: RwLock::new(LanguageRegistryState {
                 next_language_server_id: 0,
-                languages: vec![PLAIN_TEXT.clone()],
-                available_languages: Default::default(),
+                languages: Vec::new(),
+                available_languages: Vec::new(),
                 grammars: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
@@ -141,10 +137,11 @@ impl LanguageRegistry {
             }),
             language_server_download_dir: None,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
-            lsp_binary_paths: Default::default(),
-            executor,
             lsp_binary_status_tx: Default::default(),
-        }
+            executor,
+        };
+        this.add(PLAIN_TEXT.clone());
+        this
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -314,7 +311,7 @@ impl LanguageRegistry {
         result
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// Add a pre-loaded language to the registry.
     pub fn add(&self, language: Arc<Language>) {
         let mut state = self.state.write();
         state.available_languages.push(AvailableLanguage {
@@ -755,9 +752,6 @@ impl LanguageRegistry {
         cx: &mut AppContext,
     ) -> Task<()> {
         log::info!("deleting server container");
-
-        let mut lock = self.lsp_binary_paths.lock();
-        lock.remove(&adapter.name);
 
         let download_dir = self
             .language_server_download_dir

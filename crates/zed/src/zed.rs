@@ -3031,7 +3031,11 @@ mod tests {
             languages::init(languages.clone(), node_runtime, cx);
         });
         for name in languages.language_names() {
-            languages.language_for_name(&name).await.unwrap();
+            languages
+                .language_for_name(&name)
+                .await
+                .with_context(|| format!("language name {name}"))
+                .unwrap();
         }
         cx.run_until_parked();
     }

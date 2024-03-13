@@ -1719,6 +1719,7 @@ fn init_test(cx: &mut TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         SemanticIndexSettings::register(cx);
+        language::init(cx);
         Project::init_settings(cx);
     });
 }
