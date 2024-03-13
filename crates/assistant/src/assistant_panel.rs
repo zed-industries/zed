@@ -31,9 +31,9 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
@@ -1284,25 +1284,25 @@ impl Render for AssistantPanel {
                             let view = cx.view().clone();
                             let scroll_handle = self.saved_conversations_scroll_handle.clone();
                             let conversation_count = self.saved_conversations.len();
-                            canvas(move |bounds, cx| {
-                                uniform_list(
-                                    view,
-                                    "saved_conversations",
-                                    conversation_count,
-                                    |this, range, cx| {
-                                        range
-                                            .map(|ix| this.render_saved_conversation(ix, cx))
-                                            .collect()
-                                    },
-                                )
-                                .track_scroll(scroll_handle)
-                                .into_any_element()
-                                .draw(
-                                    bounds.origin,
-                                    bounds.size.map(AvailableSpace::Definite),
-                                    cx,
-                                );
-                            })
+                            canvas(
+                                move |bounds, cx| {
+                                    let mut list = uniform_list(
+                                        view,
+                                        "saved_conversations",
+                                        conversation_count,
+                                        |this, range, cx| {
+                                            range
+                                                .map(|ix| this.render_saved_conversation(ix, cx))
+                                                .collect()
+                                        },
+                                    )
+                                    .track_scroll(scroll_handle)
+                                    .into_any_element();
+                                    list.layout(bounds.origin, bounds.size.into(), cx);
+                                    list
+                                },
+                                |_bounds, mut list, cx| list.paint(cx),
+                            )
                             .size_full()
                             .into_any_element()
                         }),

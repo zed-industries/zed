@@ -140,6 +140,8 @@ async fn fetch_extensions_from_blob_store(
     blob_store_bucket: &String,
     app_state: &Arc<AppState>,
 ) -> anyhow::Result<()> {
+    log::info!("fetching extensions from blob store");
+
     let list = blob_store_client
         .list_objects()
         .bucket(blob_store_bucket)
@@ -164,10 +166,12 @@ async fn fetch_extensions_from_blob_store(
         let Some(version) = parts.next() else {
             continue;
         };
-        published_versions
-            .entry(extension_id)
-            .or_default()
-            .push(version);
+        if parts.next() == Some("manifest.json") {
+            published_versions
+                .entry(extension_id)
+                .or_default()
+                .push(version);
+        }
     }
 
     let known_versions = app_state.db.get_known_extension_versions().await?;
@@ -182,46 +186,20 @@ async fn fetch_extensions_from_blob_store(
                 .binary_search_by_key(&published_version, String::as_str)
                 .is_err()
             {
-                let object = blob_store_client
-                    .get_object()
-                    .bucket(blob_store_bucket)
-                    .key(format!(
-                        "extensions/{extension_id}/{published_version}/manifest.json"
-                    ))
-                    .send()
-                    .await?;
-                let manifest_bytes = object
-                    .body
-                    .collect()
-                    .await
-                    .map(|data| data.into_bytes())
-                    .with_context(|| format!("failed to download manifest for extension {extension_id} version {published_version}"))?
-                    .to_vec();
-                let manifest = serde_json::from_slice::<ExtensionManifest>(&manifest_bytes)
-                    .with_context(|| format!("invalid manifest for extension {extension_id} version {published_version}: {}", String::from_utf8_lossy(&manifest_bytes)))?;
-
-                let published_at = object.last_modified.ok_or_else(|| anyhow!("missing last modified timestamp for extension {extension_id} version {published_version}"))?;
-                let published_at =
-                    time::OffsetDateTime::from_unix_timestamp_nanos(published_at.as_nanos())?;
-                let published_at = PrimitiveDateTime::new(published_at.date(), published_at.time());
-
-                let version = semver::Version::parse(&manifest.version).with_context(|| {
-                    format!(
-                        "invalid version for extension {extension_id} version {published_version}"
-                    )
-                })?;
-
-                new_versions
-                    .entry(extension_id)
-                    .or_default()
-                    .push(NewExtensionVersion {
-                        name: manifest.name,
-                        version,
-                        description: manifest.description.unwrap_or_default(),
-                        authors: manifest.authors,
-                        repository: manifest.repository,
-                        published_at,
-                    });
+                if let Some(extension) = fetch_extension_manifest(
+                    blob_store_client,
+                    blob_store_bucket,
+                    extension_id,
+                    published_version,
+                )
+                .await
+                .log_err()
+                {
+                    new_versions
+                        .entry(extension_id)
+                        .or_default()
+                        .push(extension);
+                }
             }
         }
     }
@@ -231,5 +209,56 @@ async fn fetch_extensions_from_blob_store(
         .insert_extension_versions(&new_versions)
         .await?;
 
+    log::info!(
+        "fetched {} new extensions from blob store",
+        new_versions.values().map(|v| v.len()).sum::<usize>()
+    );
+
     Ok(())
+}
+
+async fn fetch_extension_manifest(
+    blob_store_client: &aws_sdk_s3::Client,
+    blob_store_bucket: &String,
+    extension_id: &str,
+    version: &str,
+) -> Result<NewExtensionVersion, anyhow::Error> {
+    let object = blob_store_client
+        .get_object()
+        .bucket(blob_store_bucket)
+        .key(format!("extensions/{extension_id}/{version}/manifest.json"))
+        .send()
+        .await?;
+    let manifest_bytes = object
+        .body
+        .collect()
+        .await
+        .map(|data| data.into_bytes())
+        .with_context(|| {
+            format!("failed to download manifest for extension {extension_id} version {version}")
+        })?
+        .to_vec();
+    let manifest =
+        serde_json::from_slice::<ExtensionManifest>(&manifest_bytes).with_context(|| {
+            format!(
+                "invalid manifest for extension {extension_id} version {version}: {}",
+                String::from_utf8_lossy(&manifest_bytes)
+            )
+        })?;
+    let published_at = object.last_modified.ok_or_else(|| {
+        anyhow!("missing last modified timestamp for extension {extension_id} version {version}")
+    })?;
+    let published_at = time::OffsetDateTime::from_unix_timestamp_nanos(published_at.as_nanos())?;
+    let published_at = PrimitiveDateTime::new(published_at.date(), published_at.time());
+    let version = semver::Version::parse(&manifest.version).with_context(|| {
+        format!("invalid version for extension {extension_id} version {version}")
+    })?;
+    Ok(NewExtensionVersion {
+        name: manifest.name,
+        version,
+        description: manifest.description.unwrap_or_default(),
+        authors: manifest.authors,
+        repository: manifest.repository,
+        published_at,
+    })
 }

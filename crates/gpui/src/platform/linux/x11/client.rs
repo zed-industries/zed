@@ -318,20 +318,35 @@ impl Client for X11Client {
             .unwrap()
             .reply()
             .expect("TODO");
-        let crtc = screen_resources.crtcs.first().unwrap();
-
-        let crtc_info = self
-            .xcb_connection
-            .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-            .unwrap()
-            .reply()
-            .expect("TODO");
 
         let mode = screen_resources
-            .modes
+            .crtcs
             .iter()
-            .find(|m| m.id == crtc_info.mode)
-            .expect("Missing screen mode for crtc specified mode id");
+            .find_map(|crtc| {
+                //             let cookie = self.xcb_connection.send_request(&xcb::randr::GetCrtcInfo {
+                //                 crtc: crtc.to_owned(),
+                //                 config_timestamp: xcb::x::Time::CurrentTime as u32,
+                //             });
+                //             let crtc_info = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
+
+                //             let mode_id = crtc_info.mode().resource_id();
+                //             screen_resources.modes().iter().find(|m| m.id == mode_id)
+
+                // /////////////////////////////////////
+
+                let crtc_info = self
+                    .xcb_connection
+                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME).ok()?
+                    .reply().ok()?;
+
+                screen_resources
+                    .modes
+                    .iter()
+                    .find(|m| m.id == crtc_info.mode)
+            })
+            .expect("Unable to find screen refresh reate");
+
+        // .expect("Missing screen mode for crtc specified mode id");
 
         let refresh_event_token = self
             .platform_inner

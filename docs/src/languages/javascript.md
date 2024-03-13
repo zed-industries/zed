@@ -23,3 +23,65 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
   }
 }
 ```
+
+### ESLint
+
+You can configure Zed to format code using `eslint --fix` by running the ESLint
+code action when formatting (requires Zed `0.125.0`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  }
+}
+```
+
+You can also only execute a single ESLint rule when using `fixAll`:
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
+      }
+    }
+  },
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "codeActionOnSave": {
+          "rules": ["import/order"]
+        }
+      }
+    }
+  }
+}
+```
+
+**Note:** the other formatter you have configured will still run, after ESLint.
+So if your language server or prettier configuration don't format according to
+ESLint's rules, then they will overwrite what ESLint fixed and you end up with
+errors.
+
+#### Configure ESLint's `nodePath`:
+
+You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
+
+```json
+
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "nodePath": ".yarn/sdks"
+      }
+    }
+  }
+}
+```

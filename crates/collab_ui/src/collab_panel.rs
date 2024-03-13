@@ -989,7 +989,6 @@ impl CollabPanel {
                     .children(has_channel_buffer_changed.then(|| {
                         div()
                             .w_1p5()
-                            .z_index(1)
                             .absolute()
                             .right(px(2.))
                             .top(px(2.))
@@ -1022,7 +1021,6 @@ impl CollabPanel {
                     .children(has_messages_notification.then(|| {
                         div()
                             .w_1p5()
-                            .z_index(1)
                             .absolute()
                             .right(px(2.))
                             .top(px(4.))
@@ -2617,7 +2615,6 @@ impl CollabPanel {
                             .children(has_notes_notification.then(|| {
                                 div()
                                     .w_1p5()
-                                    .z_index(1)
                                     .absolute()
                                     .right(px(-1.))
                                     .top(px(-1.))
@@ -2632,49 +2629,44 @@ impl CollabPanel {
                     ),
             )
             .child(
-                h_flex()
-                    .absolute()
-                    .right(rems(0.))
-                    .z_index(1)
-                    .h_full()
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .px_1()
-                            .child(
-                                IconButton::new("channel_chat", IconName::MessageBubbles)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_messages_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.join_channel_chat(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-                                    .visible_on_hover(""),
-                            )
-                            .child(
-                                IconButton::new("channel_notes", IconName::File)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_notes_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.open_channel_notes(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-                                    .visible_on_hover(""),
-                            ),
-                    ),
+                h_flex().absolute().right(rems(0.)).h_full().child(
+                    h_flex()
+                        .h_full()
+                        .gap_1()
+                        .px_1()
+                        .child(
+                            IconButton::new("channel_chat", IconName::MessageBubbles)
+                                .style(ButtonStyle::Filled)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(if has_messages_notification {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                })
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.join_channel_chat(channel_id, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Open channel chat", cx))
+                                .visible_on_hover(""),
+                        )
+                        .child(
+                            IconButton::new("channel_notes", IconName::File)
+                                .style(ButtonStyle::Filled)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(if has_notes_notification {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                })
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.open_channel_notes(channel_id, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Open channel notes", cx))
+                                .visible_on_hover(""),
+                        ),
+                ),
             )
             .tooltip({
                 let channel_store = self.channel_store.clone();
@@ -2720,31 +2712,34 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
     let thickness = px(1.);
     let color = cx.theme().colors().text;
 
-    canvas(move |bounds, cx| {
-        let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
-        let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
-        let right = bounds.right();
-        let top = bounds.top();
+    canvas(
+        |_, _| {},
+        move |bounds, _, cx| {
+            let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
+            let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
+            let right = bounds.right();
+            let top = bounds.top();
 
-        cx.paint_quad(fill(
-            Bounds::from_corners(
-                point(start_x, top),
-                point(
-                    start_x + thickness,
-                    if is_last {
-                        start_y
-                    } else {
-                        bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
-                    },
+            cx.paint_quad(fill(
+                Bounds::from_corners(
+                    point(start_x, top),
+                    point(
+                        start_x + thickness,
+                        if is_last {
+                            start_y
+                        } else {
+                            bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
+                        },
+                    ),
                 ),
-            ),
-            color,
-        ));
-        cx.paint_quad(fill(
-            Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
-            color,
-        ));
-    })
+                color,
+            ));
+            cx.paint_quad(fill(
+                Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
+                color,
+            ));
+        },
+    )
     .w(width)
     .h(line_height)
 }

@@ -10,7 +10,7 @@ use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageMatcher, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
-use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
+use project::{FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
 use settings::{Settings, SettingsStore};
@@ -1720,6 +1720,6 @@ fn init_test(cx: &mut TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         SemanticIndexSettings::register(cx);
-        ProjectSettings::register(cx);
+        Project::init_settings(cx);
     });
 }

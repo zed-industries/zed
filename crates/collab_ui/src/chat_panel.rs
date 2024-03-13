@@ -467,10 +467,6 @@ impl ChatPanel {
             .group("")
             .when(!is_continuation_from_previous, |this| this.pt_2())
             .child(
-                self.render_popover_buttons(&cx, message_id, can_delete_message)
-                    .neg_mt_2p5(),
-            )
-            .child(
                 div()
                     .group("")
                     .bg(background)
@@ -497,9 +493,10 @@ impl ChatPanel {
                                 )
                                 .child(
                                     Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
                                         message.timestamp,
+                                        OffsetDateTime::now_utc(),
                                         self.local_timezone,
+                                        time_format::TimestampFormat::EnhancedAbsolute,
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
@@ -583,6 +580,10 @@ impl ChatPanel {
                     )
                 },
             )
+            .child(
+                self.render_popover_buttons(&cx, message_id, can_delete_message)
+                    .neg_mt_2p5(),
+            )
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -600,11 +601,9 @@ impl ChatPanel {
     ) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .child(
                 div()
                     .absolute()
-                    .z_index(1)
                     .right_8()
                     .w_6()
                     .rounded_tl_md()
@@ -638,7 +637,6 @@ impl ChatPanel {
             .child(
                 div()
                     .absolute()
-                    .z_index(1)
                     .right_2()
                     .w_6()
                     .rounded_tr_md()
@@ -855,7 +853,7 @@ impl Render for ChatPanel {
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_flex().z_index(1).child(
+                h_flex().child(
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()

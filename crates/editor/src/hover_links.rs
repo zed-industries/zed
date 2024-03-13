@@ -1,7 +1,7 @@
 use crate::{
-    element::PointForPosition,
     hover_popover::{self, InlayHover},
-    Anchor, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId, SelectPhase,
+    Anchor, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId, PointForPosition,
+    SelectPhase,
 };
 use gpui::{px, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -591,7 +591,8 @@ pub(crate) fn find_url(
         }
         token_start -= ch.len_utf8();
     }
-    if !found_start {
+    // Check if we didn't find the starting whitespace or if we didn't reach the start of the buffer
+    if !found_start && token_start != 0 {
         return None;
     }
 
@@ -605,7 +606,9 @@ pub(crate) fn find_url(
         }
         token_end += ch.len_utf8();
     }
-    if !found_end {
+    // Check if we didn't find the ending whitespace or if we read more or equal than LIMIT
+    // which at this point would happen only if we reached the end of buffer
+    if !found_end && (token_end - token_start >= LIMIT) {
         return None;
     }
 
@@ -1154,5 +1157,55 @@ mod tests {
             cx.opened_url(),
             Some("https://zed.dev/channel/had-(oops)".into())
         );
+    }
+
+    #[gpui::test]
+    async fn test_urls_at_beginning_of_buffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"https://zed.dev/releases is a cool ˇwebpage."});
+
+        let screen_coord =
+            cx.pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."});
+
+        cx.simulate_mouse_move(screen_coord, Modifiers::command());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(
+            indoc! {"«https://zed.dev/releasesˇ» is a cool webpage."},
+        );
+
+        cx.simulate_click(screen_coord, Modifiers::command());
+        assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
+    }
+
+    #[gpui::test]
+    async fn test_urls_at_end_of_buffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"A cool ˇwebpage is https://zed.dev/releases"});
+
+        let screen_coord =
+            cx.pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"});
+
+        cx.simulate_mouse_move(screen_coord, Modifiers::command());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(
+            indoc! {"A cool webpage is «https://zed.dev/releasesˇ»"},
+        );
+
+        cx.simulate_click(screen_coord, Modifiers::command());
+        assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
     }
 }

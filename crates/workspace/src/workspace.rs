@@ -262,7 +262,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(move |cx| async move {
                     if let Some(paths) = paths.await.log_err().flatten() {
                         cx.update(|cx| {
-                            open_paths(&paths, app_state, None, cx).detach_and_log_err(cx)
+                            open_paths(&paths, app_state, OpenOptions::default(), cx)
+                                .detach_and_log_err(cx)
                         })
                         .ok();
                     }
@@ -1414,8 +1415,18 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            cx.update(|cx| open_paths(&paths, app_state, window_to_replace, cx))?
-                .await?;
+            cx.update(|cx| {
+                open_paths(
+                    &paths,
+                    app_state,
+                    OpenOptions {
+                        replace_window: window_to_replace,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })?
+            .await?;
             Ok(())
         })
     }
@@ -2756,7 +2767,6 @@ impl Workspace {
             Some(
                 div()
                     .absolute()
-                    .z_index(100)
                     .right_3()
                     .bottom_3()
                     .w_112()
@@ -3832,18 +3842,15 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(colors.border)
-                    .child(
-                        canvas({
-                            let this = cx.view().clone();
-                            move |bounds, cx| {
-                                this.update(cx, |this, _cx| {
-                                    this.bounds = *bounds;
-                                })
-                            }
-                        })
+                    .child({
+                        let this = cx.view().clone();
+                        canvas(
+                            move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
+                            |_, _, _| {},
+                        )
                         .absolute()
-                        .size_full(),
-                    )
+                        .size_full()
+                    })
                     .on_drag_move(
                         cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                             match e.drag(cx).0 {
@@ -3868,7 +3875,6 @@ impl Render for Workspace {
                             }
                         }),
                     )
-                    .child(self.modal_layer.clone())
                     .child(
                         div()
                             .flex()
@@ -3917,11 +3923,10 @@ impl Render for Workspace {
                                 },
                             )),
                     )
-                    .children(self.render_notifications(cx))
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
                         let div = div()
-                            .z_index(1)
+                            .occlude()
                             .absolute()
                             .overflow_hidden()
                             .border_color(colors.border)
@@ -3936,7 +3941,9 @@ impl Render for Workspace {
                             Some(DockPosition::Bottom) => div.top_2().border_t(),
                             None => div.top_2().bottom_2().left_2().right_2().border(),
                         })
-                    })),
+                    }))
+                    .child(self.modal_layer.clone())
+                    .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
             .children(if self.project.read(cx).is_disconnected() {
@@ -4128,6 +4135,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 }
 
 actions!(collab, [OpenChannelNotes]);
+actions!(zed, [OpenLog]);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
@@ -4364,6 +4372,13 @@ pub async fn get_any_active_workspace(
 
 fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
+        if let Some(workspace_window) = cx
+            .active_window()
+            .and_then(|window| window.downcast::<Workspace>())
+        {
+            return Some(workspace_window);
+        }
+
         for window in cx.windows() {
             if let Some(workspace_window) = window.downcast::<Workspace>() {
                 workspace_window
@@ -4378,11 +4393,17 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
     .flatten()
 }
 
+#[derive(Default)]
+pub struct OpenOptions {
+    pub open_new_workspace: Option<bool>,
+    pub replace_window: Option<WindowHandle<Workspace>>,
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    requesting_window: Option<WindowHandle<Workspace>>,
+    open_options: OpenOptions,
     cx: &mut AppContext,
 ) -> Task<
     anyhow::Result<(
@@ -4391,24 +4412,62 @@ pub fn open_paths(
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
-    // Open paths in existing workspace if possible
-    let existing = activate_workspace_for_project(cx, {
-        let abs_paths = abs_paths.clone();
-        move |project, cx| project.contains_paths(&abs_paths, cx)
-    });
+    let mut existing = None;
+    let mut best_match = None;
+    let mut open_visible = OpenVisible::All;
+
+    if open_options.open_new_workspace != Some(true) {
+        for window in cx.windows() {
+            let Some(handle) = window.downcast::<Workspace>() else {
+                continue;
+            };
+            if let Ok(workspace) = handle.read(cx) {
+                let m = workspace
+                    .project()
+                    .read(cx)
+                    .visibility_for_paths(&abs_paths, cx);
+                if m > best_match {
+                    existing = Some(handle);
+                    best_match = m;
+                } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
+                    existing = Some(handle)
+                }
+            }
+        }
+    }
+
     cx.spawn(move |mut cx| async move {
+        if open_options.open_new_workspace.is_none() && existing.is_none() {
+            let all_files = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            if futures::future::join_all(all_files)
+                .await
+                .into_iter()
+                .filter_map(|result| result.ok().flatten())
+                .all(|file| !file.is_dir)
+            {
+                existing = activate_any_workspace_window(&mut cx);
+                open_visible = OpenVisible::None;
+            }
+        }
+
         if let Some(existing) = existing {
             Ok((
                 existing,
                 existing
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
+                        cx.activate_window();
+                        workspace.open_paths(abs_paths, open_visible, None, cx)
                     })?
                     .await,
             ))
         } else {
             cx.update(move |cx| {
-                Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
+                Workspace::new_local(
+                    abs_paths,
+                    app_state.clone(),
+                    open_options.replace_window,
+                    cx,
+                )
             })?
             .await
         }
@@ -4662,13 +4721,10 @@ pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
-    type State = AnyElement;
+    type BeforeLayout = AnyElement;
+    type AfterLayout = ();
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::State>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4686,28 +4742,32 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.request_layout(cx), overlay)
+        (overlay.before_layout(cx), overlay)
+    }
+
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) {
+        cx.insert_hitbox(bounds, true);
+        overlay.after_layout(cx);
     }
 
     fn paint(
         &mut self,
-        bounds: Bounds<Pixels>,
-        overlay: &mut Self::State,
+        _: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        cx.with_z_index(u16::MAX, |cx| {
-            cx.add_opaque_layer(bounds);
-            overlay.paint(cx);
-        })
+        overlay.paint(cx)
     }
 }
 
 impl IntoElement for DisconnectedOverlay {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ui::prelude::ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
