@@ -5,9 +5,9 @@ use clap::Parser;
 use cli::{CliRequest, CliResponse};
 use serde::Deserialize;
 use std::{
+    env,
     ffi::OsStr,
-    fs::{self, OpenOptions},
-    io,
+    fs::{self},
     path::{Path, PathBuf},
 };
 use util::paths::PathLikeWithPosition;
@@ -62,14 +62,26 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    for path in args
-        .paths_with_position
-        .iter()
-        .map(|path_with_position| &path_with_position.path_like)
-    {
-        if !path.exists() {
-            touch(path.as_path())?;
-        }
+    let curdir = env::current_dir()?;
+    let mut paths = vec![];
+    for path in args.paths_with_position {
+        let canonicalized = path.map_path_like(|path| match fs::canonicalize(&path) {
+            Ok(path) => Ok(path),
+            Err(e) => {
+                if let Some(mut parent) = path.parent() {
+                    if parent == Path::new("") {
+                        parent = &curdir;
+                    }
+                    match fs::canonicalize(parent) {
+                        Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
+                        Err(_) => Err(e),
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        })?;
+        paths.push(canonicalized.to_string(|path| path.display().to_string()))
     }
 
     let (tx, rx) = bundle.launch()?;
@@ -82,17 +94,7 @@ fn main() -> Result<()> {
     };
 
     tx.send(CliRequest::Open {
-        paths: args
-            .paths_with_position
-            .into_iter()
-            .map(|path_with_position| {
-                let path_with_position = path_with_position.map_path_like(|path| {
-                    fs::canonicalize(&path)
-                        .with_context(|| format!("path {path:?} canonicalization"))
-                })?;
-                Ok(path_with_position.to_string(|path| path.display().to_string()))
-            })
-            .collect::<Result<_>>()?,
+        paths,
         wait: args.wait,
         open_new_workspace,
     })?;
@@ -118,13 +120,6 @@ enum Bundle {
         executable: PathBuf,
         plist: InfoPlist,
     },
-}
-
-fn touch(path: &Path) -> io::Result<()> {
-    match OpenOptions::new().create(true).write(true).open(path) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e),
-    }
 }
 
 fn locate_bundle() -> Result<PathBuf> {

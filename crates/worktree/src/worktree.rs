@@ -761,6 +761,32 @@ impl LocalWorktree {
         })
     }
 
+    pub fn new_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        path: Arc<Path>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Model<Buffer> {
+        let text_buffer = text::Buffer::new(0, buffer_id, "".into());
+        let worktree = cx.handle();
+        cx.new_model(|_| {
+            Buffer::build(
+                text_buffer,
+                None,
+                Some(Arc::new(File {
+                    worktree,
+                    path,
+                    mtime: None,
+                    entry_id: None,
+                    is_local: true,
+                    is_deleted: false,
+                    is_private: false,
+                })),
+                Capability::ReadWrite,
+            )
+        })
+    }
+
     pub fn diagnostics_for_path(
         &self,
         path: &Path,
@@ -1088,7 +1114,7 @@ impl LocalWorktree {
                             entry_id: None,
                             worktree,
                             path,
-                            mtime: metadata.mtime,
+                            mtime: Some(metadata.mtime),
                             is_local: true,
                             is_deleted: false,
                             is_private,
@@ -1105,7 +1131,7 @@ impl LocalWorktree {
         &self,
         buffer_handle: Model<Buffer>,
         path: Arc<Path>,
-        has_changed_file: bool,
+        mut has_changed_file: bool,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
@@ -1113,6 +1139,10 @@ impl LocalWorktree {
         let rpc = self.client.clone();
         let buffer_id: u64 = buffer.remote_id().into();
         let project_id = self.share.as_ref().map(|share| share.project_id);
+
+        if buffer.file().is_some_and(|file| !file.is_created()) {
+            has_changed_file = true;
+        }
 
         let text = buffer.as_rope().clone();
         let fingerprint = text.fingerprint();
@@ -1141,7 +1171,7 @@ impl LocalWorktree {
                         .with_context(|| {
                             format!("Excluded buffer {path:?} got removed during saving")
                         })?;
-                    (None, metadata.mtime, path, is_private)
+                    (None, Some(metadata.mtime), path, is_private)
                 }
             };
 
@@ -1177,7 +1207,7 @@ impl LocalWorktree {
                     project_id,
                     buffer_id,
                     version: serialize_version(&version),
-                    mtime: Some(mtime.into()),
+                    mtime: mtime.map(|time| time.into()),
                     fingerprint: serialize_fingerprint(fingerprint),
                 })?;
             }
@@ -1585,10 +1615,7 @@ impl RemoteWorktree {
                 .await?;
             let version = deserialize_version(&response.version);
             let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
-            let mtime = response
-                .mtime
-                .ok_or_else(|| anyhow!("missing mtime"))?
-                .into();
+            let mtime = response.mtime.map(|mtime| mtime.into());
 
             buffer_handle.update(&mut cx, |buffer, cx| {
                 buffer.did_save(version.clone(), fingerprint, mtime, cx);
@@ -2733,10 +2760,13 @@ impl BackgroundScannerState {
             let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
                 continue;
             };
+            let Some(mtime) = entry.mtime else {
+                continue;
+            };
             let repo_path = RepoPath(repo_path.to_path_buf());
             let git_file_status = combine_git_statuses(
                 staged_statuses.get(&repo_path).copied(),
-                repo.unstaged_status(&repo_path, entry.mtime),
+                repo.unstaged_status(&repo_path, mtime),
             );
             if entry.git_status != git_file_status {
                 entry.git_status = git_file_status;
@@ -2850,7 +2880,7 @@ impl fmt::Debug for Snapshot {
 pub struct File {
     pub worktree: Model<Worktree>,
     pub path: Arc<Path>,
-    pub mtime: SystemTime,
+    pub mtime: Option<SystemTime>,
     pub entry_id: Option<ProjectEntryId>,
     pub is_local: bool,
     pub is_deleted: bool,
@@ -2866,7 +2896,7 @@ impl language::File for File {
         }
     }
 
-    fn mtime(&self) -> SystemTime {
+    fn mtime(&self) -> Option<SystemTime> {
         self.mtime
     }
 
@@ -2923,7 +2953,7 @@ impl language::File for File {
             worktree_id: self.worktree.entity_id().as_u64(),
             entry_id: self.entry_id.map(|id| id.to_proto()),
             path: self.path.to_string_lossy().into(),
-            mtime: Some(self.mtime.into()),
+            mtime: self.mtime.map(|time| time.into()),
             is_deleted: self.is_deleted,
         }
     }
@@ -2957,7 +2987,7 @@ impl language::LocalFile for File {
         version: &clock::Global,
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
-        mtime: SystemTime,
+        mtime: Option<SystemTime>,
         cx: &mut AppContext,
     ) {
         let worktree = self.worktree.read(cx).as_local().unwrap();
@@ -2968,7 +2998,7 @@ impl language::LocalFile for File {
                     project_id,
                     buffer_id: buffer_id.into(),
                     version: serialize_version(version),
-                    mtime: Some(mtime.into()),
+                    mtime: mtime.map(|time| time.into()),
                     fingerprint: serialize_fingerprint(fingerprint),
                     line_ending: serialize_line_ending(line_ending) as i32,
                 })
@@ -3008,7 +3038,7 @@ impl File {
         Ok(Self {
             worktree,
             path: Path::new(&proto.path).into(),
-            mtime: proto.mtime.ok_or_else(|| anyhow!("no timestamp"))?.into(),
+            mtime: proto.mtime.map(|time| time.into()),
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
             is_deleted: proto.is_deleted,
@@ -3039,7 +3069,7 @@ pub struct Entry {
     pub kind: EntryKind,
     pub path: Arc<Path>,
     pub inode: u64,
-    pub mtime: SystemTime,
+    pub mtime: Option<SystemTime>,
     pub is_symlink: bool,
 
     /// Whether this entry is ignored by Git.
@@ -3109,13 +3139,17 @@ impl Entry {
             },
             path,
             inode: metadata.inode,
-            mtime: metadata.mtime,
+            mtime: Some(metadata.mtime),
             is_symlink: metadata.is_symlink,
             is_ignored: false,
             is_external: false,
             is_private: false,
             git_status: None,
         }
+    }
+
+    pub fn is_created(&self) -> bool {
+        self.mtime.is_some()
     }
 
     pub fn is_dir(&self) -> bool {
@@ -3456,7 +3490,7 @@ impl BackgroundScanner {
             Ok(path) => path,
             Err(err) => {
                 log::error!("failed to canonicalize root path: {}", err);
-                return false;
+                return true;
             }
         };
         let abs_paths = request
@@ -3878,13 +3912,13 @@ impl BackgroundScanner {
                         &job.containing_repository
                     {
                         if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
-                            let repo_path = RepoPath(repo_path.into());
-                            child_entry.git_status = combine_git_statuses(
-                                staged_statuses.get(&repo_path).copied(),
-                                repository
-                                    .lock()
-                                    .unstaged_status(&repo_path, child_entry.mtime),
-                            );
+                            if let Some(mtime) = child_entry.mtime {
+                                let repo_path = RepoPath(repo_path.into());
+                                child_entry.git_status = combine_git_statuses(
+                                    staged_statuses.get(&repo_path).copied(),
+                                    repository.lock().unstaged_status(&repo_path, mtime),
+                                );
+                            }
                         }
                     }
                 }
@@ -4018,9 +4052,11 @@ impl BackgroundScanner {
                     if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
                         if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(path) {
                             if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
-                                let repo_path = RepoPath(repo_path.into());
-                                let repo = repo.repo_ptr.lock();
-                                fs_entry.git_status = repo.status(&repo_path, fs_entry.mtime);
+                                if let Some(mtime) = fs_entry.mtime {
+                                    let repo_path = RepoPath(repo_path.into());
+                                    let repo = repo.repo_ptr.lock();
+                                    fs_entry.git_status = repo.status(&repo_path, mtime);
+                                }
                             }
                         }
                     }
@@ -4664,7 +4700,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             is_dir: entry.is_dir(),
             path: entry.path.to_string_lossy().into(),
             inode: entry.inode,
-            mtime: Some(entry.mtime.into()),
+            mtime: entry.mtime.map(|time| time.into()),
             is_symlink: entry.is_symlink,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
@@ -4677,33 +4713,26 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
     type Error = anyhow::Error;
 
     fn try_from((root_char_bag, entry): (&'a CharBag, proto::Entry)) -> Result<Self> {
-        if let Some(mtime) = entry.mtime {
-            let kind = if entry.is_dir {
-                EntryKind::Dir
-            } else {
-                let mut char_bag = *root_char_bag;
-                char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
-                EntryKind::File(char_bag)
-            };
-            let path: Arc<Path> = PathBuf::from(entry.path).into();
-            Ok(Entry {
-                id: ProjectEntryId::from_proto(entry.id),
-                kind,
-                path,
-                inode: entry.inode,
-                mtime: mtime.into(),
-                is_symlink: entry.is_symlink,
-                is_ignored: entry.is_ignored,
-                is_external: entry.is_external,
-                git_status: git_status_from_proto(entry.git_status),
-                is_private: false,
-            })
+        let kind = if entry.is_dir {
+            EntryKind::Dir
         } else {
-            Err(anyhow!(
-                "missing mtime in remote worktree entry {:?}",
-                entry.path
-            ))
-        }
+            let mut char_bag = *root_char_bag;
+            char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
+            EntryKind::File(char_bag)
+        };
+        let path: Arc<Path> = PathBuf::from(entry.path).into();
+        Ok(Entry {
+            id: ProjectEntryId::from_proto(entry.id),
+            kind,
+            path,
+            inode: entry.inode,
+            mtime: entry.mtime.map(|time| time.into()),
+            is_symlink: entry.is_symlink,
+            is_ignored: entry.is_ignored,
+            is_external: entry.is_external,
+            git_status: git_status_from_proto(entry.git_status),
+            is_private: false,
+        })
     }
 }
 

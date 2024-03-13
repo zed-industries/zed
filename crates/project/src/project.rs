@@ -75,7 +75,7 @@ use std::{
     env,
     ffi::OsStr,
     hash::Hash,
-    mem,
+    io, mem,
     num::NonZeroU32,
     ops::Range,
     path::{self, Component, Path, PathBuf},
@@ -1801,13 +1801,13 @@ impl Project {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
+                let project_path = project_path.clone();
                 let load_buffer = if worktree.read(cx).is_local() {
-                    self.open_local_buffer_internal(&project_path.path, &worktree, cx)
+                    self.open_local_buffer_internal(project_path.path.clone(), worktree, cx)
                 } else {
                     self.open_remote_buffer_internal(&project_path.path, &worktree, cx)
                 };
 
-                let project_path = project_path.clone();
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
@@ -1832,17 +1832,32 @@ impl Project {
 
     fn open_local_buffer_internal(
         &mut self,
-        path: &Arc<Path>,
-        worktree: &Model<Worktree>,
+        path: Arc<Path>,
+        worktree: Model<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         let buffer_id = self.next_buffer_id.next();
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(buffer_id, path, cx)
+            worktree.load_buffer(buffer_id, &path, cx)
         });
+        fn is_not_found_error(error: &anyhow::Error) -> bool {
+            error
+                .root_cause()
+                .downcast_ref::<io::Error>()
+                .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
+        }
         cx.spawn(move |this, mut cx| async move {
-            let buffer = load_buffer.await?;
+            let buffer = match load_buffer.await {
+                Ok(buffer) => Ok(buffer),
+                Err(error) if is_not_found_error(&error) => {
+                    worktree.update(&mut cx, |worktree, cx| {
+                        let worktree = worktree.as_local_mut().unwrap();
+                        worktree.new_buffer(buffer_id, path, cx)
+                    })
+                }
+                Err(e) => Err(e),
+            }?;
             this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))??;
             Ok(buffer)
         })
@@ -8005,7 +8020,7 @@ impl Project {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
-            mtime: Some(buffer.saved_mtime().into()),
+            mtime: buffer.saved_mtime().map(|time| time.into()),
             fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
         })
     }
@@ -8098,7 +8113,7 @@ impl Project {
                             project_id,
                             buffer_id: buffer_id.into(),
                             version: language::proto::serialize_version(buffer.saved_version()),
-                            mtime: Some(buffer.saved_mtime().into()),
+                            mtime: buffer.saved_mtime().map(|time| time.into()),
                             fingerprint: language::proto::serialize_fingerprint(
                                 buffer.saved_version_fingerprint(),
                             ),
@@ -8973,11 +8988,7 @@ impl Project {
         let fingerprint = deserialize_fingerprint(&envelope.payload.fingerprint)?;
         let version = deserialize_version(&envelope.payload.version);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let mtime = envelope
-            .payload
-            .mtime
-            .ok_or_else(|| anyhow!("missing mtime"))?
-            .into();
+        let mtime = envelope.payload.mtime.map(|time| time.into());
 
         this.update(&mut cx, |this, cx| {
             let buffer = this
@@ -9011,10 +9022,7 @@ impl Project {
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
         );
-        let mtime = payload
-            .mtime
-            .ok_or_else(|| anyhow!("missing mtime"))?
-            .into();
+        let mtime = payload.mtime.map(|time| time.into());
         let buffer_id = BufferId::new(payload.buffer_id)?;
         this.update(&mut cx, |this, cx| {
             let buffer = this
