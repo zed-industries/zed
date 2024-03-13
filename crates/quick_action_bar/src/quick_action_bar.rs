@@ -8,7 +8,7 @@ use gpui::{
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
-use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
+use ui::{prelude::*, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -171,7 +171,6 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .size(ButtonSize::Compact)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)

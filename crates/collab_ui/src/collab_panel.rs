@@ -2243,7 +2243,7 @@ impl CollabPanel {
                 let channel_link_copy = channel_link.clone();
                 IconButton::new("channel-link", IconName::Copy)
                     .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
+                    .size(ButtonSize::Compact)
                     .visible_on_hover("section-header")
                     .on_click(move |_, cx| {
                         let item = ClipboardItem::new(channel_link_copy.clone());

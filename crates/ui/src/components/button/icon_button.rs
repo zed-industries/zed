@@ -15,6 +15,7 @@ pub enum IconButtonShape {
 #[derive(IntoElement)]
 pub struct IconButton {
     base: ButtonLike,
+    size: ButtonSize,
     shape: IconButtonShape,
     icon: IconName,
     icon_size: IconSize,
@@ -26,6 +27,7 @@ impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
         let mut this = Self {
             base: ButtonLike::new(id),
+            size: ButtonSize::default(),
             shape: IconButtonShape::Wide,
             icon,
             icon_size: IconSize::default(),
@@ -112,6 +114,7 @@ impl ButtonCommon for IconButton {
 
     fn size(mut self, size: ButtonSize) -> Self {
         self.base = self.base.size(size);
+        self.size = size;
         self
     }
 
@@ -145,10 +148,13 @@ impl RenderOnce for IconButton {
                         IconSize::Medium => px(2.),
                     };
 
-                    this.width((icon_size + padding * 2.).into())
-                        .height((icon_size + padding * 2.).into())
+                    let width = (icon_size + padding * 2.).into();
+                    this.width(width).height(width)
                 }
-                IconButtonShape::Wide => this,
+                IconButtonShape::Wide => {
+                    let width = self.size.height().into();
+                    this.width(width).height(width)
+                }
             })
             .child(
                 ButtonIcon::new(self.icon)

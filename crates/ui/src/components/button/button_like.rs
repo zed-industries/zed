@@ -276,7 +276,7 @@ pub enum ButtonSize {
 }
 
 impl ButtonSize {
-    fn height(self) -> Rems {
+    pub fn height(self) -> Rems {
         match self {
             ButtonSize::Large => rems(32. / 16.),
             ButtonSize::Default => rems(22. / 16.),
