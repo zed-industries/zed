@@ -1,8 +1,8 @@
 use crate::{
-    Bounds, Element, ElementContext, Hitbox, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Pixels, SharedString, StyleRefinement, Styled, TransformationMatrix,
+    point, px, size, Bounds, Element, ElementContext, Hitbox, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Pixels, Point, SharedString, Size, StyleRefinement, Styled,
+    TransformationMatrix,
 };
-use usvg::{Point, Size};
 use util::ResultExt;
 
 /// An SVG element.
@@ -28,7 +28,8 @@ impl Svg {
         self
     }
 
-    pub fn with_transformation(mut self, transformation: TransformationMatrix) -> Self {
+    /// TODO
+    pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
         self
     }
@@ -69,6 +70,7 @@ impl Element for Svg {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     let transformation = self
                         .transformation
+                        .as_ref()
                         .map(|transformation| transformation.into_matrix(bounds.size))
                         .unwrap_or(TransformationMatrix::unit());
 
@@ -99,6 +101,8 @@ impl InteractiveElement for Svg {
     }
 }
 
+/// TODO
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transformation {
     scale: Size<Pixels>,
     translate: Point<Pixels>,

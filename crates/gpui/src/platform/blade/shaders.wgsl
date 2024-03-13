@@ -49,6 +49,10 @@ struct AtlasTile {
     bounds: AtlasBounds,
 }
 
+struct TransformationMatrix {
+    matrix: mat3x3<f32>
+}
+
 fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
     let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
     return vec4<f32>(device_position, 0.0, 1.0);
@@ -476,6 +480,7 @@ struct MonochromeSprite {
     content_mask: Bounds,
     color: Hsla,
     tile: AtlasTile,
+    transformation: TransformationMatrix,
 }
 var<storage, read> b_mono_sprites: array<MonochromeSprite>;
 
@@ -493,6 +498,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     var out = MonoSpriteVarying();
     out.position = to_device_position(unit_vertex, sprite.bounds);
+
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
     out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);

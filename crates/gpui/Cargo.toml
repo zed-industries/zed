@@ -11,6 +11,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
+default = ["macos-blade"]
 test-support = [
     "backtrace",
     "env_logger",
