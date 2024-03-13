@@ -200,7 +200,6 @@ message Envelope {
         JoinHostedProject join_hosted_project = 164;
 
         UpdateChannelMessage update_channel_message = 165;
-        UpdateChannelMessageResponse update_channel_message_response = 166;
         ChannelMessageUpdate channel_message_update = 167;
     }
 
@@ -1185,10 +1184,6 @@ message UpdateChannelMessage {
     Nonce nonce = 4;
     string body = 5;
     repeated ChatMention mentions = 6;
-}
-
-message UpdateChannelMessageResponse {
-    ChannelMessage message = 1;
 }
 
 message AckChannelMessage {

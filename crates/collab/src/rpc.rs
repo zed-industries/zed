@@ -3209,9 +3209,7 @@ async fn update_channel_message(
         edited_at: Some(updated_at.unix_timestamp() as u64),
     };
 
-    response.send(proto::UpdateChannelMessageResponse {
-        message: Some(message.clone()),
-    })?;
+    response.send(proto::Ack {})?;
 
     let pool = &*session.connection_pool().await;
     broadcast(
