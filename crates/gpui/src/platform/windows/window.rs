@@ -166,10 +166,6 @@ impl WindowsWindowInner {
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
-            WM_TIMER => {
-                self.invalidate_client_area();
-                LRESULT(0)
-            }
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_PAINT => self.handle_paint_msg(),
@@ -748,7 +744,6 @@ impl Drop for WindowsWindow {
     fn drop(&mut self) {
         unsafe {
             let _ = RevokeDragDrop(self.inner.hwnd);
-            let _ = KillTimer(self.inner.hwnd, 1);
         }
     }
 }

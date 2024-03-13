@@ -26,10 +26,17 @@ use windows::{
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{CloseHandle, HANDLE, HWND, WAIT_OBJECT_0},
+        Graphics::{
+            DirectComposition::DCompositionWaitForCompositorClock,
+            Gdi::{RedrawWindow, HRGN, RDW_INVALIDATE, RDW_UPDATENOW},
+        },
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
-            Threading::{CreateEventW, INFINITE},
+            Threading::{
+                CreateEventW, CreateThreadpoolWork, SetEvent, SubmitThreadpoolWork, INFINITE,
+                PTP_CALLBACK_INSTANCE, PTP_WORK,
+            },
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
         UI::{
@@ -188,6 +195,19 @@ impl WindowsPlatform {
             runnable.run();
         }
     }
+
+    fn redraw_all(&self) {
+        for handle in self.inner.raw_window_handles.read().iter() {
+            unsafe {
+                RedrawWindow(
+                    *handle,
+                    None,
+                    HRGN::default(),
+                    RDW_INVALIDATE | RDW_UPDATENOW,
+                );
+            }
+        }
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -206,13 +226,21 @@ impl Platform for WindowsPlatform {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         let dispatch_event = self.inner.event;
+        let tick_event = unsafe { CreateEventW(None, false, false, None).unwrap() };
+        generate_compositor_tick(tick_event);
 
         'a: loop {
             let event = unsafe {
-                MsgWaitForMultipleObjects(Some(&[dispatch_event]), false, INFINITE, QS_ALLINPUT)
+                MsgWaitForMultipleObjects(
+                    Some(&[dispatch_event, tick_event]),
+                    false,
+                    INFINITE,
+                    QS_ALLINPUT,
+                )
             };
             match event.0 - WAIT_OBJECT_0.0 {
                 0 => self.run_foreground_tasks(),
+                1 => self.redraw_all(),
                 _ => unsafe {
                     let mut msg = MSG::default();
 
@@ -644,4 +672,41 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     }
 
     Ok(dialog)
+}
+
+fn generate_compositor_tick(tick_event: HANDLE) {
+    unsafe {
+        let Ok(work) =
+            CreateThreadpoolWork(Some(compositor_tick_runner), Some(tick_event.0 as _), None)
+                .inspect_err(|_| {
+                    log::error!(
+                        "unable to create threadpool work for compositor: {}",
+                        std::io::Error::last_os_error()
+                    )
+                })
+        else {
+            return;
+        };
+        SubmitThreadpoolWork(work);
+    }
+}
+
+extern "system" fn compositor_tick_runner(
+    _: PTP_CALLBACK_INSTANCE,
+    ptr: *mut std::ffi::c_void,
+    _: PTP_WORK,
+) {
+    unsafe {
+        let tick_event = HANDLE(ptr as isize);
+        loop {
+            DCompositionWaitForCompositorClock(None, INFINITE);
+            SetEvent(tick_event).expect(
+                format!(
+                    "unable to trigger tick event: {}",
+                    std::io::Error::last_os_error()
+                )
+                .as_str(),
+            );
+        }
+    }
 }
