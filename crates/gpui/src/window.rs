@@ -1157,12 +1157,10 @@ impl<'a> WindowContext<'a> {
                         click_count: 1,
                     })
                 }
-                FileDropEvent::Exited => PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    position: Point::default(),
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                }),
+                FileDropEvent::Exited => {
+                    self.active_drag.take();
+                    PlatformInput::FileDrop(FileDropEvent::Exited)
+                }
             },
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
