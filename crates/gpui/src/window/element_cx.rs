@@ -1266,6 +1266,11 @@ impl<'a> ElementContext<'a> {
         self.window.next_frame.dispatch_tree.set_view_id(view_id);
     }
 
+    /// Get the last view id for the current element
+    pub fn last_view_id(&mut self) -> Option<EntityId> {
+        self.window.next_frame.dispatch_tree.last_view_id()
+    }
+
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     /// platform to receive textual input with proper integration with concerns such
     /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
