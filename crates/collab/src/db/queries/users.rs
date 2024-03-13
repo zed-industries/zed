@@ -135,7 +135,7 @@ impl Database {
                         accepted: ActiveValue::Set(true),
                         role: ActiveValue::Set(ChannelRole::Guest),
                     })
-                    .exec(&*tx)
+                    .exec(tx)
                     .await?;
                 }
                 Ok(user)
