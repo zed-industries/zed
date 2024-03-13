@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use windows::{
     core::{implement, w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, MAX_PATH, POINTL, S_OK, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINTL, S_OK, WPARAM},
         Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
         System::{
             Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},

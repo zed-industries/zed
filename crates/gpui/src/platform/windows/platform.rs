@@ -55,10 +55,10 @@ use windows::{
 };
 
 use crate::{
-    try_get_window_inner, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowParams,
-    WindowsDispatcher, WindowsDisplay, WindowsTextSystem, WindowsWindow,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
+    PlatformWindow, Task, WindowAppearance, WindowParams, WindowsDispatcher, WindowsDisplay,
+    WindowsTextSystem, WindowsWindow,
 };
 
 pub(crate) struct WindowsPlatform {
