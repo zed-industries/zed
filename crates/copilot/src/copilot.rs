@@ -1220,7 +1220,7 @@ mod tests {
             Some(self)
         }
 
-        fn mtime(&self) -> std::time::SystemTime {
+        fn mtime(&self) -> Option<std::time::SystemTime> {
             unimplemented!()
         }
 
@@ -1271,7 +1271,7 @@ mod tests {
             _: BufferId,
             _: &clock::Global,
             _: language::LineEnding,
-            _: std::time::SystemTime,
+            _: Option<std::time::SystemTime>,
             _: &mut AppContext,
         ) {
             unimplemented!()

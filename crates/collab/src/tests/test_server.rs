@@ -265,7 +265,7 @@ impl TestServer {
             workspace_store,
             languages: Arc::new(language_registry),
             fs: fs.clone(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
 
@@ -513,6 +513,7 @@ impl TestServer {
                 clickhouse_database: None,
                 zed_client_checksum_seed: None,
                 slack_panics_webhook: None,
+                auto_join_channel_id: None,
             },
         })
     }

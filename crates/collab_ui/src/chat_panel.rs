@@ -464,19 +464,21 @@ impl ChatPanel {
         v_flex()
             .w_full()
             .relative()
+            .group("")
+            .when(!is_continuation_from_previous, |this| this.pt_2())
             .child(
                 div()
                     .group("")
                     .bg(background)
                     .rounded_md()
                     .overflow_hidden()
-                    .px_1()
+                    .px_1p5()
                     .py_0p5()
                     .when(!self.has_open_menu(message_id), |this| {
                         this.hover(|style| style.bg(cx.theme().colors().element_hover))
                     })
                     .when(!is_continuation_from_previous, |this| {
-                        this.mt_2().child(
+                        this.child(
                             h_flex()
                                 .text_ui_sm()
                                 .child(div().absolute().child(
@@ -491,24 +493,15 @@ impl ChatPanel {
                                 )
                                 .child(
                                     Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
                                         message.timestamp,
+                                        OffsetDateTime::now_utc(),
                                         self.local_timezone,
+                                        time_format::TimestampFormat::EnhancedAbsolute,
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                                )
-                                .map(|el| {
-                                    el.child(self.render_popover_button(
-                                        &cx,
-                                        message_id,
-                                        can_delete_message,
-                                    ))
-                                }),
+                                ),
                         )
-                    })
-                    .when(is_continuation_from_previous, |el| {
-                        el.child(self.render_popover_button(&cx, message_id, can_delete_message))
                     })
                     .when(
                         message.reply_to_message_id.is_some() && reply_to_message.is_none(),
@@ -587,6 +580,10 @@ impl ChatPanel {
                     )
                 },
             )
+            .child(
+                self.render_popover_buttons(&cx, message_id, can_delete_message)
+                    .neg_mt_2p5(),
+            )
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -596,7 +593,7 @@ impl ChatPanel {
         }
     }
 
-    fn render_popover_button(
+    fn render_popover_buttons(
         &self,
         cx: &ViewContext<Self>,
         message_id: Option<u64>,
@@ -604,29 +601,80 @@ impl ChatPanel {
     ) -> Div {
         div()
             .absolute()
-            .z_index(1)
-            .right_0()
-            .w_6()
-            .bg(cx.theme().colors().element_hover)
-            .when(!self.has_open_menu(message_id), |el| {
-                el.visible_on_hover("")
-            })
-            .when_some(message_id, |el, message_id| {
-                let chat_panel_view = cx.view().clone();
+            .child(
+                div()
+                    .absolute()
+                    .right_8()
+                    .w_6()
+                    .rounded_tl_md()
+                    .rounded_bl_md()
+                    .border_l_1()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().element_selected)
+                    .bg(cx.theme().colors().element_background)
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .when(!self.has_open_menu(message_id), |el| {
+                        el.visible_on_hover("")
+                    })
+                    .when_some(message_id, |el, message_id| {
+                        el.child(
+                            div()
+                                .id("reply")
+                                .child(
+                                    IconButton::new(("reply", message_id), IconName::ReplyArrow)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.message_editor.update(cx, |editor, cx| {
+                                                editor.set_reply_to_message_id(message_id);
+                                                editor.focus_handle(cx).focus(cx);
+                                            })
+                                        })),
+                                )
+                                .tooltip(|cx| Tooltip::text("Reply", cx)),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .right_2()
+                    .w_6()
+                    .rounded_tr_md()
+                    .rounded_br_md()
+                    .border_r_1()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().element_selected)
+                    .bg(cx.theme().colors().element_background)
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .when(!self.has_open_menu(message_id), |el| {
+                        el.visible_on_hover("")
+                    })
+                    .when_some(message_id, |el, message_id| {
+                        let this = cx.view().clone();
 
-                el.child(
-                    popover_menu(("menu", message_id))
-                        .trigger(IconButton::new(("trigger", message_id), IconName::Ellipsis))
-                        .menu(move |cx| {
-                            Some(Self::render_message_menu(
-                                &chat_panel_view,
-                                message_id,
-                                can_delete_message,
-                                cx,
-                            ))
-                        }),
-                )
-            })
+                        el.child(
+                            div()
+                                .id("more")
+                                .child(
+                                    popover_menu(("menu", message_id))
+                                        .trigger(IconButton::new(
+                                            ("trigger", message_id),
+                                            IconName::Ellipsis,
+                                        ))
+                                        .menu(move |cx| {
+                                            Some(Self::render_message_menu(
+                                                &this,
+                                                message_id,
+                                                can_delete_message,
+                                                cx,
+                                            ))
+                                        }),
+                                )
+                                .tooltip(|cx| Tooltip::text("More", cx)),
+                        )
+                    }),
+            )
     }
 
     fn render_message_menu(
@@ -805,7 +853,7 @@ impl Render for ChatPanel {
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_flex().z_index(1).child(
+                h_flex().child(
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()

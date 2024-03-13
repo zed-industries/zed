@@ -248,11 +248,25 @@ fn render_markdown_code_block(
     parsed: &ParsedMarkdownCodeBlock,
     cx: &mut RenderContext,
 ) -> AnyElement {
+    let body = if let Some(highlights) = parsed.highlights.as_ref() {
+        StyledText::new(parsed.contents.clone()).with_highlights(
+            &cx.text_style,
+            highlights.iter().filter_map(|(range, highlight_id)| {
+                highlight_id
+                    .style(cx.syntax_theme.as_ref())
+                    .map(|style| (range.clone(), style))
+            }),
+        )
+    } else {
+        StyledText::new(parsed.contents.clone())
+    };
+
     cx.with_common_p(div())
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
-        .child(StyledText::new(parsed.contents.clone()))
+        .rounded_md()
+        .child(body)
         .into_any()
 }
 

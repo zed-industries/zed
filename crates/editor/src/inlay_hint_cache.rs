@@ -1255,7 +1255,7 @@ fn apply_hint_update(
         editor.inlay_hint_cache.version += 1;
     }
     if displayed_inlays_changed {
-        editor.splice_inlay_hints(to_remove, to_insert, cx)
+        editor.splice_inlays(to_remove, to_insert, cx)
     }
 }
 
@@ -2664,6 +2664,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         let editor =
             cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
+
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);

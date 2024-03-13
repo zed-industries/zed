@@ -6,13 +6,16 @@ use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
 use serde::Deserialize;
+use std::mem;
 use std::{
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
 };
-use util::http::{AsyncBody, HttpClient};
+use util::http::{self, AsyncBody, HttpClient};
+use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
+use wasmparser::Parser;
 use wit_component::ComponentEncoder;
 
 /// Currently, we compile with Rust's `wasm32-wasi` target, which works with WASI `preview1`.
@@ -59,8 +62,11 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf, http: Arc<dyn HttpClient>) -> Self {
-        Self { cache_dir, http }
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir,
+            http: http::client(),
+        }
     }
 
     pub async fn compile_extension(
@@ -137,6 +143,10 @@ impl ExtensionBuilder {
         let component_bytes = encoder
             .encode()
             .context("failed to encode wasm component")?;
+
+        let component_bytes = self
+            .strip_custom_sections(&component_bytes)
+            .context("failed to strip debug sections from wasm component")?;
 
         fs::write(extension_dir.join("extension.wasm"), &component_bytes)
             .context("failed to write extension.wasm")?;
@@ -250,13 +260,6 @@ impl ExtensionBuilder {
             .args(["fetch", "--depth", "1", "origin", &rev])
             .output()
             .context("failed to execute `git fetch`")?;
-        if !fetch_output.status.success() {
-            bail!(
-                "failed to fetch revision {} in directory '{}'",
-                rev,
-                directory.display()
-            );
-        }
 
         let checkout_output = Command::new("git")
             .arg("--git-dir")
@@ -266,6 +269,13 @@ impl ExtensionBuilder {
             .output()
             .context("failed to execute `git checkout`")?;
         if !checkout_output.status.success() {
+            if !fetch_output.status.success() {
+                bail!(
+                    "failed to fetch revision {} in directory '{}'",
+                    rev,
+                    directory.display()
+                );
+            }
             bail!(
                 "failed to checkout revision {} in directory '{}'",
                 rev,
@@ -310,14 +320,17 @@ impl ExtensionBuilder {
     async fn install_wasi_preview1_adapter_if_needed(&self) -> Result<Vec<u8>> {
         let cache_path = self.cache_dir.join("wasi_snapshot_preview1.reactor.wasm");
         if let Ok(content) = fs::read(&cache_path) {
-            if wasmparser::Parser::is_core_wasm(&content) {
+            if Parser::is_core_wasm(&content) {
                 return Ok(content);
             }
         }
 
         fs::remove_file(&cache_path).ok();
 
-        log::info!("downloading wasi adapter module");
+        log::info!(
+            "downloading wasi adapter module to {}",
+            cache_path.display()
+        );
         let mut response = self
             .http
             .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
@@ -330,7 +343,7 @@ impl ExtensionBuilder {
         fs::write(&cache_path, &content)
             .with_context(|| format!("failed to save file {}", cache_path.display()))?;
 
-        if !wasmparser::Parser::is_core_wasm(&content) {
+        if !Parser::is_core_wasm(&content) {
             bail!("downloaded wasi adapter is invalid");
         }
         Ok(content)
@@ -357,6 +370,7 @@ impl ExtensionBuilder {
         fs::remove_dir_all(&wasi_sdk_dir).ok();
         fs::remove_dir_all(&tar_out_dir).ok();
 
+        log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
         let body = BufReader::new(response.body_mut());
         let body = GzipDecoder::new(body);
@@ -374,5 +388,69 @@ impl ExtensionBuilder {
         fs::remove_dir_all(&tar_out_dir).ok();
 
         Ok(clang_path)
+    }
+
+    // This was adapted from:
+    // https://github.com/bytecodealliance/wasm-tools/1791a8f139722e9f8679a2bd3d8e423e55132b22/src/bin/wasm-tools/strip.rs
+    fn strip_custom_sections(&self, input: &Vec<u8>) -> Result<Vec<u8>> {
+        use wasmparser::Payload::*;
+
+        let strip_custom_section = |name: &str| name.starts_with(".debug");
+
+        let mut output = Vec::new();
+        let mut stack = Vec::new();
+
+        for payload in Parser::new(0).parse_all(input) {
+            let payload = payload?;
+
+            // Track nesting depth, so that we don't mess with inner producer sections:
+            match payload {
+                Version { encoding, .. } => {
+                    output.extend_from_slice(match encoding {
+                        wasmparser::Encoding::Component => &wasm_encoder::Component::HEADER,
+                        wasmparser::Encoding::Module => &wasm_encoder::Module::HEADER,
+                    });
+                }
+                ModuleSection { .. } | ComponentSection { .. } => {
+                    stack.push(mem::take(&mut output));
+                    continue;
+                }
+                End { .. } => {
+                    let mut parent = match stack.pop() {
+                        Some(c) => c,
+                        None => break,
+                    };
+                    if output.starts_with(&wasm_encoder::Component::HEADER) {
+                        parent.push(ComponentSectionId::Component as u8);
+                        output.encode(&mut parent);
+                    } else {
+                        parent.push(ComponentSectionId::CoreModule as u8);
+                        output.encode(&mut parent);
+                    }
+                    output = parent;
+                }
+                _ => {}
+            }
+
+            match &payload {
+                CustomSection(c) => {
+                    if strip_custom_section(c.name()) {
+                        continue;
+                    }
+                }
+
+                _ => {}
+            }
+
+            if let Some((id, range)) = payload.as_section() {
+                RawSection {
+                    id,
+                    data: &input[range],
+                }
+                .append_to(&mut output);
+            }
+        }
+
+        Ok(output)
     }
 }

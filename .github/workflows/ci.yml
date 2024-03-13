@@ -86,12 +86,6 @@ jobs:
           clean: false
           submodules: "recursive"
 
-      - name: Install cargo-component
-        run: |
-          if ! which cargo-component > /dev/null; then
-            cargo install cargo-component
-          fi
-
       - name: cargo clippy
         run: cargo xtask clippy
 

@@ -20,7 +20,7 @@ use std::{
 use util::{
     async_maybe,
     fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
+    github::{github_release_with_tag, GitHubLspBinaryVersion},
     ResultExt,
 };
 
@@ -254,12 +254,14 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
+
         json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
                 "run": "onType",
-                "nodePath": null,
+                "nodePath": node_path,
                 "workingDirectory": {"mode": "auto"},
                 "workspaceFolder": {
                     "uri": workspace_root,
@@ -283,13 +285,11 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        // At the time of writing the latest vscode-eslint release was released in 2020 and requires
-        // special custom LSP protocol extensions be handled to fully initialize. Download the latest
-        // prerelease instead to sidestep this issue
-        let release = latest_github_release(
+        // We're using this hardcoded release tag, because ESLint's API changed with
+        // >= 2.3 and we haven't upgraded yet.
+        let release = github_release_with_tag(
             "microsoft/vscode-eslint",
-            false,
-            true,
+            "release/2.2.20-Insider",
             delegate.http_client(),
         )
         .await?;

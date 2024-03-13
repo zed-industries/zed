@@ -68,7 +68,7 @@ impl LspAdapter for TaploLspAdapter {
 
             futures::io::copy(decompressed_bytes, &mut file).await?;
 
-            // todo(windows)
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(

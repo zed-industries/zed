@@ -493,9 +493,16 @@ mod tests {
                 }),
             )
             .await;
-        cx.update(|cx| open_paths(&[PathBuf::from("/dir/main.ts")], app_state, None, cx))
-            .await
-            .unwrap();
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/dir/main.ts")],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         let workspace = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());

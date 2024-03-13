@@ -9,7 +9,7 @@ use crate::{
 };
 
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{div, TestAppContext, VisualTestContext, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
@@ -5206,20 +5206,39 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
         editor.handle_input(":", cx);
         assert_eq!(editor.text(cx), "Hello 👋 😄".unindent());
 
-        editor.handle_input(":1:", cx);
-        assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+        // Ensure shortcode gets replaced when it is part of a word that only consists of emojis
+        editor.handle_input(":wave", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋".unindent());
+
+        editor.handle_input(":1", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1:".unindent());
 
         // Ensure shortcode does not get replaced when it is part of a word
-        editor.handle_input(" Test:wave:", cx);
-        assert_eq!(editor.text(cx), "Hello 👋 😄:1: Test:wave:".unindent());
+        editor.handle_input(" Test:wave", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1: Test:wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1: Test:wave:".unindent());
 
         editor.set_auto_replace_emoji_shortcode(false);
 
         // Ensure shortcode does not get replaced when auto replace is off
-        editor.handle_input(" :wave:", cx);
+        editor.handle_input(" :wave", cx);
         assert_eq!(
             editor.text(cx),
-            "Hello 👋 😄:1: Test:wave: :wave:".unindent()
+            "Hello 👋 😄👋:1: Test:wave: :wave".unindent()
+        );
+
+        editor.handle_input(":", cx);
+        assert_eq!(
+            editor.text(cx),
+            "Hello 👋 😄👋:1: Test:wave: :wave:".unindent()
         );
     });
 }
@@ -6854,7 +6873,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                bounds: WindowBounds::Fixed(Bounds::from_corners(
+                bounds: Some(Bounds::from_corners(
                     gpui::Point::new(0_f64.into(), 0_f64.into()),
                     gpui::Point::new(10_f64.into(), 80_f64.into()),
                 )),
@@ -7423,6 +7442,8 @@ fn test_split_words() {
     assert_eq!(split("Hello_World"), &["Hello_", "World"]);
     assert_eq!(split("helloWOrld"), &["hello", "WOrld"]);
     assert_eq!(split("helloworld"), &["helloworld"]);
+
+    assert_eq!(split(":do_the_thing"), &[":", "do_", "the_", "thing"]);
 }
 
 #[gpui::test]
@@ -8743,6 +8764,560 @@ async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let base_text = indoc! {r#"struct Row;
+struct Row1;
+struct Row2;
+
+struct Row4;
+struct Row5;
+struct Row6;
+
+struct Row8;
+struct Row9;
+struct Row10;"#};
+
+    // When addition hunks are not adjacent to carets, no hunk revert is performed
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row1.1;
+                   struct Row1.2;
+                   struct Row2;ˇ
+
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+
+                   struct Row8;
+                   ˇstruct Row9;
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row1.1;
+                   struct Row1.2;
+                   struct Row2;ˇ
+
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+
+                   struct Row8;
+                   ˇstruct Row9;
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+    // Same for selections
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row2;
+                   struct Row2.1;
+                   struct Row2.2;
+                   «ˇ
+                   struct Row4;
+                   struct» Row5;
+                   «struct Row6;
+                   ˇ»
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row8;
+                   struct Row9;
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row2;
+                   struct Row2.1;
+                   struct Row2.2;
+                   «ˇ
+                   struct Row4;
+                   struct» Row5;
+                   «struct Row6;
+                   ˇ»
+                   struct Row9.1;
+                   struct Row9.2;
+                   struct Row9.3;
+                   struct Row8;
+                   struct Row9;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+
+    // When carets and selections intersect the addition hunks, those are reverted.
+    // Adjacent carets got merged.
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   ˇ// something on the top
+                   struct Row1;
+                   struct Row2;
+                   struct Roˇw3.1;
+                   struct Row2.2;
+                   struct Row2.3;ˇ
+
+                   struct Row4;
+                   struct ˇRow5.1;
+                   struct Row5.2;
+                   struct «Rowˇ»5.3;
+                   struct Row5;
+                   struct Row6;
+                   ˇ
+                   struct Row9.1;
+                   struct «Rowˇ»9.2;
+                   struct «ˇRow»9.3;
+                   struct Row8;
+                   struct Row9;
+                   «ˇ// something on bottom»
+                   struct Row10;"#},
+        vec![
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+            DiffHunkStatus::Added,
+        ],
+        indoc! {r#"struct Row;
+                   ˇstruct Row1;
+                   struct Row2;
+                   ˇ
+                   struct Row4;
+                   ˇstruct Row5;
+                   struct Row6;
+                   ˇ
+                   ˇstruct Row8;
+                   struct Row9;
+                   ˇstruct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let base_text = indoc! {r#"struct Row;
+struct Row1;
+struct Row2;
+
+struct Row4;
+struct Row5;
+struct Row6;
+
+struct Row8;
+struct Row9;
+struct Row10;"#};
+
+    // Modification hunks behave the same as the addition ones.
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row33;
+                   ˇ
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+                   ˇ
+                   struct Row99;
+                   struct Row9;
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row33;
+                   ˇ
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+                   ˇ
+                   struct Row99;
+                   struct Row9;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row33;
+                   «ˇ
+                   struct Row4;
+                   struct» Row5;
+                   «struct Row6;
+                   ˇ»
+                   struct Row99;
+                   struct Row9;
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row33;
+                   «ˇ
+                   struct Row4;
+                   struct» Row5;
+                   «struct Row6;
+                   ˇ»
+                   struct Row99;
+                   struct Row9;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+
+    assert_hunk_revert(
+        indoc! {r#"ˇstruct Row1.1;
+                   struct Row1;
+                   «ˇstr»uct Row22;
+
+                   struct ˇRow44;
+                   struct Row5;
+                   struct «Rˇ»ow66;ˇ
+
+                   «struˇ»ct Row88;
+                   struct Row9;
+                   struct Row1011;ˇ"#},
+        vec![
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+            DiffHunkStatus::Modified,
+        ],
+        indoc! {r#"struct Row;
+                   ˇstruct Row1;
+                   struct Row2;
+                   ˇ
+                   struct Row4;
+                   ˇstruct Row5;
+                   struct Row6;
+                   ˇ
+                   struct Row8;
+                   ˇstruct Row9;
+                   struct Row10;ˇ"#},
+        base_text,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_deletion_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let base_text = indoc! {r#"struct Row;
+struct Row1;
+struct Row2;
+
+struct Row4;
+struct Row5;
+struct Row6;
+
+struct Row8;
+struct Row9;
+struct Row10;"#};
+
+    // Deletion hunks trigger with carets on ajacent rows, so carets and selections have to stay farther to avoid the revert
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row2;
+
+                   ˇstruct Row4;
+                   struct Row5;
+                   struct Row6;
+                   ˇ
+                   struct Row8;
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        indoc! {r#"struct Row;
+                   struct Row2;
+
+                   ˇstruct Row4;
+                   struct Row5;
+                   struct Row6;
+                   ˇ
+                   struct Row8;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row2;
+
+                   «ˇstruct Row4;
+                   struct» Row5;
+                   «struct Row6;
+                   ˇ»
+                   struct Row8;
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        indoc! {r#"struct Row;
+                   struct Row2;
+
+                   «ˇstruct Row4;
+                   struct» Row5;
+                   «struct Row6;
+                   ˇ»
+                   struct Row8;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+
+    // Deletion hunks are ephemeral, so it's impossible to place the caret into them — Zed triggers reverts for lines, adjacent to carets and selections.
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   ˇstruct Row2;
+
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+
+                   struct Row8;ˇ
+                   struct Row10;"#},
+        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   ˇstruct Row2;
+
+                   struct Row4;
+                   struct Row5;
+                   struct Row6;
+
+                   struct Row8;ˇ
+                   struct Row9;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+    assert_hunk_revert(
+        indoc! {r#"struct Row;
+                   struct Row2«ˇ;
+                   struct Row4;
+                   struct» Row5;
+                   «struct Row6;
+
+                   struct Row8;ˇ»
+                   struct Row10;"#},
+        vec![
+            DiffHunkStatus::Removed,
+            DiffHunkStatus::Removed,
+            DiffHunkStatus::Removed,
+        ],
+        indoc! {r#"struct Row;
+                   struct Row1;
+                   struct Row2«ˇ;
+
+                   struct Row4;
+                   struct» Row5;
+                   «struct Row6;
+
+                   struct Row8;ˇ»
+                   struct Row9;
+                   struct Row10;"#},
+        base_text,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let cols = 4;
+    let rows = 10;
+    let sample_text_1 = sample_text(rows, cols, 'a');
+    assert_eq!(
+        sample_text_1,
+        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+    );
+    let sample_text_2 = sample_text(rows, cols, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let sample_text_3 = sample_text(rows, cols, 'v');
+    assert_eq!(
+        sample_text_3,
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+    );
+
+    fn diff_every_buffer_row(
+        buffer: &Model<Buffer>,
+        sample_text: String,
+        cols: usize,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // revert first character in each row, creating one large diff hunk per buffer
+        let is_first_char = |offset: usize| offset % cols == 0;
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                sample_text
+                    .chars()
+                    .enumerate()
+                    .map(|(offset, c)| if is_first_char(offset) { 'X' } else { c })
+                    .collect::<String>(),
+                cx,
+            );
+            buffer.set_diff_base(Some(sample_text), cx);
+        });
+        cx.executor().run_until_parked();
+    }
+
+    let buffer_1 = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            sample_text_1.clone(),
+        )
+    });
+    diff_every_buffer_row(&buffer_1, sample_text_1.clone(), cols, cx);
+
+    let buffer_2 = cx.new_model(|cx| {
+        Buffer::new(
+            1,
+            BufferId::new(cx.entity_id().as_u64() + 1).unwrap(),
+            sample_text_2.clone(),
+        )
+    });
+    diff_every_buffer_row(&buffer_2, sample_text_2.clone(), cols, cx);
+
+    let buffer_3 = cx.new_model(|cx| {
+        Buffer::new(
+            2,
+            BufferId::new(cx.entity_id().as_u64() + 2).unwrap(),
+            sample_text_3.clone(),
+        )
+    });
+    diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
+
+    let multibuffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "XaaaXbbbX\nccXc\ndXdd\n\nhXhh\nXiiiXjjjX\n\nXlllXmmmX\nnnXn\noXoo\n\nsXss\nXtttXuuuX\n\nXvvvXwwwX\nxxXx\nyXyy\n\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X\n");
+        editor.select_all(&SelectAll, cx);
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    });
+    cx.executor().run_until_parked();
+    // When all ranges are selected, all buffer hunks are reverted.
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nllll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu\n\n\nvvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}\n\n");
+    });
+    buffer_1.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_1);
+    });
+    buffer_2.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_2);
+    });
+    buffer_3.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_3);
+    });
+
+    diff_every_buffer_row(&buffer_1, sample_text_1.clone(), cols, cx);
+    diff_every_buffer_row(&buffer_2, sample_text_2.clone(), cols, cx);
+    diff_every_buffer_row(&buffer_3, sample_text_3.clone(), cols, cx);
+    editor.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
+        });
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+    });
+    // Now, when all ranges selected belong to buffer_1, the revert should succeed,
+    // but not affect buffer_2 and its related excerpts.
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n\n\nXlllXmmmX\nnnXn\noXoo\nXpppXqqqX\nrrXr\nsXss\nXtttXuuuX\n\n\nXvvvXwwwX\nxxXx\nyXyy\nXzzzX{{{X\n||X|\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X\n\n"
+        );
+    });
+    buffer_1.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), sample_text_1);
+    });
+    buffer_2.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "XlllXmmmX\nnnXn\noXoo\nXpppXqqqX\nrrXr\nsXss\nXtttXuuuX"
+        );
+    });
+    buffer_3.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "XvvvXwwwX\nxxXx\nyXyy\nXzzzX{{{X\n||X|\n}X}}\nX~~~X\u{7f}\u{7f}\u{7f}X"
+        );
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -8912,4 +9487,46 @@ pub(crate) fn rust_lang() -> Arc<Language> {
         },
         Some(tree_sitter_rust::language()),
     ))
+}
+
+#[track_caller]
+fn assert_hunk_revert(
+    not_reverted_text_with_selections: &str,
+    expected_not_reverted_hunk_statuses: Vec<DiffHunkStatus>,
+    expected_reverted_text_with_selections: &str,
+    base_text: &str,
+    cx: &mut EditorLspTestContext,
+) {
+    cx.set_state(not_reverted_text_with_selections);
+    cx.update_editor(|editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_diff_base(Some(base_text.to_string()), cx);
+            });
+    });
+    cx.executor().run_until_parked();
+
+    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
+        let snapshot = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .snapshot();
+        let reverted_hunk_statuses = snapshot
+            .git_diff_hunks_in_row_range(0..u32::MAX)
+            .map(|hunk| hunk.status())
+            .collect::<Vec<_>>();
+
+        editor.revert_selected_hunks(&RevertSelectedHunks, cx);
+        reverted_hunk_statuses
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(expected_reverted_text_with_selections);
+    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 }

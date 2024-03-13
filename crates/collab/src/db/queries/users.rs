@@ -74,12 +74,14 @@ impl Database {
         github_login: &str,
         github_user_id: Option<i32>,
         github_email: Option<&str>,
+        initial_channel_id: Option<ChannelId>,
     ) -> Result<User> {
         self.transaction(|tx| async move {
             self.get_or_create_user_by_github_account_tx(
                 github_login,
                 github_user_id,
                 github_email,
+                initial_channel_id,
                 &tx,
             )
             .await
@@ -92,6 +94,7 @@ impl Database {
         github_login: &str,
         github_user_id: Option<i32>,
         github_email: Option<&str>,
+        initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<User> {
         if let Some(github_user_id) = github_user_id {
@@ -124,6 +127,17 @@ impl Database {
                 })
                 .exec_with_returning(tx)
                 .await?;
+                if let Some(channel_id) = initial_channel_id {
+                    channel_member::Entity::insert(channel_member::ActiveModel {
+                        id: ActiveValue::NotSet,
+                        channel_id: ActiveValue::Set(channel_id),
+                        user_id: ActiveValue::Set(user.id),
+                        accepted: ActiveValue::Set(true),
+                        role: ActiveValue::Set(ChannelRole::Guest),
+                    })
+                    .exec(tx)
+                    .await?;
+                }
                 Ok(user)
             }
         } else {
