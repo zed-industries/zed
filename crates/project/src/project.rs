@@ -4884,10 +4884,15 @@ impl Project {
             let mut requests = Vec::new();
             for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
                 let worktree_id = *worktree_id;
-                let worktree_handle = self.worktree_for_id(worktree_id, cx);
-                let worktree = match worktree_handle.and_then(|tree| tree.read(cx).as_local()) {
-                    Some(worktree) => worktree,
-                    None => continue,
+                let Some(worktree_handle) = self.worktree_for_id(worktree_id, cx) else {
+                    continue;
+                };
+                let worktree = worktree_handle.read(cx);
+                if !worktree.is_visible() {
+                    continue;
+                }
+                let Some(worktree) = worktree.as_local() else {
+                    continue;
                 };
                 let worktree_abs_path = worktree.abs_path().clone();
 
