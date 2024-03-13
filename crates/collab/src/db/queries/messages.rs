@@ -602,7 +602,8 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            // // TODO: maybe we don't want to delete all the old mentions, and just create new ones
+            // we have to fetch the old mentions,
+            // so we don't send a notification when the message has been edited that you are mentioned in
             let old_mentions = channel_message_mention::Entity::find()
                 .filter(channel_message_mention::Column::MessageId.eq(message_id))
                 .all(&*tx)
