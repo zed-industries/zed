@@ -788,7 +788,6 @@ impl ChatPanel {
             rich_text.highlights.push((
                 message.body.len()..(message.body.len() + MESSAGE_UPDATED.len()),
                 Highlight::Highlight(HighlightStyle {
-                    font_style: Some(FontStyle::Italic),
                     fade_out: Some(0.2),
                     ..Default::default()
                 }),
