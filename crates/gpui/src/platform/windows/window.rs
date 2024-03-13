@@ -1224,4 +1224,3 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
-const FRAME_TIME: u32 = 16; // draw at 60fps
