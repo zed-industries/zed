@@ -2663,13 +2663,28 @@ impl BackgroundScannerState {
         Arc<Mutex<dyn GitRepository>>,
         TreeMap<RepoPath, GitFileStatus>,
     )> {
-        log::info!("build git repository {:?}", dot_git_path);
-
-        let work_dir_path: Arc<Path> = dot_git_path.parent().unwrap().into();
-
-        // Guard against repositories inside the repository metadata
-        if work_dir_path.iter().any(|component| component == *DOT_GIT) {
-            return None;
+        let work_dir_path: Arc<Path> = match dot_git_path.parent() {
+            Some(parent_dir) => {
+                // Guard against repositories inside the repository metadata
+                if parent_dir.iter().any(|component| component == *DOT_GIT) {
+                    log::info!(
+                        "not building git repository for nested `.git` directory, `.git` path in the worktree: {dot_git_path:?}"
+                    );
+                    return None;
+                };
+                log::info!(
+                    "building git repository, `.git` path in the worktree: {dot_git_path:?}"
+                );
+                parent_dir.into()
+            }
+            None => {
+                // `dot_git_path.parent().is_none()` means `.git` directory is the opened worktree itself,
+                // no files inside that directory are tracked by git, so no need to build the repo around it
+                log::info!(
+                    "not building git repository for the worktree itself, `.git` path in the worktree: {dot_git_path:?}"
+                );
+                return None;
+            }
         };
 
         let work_dir_id = self
