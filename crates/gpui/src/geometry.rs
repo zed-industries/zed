@@ -157,6 +157,12 @@ impl<T: Clone + Debug + Default> Along for Point<T> {
     }
 }
 
+impl<T: Clone + Debug + Default + Invert> Invert for Point<T> {
+    fn invert(&self) -> Self {
+        self.map(Invert::invert)
+    }
+}
+
 impl Point<Pixels> {
     /// Scales the point by a given factor, which is typically derived from the resolution
     /// of a target display to ensure proper sizing of UI elements.
@@ -405,6 +411,18 @@ where
         Size {
             width: f(self.width.clone()),
             height: f(self.height.clone()),
+        }
+    }
+}
+
+impl<T> Size<T>
+where
+    T: Clone + Default + Debug + Half,
+{
+    pub fn center(&self) -> Point<T> {
+        Point {
+            x: self.width.half(),
+            y: self.height.half(),
         }
     }
 }
@@ -2694,6 +2712,54 @@ impl Half for Rems {
 impl Half for GlobalPixels {
     fn half(&self) -> Self {
         Self(self.0 / 2.)
+    }
+}
+
+/// Provides a trait for types that can invert their values.
+pub trait Invert {
+    /// Returns the inverse of the given value
+    fn invert(&self) -> Self;
+}
+
+impl Invert for i32 {
+    fn invert(&self) -> Self {
+        -self
+    }
+}
+
+impl Invert for f32 {
+    fn invert(&self) -> Self {
+        -self
+    }
+}
+
+impl Invert for DevicePixels {
+    fn invert(&self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Invert for ScaledPixels {
+    fn invert(&self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Invert for Pixels {
+    fn invert(&self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Invert for Rems {
+    fn invert(&self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Invert for GlobalPixels {
+    fn invert(&self) -> Self {
+        Self(-self.0)
     }
 }
 
