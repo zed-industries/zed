@@ -1602,7 +1602,7 @@ impl ProjectSearchBar {
             });
         let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
             (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => Some(format!(
-                "Search ({}/{} for previous/next query)",
+                "Search ({} or {} for previous/next query)",
                 previous_query_keystrokes.join(" "),
                 next_query_keystrokes.join(" ")
             )),

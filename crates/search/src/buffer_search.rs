@@ -159,7 +159,7 @@ impl Render for BufferSearchBar {
                     .zip(down_keystrokes)
                     .map(|(up_keystrokes, down_keystrokes)| {
                         Arc::from(format!(
-                            "Search ({}/{} for previous/next query)",
+                            "Search ({} or {} for previous/next query)",
                             up_keystrokes.join(" "),
                             down_keystrokes.join(" ")
                         ))

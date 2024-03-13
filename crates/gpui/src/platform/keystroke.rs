@@ -155,12 +155,13 @@ impl std::fmt::Display for Keystroke {
         }
         let key = match self.key.as_str() {
             "backspace" => '⌫',
-            "up" => '↑',
-            "down" => '↓',
-            "left" => '←',
-            "right" => '→',
+            "up" => '▲',
+            "down" => '▼',
+            "left" => '◀',
+            "right" => '▶',
             "tab" => '⇥',
             "escape" => '⎋',
+            "delete" => '⌦',
             key => {
                 if key.len() == 1 {
                     key.chars().next().unwrap().to_ascii_uppercase()
