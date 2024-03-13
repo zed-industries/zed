@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
     Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowAppearance, WindowOptions,
+    WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -161,6 +161,10 @@ impl Platform for TestPlatform {
         vec![self.active_display.clone()]
     }
 
+    fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        Some(self.active_display.clone())
+    }
+
     fn display(&self, id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
         self.displays().iter().find(|d| d.id() == id).cloned()
     }
@@ -175,11 +179,11 @@ impl Platform for TestPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        params: WindowParams,
     ) -> Box<dyn crate::PlatformWindow> {
         let window = TestWindow::new(
-            options,
             handle,
+            params,
             self.weak.clone(),
             self.active_display.clone(),
         );

@@ -6,7 +6,6 @@ use gpui::{
     actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowBounds,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -65,7 +64,7 @@ impl Render for CollabTitlebarItem {
             .w_full()
             .h(titlebar_height(cx))
             .map(|this| {
-                if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
+                if cx.is_full_screen() {
                     this.pl_2()
                 } else {
                     // Use pixels here instead of a rem-based size because the macOS traffic

@@ -32,7 +32,7 @@ use gpui::{
     FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    VisualContext, WeakView, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -362,8 +362,7 @@ pub struct AppState {
     pub user_store: Model<UserStore>,
     pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub build_window_options:
-        fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
+    pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
@@ -424,7 +423,7 @@ impl AppState {
             user_store,
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
         })
     }
 }
@@ -690,18 +689,16 @@ impl Workspace {
             cx.observe_window_bounds(move |_, cx| {
                 if let Some(display) = cx.display() {
                     // Transform fixed bounds to be stored in terms of the containing display
-                    let mut bounds = cx.window_bounds();
-                    if let WindowBounds::Fixed(window_bounds) = &mut bounds {
-                        let display_bounds = display.bounds();
-                        window_bounds.origin.x -= display_bounds.origin.x;
-                        window_bounds.origin.y -= display_bounds.origin.y;
-                    }
+                    let mut window_bounds = cx.window_bounds();
+                    let display_bounds = display.bounds();
+                    window_bounds.origin.x -= display_bounds.origin.x;
+                    window_bounds.origin.y -= display_bounds.origin.y;
 
                     if let Some(display_uuid) = display.uuid().log_err() {
                         cx.background_executor()
                             .spawn(DB.set_window_bounds(
                                 workspace_id,
-                                SerializedWindowsBounds(bounds),
+                                SerializedWindowsBounds(window_bounds),
                                 display_uuid,
                             ))
                             .detach_and_log_err(cx);
@@ -847,19 +844,16 @@ impl Workspace {
 
                             // Stored bounds are relative to the containing display.
                             // So convert back to global coordinates if that screen still exists
-                            if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                let screen = cx
-                                    .update(|cx| {
-                                        cx.displays().into_iter().find(|display| {
-                                            display.uuid().ok() == Some(serialized_display)
-                                        })
+                            let screen = cx
+                                .update(|cx| {
+                                    cx.displays().into_iter().find(|display| {
+                                        display.uuid().ok() == Some(serialized_display)
                                     })
-                                    .ok()??;
-                                let screen_bounds = screen.bounds();
-                                window_bounds.origin.x += screen_bounds.origin.x;
-                                window_bounds.origin.y += screen_bounds.origin.y;
-                                bounds = WindowBounds::Fixed(window_bounds);
-                            }
+                                })
+                                .ok()??;
+                            let screen_bounds = screen.bounds();
+                            bounds.origin.x += screen_bounds.origin.x;
+                            bounds.origin.y += screen_bounds.origin.y;
 
                             Some((bounds, serialized_display))
                         })
@@ -867,9 +861,8 @@ impl Workspace {
                 };
 
                 // Use the serialized workspace to construct the new window
-                let options =
-                    cx.update(|cx| (app_state.build_window_options)(bounds, display, cx))?;
-
+                let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
+                options.bounds = bounds;
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
@@ -3610,7 +3603,7 @@ impl Workspace {
             client,
             user_store,
             fs: project.read(cx).fs().clone(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
         let workspace = Self::new(0, project, app_state, cx);
@@ -3663,17 +3656,15 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
+fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<Bounds<GlobalPixels>> {
     let display_origin = cx
         .update(|cx| Some(cx.displays().first()?.bounds().origin))
         .ok()??;
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
-        .map(|(position, size)| {
-            WindowBounds::Fixed(Bounds {
-                origin: display_origin + position,
-                size,
-            })
+        .map(|(position, size)| Bounds {
+            origin: display_origin + position,
+            size,
         })
 }
 
@@ -4553,7 +4544,8 @@ pub fn join_hosted_project(
 
             let window_bounds_override = window_bounds_env_override(&cx);
             cx.update(|cx| {
-                let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+                let mut options = (app_state.build_window_options)(None, cx);
+                options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
                 })
@@ -4611,7 +4603,8 @@ pub fn join_in_room_project(
 
             let window_bounds_override = window_bounds_env_override(&cx);
             cx.update(|cx| {
-                let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+                let mut options = (app_state.build_window_options)(None, cx);
+                options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
                 })

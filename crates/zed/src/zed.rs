@@ -10,7 +10,7 @@ use collections::VecDeque;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
-    TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -79,12 +79,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(quit);
 }
 
-pub fn build_window_options(
-    bounds: Option<WindowBounds>,
-    display_uuid: Option<Uuid>,
-    cx: &mut AppContext,
-) -> WindowOptions {
-    let bounds = bounds.unwrap_or(WindowBounds::Maximized);
+pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> WindowOptions {
     let display = display_uuid.and_then(|uuid| {
         cx.displays()
             .into_iter()
@@ -92,18 +87,18 @@ pub fn build_window_options(
     });
 
     WindowOptions {
-        bounds,
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.5), px(9.5))),
         }),
-        center: false,
+        bounds: None,
         focus: false,
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
         display_id: display.map(|display| display.id()),
+        fullscreen: false,
     }
 }
 

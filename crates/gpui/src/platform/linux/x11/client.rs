@@ -20,7 +20,7 @@ use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DisplayId, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowOptions,
+    ScrollDelta, Size, TouchPhase, WindowParams,
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
@@ -284,8 +284,9 @@ impl Client for X11Client {
             .roots
             .iter()
             .enumerate()
-            .map(|(root_id, _)| {
-                Rc::new(X11Display::new(&self.xcb_connection, root_id)) as Rc<dyn PlatformDisplay>
+            .filter_map(|(root_id, _)| {
+                Some(Rc::new(X11Display::new(&self.xcb_connection, root_id)?)
+                    as Rc<dyn PlatformDisplay>)
             })
             .collect()
     }
@@ -294,13 +295,20 @@ impl Client for X11Client {
         Some(Rc::new(X11Display::new(
             &self.xcb_connection,
             id.0 as usize,
-        )))
+        )?))
+    }
+
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(
+            X11Display::new(&self.xcb_connection, self.x_root_index)
+                .expect("There should always be a root index"),
+        ))
     }
 
     fn open_window(
         &self,
         _handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id().unwrap();
 
@@ -323,28 +331,19 @@ impl Client for X11Client {
             .crtcs
             .iter()
             .find_map(|crtc| {
-                //             let cookie = self.xcb_connection.send_request(&xcb::randr::GetCrtcInfo {
-                //                 crtc: crtc.to_owned(),
-                //                 config_timestamp: xcb::x::Time::CurrentTime as u32,
-                //             });
-                //             let crtc_info = self.xcb_connection.wait_for_reply(cookie).expect("TODO");
-
-                //             let mode_id = crtc_info.mode().resource_id();
-                //             screen_resources.modes().iter().find(|m| m.id == mode_id)
-
-                // /////////////////////////////////////
-
                 let crtc_info = self
                     .xcb_connection
-                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME).ok()?
-                    .reply().ok()?;
+                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                    .ok()?
+                    .reply()
+                    .ok()?;
 
                 screen_resources
                     .modes
                     .iter()
                     .find(|m| m.id == crtc_info.mode)
             })
-            .expect("Unable to find screen refresh reate");
+            .expect("Unable to find screen refresh rate");
 
         // .expect("Missing screen mode for crtc specified mode id");
 

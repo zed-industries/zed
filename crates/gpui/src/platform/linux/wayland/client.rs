@@ -39,11 +39,12 @@ use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::WindowParams;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
     KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, WindowOptions,
+    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -207,10 +208,14 @@ impl Client for WaylandClient {
         unimplemented!()
     }
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        None
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.state.client_state_inner.borrow_mut();
 
