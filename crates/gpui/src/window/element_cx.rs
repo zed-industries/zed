@@ -432,6 +432,7 @@ impl<'a> ElementContext<'a> {
         );
         self.window.next_frame.deferred_draws = deferred_draws;
         self.window.element_id_stack.clear();
+        self.window.text_style_stack.clear();
     }
 
     fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
