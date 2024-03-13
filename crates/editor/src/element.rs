@@ -1650,6 +1650,12 @@ impl EditorElement {
         em_width: Pixels,
         cx: &mut ElementContext,
     ) {
+        struct MeasuredHoverPopover {
+            element: AnyElement,
+            size: Size<Pixels>,
+            horizontal_offset: Pixels,
+        }
+
         let max_size = size(
             (120. * em_width) // Default size
                 .min(hitbox.size.width / 2.) // Shrink to half of the editor width
@@ -1669,7 +1675,7 @@ impl EditorElement {
                 cx,
             )
         });
-        let Some((position, mut hover_popovers)) = hover_popovers else {
+        let Some((position, hover_popovers)) = hover_popovers else {
             return;
         };
 
@@ -1679,47 +1685,69 @@ impl EditorElement {
         let hovered_row_layout =
             &line_layouts[(position.row() - visible_display_row_range.start) as usize].line;
 
-        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-        // height. This is the size we will use to decide whether to render popovers above or below
-        // the hovered line.
-        let first_size = hover_popovers[0].measure(available_space, cx);
-        let height_to_reserve = first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * line_height;
-
         // Compute Hovered Point
         let x =
             hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
         let y = position.row() as f32 * line_height - scroll_pixel_position.y;
         let hovered_point = content_origin + point(x, y);
 
-        if hovered_point.y - height_to_reserve > Pixels::ZERO {
+        let mut overall_height = Pixels::ZERO;
+        let mut measured_hover_popovers = Vec::new();
+        for mut hover_popover in hover_popovers {
+            let size = hover_popover.measure(available_space, cx);
+            let horizontal_offset =
+                (text_hitbox.upper_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
+
+            overall_height += HOVER_POPOVER_GAP + size.height;
+
+            measured_hover_popovers.push(MeasuredHoverPopover {
+                element: hover_popover,
+                size,
+                horizontal_offset,
+            });
+        }
+        overall_height += HOVER_POPOVER_GAP;
+
+        fn draw_occluder(width: Pixels, origin: gpui::Point<Pixels>, cx: &mut ElementContext) {
+            let mut occlusion = div()
+                .size_full()
+                .occlude()
+                .on_mouse_move(|_, cx| cx.stop_propagation())
+                .into_any_element();
+            occlusion.measure(size(width, HOVER_POPOVER_GAP).into(), cx);
+            cx.defer_draw(occlusion, origin, 2);
+        }
+
+        if hovered_point.y > overall_height {
             // There is enough space above. Render popovers above the hovered point
             let mut current_y = hovered_point.y;
-            for mut hover_popover in hover_popovers {
-                let size = hover_popover.measure(available_space, cx);
-                let mut popover_origin = point(hovered_point.x, current_y - size.height);
+            for (position, popover) in measured_hover_popovers.into_iter().with_position() {
+                let size = popover.size;
+                let popover_origin = point(
+                    hovered_point.x + popover.horizontal_offset,
+                    current_y - size.height,
+                );
 
-                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
-                if x_out_of_bounds < Pixels::ZERO {
-                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                cx.defer_draw(popover.element, popover_origin, 2);
+                if position != itertools::Position::Last {
+                    let origin = point(popover_origin.x, popover_origin.y - HOVER_POPOVER_GAP);
+                    draw_occluder(size.width, origin, cx);
                 }
-
-                cx.defer_draw(hover_popover, popover_origin, 2);
 
                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
             }
         } else {
             // There is not enough space above. Render popovers below the hovered point
             let mut current_y = hovered_point.y + line_height;
-            for mut hover_popover in hover_popovers {
-                let size = hover_popover.measure(available_space, cx);
-                let mut popover_origin = point(hovered_point.x, current_y);
+            for (position, popover) in measured_hover_popovers.into_iter().with_position() {
+                let size = popover.size;
+                let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
 
-                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
-                if x_out_of_bounds < Pixels::ZERO {
-                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                cx.defer_draw(popover.element, popover_origin, 2);
+                if position != itertools::Position::Last {
+                    let origin = point(popover_origin.x, popover_origin.y + size.height);
+                    draw_occluder(size.width, origin, cx);
                 }
-
-                cx.defer_draw(hover_popover, popover_origin, 2);
 
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
             }
