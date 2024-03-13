@@ -10,7 +10,7 @@ use windows::Win32::{
     },
 };
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
+use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
 
 #[derive(Debug)]
 pub(crate) struct WindowsDisplay {
@@ -28,15 +28,17 @@ impl WindowsDisplay {
             return None;
         };
         let size = info.monitorInfo.rcMonitor;
-        println!("Monitor size: {:#?}", size);
 
         Some(WindowsDisplay {
             display_id,
             bounds: Bounds {
-                origin: Default::default(),
+                origin: Point {
+                    x: GlobalPixels(size.left as f32),
+                    y: GlobalPixels(size.top as f32),
+                },
                 size: Size {
                     width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.top - size.bottom) as f32),
+                    height: GlobalPixels((size.bottom - size.top) as f32),
                 },
             },
             uuid: Uuid::from_bytes([0; 16]),
@@ -46,15 +48,17 @@ impl WindowsDisplay {
     fn new_with_handle_and_id(handle: HMONITOR, display_id: DisplayId) -> Self {
         let info = get_monitor_info(handle).expect("unable to get monitor info");
         let size = info.monitorInfo.rcMonitor;
-        println!("Monitor size: {:#?}", size);
 
         WindowsDisplay {
             display_id,
             bounds: Bounds {
-                origin: Default::default(),
+                origin: Point {
+                    x: GlobalPixels(size.left as f32),
+                    y: GlobalPixels(size.top as f32),
+                },
                 size: Size {
                     width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.top - size.bottom) as f32),
+                    height: GlobalPixels((size.bottom - size.top) as f32),
                 },
             },
             uuid: Uuid::from_bytes([0; 16]),
@@ -66,6 +70,10 @@ impl WindowsDisplay {
         const POINT_ZERO: POINT = POINT { x: 0, y: 0 };
         let monitor = unsafe { MonitorFromPoint(POINT_ZERO, MONITOR_DEFAULTTOPRIMARY) };
         if monitor.is_invalid() {
+            log::error!(
+                "can not find the primary monitor: {}",
+                std::io::Error::last_os_error()
+            );
             return None;
         }
         let Some(display_id) = available_monitors()
