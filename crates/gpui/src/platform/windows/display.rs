@@ -61,15 +61,24 @@ impl WindowsDisplay {
         }
     }
 
-    pub fn primary_monitor() -> Self {
+    pub fn primary_monitor() -> Option<Self> {
         // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
         const POINT_ZERO: POINT = POINT { x: 0, y: 0 };
         let monitor = unsafe { MonitorFromPoint(POINT_ZERO, MONITOR_DEFAULTTOPRIMARY) };
-        let display_id = available_monitors()
+        if monitor.is_invalid() {
+            return None;
+        }
+        let Some(display_id) = available_monitors()
             .iter()
             .position(|handle| handle.0 == monitor.0)
-            .unwrap();
-        WindowsDisplay::new_with_handle_and_id(monitor, DisplayId(display_id as _))
+        else {
+            return None;
+        };
+
+        Some(WindowsDisplay::new_with_handle_and_id(
+            monitor,
+            DisplayId(display_id as _),
+        ))
     }
 
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
