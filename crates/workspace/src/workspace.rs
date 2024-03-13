@@ -1447,18 +1447,12 @@ impl Workspace {
                     OpenVisible::None => Some(false),
                     OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
                         Some(Some(metadata)) => Some(!metadata.is_dir),
-                        Some(None) => {
-                            log::error!("No metadata for file {abs_path:?}");
-                            None
-                        }
+                        Some(None) => Some(true),
                         None => None,
                     },
                     OpenVisible::OnlyDirectories => match fs.metadata(abs_path).await.log_err() {
                         Some(Some(metadata)) => Some(metadata.is_dir),
-                        Some(None) => {
-                            log::error!("No metadata for file {abs_path:?}");
-                            None
-                        }
+                        Some(None) => Some(false),
                         None => None,
                     },
                 };
@@ -1486,15 +1480,7 @@ impl Workspace {
                 let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
                     let (worktree, project_path) = project_path?;
-                    if fs.is_file(&abs_path).await {
-                        Some(
-                            this.update(&mut cx, |this, cx| {
-                                this.open_path(project_path, pane, true, cx)
-                            })
-                            .log_err()?
-                            .await,
-                        )
-                    } else {
+                    if fs.is_dir(&abs_path).await {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
@@ -1517,6 +1503,14 @@ impl Workspace {
                         })
                         .log_err()?;
                         None
+                    } else {
+                        Some(
+                            this.update(&mut cx, |this, cx| {
+                                this.open_path(project_path, pane, true, cx)
+                            })
+                            .log_err()?
+                            .await,
+                        )
                     }
                 });
                 tasks.push(task);
@@ -3731,7 +3725,9 @@ fn open_items(
                         let fs = app_state.fs.clone();
                         async move {
                             let file_project_path = project_path?;
-                            if fs.is_file(&abs_path).await {
+                            if fs.is_dir(&abs_path).await {
+                                None
+                            } else {
                                 Some((
                                     ix,
                                     workspace
@@ -3741,8 +3737,6 @@ fn open_items(
                                         .log_err()?
                                         .await,
                                 ))
-                            } else {
-                                None
                             }
                         }
                     })
