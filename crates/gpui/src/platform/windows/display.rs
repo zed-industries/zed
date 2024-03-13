@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use itertools::Itertools;
 use smallvec::SmallVec;
 use uuid::Uuid;
 use windows::Win32::{
@@ -28,6 +29,7 @@ impl WindowsDisplay {
             return None;
         };
         let size = info.monitorInfo.rcMonitor;
+        let uuid = generate_uuid(&info.szDevice);
 
         Some(WindowsDisplay {
             display_id,
@@ -41,13 +43,14 @@ impl WindowsDisplay {
                     height: GlobalPixels((size.bottom - size.top) as f32),
                 },
             },
-            uuid: Uuid::from_bytes([0; 16]),
+            uuid,
         })
     }
 
     fn new_with_handle_and_id(handle: HMONITOR, display_id: DisplayId) -> Self {
         let info = get_monitor_info(handle).expect("unable to get monitor info");
         let size = info.monitorInfo.rcMonitor;
+        let uuid = generate_uuid(&info.szDevice);
 
         WindowsDisplay {
             display_id,
@@ -61,7 +64,7 @@ impl WindowsDisplay {
                     height: GlobalPixels((size.bottom - size.top) as f32),
                 },
             },
-            uuid: Uuid::from_bytes([0; 16]),
+            uuid,
         }
     }
 
@@ -155,4 +158,12 @@ fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFOEXW> {
     } else {
         Err(anyhow::anyhow!(std::io::Error::last_os_error()))
     }
+}
+
+fn generate_uuid(device_name: &[u16]) -> Uuid {
+    let name = device_name
+        .iter()
+        .flat_map(|&a| a.to_be_bytes().to_vec())
+        .collect_vec();
+    Uuid::new_v5(&Uuid::NAMESPACE_DNS, &name)
 }
