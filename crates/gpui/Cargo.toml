@@ -105,9 +105,11 @@ cosmic-text = "0.10.0"
 copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-open = "5.0.1"
-ashpd = "0.7.0"
-x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr"] }
+as-raw-xcb-connection = "1"
+ashpd = "0.8.0"
+calloop = "0.12.4"
+calloop-wayland-source = "0.2.0"
+wayland-backend = { version = "0.3.3", features = ["client_system"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
 wayland-protocols = { version = "0.31.2", features = [
@@ -115,12 +117,10 @@ wayland-protocols = { version = "0.31.2", features = [
     "staging",
     "unstable",
 ] }
-wayland-backend = { version = "0.3.3", features = ["client_system"] }
-xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
-as-raw-xcb-connection = "1"
-calloop = "0.12.4"
-calloop-wayland-source = "0.2.0"
 oo7 = "0.3.0"
+open = "5.1.2"
+x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr"] }
+xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
