@@ -37,7 +37,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
     vec,
 };
 use sum_tree::TreeMap;
@@ -83,7 +83,7 @@ pub struct Buffer {
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
     /// or saved to disk.
-    saved_mtime: SystemTime,
+    saved_mtime: Option<SystemTime>,
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
@@ -358,7 +358,7 @@ pub trait File: Send + Sync {
     }
 
     /// Returns the file's mtime.
-    fn mtime(&self) -> SystemTime;
+    fn mtime(&self) -> Option<SystemTime>;
 
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
@@ -378,6 +378,11 @@ pub trait File: Send + Sync {
 
     /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
+
+    /// Returns whether the file existed on disk at one point
+    fn is_created(&self) -> bool {
+        self.mtime().is_some()
+    }
 
     /// Converts this file into an [`Any`] trait object.
     fn as_any(&self) -> &dyn Any;
@@ -404,7 +409,7 @@ pub trait LocalFile: File {
         version: &clock::Global,
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
-        mtime: SystemTime,
+        mtime: Option<SystemTime>,
         cx: &mut AppContext,
     );
 
@@ -573,10 +578,7 @@ impl Buffer {
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
         this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
-        this.saved_mtime = message
-            .saved_mtime
-            .ok_or_else(|| anyhow!("invalid saved_mtime"))?
-            .into();
+        this.saved_mtime = message.saved_mtime.map(|time| time.into());
         Ok(this)
     }
 
@@ -590,7 +592,7 @@ impl Buffer {
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_version_fingerprint: proto::serialize_fingerprint(self.file_fingerprint),
-            saved_mtime: Some(self.saved_mtime.into()),
+            saved_mtime: self.saved_mtime.map(|time| time.into()),
         }
     }
 
@@ -664,11 +666,7 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
         capability: Capability,
     ) -> Self {
-        let saved_mtime = if let Some(file) = file.as_ref() {
-            file.mtime()
-        } else {
-            UNIX_EPOCH
-        };
+        let saved_mtime = file.as_ref().and_then(|file| file.mtime());
 
         Self {
             saved_mtime,
@@ -754,7 +752,7 @@ impl Buffer {
     }
 
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
-    pub fn saved_mtime(&self) -> SystemTime {
+    pub fn saved_mtime(&self) -> Option<SystemTime> {
         self.saved_mtime
     }
 
@@ -786,7 +784,7 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         fingerprint: RopeFingerprint,
-        mtime: SystemTime,
+        mtime: Option<SystemTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -861,7 +859,7 @@ impl Buffer {
         version: clock::Global,
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
-        mtime: SystemTime,
+        mtime: Option<SystemTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
@@ -1547,7 +1545,10 @@ impl Buffer {
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         (self.has_conflict || self.changed_since_saved_version())
-            || self.file.as_ref().map_or(false, |file| file.is_deleted())
+            || self
+                .file
+                .as_ref()
+                .map_or(false, |file| file.is_deleted() || !file.is_created())
     }
 
     /// Checks if the buffer and its file have both changed since the buffer

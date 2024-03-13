@@ -1280,7 +1280,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn mtime(&self) -> SystemTime {
+        fn mtime(&self) -> Option<SystemTime> {
             unimplemented!()
         }
 

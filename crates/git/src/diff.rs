@@ -29,36 +29,11 @@ pub struct DiffHunk<T> {
     pub diff_base_byte_range: Range<usize>,
 }
 
-impl<T> DiffHunk<T> {
-    fn buffer_range_empty(&self) -> bool {
-        if self.buffer_range.start == self.buffer_range.end {
-            return true;
-        }
-
-        // buffer diff hunks are per line, so if we arrive to the same line with different bias, it's the same hunk
-        let Anchor {
-            timestamp: timestamp_start,
-            offset: offset_start,
-            buffer_id: buffer_id_start,
-            bias: _,
-        } = self.buffer_range.start;
-        let Anchor {
-            timestamp: timestamp_end,
-            offset: offset_end,
-            buffer_id: buffer_id_end,
-            bias: _,
-        } = self.buffer_range.end;
-        timestamp_start == timestamp_end
-            && offset_start == offset_end
-            && buffer_id_start == buffer_id_end
-    }
-}
-
 impl DiffHunk<u32> {
     pub fn status(&self) -> DiffHunkStatus {
         if self.diff_base_byte_range.is_empty() {
             DiffHunkStatus::Added
-        } else if self.buffer_range_empty() {
+        } else if self.associated_range.is_empty() {
             DiffHunkStatus::Removed
         } else {
             DiffHunkStatus::Modified

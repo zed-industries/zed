@@ -22,13 +22,13 @@ dirs = "4.0.0"
 futures.workspace = true
 gpui.workspace = true
 libc = "0.2"
-procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "0c13436f4fa8b126f46dd4a20106419b41666897", default-features = false }
 task.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+sysinfo.workspace = true
 smol.workspace = true
 theme.workspace = true
 thiserror.workspace = true

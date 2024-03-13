@@ -20,17 +20,6 @@ pub enum ElevationIndex {
 }
 
 impl ElevationIndex {
-    pub fn z_index(self) -> u16 {
-        match self {
-            ElevationIndex::Background => 0,
-            ElevationIndex::Surface => 42,
-            ElevationIndex::ElevatedSurface => 84,
-            ElevationIndex::Wash => 126,
-            ElevationIndex::ModalSurface => 168,
-            ElevationIndex::DraggedElement => 210,
-        }
-    }
-
     pub fn shadow(self) -> SmallVec<[BoxShadow; 2]> {
         match self {
             ElevationIndex::Surface => smallvec![],
@@ -75,16 +64,6 @@ pub enum LayerIndex {
     ElevatedElement,
 }
 
-impl LayerIndex {
-    pub fn usize(&self) -> usize {
-        match *self {
-            LayerIndex::BehindElement => 0,
-            LayerIndex::Element => 100,
-            LayerIndex::ElevatedElement => 200,
-        }
-    }
-}
-
 /// An appropriate z-index for the given layer based on its intended usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementIndex {
@@ -94,17 +73,4 @@ pub enum ElementIndex {
     Highlight,
     Content,
     Overlay,
-}
-
-impl ElementIndex {
-    pub fn usize(&self) -> usize {
-        match *self {
-            ElementIndex::Effect => 0,
-            ElementIndex::Background => 100,
-            ElementIndex::Tint => 200,
-            ElementIndex::Highlight => 300,
-            ElementIndex::Content => 400,
-            ElementIndex::Overlay => 500,
-        }
-    }
 }

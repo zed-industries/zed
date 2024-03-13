@@ -1561,7 +1561,6 @@ impl Pane {
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .bottom_0()
             .right_0()
             .size_0()
@@ -1886,7 +1885,6 @@ impl Render for Pane {
                     .child(
                         // drag target
                         div()
-                            .z_index(1)
                             .invisible()
                             .absolute()
                             .bg(theme::color_alpha(
@@ -2110,7 +2108,11 @@ impl NavHistoryState {
 fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     let path = buffer_path
         .as_ref()
-        .and_then(|p| p.path.to_str())
+        .and_then(|p| {
+            p.path
+                .to_str()
+                .and_then(|s| if s == "" { None } else { Some(s) })
+        })
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
