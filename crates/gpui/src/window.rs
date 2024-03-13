@@ -1,13 +1,13 @@
 use crate::{
-    px, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext, Bounds,
-    Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
-    Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten, Global, GlobalElementId,
-    Hsla, KeyBinding, KeyDownEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model,
-    ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
-    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    point, px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena,
+    AsyncWindowContext, Bounds, Context, Corners, CursorStyle, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, Flatten, Global, GlobalElementId, GlobalPixels, Hsla, KeyBinding, KeyDownEvent,
+    KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers,
+    MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size,
+    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, View,
+    VisualContext, WeakView, WindowAppearance, WindowOptions, WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -253,7 +253,6 @@ pub struct Window {
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     scale_factor: f32,
-    bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -315,20 +314,69 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
+fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
+    const DEFAULT_WINDOW_SIZE: Size<GlobalPixels> = size(GlobalPixels(1024.0), GlobalPixels(700.0));
+    const DEFAULT_WINDOW_OFFSET: Point<GlobalPixels> = point(GlobalPixels(0.0), GlobalPixels(35.0));
+
+    cx.active_window()
+        .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
+        .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
+        .unwrap_or_else(|| {
+            cx.primary_display()
+                .map(|display| {
+                    let center = display.bounds().center();
+                    let offset = DEFAULT_WINDOW_SIZE / 2.0;
+                    let origin = point(center.x - offset.width, center.y - offset.height);
+                    Bounds::new(origin, DEFAULT_WINDOW_SIZE)
+                })
+                .unwrap_or_else(|| {
+                    Bounds::new(
+                        point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                        DEFAULT_WINDOW_SIZE,
+                    )
+                })
+        })
+}
+
+// Fixed, Maximized, Fullscreen, and 'Inherent / default'
+// Platform part, you don't, you only need Fixed, Maximized, Fullscreen
+
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
         cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform.open_window(handle, options);
+        let WindowOptions {
+            bounds,
+            titlebar,
+            focus,
+            show,
+            kind,
+            is_movable,
+            display_id,
+            fullscreen,
+        } = options;
+
+        let bounds = bounds.unwrap_or_else(|| default_bounds(cx));
+        let platform_window = cx.platform.open_window(
+            handle,
+            WindowParams {
+                bounds,
+                titlebar,
+                kind,
+                is_movable,
+                focus,
+                show,
+                display_id,
+            },
+        );
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
-        let bounds = platform_window.bounds();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
@@ -336,6 +384,10 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+
+        if fullscreen {
+            platform_window.toggle_full_screen();
+        }
 
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
@@ -457,7 +509,6 @@ impl Window {
             mouse_hit_test: HitTest::default(),
             modifiers,
             scale_factor,
-            bounds,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -740,7 +791,6 @@ impl<'a> WindowContext<'a> {
     fn window_bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
-        self.window.bounds = self.window.platform_window.bounds();
         self.window.display_id = self.window.platform_window.display().id();
         self.refresh();
 
@@ -751,8 +801,13 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn window_bounds(&self) -> WindowBounds {
-        self.window.bounds
+    pub fn window_bounds(&self) -> Bounds<GlobalPixels> {
+        self.window.platform_window.bounds()
+    }
+
+    /// Retusn whether or not the window is currently fullscreen
+    pub fn is_full_screen(&self) -> bool {
+        self.window.platform_window.is_full_screen()
     }
 
     fn appearance_changed(&mut self) {

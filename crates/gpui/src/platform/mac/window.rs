@@ -4,8 +4,7 @@ use crate::{
     Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
     KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
-    WindowOptions,
+    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -419,23 +418,7 @@ impl MacWindowState {
         }
     }
 
-    fn bounds(&self) -> WindowBounds {
-        unsafe {
-            if self.is_fullscreen() {
-                return WindowBounds::Fullscreen;
-            }
-
-            let frame = self.frame();
-            let screen_size = self.native_window.screen().visibleFrame().into();
-            if frame.size == screen_size {
-                WindowBounds::Maximized
-            } else {
-                WindowBounds::Fixed(frame)
-            }
-        }
-    }
-
-    fn frame(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<GlobalPixels> {
         let frame = unsafe { NSWindow::frame(self.native_window) };
         global_bounds_from_ns_rect(frame)
     }
@@ -483,7 +466,15 @@ pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        WindowParams {
+            bounds,
+            titlebar,
+            kind,
+            is_movable,
+            display_id,
+            focus,
+            show,
+        }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
     ) -> Self {
@@ -491,7 +482,7 @@ impl MacWindow {
             let pool = NSAutoreleasePool::new(nil);
 
             let mut style_mask;
-            if let Some(titlebar) = options.titlebar.as_ref() {
+            if let Some(titlebar) = titlebar.as_ref() {
                 style_mask = NSWindowStyleMask::NSClosableWindowMask
                     | NSWindowStyleMask::NSMiniaturizableWindowMask
                     | NSWindowStyleMask::NSResizableWindowMask
@@ -505,7 +496,7 @@ impl MacWindow {
                     | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
             }
 
-            let native_window: id = match options.kind {
+            let native_window: id = match kind {
                 WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
                 WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
@@ -513,8 +504,7 @@ impl MacWindow {
                 }
             };
 
-            let display = options
-                .display_id
+            let display = display_id
                 .and_then(MacDisplay::find_by_id)
                 .unwrap_or_else(MacDisplay::primary);
 
@@ -530,22 +520,12 @@ impl MacWindow {
                 }
             }
 
-            let window_rect = match options.bounds {
-                WindowBounds::Fullscreen => {
-                    // Set a temporary size as we will asynchronously resize the window
-                    NSRect::new(NSPoint::new(0., 0.), NSSize::new(1024., 768.))
-                }
-                WindowBounds::Maximized => {
-                    let display_bounds = display.bounds();
+            let window_rect = {
+                let display_bounds = display.bounds();
+                if bounds.intersects(&display_bounds) {
+                    global_bounds_to_ns_rect(bounds)
+                } else {
                     global_bounds_to_ns_rect(display_bounds)
-                }
-                WindowBounds::Fixed(bounds) => {
-                    let display_bounds = display.bounds();
-                    if bounds.intersects(&display_bounds) {
-                        global_bounds_to_ns_rect(bounds)
-                    } else {
-                        global_bounds_to_ns_rect(display_bounds)
-                    }
                 }
             };
 
@@ -568,17 +548,8 @@ impl MacWindow {
             assert!(!native_view.is_null());
 
             let window_size = {
-                let bounds = match options.bounds {
-                    WindowBounds::Fullscreen | WindowBounds::Maximized => {
-                        native_window.screen().visibleFrame()
-                    }
-                    WindowBounds::Fixed(bounds) => global_bounds_to_ns_rect(bounds),
-                };
                 let scale = get_scale_factor(native_window);
-                size(
-                    bounds.size.width as f32 * scale,
-                    bounds.size.height as f32 * scale,
-                )
+                size(bounds.size.width.0 * scale, bounds.size.height.0 * scale)
             };
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -594,7 +565,7 @@ impl MacWindow {
                     native_view as *mut _,
                     window_size,
                 ),
-                kind: options.kind,
+                kind,
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
@@ -608,8 +579,7 @@ impl MacWindow {
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
                 last_fresh_keydown: None,
-                traffic_light_position: options
-                    .titlebar
+                traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
@@ -628,20 +598,16 @@ impl MacWindow {
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
 
-            if let Some(title) = options
-                .titlebar
+            if let Some(title) = titlebar
                 .as_ref()
                 .and_then(|t| t.title.as_ref().map(AsRef::as_ref))
             {
                 native_window.setTitle_(NSString::alloc(nil).init_str(title));
             }
 
-            native_window.setMovable_(options.is_movable as BOOL);
+            native_window.setMovable_(is_movable as BOOL);
 
-            if options
-                .titlebar
-                .map_or(true, |titlebar| titlebar.appears_transparent)
-            {
+            if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }
@@ -663,11 +629,7 @@ impl MacWindow {
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
-            if options.center {
-                native_window.center();
-            }
-
-            match options.kind {
+            match kind {
                 WindowKind::Normal => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
@@ -698,16 +660,11 @@ impl MacWindow {
                     );
                 }
             }
-            if options.focus {
-                native_window.makeKeyAndOrderFront_(nil);
-            } else if options.show {
-                native_window.orderFront_(nil);
-            }
 
-            if options.bounds == WindowBounds::Fullscreen {
-                // We need to toggle full screen asynchronously as doing so may
-                // call back into the platform handlers.
-                window.toggle_full_screen();
+            if focus {
+                native_window.makeKeyAndOrderFront_(nil);
+            } else if show {
+                native_window.orderFront_(nil);
             }
 
             window.0.lock().move_traffic_light();
@@ -754,7 +711,7 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn bounds(&self) -> WindowBounds {
+    fn bounds(&self) -> Bounds<GlobalPixels> {
         self.0.as_ref().lock().bounds()
     }
 
@@ -993,6 +950,17 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach();
+    }
+
+    fn is_full_screen(&self) -> bool {
+        let this = self.0.lock();
+        let window = this.native_window;
+
+        unsafe {
+            window
+                .styleMask()
+                .contains(NSWindowStyleMask::NSFullScreenWindowMask)
+        }
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {

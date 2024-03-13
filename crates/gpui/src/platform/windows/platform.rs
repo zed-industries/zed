@@ -53,8 +53,8 @@ use windows::{
 use crate::{
     try_get_window_inner, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
     ForegroundExecutor, Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowsDispatcher,
-    WindowsDisplay, WindowsTextSystem, WindowsWindow,
+    PlatformTextSystem, PlatformWindow, Task, WindowAppearance, WindowOptions, WindowParams,
+    WindowsDispatcher, WindowsDisplay, WindowsTextSystem, WindowsWindow,
 };
 
 pub(crate) struct WindowsPlatform {
@@ -328,14 +328,19 @@ impl Platform for WindowsPlatform {
     }
 
     // todo(windows)
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(WindowsDisplay::new()))
+    }
+
+    // todo(windows)
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        unimplemented!()
+        None
     }
 
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         Box::new(WindowsWindow::new(self.inner.clone(), handle, options))
     }

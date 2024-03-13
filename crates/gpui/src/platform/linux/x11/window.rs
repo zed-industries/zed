@@ -4,7 +4,7 @@
 use crate::{
     platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBounds, WindowOptions,
+    Scene, Size, WindowAppearance, WindowOptions, WindowParams,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -138,13 +138,13 @@ impl rwh::HasDisplayHandle for X11Window {
 
 impl X11WindowState {
     pub fn new(
-        options: WindowOptions,
+        params: WindowParams,
         xcb_connection: &Rc<xcb::Connection>,
         x_main_screen_index: i32,
         x_window: x::Window,
         atoms: &XcbAtoms,
     ) -> Self {
-        let x_screen_index = options
+        let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as i32);
         let screen = xcb_connection
@@ -175,32 +175,21 @@ impl X11WindowState {
             ),
         ];
 
-        let bounds = match options.bounds {
-            WindowBounds::Fullscreen | WindowBounds::Maximized => Bounds {
-                origin: Point::default(),
-                size: Size {
-                    width: screen.width_in_pixels() as i32,
-                    height: screen.height_in_pixels() as i32,
-                },
-            },
-            WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as i32),
-        };
-
         xcb_connection.send_request(&x::CreateWindow {
             depth: x::COPY_FROM_PARENT as u8,
             wid: x_window,
             parent: screen.root(),
-            x: bounds.origin.x as i16,
-            y: bounds.origin.y as i16,
-            width: bounds.size.width as u16,
-            height: bounds.size.height as u16,
+            x: params.bounds.origin.x.0 as i16,
+            y: params.bounds.origin.y.0 as i16,
+            width: params.bounds.size.width.0 as u16,
+            height: params.bounds.size.height.0 as u16,
             border_width: 0,
             class: x::WindowClass::InputOutput,
             visual: screen.root_visual(),
             value_list: &xcb_values,
         });
 
-        if let Some(titlebar) = options.titlebar {
+        if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection.send_request(&x::ChangeProperty {
                     mode: x::PropMode::Replace,
@@ -250,12 +239,12 @@ impl X11WindowState {
 
         Self {
             xcb_connection: xcb_connection.clone(),
-            display: Rc::new(X11Display::new(xcb_connection, x_screen_index)),
+            display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
             x_window,
             callbacks: RefCell::new(Callbacks::default()),
             inner: RefCell::new(LinuxWindowInner {
-                bounds,
+                bounds: params.bounds.map(|v| v.0 as i32),
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
@@ -339,14 +328,12 @@ impl X11WindowState {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> WindowBounds {
-        WindowBounds::Fixed(
-            self.0
-                .inner
-                .borrow_mut()
-                .bounds
-                .map(|v| GlobalPixels(v as f32)),
-        )
+    fn bounds(&self) -> Bounds<GlobalPixels> {
+        self.0
+            .inner
+            .borrow_mut()
+            .bounds
+            .map(|v| GlobalPixels(v as f32))
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -451,6 +438,11 @@ impl PlatformWindow for X11Window {
 
     // todo(linux)
     fn toggle_full_screen(&self) {
+        unimplemented!()
+    }
+
+    // todo(linux)
+    fn is_full_screen(&self) -> bool {
         unimplemented!()
     }
 

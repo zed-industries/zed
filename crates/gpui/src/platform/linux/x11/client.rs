@@ -13,7 +13,7 @@ use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DisplayId, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowOptions,
+    ScrollDelta, Size, TouchPhase,
 };
 
 use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
@@ -284,26 +284,35 @@ impl Client for X11Client {
         setup
             .roots()
             .enumerate()
-            .map(|(root_id, _)| {
-                Rc::new(X11Display::new(&self.xcb_connection, root_id as i32))
-                    as Rc<dyn PlatformDisplay>
+            .filter_map(|(root_id, _)| {
+                Some(
+                    Rc::new(X11Display::new(&self.xcb_connection, root_id as i32)?)
+                        as Rc<dyn PlatformDisplay>,
+                )
             })
             .collect()
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)))
+        Some(Rc::new(X11Display::new(&self.xcb_connection, id.0 as i32)?))
+    }
+
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(
+            X11Display::new(&self.xcb_connection, self.x_root_index)
+                .expect("There should always be a root index"),
+        ))
     }
 
     fn open_window(
         &self,
         _handle: AnyWindowHandle,
-        options: WindowOptions,
+        params: crate::WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let x_window = self.xcb_connection.generate_id();
 
         let window_ptr = Rc::new(X11WindowState::new(
-            options,
+            params,
             &self.xcb_connection,
             self.x_root_index,
             x_window,

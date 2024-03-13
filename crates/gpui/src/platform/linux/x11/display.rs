@@ -11,9 +11,9 @@ pub(crate) struct X11Display {
 }
 
 impl X11Display {
-    pub(crate) fn new(xc: &xcb::Connection, x_screen_index: i32) -> Self {
-        let screen = xc.get_setup().roots().nth(x_screen_index as usize).unwrap();
-        Self {
+    pub(crate) fn new(xc: &xcb::Connection, x_screen_index: i32) -> Option<Self> {
+        let screen = xc.get_setup().roots().nth(x_screen_index as usize)?;
+        Some(Self {
             x_screen_index,
             bounds: Bounds {
                 origin: Default::default(),
@@ -23,7 +23,7 @@ impl X11Display {
                 },
             },
             uuid: Uuid::from_bytes([0; 16]),
-        }
+        })
     }
 }
 
