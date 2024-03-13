@@ -4,7 +4,7 @@ use crate::{
     ShapedGlyph, SharedString, Size,
 };
 use anyhow::{anyhow, Context, Ok, Result};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use cosmic_text::Font as CosmicTextFont;
 use cosmic_text::{
     fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, SwashCache,
