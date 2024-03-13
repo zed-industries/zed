@@ -9302,8 +9302,7 @@ impl Editor {
             .redacted_ranges(search_range, |file| {
                 if let Some(file) = file {
                     file.is_private()
-                        && EditorSettings::get(Some((file.worktree_id(), file.path())), cx)
-                            .redact_private_values
+                        && EditorSettings::get(Some(file.as_ref().into()), cx).redact_private_values
                 } else {
                     false
                 }
@@ -9645,22 +9644,16 @@ impl Editor {
         telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn report_editor_event(
-        &self,
-        _operation: &'static str,
-        _file_extension: Option<String>,
-        _cx: &AppContext,
-    ) {
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
+        if cfg!(any(test, feature = "test-support")) {
+            return;
+        }
+
         let Some(project) = &self.project else { return };
 
         // If None, we are in a file without an extension

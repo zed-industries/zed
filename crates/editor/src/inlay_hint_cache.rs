@@ -3387,17 +3387,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        )));
+        language_registry.add(crate::editor_tests::rust_lang());
         let mut fake_servers = language_registry.register_fake_lsp_adapter(
             "Rust",
             FakeLspAdapter {

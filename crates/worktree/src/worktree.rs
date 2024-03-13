@@ -46,7 +46,7 @@ use postage::{
     watch,
 };
 use serde::Serialize;
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -352,7 +352,10 @@ impl Worktree {
                         "file_scan_exclusions",
                     );
                     let new_private_files = path_matchers(
-                        WorktreeSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
+                        WorktreeSettings::get(Some(settings::SettingsLocation {
+                            worktree_id: cx.handle().entity_id().as_u64() as usize,
+                            path: Path::new("")
+                        }), cx).private_files.as_deref(),
                         "private_files",
                     );
 
@@ -408,7 +411,10 @@ impl Worktree {
                     "file_scan_exclusions",
                 ),
                 private_files: path_matchers(
-                    WorktreeSettings::get(Some((cx.handle().entity_id().as_u64() as usize, &Path::new(""))), cx).private_files.as_deref(),
+                    WorktreeSettings::get(Some(SettingsLocation {
+                        worktree_id: cx.handle().entity_id().as_u64() as usize,
+                        path: Path::new(""),
+                    }), cx).private_files.as_deref(),
                     "private_files",
                 ),
                 ignores_by_parent_abs_path: Default::default(),

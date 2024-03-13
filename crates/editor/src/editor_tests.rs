@@ -15,8 +15,7 @@ use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageRegistry,
-    Override, Point,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -4447,10 +4446,8 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_rust::language()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(language.clone());
+    cx.language_registry().add(language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
     });
 
@@ -4649,12 +4646,10 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_typescript::language_tsx()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(html_language.clone());
-    registry.add(javascript_language.clone());
+    cx.language_registry().add(html_language.clone());
+    cx.language_registry().add(javascript_language.clone());
 
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(html_language), cx);
     });
 
@@ -4829,11 +4824,8 @@ async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
         .unwrap(),
     );
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(rust_language.clone());
-
+    cx.language_registry().add(rust_language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(rust_language), cx);
     });
 
@@ -6139,12 +6131,10 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
         Some(tree_sitter_rust::language()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(language.clone());
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    cx.language_registry().add(language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
     });
 
@@ -6294,12 +6284,9 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_typescript::language_tsx()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(html_language.clone());
-    registry.add(javascript_language.clone());
-
+    cx.language_registry().add(html_language.clone());
+    cx.language_registry().add(javascript_language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(html_language), cx);
     });
 

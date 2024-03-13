@@ -257,13 +257,12 @@ impl TestServer {
         let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
-        let mut language_registry = LanguageRegistry::test();
-        language_registry.set_executor(cx.executor());
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,
-            languages: Arc::new(language_registry),
+            languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),

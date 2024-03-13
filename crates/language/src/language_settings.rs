@@ -10,8 +10,17 @@ use schemars::{
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
+
+impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
+    fn into(self) -> SettingsLocation<'a> {
+        SettingsLocation {
+            worktree_id: self.worktree_id(),
+            path: self.path().as_ref(),
+        }
+    }
+}
 
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
@@ -33,7 +42,7 @@ pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    let location = file.map(|f| (f.worktree_id(), f.path().as_ref()));
+    let location = file.map(|f| f.as_ref().into());
     AllLanguageSettings::get(location, cx)
 }
 
@@ -44,6 +53,7 @@ pub struct AllLanguageSettings {
     pub copilot: CopilotSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
+    pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for a particular language.
@@ -121,6 +131,10 @@ pub struct AllLanguageSettingsContent {
     /// The settings for individual languages.
     #[serde(default, alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    /// Settings for associating file extensions and filenames
+    /// with languages.
+    #[serde(default)]
+    pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for a particular language.
@@ -502,6 +516,16 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
 
+        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        for user_file_types in user_settings.iter().map(|s| &s.file_types) {
+            for (language, suffixes) in user_file_types {
+                file_types
+                    .entry(language.clone())
+                    .or_default()
+                    .extend_from_slice(suffixes);
+            }
+        }
+
         Ok(Self {
             copilot: CopilotSettings {
                 feature_enabled: copilot_enabled,
@@ -512,6 +536,7 @@ impl settings::Settings for AllLanguageSettings {
             },
             defaults,
             languages,
+            file_types,
         })
     }
 

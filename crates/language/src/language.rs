@@ -852,11 +852,7 @@ struct BracketConfig {
 
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
-        Self::new_with_id(
-            LanguageId(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst)),
-            config,
-            ts_language,
-        )
+        Self::new_with_id(LanguageId::new(), config, ts_language)
     }
 
     fn new_with_id(
@@ -1570,43 +1566,8 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 10)]
-    async fn test_first_line_pattern(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-
-        languages.set_executor(cx.executor());
-        let languages = Arc::new(languages);
-        languages.register_test_language(LanguageConfig {
-            name: "JavaScript".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".into()],
-                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
-            },
-            ..Default::default()
-        });
-
-        languages
-            .language_for_file("the/script".as_ref(), None)
-            .await
-            .unwrap_err();
-        languages
-            .language_for_file("the/script".as_ref(), Some(&"nothing".into()))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            languages
-                .language_for_file("the/script".as_ref(), Some(&"#!/bin/env node".into()))
-                .await
-                .unwrap()
-                .name()
-                .as_ref(),
-            "JavaScript"
-        );
-    }
-
-    #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor());
+        let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         languages.register_native_grammars([
             ("json", tree_sitter_json::language()),

@@ -64,7 +64,7 @@ use worktree::LocalSnapshot;
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use serde::Serialize;
-use settings::{watch_config_file, Settings, SettingsStore};
+use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
@@ -861,8 +861,7 @@ impl Project {
     ) -> Model<Project> {
         use clock::FakeSystemClock;
 
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor());
+        let languages = LanguageRegistry::test(cx.executor());
         let clock = Arc::new(FakeSystemClock::default());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -2776,11 +2775,11 @@ impl Project {
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let full_path = buffer.file()?.full_path(cx);
+        let file = buffer.file()?;
         let content = buffer.as_rope();
         let new_language = self
             .languages
-            .language_for_file(&full_path, Some(content))
+            .language_for_file(file, Some(content), cx)
             .now_or_never()?
             .ok()?;
         self.set_language_for_buffer(buffer_handle, new_language, cx);
@@ -2869,8 +2868,13 @@ impl Project {
             None => return,
         };
 
-        let project_settings =
-            ProjectSettings::get(Some((worktree_id.to_proto() as usize, Path::new(""))), cx);
+        let project_settings = ProjectSettings::get(
+            Some(SettingsLocation {
+                worktree_id: worktree_id.to_proto() as usize,
+                path: Path::new(""),
+            }),
+            cx,
+        );
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.and_then(|s| s.initialization_options.clone());
 
@@ -3553,14 +3557,14 @@ impl Project {
             .into_iter()
             .filter_map(|buffer| {
                 let buffer = buffer.read(cx);
-                let file = File::from_dyn(buffer.file())?;
-                let full_path = file.full_path(cx);
+                let file = buffer.file()?;
+                let worktree = File::from_dyn(Some(file))?.worktree.clone();
                 let language = self
                     .languages
-                    .language_for_file(&full_path, Some(buffer.as_rope()))
+                    .language_for_file(file, Some(buffer.as_rope()), cx)
                     .now_or_never()?
                     .ok()?;
-                Some((file.worktree.clone(), language))
+                Some((worktree, language))
             })
             .collect();
         for (worktree, language) in language_server_lookup_info {
@@ -4900,11 +4904,15 @@ impl Project {
         if self.is_local() {
             let mut requests = Vec::new();
             for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
-                let worktree_id = *worktree_id;
-                let worktree_handle = self.worktree_for_id(worktree_id, cx);
-                let worktree = match worktree_handle.and_then(|tree| tree.read(cx).as_local()) {
-                    Some(worktree) => worktree,
-                    None => continue,
+                let Some(worktree_handle) = self.worktree_for_id(*worktree_id, cx) else {
+                    continue;
+                };
+                let worktree = worktree_handle.read(cx);
+                if !worktree.is_visible() {
+                    continue;
+                }
+                let Some(worktree) = worktree.as_local() else {
+                    continue;
                 };
                 let worktree_abs_path = worktree.abs_path().clone();
 
@@ -4952,7 +4960,7 @@ impl Project {
                             (
                                 adapter,
                                 language,
-                                worktree_id,
+                                worktree_handle.downgrade(),
                                 worktree_abs_path,
                                 lsp_symbols,
                             )
@@ -4972,7 +4980,7 @@ impl Project {
                     for (
                         adapter,
                         adapter_language,
-                        source_worktree_id,
+                        source_worktree,
                         worktree_abs_path,
                         lsp_symbols,
                     ) in responses
@@ -4980,17 +4988,22 @@ impl Project {
                         symbols.extend(lsp_symbols.into_iter().filter_map(
                             |(symbol_name, symbol_kind, symbol_location)| {
                                 let abs_path = symbol_location.uri.to_file_path().ok()?;
-                                let mut worktree_id = source_worktree_id;
+                                let source_worktree = source_worktree.upgrade()?;
+                                let source_worktree_id = source_worktree.read(cx).id();
+
                                 let path;
-                                if let Some((worktree, rel_path)) =
+                                let worktree;
+                                if let Some((tree, rel_path)) =
                                     this.find_local_worktree(&abs_path, cx)
                                 {
-                                    worktree_id = worktree.read(cx).id();
+                                    worktree = tree;
                                     path = rel_path;
                                 } else {
+                                    worktree = source_worktree.clone();
                                     path = relativize_path(&worktree_abs_path, &abs_path);
                                 }
 
+                                let worktree_id = worktree.read(cx).id();
                                 let project_path = ProjectPath {
                                     worktree_id,
                                     path: path.into(),
@@ -4999,7 +5012,7 @@ impl Project {
                                 let adapter_language = adapter_language.clone();
                                 let language = this
                                     .languages
-                                    .language_for_file(&project_path.path, None)
+                                    .language_for_file_path(&project_path.path)
                                     .unwrap_or_else(move |_| adapter_language);
                                 let adapter = adapter.clone();
                                 Some(async move {
@@ -8538,7 +8551,7 @@ impl Project {
             .symbol
             .ok_or_else(|| anyhow!("invalid symbol"))?;
         let symbol = this
-            .update(&mut cx, |this, _| this.deserialize_symbol(symbol))?
+            .update(&mut cx, |this, _cx| this.deserialize_symbol(symbol))?
             .await?;
         let symbol = this.update(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
@@ -8928,27 +8941,26 @@ impl Project {
         serialized_symbol: proto::Symbol,
     ) -> impl Future<Output = Result<Symbol>> {
         let languages = self.languages.clone();
+        let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
+        let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
+        let kind = unsafe { mem::transmute(serialized_symbol.kind) };
+        let path = ProjectPath {
+            worktree_id,
+            path: PathBuf::from(serialized_symbol.path).into(),
+        };
+        let language = languages.language_for_file_path(&path.path);
+
         async move {
-            let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
-            let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
+            let language = language.await.log_err();
+            let adapter = language
+                .as_ref()
+                .and_then(|language| languages.lsp_adapters(language).first().cloned());
             let start = serialized_symbol
                 .start
                 .ok_or_else(|| anyhow!("invalid start"))?;
             let end = serialized_symbol
                 .end
                 .ok_or_else(|| anyhow!("invalid end"))?;
-            let kind = unsafe { mem::transmute(serialized_symbol.kind) };
-            let path = ProjectPath {
-                worktree_id,
-                path: PathBuf::from(serialized_symbol.path).into(),
-            };
-            let language = languages
-                .language_for_file(&path.path, None)
-                .await
-                .log_err();
-            let adapter = language
-                .as_ref()
-                .and_then(|language| languages.lsp_adapters(language).first().cloned());
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),
@@ -9418,6 +9430,15 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 }
 
 impl EventEmitter<Event> for Project {}
+
+impl<'a> Into<SettingsLocation<'a>> for &'a ProjectPath {
+    fn into(self) -> SettingsLocation<'a> {
+        SettingsLocation {
+            worktree_id: self.worktree_id.to_usize(),
+            path: self.path.as_ref(),
+        }
+    }
+}
 
 impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     fn from((worktree_id, path): (WorktreeId, P)) -> Self {
