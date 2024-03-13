@@ -2758,7 +2758,7 @@ impl Project {
         let content = buffer.as_rope();
         let new_language = self
             .languages
-            .language_for_file(file.as_ref().into(), Some(content), cx)
+            .language_for_file(file, Some(content), cx)
             .now_or_never()?
             .ok()?;
         self.set_language_for_buffer(buffer_handle, new_language, cx);
@@ -3540,7 +3540,7 @@ impl Project {
                 let worktree = File::from_dyn(Some(file))?.worktree.clone();
                 let language = self
                     .languages
-                    .language_for_file(file.as_ref().into(), Some(buffer.as_rope()), cx)
+                    .language_for_file(file, Some(buffer.as_rope()), cx)
                     .now_or_never()?
                     .ok()?;
                 Some((worktree, language))
@@ -4883,8 +4883,7 @@ impl Project {
         if self.is_local() {
             let mut requests = Vec::new();
             for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
-                let worktree_id = *worktree_id;
-                let Some(worktree_handle) = self.worktree_for_id(worktree_id, cx) else {
+                let Some(worktree_handle) = self.worktree_for_id(*worktree_id, cx) else {
                     continue;
                 };
                 let worktree = worktree_handle.read(cx);
@@ -4940,7 +4939,7 @@ impl Project {
                             (
                                 adapter,
                                 language,
-                                worktree_id,
+                                worktree_handle.downgrade(),
                                 worktree_abs_path,
                                 lsp_symbols,
                             )
@@ -4960,7 +4959,7 @@ impl Project {
                     for (
                         adapter,
                         adapter_language,
-                        source_worktree_id,
+                        source_worktree,
                         worktree_abs_path,
                         lsp_symbols,
                     ) in responses
@@ -4968,19 +4967,22 @@ impl Project {
                         symbols.extend(lsp_symbols.into_iter().filter_map(
                             |(symbol_name, symbol_kind, symbol_location)| {
                                 let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let source_worktree = source_worktree.upgrade()?;
+                                let source_worktree_id = source_worktree.read(cx).id();
 
                                 let path;
-                                let worktree_id;
-                                if let Some((worktree, rel_path)) =
+                                let worktree;
+                                if let Some((tree, rel_path)) =
                                     this.find_local_worktree(&abs_path, cx)
                                 {
-                                    worktree_id = worktree.read(cx).id();
+                                    worktree = tree;
                                     path = rel_path;
                                 } else {
-                                    worktree_id = source_worktree_id;
+                                    worktree = source_worktree.clone();
                                     path = relativize_path(&worktree_abs_path, &abs_path);
                                 }
 
+                                let worktree_id = worktree.read(cx).id();
                                 let project_path = ProjectPath {
                                     worktree_id,
                                     path: path.into(),
@@ -4989,7 +4991,7 @@ impl Project {
                                 let adapter_language = adapter_language.clone();
                                 let language = this
                                     .languages
-                                    .language_for_file((&project_path).into(), None, cx)
+                                    .language_for_file_path(&project_path.path)
                                     .unwrap_or_else(move |_| adapter_language);
                                 let adapter = adapter.clone();
                                 Some(async move {
@@ -5029,11 +5031,11 @@ impl Project {
                 let response = request.await?;
                 let mut symbols = Vec::new();
                 if let Some(this) = this.upgrade() {
-                    let new_symbols = this.update(&mut cx, |this, cx| {
+                    let new_symbols = this.update(&mut cx, |this, _| {
                         response
                             .symbols
                             .into_iter()
-                            .map(|symbol| this.deserialize_symbol(symbol, cx))
+                            .map(|symbol| this.deserialize_symbol(symbol))
                             .collect::<Vec<_>>()
                     })?;
                     symbols = futures::future::join_all(new_symbols)
@@ -8528,7 +8530,7 @@ impl Project {
             .symbol
             .ok_or_else(|| anyhow!("invalid symbol"))?;
         let symbol = this
-            .update(&mut cx, |this, cx| this.deserialize_symbol(symbol, cx))?
+            .update(&mut cx, |this, _cx| this.deserialize_symbol(symbol))?
             .await?;
         let symbol = this.update(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
@@ -8916,7 +8918,6 @@ impl Project {
     fn deserialize_symbol(
         &self,
         serialized_symbol: proto::Symbol,
-        cx: &mut AppContext,
     ) -> impl Future<Output = Result<Symbol>> {
         let languages = self.languages.clone();
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
@@ -8926,14 +8927,7 @@ impl Project {
             worktree_id,
             path: PathBuf::from(serialized_symbol.path).into(),
         };
-        let language = languages.language_for_file(
-            SettingsLocation {
-                worktree_id: worktree_id.to_usize(),
-                path: &path.path,
-            },
-            None,
-            cx,
-        );
+        let language = languages.language_for_file_path(&path.path);
 
         async move {
             let language = language.await.log_err();

@@ -12,7 +12,7 @@ use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
-use settings::{SettingsLocation, SettingsStore};
+use settings::SettingsStore;
 use std::{
     env,
     ops::Range,
@@ -99,14 +99,14 @@ fn test_select_language(cx: &mut AppContext) {
     // matching file extension
     assert_eq!(
         registry
-            .language_for_file(settings_location("src/lib.rs"), None, cx)
+            .language_for_file(&file("src/lib.rs"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Rust".into())
     );
     assert_eq!(
         registry
-            .language_for_file(settings_location("src/lib.mk"), None, cx)
+            .language_for_file(&file("src/lib.mk"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -115,7 +115,7 @@ fn test_select_language(cx: &mut AppContext) {
     // matching filename
     assert_eq!(
         registry
-            .language_for_file(settings_location("src/Makefile"), None, cx)
+            .language_for_file(&file("src/Makefile"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
@@ -124,21 +124,21 @@ fn test_select_language(cx: &mut AppContext) {
     // matching suffix that is not the full file extension or filename
     assert_eq!(
         registry
-            .language_for_file(settings_location("zed/cars"), None, cx)
+            .language_for_file(&file("zed/cars"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file(settings_location("zed/a.cars"), None, cx)
+            .language_for_file(&file("zed/a.cars"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
         registry
-            .language_for_file(settings_location("zed/sumk"), None, cx)
+            .language_for_file(&file("zed/sumk"), None, cx)
             .now_or_never()
             .and_then(|l| Some(l.ok()?.name())),
         None
@@ -161,17 +161,15 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ..Default::default()
     });
 
-    cx.read(|cx| languages.language_for_file(settings_location("the/script"), None, cx))
+    cx.read(|cx| languages.language_for_file(&file("the/script"), None, cx))
         .await
         .unwrap_err();
-    cx.read(|cx| {
-        languages.language_for_file(settings_location("the/script"), Some(&"nothing".into()), cx)
-    })
-    .await
-    .unwrap_err();
+    cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+        .await
+        .unwrap_err();
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
-            settings_location("the/script"),
+            &file("the/script"),
             Some(&"#!/bin/env node".into()),
             cx
         ))
@@ -234,22 +232,22 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     }
 
     let language = cx
-        .read(|cx| languages.language_for_file(settings_location("foo.js"), None, cx))
+        .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .await
         .unwrap();
     assert_eq!(language.name().as_ref(), "TypeScript");
     let language = cx
-        .read(|cx| languages.language_for_file(settings_location("foo.c"), None, cx))
+        .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .await
         .unwrap();
     assert_eq!(language.name().as_ref(), "C++");
 }
 
-fn settings_location(path: &str) -> SettingsLocation {
-    SettingsLocation {
-        path: Path::new(path),
-        worktree_id: 0,
-    }
+fn file(path: &str) -> Arc<dyn File> {
+    Arc::new(TestFile {
+        path: Path::new(path).into(),
+        root_name: "zed".into(),
+    })
 }
 
 #[gpui::test]

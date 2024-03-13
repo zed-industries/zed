@@ -34,15 +34,15 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file.map(|c| c.as_ref().into()), cx).language(language_name.as_deref())
+    all_language_settings(file, cx).language(language_name.as_deref())
 }
 
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
-    file: Option<SettingsLocation>,
+    file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    let location = file.map(|f| f.into());
+    let location = file.map(|f| f.as_ref().into());
     AllLanguageSettings::get(location, cx)
 }
 

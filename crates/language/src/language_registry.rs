@@ -1,5 +1,5 @@
 use crate::{
-    language_settings::all_language_settings, CachedLspAdapter, Language, LanguageConfig,
+    language_settings::all_language_settings, CachedLspAdapter, File, Language, LanguageConfig,
     LanguageContextProvider, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
     LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
@@ -14,7 +14,6 @@ use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::{LanguageServerBinary, LanguageServerId};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
-use settings::SettingsLocation;
 use std::{
     borrow::Cow,
     ffi::OsStr,
@@ -394,12 +393,16 @@ impl LanguageRegistry {
 
     pub fn language_for_file(
         self: &Arc<Self>,
-        file: SettingsLocation,
+        file: &Arc<dyn File>,
         content: Option<&Rope>,
         cx: &AppContext,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let user_file_types = all_language_settings(Some(file), cx);
-        self.language_for_file_internal(file.path, content, Some(&user_file_types.file_types))
+        self.language_for_file_internal(
+            &file.full_path(cx),
+            content,
+            Some(&user_file_types.file_types),
+        )
     }
 
     pub fn language_for_file_path(

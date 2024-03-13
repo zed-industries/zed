@@ -4130,7 +4130,7 @@ impl Editor {
     ) -> bool {
         let file = snapshot.file_at(location);
         let language = snapshot.language_at(location);
-        let settings = all_language_settings(file.map(|f| f.as_ref().into()), cx);
+        let settings = all_language_settings(file, cx);
         self.show_copilot_suggestions
             && settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
     }
@@ -9931,7 +9931,7 @@ fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location);
-    let settings = all_language_settings(file.map(|f| f.as_ref().into()), cx);
+    let settings = all_language_settings(file, cx);
     settings
         .language(language.map(|l| l.name()).as_deref())
         .inlay_hints
