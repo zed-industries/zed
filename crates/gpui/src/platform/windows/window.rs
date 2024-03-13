@@ -40,9 +40,9 @@ use windows::{
                 TD_INFORMATION_ICON, TD_WARNING_ICON,
             },
             Input::KeyboardAndMouse::{
-                GetKeyState, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
-                VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
-                VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+                GetKeyState, VIRTUAL_KEY, VK_0, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
+                VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT,
+                VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
@@ -52,9 +52,9 @@ use windows::{
                 WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
                 WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
                 WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
-                WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN,
-                WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
-                WS_VISIBLE, XBUTTON1, XBUTTON2,
+                WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+                WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1,
+                XBUTTON2,
             },
         },
     },
@@ -67,25 +67,6 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PromptLevel, Scene, ScrollDelta, Size, TouchPhase,
     WindowAppearance, WindowParams, WindowsDisplay, WindowsPlatformInner,
 };
-
-#[derive(PartialEq)]
-pub(crate) enum CallbackResult {
-    /// handled by system or user callback
-    Handled {
-        /// `true` if user callback handled event
-        by_callback: bool,
-    },
-    Unhandled,
-}
-
-impl CallbackResult {
-    pub fn is_handled(&self) -> bool {
-        match self {
-            Self::Handled { by_callback: _ } => true,
-            _ => false,
-        }
-    }
-}
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
@@ -182,15 +163,6 @@ impl WindowsWindowInner {
         unsafe { InvalidateRect(self.hwnd, None, FALSE) };
     }
 
-    /// returns true if message is handled and should not dispatch
-    pub(crate) fn handle_immediate_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
-        match msg {
-            WM_KEYDOWN | WM_SYSKEYDOWN => self.handle_keydown_msg(wparam).is_handled(),
-            WM_KEYUP | WM_SYSKEYUP => self.handle_keyup_msg(wparam).is_handled(),
-            _ => false,
-        }
-    }
-
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
@@ -234,9 +206,11 @@ impl WindowsWindowInner {
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(wparam, lparam),
-            WM_CHAR | WM_SYSCHAR => self.handle_char_msg(wparam),
-            // These events are handled by the immediate handler
-            WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => LRESULT(0),
+            WM_SYSKEYDOWN => self.handle_syskeydown_msg(msg, wparam, lparam),
+            WM_SYSKEYUP => self.handle_syskeyup_msg(msg, wparam, lparam),
+            WM_KEYDOWN => self.handle_keydown_msg(msg, wparam, lparam),
+            WM_KEYUP => self.handle_keyup_msg(msg, wparam),
+            WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
             _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
         }
     }
@@ -302,9 +276,15 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.close.take() {
             callback()
         }
-        let mut window_handles = self.platform_inner.window_handle_values.borrow_mut();
-        window_handles.remove(&self.hwnd.0);
-        if window_handles.is_empty() {
+        let index = self
+            .platform_inner
+            .raw_window_handles
+            .read()
+            .iter()
+            .position(|handle| *handle == self.hwnd)
+            .unwrap();
+        self.platform_inner.raw_window_handles.write().remove(index);
+        if self.platform_inner.raw_window_handles.read().is_empty() {
             self.platform_inner
                 .foreground_executor
                 .spawn(async {
@@ -345,155 +325,210 @@ impl WindowsWindowInner {
         LRESULT(1)
     }
 
-    fn parse_key_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
+    fn parse_syskeydown_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
+        let modifiers = self.current_modifiers();
+        if !modifiers.alt {
+            // on Windows, F10 can trigger this event, not just the alt key
+            // and we just don't care about F10
+            return None;
+        }
+
         let vk_code = wparam.loword();
-
-        // 0-9 https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-        if vk_code >= 0x30 && vk_code <= 0x39 {
-            let modifiers = self.current_modifiers();
-
-            if modifiers.shift {
-                return None;
-            }
-
-            let digit_char = (b'0' + ((vk_code - 0x30) as u8)) as char;
-            return Some(Keystroke {
-                modifiers,
-                key: digit_char.to_string(),
-                ime_key: Some(digit_char.to_string()),
-            });
-        }
-
-        // A-Z https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-        if vk_code >= 0x41 && vk_code <= 0x5A {
-            let offset = (vk_code - 0x41) as u8;
-            let alpha_char = (b'a' + offset) as char;
-            let alpha_char_upper = (b'A' + offset) as char;
-            let modifiers = self.current_modifiers();
-            return Some(Keystroke {
-                modifiers,
-                key: alpha_char.to_string(),
-                ime_key: Some(if modifiers.shift {
-                    alpha_char_upper.to_string()
-                } else {
-                    alpha_char.to_string()
-                }),
-            });
-        }
-
-        if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-            let offset = vk_code - VK_F1.0;
-            return Some(Keystroke {
-                modifiers: self.current_modifiers(),
-                key: format!("f{}", offset + 1),
-                ime_key: None,
-            });
+        let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+        if basic_key.is_some() {
+            return basic_key;
         }
 
         let key = match VIRTUAL_KEY(vk_code) {
-            VK_SPACE => Some(("space", Some(" "))),
-            VK_TAB => Some(("tab", Some("\t"))),
-            VK_BACK => Some(("backspace", None)),
-            VK_RETURN => Some(("enter", None)),
-            VK_UP => Some(("up", None)),
-            VK_DOWN => Some(("down", None)),
-            VK_RIGHT => Some(("right", None)),
-            VK_LEFT => Some(("left", None)),
-            VK_HOME => Some(("home", None)),
-            VK_END => Some(("end", None)),
-            VK_PRIOR => Some(("pageup", None)),
-            VK_NEXT => Some(("pagedown", None)),
-            VK_ESCAPE => Some(("escape", None)),
-            VK_INSERT => Some(("insert", None)),
+            VK_BACK => Some("backspace"),
+            VK_RETURN => Some("enter"),
+            VK_TAB => Some("tab"),
+            VK_UP => Some("up"),
+            VK_DOWN => Some("down"),
+            VK_RIGHT => Some("right"),
+            VK_LEFT => Some("left"),
+            VK_HOME => Some("home"),
+            VK_END => Some("end"),
+            VK_PRIOR => Some("pageup"),
+            VK_NEXT => Some("pagedown"),
+            VK_ESCAPE => Some("escape"),
+            VK_INSERT => Some("insert"),
             _ => None,
         };
 
-        if let Some((key, ime_key)) = key {
+        if let Some(key) = key {
             Some(Keystroke {
-                modifiers: self.current_modifiers(),
+                modifiers,
                 key: key.to_string(),
-                ime_key: ime_key.map(|k| k.to_string()),
+                ime_key: None,
             })
         } else {
             None
         }
     }
 
-    fn handle_keydown_msg(&self, wparam: WPARAM) -> CallbackResult {
-        let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_key_msg_keystroke(wparam);
-        if let Some(keystroke) = keystroke {
-            if let Some(callback) = callbacks.input.as_mut() {
-                let ime_key = keystroke.ime_key.clone();
-                let event = KeyDownEvent {
-                    keystroke,
-                    is_held: true,
-                };
+    fn parse_keydown_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
+        let vk_code = wparam.loword();
 
-                if callback(PlatformInput::KeyDown(event)) {
-                    CallbackResult::Handled { by_callback: true }
-                } else if let Some(mut input_handler) = self.input_handler.take() {
-                    if let Some(ime_key) = ime_key {
-                        input_handler.replace_text_in_range(None, &ime_key);
-                    }
-                    self.input_handler.set(Some(input_handler));
-                    CallbackResult::Handled { by_callback: true }
-                } else {
-                    CallbackResult::Handled { by_callback: false }
-                }
-            } else {
-                CallbackResult::Handled { by_callback: false }
+        let modifiers = self.current_modifiers();
+        if modifiers.control || modifiers.alt {
+            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+            if basic_key.is_some() {
+                return basic_key;
             }
-        } else {
-            CallbackResult::Unhandled
         }
-    }
 
-    fn handle_keyup_msg(&self, wparam: WPARAM) -> CallbackResult {
-        let mut callbacks = self.callbacks.borrow_mut();
-        let keystroke = self.parse_key_msg_keystroke(wparam);
-        if let Some(keystroke) = keystroke {
-            if let Some(callback) = callbacks.input.as_mut() {
-                let event = KeyUpEvent { keystroke };
-                let by_callback = callback(PlatformInput::KeyUp(event));
-                CallbackResult::Handled { by_callback }
-            } else {
-                CallbackResult::Handled { by_callback: false }
-            }
-        } else {
-            CallbackResult::Unhandled
-        }
-    }
-
-    fn handle_char_msg(&self, wparam: WPARAM) -> LRESULT {
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(callback) = callbacks.input.as_mut() {
-            let modifiers = self.current_modifiers();
-            let msg_char = wparam.0 as u8 as char;
-            let keystroke = Keystroke {
+        if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+            let offset = vk_code - VK_F1.0;
+            return Some(Keystroke {
                 modifiers,
-                key: msg_char.to_string(),
-                ime_key: Some(msg_char.to_string()),
-            };
-            let ime_key = keystroke.ime_key.clone();
-            let event = KeyDownEvent {
-                keystroke,
-                is_held: false,
-            };
-
-            if callback(PlatformInput::KeyDown(event)) {
-                return LRESULT(0);
-            }
-
-            if let Some(mut input_handler) = self.input_handler.take() {
-                if let Some(ime_key) = ime_key {
-                    input_handler.replace_text_in_range(None, &ime_key);
-                }
-                self.input_handler.set(Some(input_handler));
-                return LRESULT(0);
-            }
+                key: format!("f{}", offset + 1),
+                ime_key: None,
+            });
         }
-        return LRESULT(1);
+
+        let key = match VIRTUAL_KEY(vk_code) {
+            VK_BACK => Some("backspace"),
+            VK_RETURN => Some("enter"),
+            VK_TAB => Some("tab"),
+            VK_UP => Some("up"),
+            VK_DOWN => Some("down"),
+            VK_RIGHT => Some("right"),
+            VK_LEFT => Some("left"),
+            VK_HOME => Some("home"),
+            VK_END => Some("end"),
+            VK_PRIOR => Some("pageup"),
+            VK_NEXT => Some("pagedown"),
+            VK_ESCAPE => Some("escape"),
+            VK_INSERT => Some("insert"),
+            _ => None,
+        };
+
+        if let Some(key) = key {
+            Some(Keystroke {
+                modifiers,
+                key: key.to_string(),
+                ime_key: None,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn parse_char_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
+        let src = [wparam.0 as u16];
+        let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
+            return None;
+        };
+        if first_char.is_control() {
+            None
+        } else {
+            Some(Keystroke {
+                modifiers: self.current_modifiers(),
+                key: first_char.to_lowercase().to_string(),
+                ime_key: Some(first_char.to_string()),
+            })
+        }
+    }
+
+    fn handle_syskeydown_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
+        // shortcuts.
+        let Some(keystroke) = self.parse_syskeydown_msg_keystroke(wparam) else {
+            return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
+        };
+        let Some(ref mut func) = self.callbacks.borrow_mut().input else {
+            return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
+        };
+        let event = KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        };
+        if func(PlatformInput::KeyDown(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
+        }
+        unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) }
+    }
+
+    fn handle_syskeyup_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
+        // shortcuts.
+        let Some(keystroke) = self.parse_syskeydown_msg_keystroke(wparam) else {
+            return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
+        };
+        let Some(ref mut func) = self.callbacks.borrow_mut().input else {
+            return unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) };
+        };
+        let event = KeyUpEvent { keystroke };
+        if func(PlatformInput::KeyUp(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
+        }
+        unsafe { DefWindowProcW(self.hwnd, message, wparam, lparam) }
+    }
+
+    fn handle_keydown_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let Some(keystroke) = self.parse_keydown_msg_keystroke(wparam) else {
+            return LRESULT(1);
+        };
+        let Some(ref mut func) = self.callbacks.borrow_mut().input else {
+            return LRESULT(1);
+        };
+        let event = KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        };
+        if func(PlatformInput::KeyDown(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
+        }
+        LRESULT(1)
+    }
+
+    fn handle_keyup_msg(&self, message: u32, wparam: WPARAM) -> LRESULT {
+        let Some(keystroke) = self.parse_keydown_msg_keystroke(wparam) else {
+            return LRESULT(1);
+        };
+        let Some(ref mut func) = self.callbacks.borrow_mut().input else {
+            return LRESULT(1);
+        };
+        let event = KeyUpEvent { keystroke };
+        if func(PlatformInput::KeyUp(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
+        }
+        LRESULT(1)
+    }
+
+    fn handle_char_msg(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        let Some(keystroke) = self.parse_char_msg_keystroke(wparam) else {
+            return LRESULT(1);
+        };
+        let mut callbacks = self.callbacks.borrow_mut();
+        let Some(ref mut func) = callbacks.input else {
+            return LRESULT(1);
+        };
+        let ime_key = keystroke.ime_key.clone();
+        let event = KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        };
+        if func(PlatformInput::KeyDown(event)) {
+            self.invalidate_client_area();
+            return LRESULT(0);
+        }
+        drop(callbacks);
+        let Some(ime_char) = ime_key else {
+            return LRESULT(1);
+        };
+        let Some(mut input_handler) = self.input_handler.take() else {
+            return LRESULT(1);
+        };
+        input_handler.replace_text_in_range(None, &ime_char);
+        self.input_handler.set(Some(input_handler));
+        self.invalidate_client_area();
+        LRESULT(0)
     }
 
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> LRESULT {
@@ -671,9 +706,9 @@ impl WindowsWindow {
             drag_drop_handler,
         };
         platform_inner
-            .window_handle_values
-            .borrow_mut()
-            .insert(wnd.inner.hwnd.0);
+            .raw_window_handles
+            .write()
+            .push(wnd.inner.hwnd);
 
         unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         wnd
@@ -1131,6 +1166,59 @@ unsafe fn set_window_long(hwnd: HWND, nindex: WINDOW_LONG_PTR_INDEX, dwnewlong: 
     #[cfg(target_pointer_width = "32")]
     unsafe {
         SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
+    }
+}
+
+fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
+    match code {
+        // VK_0 - VK_9
+        48..=57 => Some(Keystroke {
+            modifiers,
+            key: format!("{}", code - VK_0.0),
+            ime_key: None,
+        }),
+        // VK_A - VK_Z
+        65..=90 => Some(Keystroke {
+            modifiers,
+            key: format!("{}", (b'a' + code as u8 - VK_A.0 as u8) as char),
+            ime_key: None,
+        }),
+        // VK_F1 - VK_F24
+        112..=135 => Some(Keystroke {
+            modifiers,
+            key: format!("f{}", code - VK_F1.0 + 1),
+            ime_key: None,
+        }),
+        // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
+        _ => {
+            if let Some(key) = oemkey_vkcode_to_string(code) {
+                Some(Keystroke {
+                    modifiers,
+                    key,
+                    ime_key: None,
+                })
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
+    match code {
+        186 => Some(";".to_string()), // VK_OEM_1
+        187 => Some("=".to_string()), // VK_OEM_PLUS
+        188 => Some(",".to_string()), // VK_OEM_COMMA
+        189 => Some("-".to_string()), // VK_OEM_MINUS
+        190 => Some(".".to_string()), // VK_OEM_PERIOD
+        // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
+        191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
+        192 => Some("`".to_string()),       // VK_OEM_3
+        219 => Some("[".to_string()),       // VK_OEM_4
+        220 => Some("\\".to_string()),      // VK_OEM_5
+        221 => Some("]".to_string()),       // VK_OEM_6
+        222 => Some("'".to_string()),       // VK_OEM_7
+        _ => None,
     }
 }
 
