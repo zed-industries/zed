@@ -46,7 +46,7 @@ impl PlatformTitlebar {
     }
 
     #[cfg(windows)]
-    fn render_windows_caption_buttons(cx: &mut WindowContext) -> impl Element {
+    fn render_window_controls_right(cx: &mut WindowContext) -> impl Element {
         let btn_height = cx.titlebar_height() - PlatformTitlebar::titlebar_top_padding(cx);
         let close_btn_hover_color = Rgba {
             r: 232.0 / 255.0,
@@ -116,6 +116,11 @@ impl PlatformTitlebar {
             ])
     }
 
+    #[cfg(not(windows))]
+    fn render_window_controls_right(_cx: &mut WindowContext) -> impl Element {
+        div()
+    }
+
     /// Sets the background color of titlebar.
     pub fn titlebar_bg<F>(mut self, fill: F) -> Self
     where
@@ -167,13 +172,7 @@ impl RenderOnce for PlatformTitlebar {
                     .id("titlebar-content")
                     .children(self.children),
             )
-            .map(|this| {
-                if cfg!(windows) {
-                    this.child(PlatformTitlebar::render_windows_caption_buttons(cx))
-                } else {
-                    this
-                }
-            })
+            .child(PlatformTitlebar::render_window_controls_right(cx))
     }
 }
 
