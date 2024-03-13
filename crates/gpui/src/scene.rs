@@ -3,7 +3,7 @@
 
 use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, ScaledPixels,
+    Hsla, Pixels, Point, ScaledPixels, TransformationMatrix,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -508,11 +508,12 @@ impl From<Shadow> for Primitive {
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    pub transformation: TransformationMatrix,
     pub color: Hsla,
     pub tile: AtlasTile,
+    pub pad: u32, // align to 8 bytes
 }
 
 impl Ord for MonochromeSprite {
