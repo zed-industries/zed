@@ -5158,6 +5158,11 @@ mod tests {
         cx.deactivate_window();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
+        // Re-activating the window doesn't save the file.
+        cx.update(|cx| cx.activate_window());
+        cx.executor().run_until_parked();
+        item.update(cx, |item, _| assert_eq!(item.save_count, 1));
+
         // Autosave on focus change.
         item.update(cx, |item, cx| {
             cx.focus_self();
@@ -5175,13 +5180,11 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.update(|cx| cx.activate_window());
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
         cx.deactivate_window();
-
         item.update(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave after delay.
