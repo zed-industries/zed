@@ -721,7 +721,7 @@ impl Render for PanelButtons {
                 )
             });
 
-        h_flex().gap_0p5().children(buttons)
+        h_flex().gap_2().children(buttons)
     }
 }
 
