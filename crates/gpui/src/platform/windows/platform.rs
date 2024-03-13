@@ -25,7 +25,7 @@ use windows::{
     core::{IUnknown, HRESULT, HSTRING, PCWSTR, PWSTR},
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
-        Foundation::{CloseHandle, HANDLE, HWND, WAIT_OBJECT_0},
+        Foundation::{CloseHandle, HANDLE, HWND},
         Graphics::{
             DirectComposition::DCompositionWaitForCompositorClock,
             Gdi::{RedrawWindow, HRGN, RDW_INVALIDATE, RDW_UPDATENOW},
@@ -33,7 +33,7 @@ use windows::{
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
-            Threading::CreateEventW,
+            Threading::{CreateEventW, INFINITE},
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
         UI::{
