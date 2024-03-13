@@ -3,7 +3,6 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
     ffi::{c_uint, c_void, OsString},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
