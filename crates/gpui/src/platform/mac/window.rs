@@ -738,10 +738,11 @@ impl Drop for MacWindow {
         this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
-        unsafe {
-            this.native_window.setDelegate_(nil);
-        }
         if !this.native_window_was_closed {
+            unsafe {
+                this.native_window.setDelegate_(nil);
+            }
+
             this.executor
                 .spawn(async move {
                     unsafe {
