@@ -33,7 +33,20 @@ pub(crate) struct WindowsDispatcher {
 impl WindowsDispatcher {
     pub(crate) fn new(main_sender: Sender<Runnable>, dispatch_event: HANDLE) -> Self {
         let parker = Mutex::new(Parker::new());
-        let threadpool = init();
+        let threadpool = unsafe {
+            let ret = CreateThreadpool(None);
+            if ret.0 == 0 {
+                panic!(
+                    "unable to initialize a thread pool: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+            // set minimum 1 thread in threadpool
+            let _ = SetThreadpoolThreadMinimum(ret, 1)
+                .inspect_err(|_| log::error!("unable to configure thread pool"));
+
+            ret
+        };
         let main_thread_id = current().id();
         WindowsDispatcher {
             threadpool,
@@ -119,23 +132,6 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn unparker(&self) -> parking::Unparker {
         self.parker.lock().unparker()
-    }
-}
-
-fn init() -> PTP_POOL {
-    unsafe {
-        let threadpool = CreateThreadpool(None);
-        if threadpool.0 == 0 {
-            log::error!(
-                "unable to initialize a thread pool: {}",
-                std::io::Error::last_os_error()
-            );
-            panic!();
-        }
-        let _ = SetThreadpoolThreadMinimum(threadpool, 1)
-            .inspect_err(|_| log::error!("unable to configure thread pool"));
-
-        threadpool
     }
 }
 
