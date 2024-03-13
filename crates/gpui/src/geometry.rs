@@ -26,7 +26,7 @@ pub enum Axis {
 
 impl Axis {
     /// Swap this axis to the opposite axis.
-    pub fn invert(&self) -> Self {
+    pub fn invert(self) -> Self {
         match self {
             Axis::Vertical => Axis::Horizontal,
             Axis::Horizontal => Axis::Vertical,
@@ -161,7 +161,7 @@ impl<T: Clone + Debug + Default> Along for Point<T> {
 }
 
 impl<T: Clone + Debug + Default + Invert> Invert for Point<T> {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         self.map(Invert::invert)
     }
 }
@@ -431,6 +431,7 @@ impl<T> Size<T>
 where
     T: Clone + Default + Debug + Half,
 {
+    /// TODO
     pub fn center(&self) -> Point<T> {
         Point {
             x: self.width.half(),
@@ -2782,47 +2783,47 @@ impl Half for GlobalPixels {
 /// Provides a trait for types that can invert their values.
 pub trait Invert {
     /// Returns the inverse of the given value
-    fn invert(&self) -> Self;
+    fn invert(self) -> Self;
 }
 
 impl Invert for i32 {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         -self
     }
 }
 
 impl Invert for f32 {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         -self
     }
 }
 
 impl Invert for DevicePixels {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         Self(-self.0)
     }
 }
 
 impl Invert for ScaledPixels {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         Self(-self.0)
     }
 }
 
 impl Invert for Pixels {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         Self(-self.0)
     }
 }
 
 impl Invert for Rems {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         Self(-self.0)
     }
 }
 
 impl Invert for GlobalPixels {
-    fn invert(&self) -> Self {
+    fn invert(self) -> Self {
         Self(-self.0)
     }
 }

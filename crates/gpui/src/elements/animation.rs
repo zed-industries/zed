@@ -16,7 +16,7 @@ pub struct Animation {
     /// Note that 0 and 1 are considered to be the start and end of the animation range
     /// but the easing function can return values that are larger or smaller to indicate
     /// that the animation should overshoot or undershoot the target values.
-    pub easing: fn(f32) -> f32,
+    pub easing: Box<dyn Fn(f32) -> f32>,
 }
 
 impl Animation {
@@ -26,7 +26,7 @@ impl Animation {
         Self {
             duration,
             oneshot: true,
-            easing: linear,
+            easing: Box::new(linear),
         }
     }
 
@@ -41,8 +41,8 @@ impl Animation {
     /// This new delta should consider 0 and 1 to be the start and end of the animation range
     /// but can return values that are larger or smaller to indicate that the animation should
     /// overshoot or undershoot the target values.
-    pub fn with_easing(mut self, easing: fn(f32) -> f32) -> Self {
-        self.easing = easing;
+    pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
+        self.easing = Box::new(easing);
         self
     }
 }
