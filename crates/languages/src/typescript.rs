@@ -50,7 +50,7 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("typescript-language-server".into())
@@ -224,7 +224,7 @@ impl EsLintLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
     fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
         let eslint_user_settings = ProjectSettings::get_global(cx)

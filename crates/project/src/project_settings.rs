@@ -41,9 +41,16 @@ pub enum GitGutterSetting {
     Hide,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct BinarySettings {
+    pub path: Option<String>,
+    pub arguments: Option<Vec<String>>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
+    pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
 }

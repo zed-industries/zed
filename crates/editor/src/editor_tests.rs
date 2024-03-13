@@ -8333,6 +8333,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             "Some other server name".into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: Some(json!({
                     "some other init value": false
@@ -8351,6 +8352,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: Some(json!({
                     "anotherInitValue": false
@@ -8369,6 +8371,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: Some(json!({
                     "anotherInitValue": false
@@ -8387,6 +8390,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: None,
             },

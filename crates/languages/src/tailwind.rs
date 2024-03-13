@@ -32,7 +32,7 @@ impl TailwindLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("tailwindcss-language-server".into())
