@@ -33,10 +33,7 @@ use windows::{
         System::{
             Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
             Ole::{OleInitialize, OleUninitialize},
-            Threading::{
-                CreateEventW, CreateThreadpoolWork, SetEvent, SubmitThreadpoolWork, INFINITE,
-                PTP_CALLBACK_INSTANCE, PTP_WORK,
-            },
+            Threading::CreateEventW,
             Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
         },
         UI::{
@@ -47,11 +44,10 @@ use windows::{
                 FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
             },
             WindowsAndMessaging::{
-                DispatchMessageW, LoadImageW, MsgWaitForMultipleObjects, PeekMessageW,
-                PostQuitMessage, SetCursor, SystemParametersInfoW, TranslateMessage, HCURSOR,
-                IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE,
-                IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED, MSG, PM_REMOVE, QS_ALLINPUT,
-                SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
+                DispatchMessageW, LoadImageW, PeekMessageW, PostQuitMessage, SetCursor,
+                SystemParametersInfoW, TranslateMessage, HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND,
+                IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED,
+                MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
             },
         },
