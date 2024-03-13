@@ -31,7 +31,7 @@ impl CssLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for CssLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-css-language-server".into())

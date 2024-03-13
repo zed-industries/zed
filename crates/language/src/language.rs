@@ -282,7 +282,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
 
@@ -306,7 +306,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if let Some(binary) = self.check_if_user_installed(delegate.as_ref()).await {
+            if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
                 log::info!(
                     "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                     language.name(),
@@ -380,6 +380,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -1457,7 +1458,7 @@ impl Default for FakeLspAdapter {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for FakeLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())

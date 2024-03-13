@@ -83,7 +83,7 @@ impl JsonLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for JsonLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())

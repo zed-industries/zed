@@ -3,6 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
@@ -14,7 +15,7 @@ use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct ZlsAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for ZlsAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("zls".into())
@@ -43,6 +44,7 @@ impl LspAdapter for ZlsAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let env = delegate.shell_env().await;
         let path = delegate.which("zls".as_ref()).await?;

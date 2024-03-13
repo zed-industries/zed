@@ -38,7 +38,7 @@ impl VueLspAdapter {
         }
     }
 }
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for VueLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vue-language-server".into())

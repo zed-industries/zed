@@ -33,7 +33,7 @@ impl YamlLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for YamlLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("yaml-language-server".into())

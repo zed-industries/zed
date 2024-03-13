@@ -34,7 +34,7 @@ impl IntelephenseLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for IntelephenseLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("intelephense".into())

@@ -29,7 +29,7 @@ impl DockerfileLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for DockerfileLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("docker-langserver".into())

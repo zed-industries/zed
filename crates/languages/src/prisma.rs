@@ -29,7 +29,7 @@ impl PrismaLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for PrismaLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("prisma-language-server".into())
