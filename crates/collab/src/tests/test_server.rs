@@ -513,6 +513,7 @@ impl TestServer {
                 clickhouse_database: None,
                 zed_client_checksum_seed: None,
                 slack_panics_webhook: None,
+                auto_join_channel_id: None,
             },
         })
     }
