@@ -67,7 +67,6 @@ pub fn init(
 
     languages.register_native_grammars([
         ("astro", tree_sitter_astro::language()),
-        ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
         ("clojure", tree_sitter_clojure::language()),
@@ -82,7 +81,6 @@ pub fn init(
         ),
         ("erlang", tree_sitter_erlang::language()),
         ("gleam", tree_sitter_gleam::language()),
-        ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
@@ -92,8 +90,6 @@ pub fn init(
         ("html", tree_sitter_html::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
-        ("markdown", tree_sitter_markdown::language()),
-        ("nix", tree_sitter_nix::language()),
         ("nu", tree_sitter_nu::language()),
         ("ocaml", tree_sitter_ocaml::language_ocaml()),
         (
@@ -102,13 +98,10 @@ pub fn init(
         ),
         ("php", tree_sitter_php::language_php()),
         ("prisma", tree_sitter_prisma_io::language()),
-        ("proto", tree_sitter_proto::language()),
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
-        ("racket", tree_sitter_racket::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
-        ("scheme", tree_sitter_scheme::language()),
         ("svelte", tree_sitter_svelte::language()),
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
@@ -168,7 +161,6 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
     );
-    language!("bash");
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
@@ -232,7 +224,6 @@ pub fn init(
             languages.clone(),
         ))]
     );
-    language!("markdown");
     language!(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
@@ -302,8 +293,6 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
     );
-    language!("scheme");
-    language!("racket");
     language!("lua", vec![Arc::new(lua::LuaLspAdapter)]);
     language!(
         "yaml",
@@ -333,8 +322,6 @@ pub fn init(
         "elm",
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
-    language!("glsl");
-    language!("nix");
     language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language!("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
@@ -342,7 +329,6 @@ pub fn init(
         "vue",
         vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]
     );
-    language!("proto");
     language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
     language!(
         "terraform-vars",
