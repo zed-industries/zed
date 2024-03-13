@@ -241,7 +241,9 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn set_dock_menu(&self, paths: Vec<&str>) {}
+    fn set_recents(&self, paths: Vec<&str>) {
+        unimplemented!()
+    }
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 

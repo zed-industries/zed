@@ -10,8 +10,8 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypeString, NSSavePanel, NSWindow,
+        NSEventModifierFlags, NSImageNameFolder, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
+        NSPasteboard, NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, BOOL, YES},
     foundation::{
@@ -27,6 +27,7 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
+use font_kit::file_type;
 use futures::channel::oneshot;
 use objc::{
     class,
@@ -139,16 +140,21 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+        decl.add_method(
+            sel!(application:openFile:),
+            // dummy for now, replace later
+            open_urls as extern "C" fn(&mut Object, Sel, id, id),
+        );
 
         // logic for showing recent workspaces on right click
         decl.add_method(
             sel!(openWorkspace:),
             test as extern "C" fn(&Object, Sel, id),
         );
-        decl.add_method(
-            sel!(applicationDockMenu:),
-            application_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
-        );
+        // decl.add_method(
+        //     sel!(applicationDockMenu:),
+        //     application_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
+        // );
         decl.register()
     }
 }
@@ -160,7 +166,19 @@ extern "C" fn test(_this: &Object, _cmd: Sel, sender: id) {
 }
 
 extern "C" fn application_dock_menu(this: &mut Object, _cmd: Sel, _sender: id) -> id {
-    unsafe { *this.get_ivar::<id>(DOCK_MENU_IVAR) }
+    unsafe {
+        let dc: id = msg_send![class!(NSDocumentController), sharedDocumentController];
+        let urls: id = msg_send![dc, recentDocumentURLs];
+        for i in 0..urls.count() {
+            let utf8_str: *const i8 = urls.objectAtIndex(i).absoluteString().UTF8String();
+            println!(
+                "{:?} {:?}",
+                CStr::from_ptr(utf8_str),
+                urls.objectAtIndex(i).isFileURL() == YES
+            );
+        }
+        *this.get_ivar::<id>(DOCK_MENU_IVAR)
+    }
 }
 
 pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
@@ -788,23 +806,29 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_dock_menu(&self, paths: Vec<&str>) {
+    fn set_recents(&self, paths: Vec<&str>) {
+        println!("mac platform recents");
         unsafe {
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            // can't autorelease here; any other way to avoid a leak?
-            let menu = NSMenu::new(nil);
-            for path in paths {
-                let item = NSMenuItem::alloc(nil)
-                    .initWithTitle_action_keyEquivalent_(
-                        ns_string(path),
-                        sel!(openWorkspace:),
-                        ns_string(""),
-                    )
-                    .autorelease();
-                item.setTarget_(app.delegate());
-                menu.addItem_(item);
+            println!("retrieving document controller");
+            let document_controller: id =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
+            println!("available document types");
+            let file_types: id = msg_send![document_controller, documentClassNames];
+            for i in 0..file_types.count() {
+                let file_type: *const i8 = file_types.objectAtIndex(i).UTF8String();
+                println!("file type: {:?}", CStr::from_ptr(file_type));
             }
-            (*app.delegate()).set_ivar(DOCK_MENU_IVAR, menu);
+            println!("trying to clear documents");
+            // let _: () = msg_send![document_controller, clearRecentDocuments:nil];
+            println!("setting recents to {paths:?}");
+            for path in paths {
+                println!("{path:?}");
+                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path));
+                let file_type: id =
+                    msg_send![document_controller, typeForContentsOfURL:url error:nil];
+                println!("type: {:?}", CStr::from_ptr(file_type.UTF8String()));
+                let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
+            }
         }
     }
 
@@ -1101,6 +1125,7 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
 }
 
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
+    println!("finished launching");
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);

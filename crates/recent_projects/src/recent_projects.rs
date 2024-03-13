@@ -56,7 +56,7 @@ impl RecentProjects {
                 .recent_workspaces_on_disk()
                 .await
                 .unwrap_or_default();
-
+            println!("{workspaces:?}");
             this.update(&mut cx, move |this, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.workspaces = workspaces;

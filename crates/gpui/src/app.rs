@@ -1132,9 +1132,10 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Sets the dock menu for this application. This will replace any existing dock menu.
-    pub fn set_dock_menu(&mut self, paths: Vec<&str>) {
-        self.platform.set_dock_menu(paths);
+    /// Sets the list of recent files for this application. This will replace any existing recents.
+    pub fn set_recents(&mut self, paths: Vec<&str>) {
+        println!("setting recents");
+        self.platform.set_recents(paths);
     }
 
     /// Dispatch an action to the currently active window or global action handler
