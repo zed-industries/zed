@@ -9947,7 +9947,6 @@ dependencies = [
 name = "time_format"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "core-foundation",
  "core-foundation-sys 0.8.6",
  "sys-locale",
