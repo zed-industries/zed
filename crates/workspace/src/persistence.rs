@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds, WindowBounds};
+use gpui::{point, size, Axis, Bounds};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -59,7 +59,7 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SerializedWindowsBounds(pub(crate) WindowBounds);
+pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::GlobalPixels>);
 
 impl StaticColumnCount for SerializedWindowsBounds {
     fn column_count() -> usize {
@@ -69,30 +69,15 @@ impl StaticColumnCount for SerializedWindowsBounds {
 
 impl Bind for SerializedWindowsBounds {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let (region, next_index) = match self.0 {
-            WindowBounds::Fullscreen => {
-                let next_index = statement.bind(&"Fullscreen", start_index)?;
-                (None, next_index)
-            }
-            WindowBounds::Maximized => {
-                let next_index = statement.bind(&"Maximized", start_index)?;
-                (None, next_index)
-            }
-            WindowBounds::Fixed(region) => {
-                let next_index = statement.bind(&"Fixed", start_index)?;
-                (Some(region), next_index)
-            }
-        };
+        let next_index = statement.bind(&"Fixed", start_index)?;
 
         statement.bind(
-            &region.map(|region| {
-                (
-                    SerializedGlobalPixels(region.origin.x),
-                    SerializedGlobalPixels(region.origin.y),
-                    SerializedGlobalPixels(region.size.width),
-                    SerializedGlobalPixels(region.size.height),
-                )
-            }),
+            &(
+                SerializedGlobalPixels(self.0.origin.x),
+                SerializedGlobalPixels(self.0.origin.y),
+                SerializedGlobalPixels(self.0.size.width),
+                SerializedGlobalPixels(self.0.size.height),
+            ),
             next_index,
         )
     }
@@ -102,18 +87,16 @@ impl Column for SerializedWindowsBounds {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
         let bounds = match window_state.as_str() {
-            "Fullscreen" => SerializedWindowsBounds(WindowBounds::Fullscreen),
-            "Maximized" => SerializedWindowsBounds(WindowBounds::Maximized),
             "Fixed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
                 let x: f64 = x;
                 let y: f64 = y;
                 let width: f64 = width;
                 let height: f64 = height;
-                SerializedWindowsBounds(WindowBounds::Fixed(Bounds {
+                SerializedWindowsBounds(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
-                }))
+                })
             }
             _ => bail!("Window State did not have a valid string"),
         };

@@ -183,6 +183,7 @@ pub struct Pane {
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     display_nav_history_buttons: bool,
+    double_click_dispatch_action: Box<dyn Action>,
 }
 
 pub struct ItemNavHistory {
@@ -242,6 +243,7 @@ impl Pane {
         project: Model<Project>,
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
+        double_click_dispatch_action: Box<dyn Action>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -346,6 +348,7 @@ impl Pane {
             }),
             display_nav_history_buttons: true,
             _subscriptions: subscriptions,
+            double_click_dispatch_action,
         }
     }
 
@@ -1550,9 +1553,9 @@ impl Pane {
                         this.drag_split_direction = None;
                         this.handle_external_paths_drop(paths, cx)
                     }))
-                    .on_click(cx.listener(move |_, event: &ClickEvent, cx| {
+                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                         if event.up.click_count == 2 {
-                            cx.dispatch_action(NewFile.boxed_clone());
+                            cx.dispatch_action(this.double_click_dispatch_action.boxed_clone())
                         }
                     })),
             )
@@ -2108,7 +2111,11 @@ impl NavHistoryState {
 fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     let path = buffer_path
         .as_ref()
-        .and_then(|p| p.path.to_str())
+        .and_then(|p| {
+            p.path
+                .to_str()
+                .and_then(|s| if s == "" { None } else { Some(s) })
+        })
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")

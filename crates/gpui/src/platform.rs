@@ -88,12 +88,13 @@ pub(crate) trait Platform: 'static {
     fn unhide_other_apps(&self);
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
 
     /// Returns the appearance of the application's windows.
@@ -166,7 +167,7 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
-    fn bounds(&self) -> WindowBounds;
+    fn bounds(&self) -> Bounds<GlobalPixels>;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> Pixels;
@@ -191,6 +192,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
+    fn is_full_screen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
@@ -501,20 +503,20 @@ pub trait InputHandler: 'static {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
-    /// The initial bounds of the window
-    pub bounds: WindowBounds,
+    /// None -> inherit, Some(bounds) -> set bounds
+    pub bounds: Option<Bounds<GlobalPixels>>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
-
-    /// Whether the window should be centered on the screen
-    pub center: bool,
 
     /// Whether the window should be focused when created
     pub focus: bool,
 
     /// Whether the window should be shown when created
     pub show: bool,
+
+    /// Whether the window should be fullscreen when created
+    pub fullscreen: bool,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -526,21 +528,44 @@ pub struct WindowOptions {
     pub display_id: Option<DisplayId>,
 }
 
+/// The variables that can be configured when creating a new window
+#[derive(Debug)]
+pub(crate) struct WindowParams {
+    ///
+    pub bounds: Bounds<GlobalPixels>,
+
+    /// The titlebar configuration of the window
+    pub titlebar: Option<TitlebarOptions>,
+
+    /// The kind of window to create
+    pub kind: WindowKind,
+
+    /// Whether the window should be movable by the user
+    pub is_movable: bool,
+
+    pub focus: bool,
+
+    pub show: bool,
+
+    /// The display to create the window on
+    pub display_id: Option<DisplayId>,
+}
+
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
-            bounds: WindowBounds::default(),
+            bounds: None,
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
             }),
-            center: false,
             focus: true,
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
             display_id: None,
+            fullscreen: false,
         }
     }
 }
@@ -569,19 +594,9 @@ pub enum WindowKind {
     PopUp,
 }
 
-/// Which bounds algorithm to use for the initial size a window
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub enum WindowBounds {
-    /// The window should be full screen, on macOS this corresponds to the full screen feature
-    Fullscreen,
-
-    /// Make the window as large as the current display's size.
-    #[default]
-    Maximized,
-
-    /// Set the window to the given size in pixels
-    Fixed(Bounds<GlobalPixels>),
-}
+/// Platform level interface
+/// bounds: Bounds<GlobalPixels>
+/// full_screen: bool
 
 /// The appearance of the window, as defined by the operating system.
 ///

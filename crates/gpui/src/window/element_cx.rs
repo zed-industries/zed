@@ -79,7 +79,7 @@ impl Hitbox {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Eq, PartialEq)]
 pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
 pub(crate) struct DeferredDraw {

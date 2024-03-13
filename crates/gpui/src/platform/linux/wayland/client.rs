@@ -39,11 +39,12 @@ use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::WindowParams;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
     KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, WindowOptions,
+    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -207,10 +208,14 @@ impl Client for WaylandClient {
         unimplemented!()
     }
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        None
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.state.client_state_inner.borrow_mut();
 
@@ -417,7 +422,6 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
-                window.surface.commit();
             }
             wl_surface::Event::Leave { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -435,12 +439,10 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
-                window.surface.commit();
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
                 window.rescale(factor as f32);
                 surface.set_buffer_scale(factor);
-                window.surface.commit();
             }
             _ => {}
         }

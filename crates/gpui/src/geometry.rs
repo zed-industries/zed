@@ -9,8 +9,11 @@ use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::{self, PartialOrd},
     fmt,
+    hash::Hash,
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
+
+use crate::AppContext;
 
 /// An axis along which a measurement can be made.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -84,7 +87,7 @@ pub struct Point<T: Default + Clone + Debug> {
 /// assert_eq!(p.x, 10);
 /// assert_eq!(p.y, 20);
 /// ```
-pub fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
+pub const fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
     Point { x, y }
 }
 
@@ -354,6 +357,15 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
+impl From<Size<GlobalPixels>> for Size<Pixels> {
+    fn from(size: Size<GlobalPixels>) -> Self {
+        Size {
+            width: Pixels(size.width.0),
+            height: Pixels(size.height.0),
+        }
+    }
+}
+
 /// Constructs a new `Size<T>` with the provided width and height.
 ///
 /// # Arguments
@@ -369,7 +381,7 @@ pub struct Size<T: Clone + Default + Debug> {
 /// assert_eq!(my_size.width, 10);
 /// assert_eq!(my_size.height, 20);
 /// ```
-pub fn size<T>(width: T, height: T) -> Size<T>
+pub const fn size<T>(width: T, height: T) -> Size<T>
 where
     T: Clone + Default + Debug,
 {
@@ -660,6 +672,35 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub origin: Point<T>,
     /// The size of the rectangle.
     pub size: Size<T>,
+}
+
+impl Bounds<GlobalPixels> {
+    /// Generate a centered bounds for the primary display
+    pub fn centered(size: impl Into<Size<GlobalPixels>>, cx: &mut AppContext) -> Self {
+        let size = size.into();
+        cx.primary_display()
+            .map(|display| {
+                let center = display.bounds().center();
+                Bounds {
+                    origin: point(center.x - size.width / 2.0, center.y - size.height / 2.0),
+                    size,
+                }
+            })
+            .unwrap_or_else(|| Bounds {
+                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                size,
+            })
+    }
+
+    /// Generate maximized bounds for the primary display
+    pub fn maximized(cx: &mut AppContext) -> Self {
+        cx.primary_display()
+            .map(|display| display.bounds())
+            .unwrap_or_else(|| Bounds {
+                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                size: size(GlobalPixels(1024.0), GlobalPixels(768.0)),
+            })
+    }
 }
 
 impl<T> Bounds<T>
@@ -1163,6 +1204,29 @@ where
         Bounds {
             origin: self.origin.map(&f),
             size: self.size.map(f),
+        }
+    }
+
+    /// Applies a function to the origin  of the bounds, producing a new `Bounds` with the new origin
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 10.0, y: 10.0 },
+    ///     size: Size { width: 10.0, height: 20.0 },
+    /// };
+    /// let new_bounds = bounds.map_origin(|value| value * 1.5);
+    ///
+    /// assert_eq!(new_bounds, Bounds {
+    ///     origin: Point { x: 15.0, y: 15.0 },
+    ///     size: Size { width: 10.0, height: 20.0 },
+    /// });
+    pub fn map_origin(self, f: impl Fn(Point<T>) -> Point<T>) -> Bounds<T> {
+        Bounds {
+            origin: f(self.origin),
+            size: self.size,
         }
     }
 }

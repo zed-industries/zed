@@ -395,6 +395,7 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
@@ -1534,6 +1535,7 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
+            find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
             next_inlay_id: 0,
@@ -7608,36 +7610,52 @@ impl Editor {
         }
     }
 
-    pub fn go_to_definition(&mut self, _: &GoToDefinition, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
+    pub fn go_to_definition(
+        &mut self,
+        _: &GoToDefinition,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx)
     }
 
-    pub fn go_to_implementation(&mut self, _: &GoToImplementation, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, cx);
+    pub fn go_to_implementation(
+        &mut self,
+        _: &GoToImplementation,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, cx)
     }
 
     pub fn go_to_implementation_split(
         &mut self,
         _: &GoToImplementationSplit,
         cx: &mut ViewContext<Self>,
-    ) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, cx);
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, cx)
     }
 
-    pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx);
+    pub fn go_to_type_definition(
+        &mut self,
+        _: &GoToTypeDefinition,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx)
     }
 
-    pub fn go_to_definition_split(&mut self, _: &GoToDefinitionSplit, cx: &mut ViewContext<Self>) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx);
+    pub fn go_to_definition_split(
+        &mut self,
+        _: &GoToDefinitionSplit,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx)
     }
 
     pub fn go_to_type_definition_split(
         &mut self,
         _: &GoToTypeDefinitionSplit,
         cx: &mut ViewContext<Self>,
-    ) {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx);
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx)
     }
 
     fn go_to_definition_of_kind(
@@ -7645,16 +7663,16 @@ impl Editor {
         kind: GotoDefinitionKind,
         split: bool,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> Task<Result<bool>> {
         let Some(workspace) = self.workspace() else {
-            return;
+            return Task::ready(Ok(false));
         };
         let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
             text_anchor
         } else {
-            return;
+            return Task::ready(Ok(false));
         };
 
         let project = workspace.read(cx).project().clone();
@@ -7666,17 +7684,18 @@ impl Editor {
 
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
-            editor.update(&mut cx, |editor, cx| {
-                editor.navigate_to_hover_links(
-                    Some(kind),
-                    definitions.into_iter().map(HoverLink::Text).collect(),
-                    split,
-                    cx,
-                );
-            })?;
-            Ok::<(), anyhow::Error>(())
+            let navigated = editor
+                .update(&mut cx, |editor, cx| {
+                    editor.navigate_to_hover_links(
+                        Some(kind),
+                        definitions.into_iter().map(HoverLink::Text).collect(),
+                        split,
+                        cx,
+                    )
+                })?
+                .await?;
+            anyhow::Ok(navigated)
         })
-        .detach_and_log_err(cx);
     }
 
     pub fn open_url(&mut self, _: &OpenUrl, cx: &mut ViewContext<Self>) {
@@ -7705,7 +7724,7 @@ impl Editor {
         mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
-    ) {
+    ) -> Task<Result<bool>> {
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
@@ -7724,7 +7743,7 @@ impl Editor {
                 if let Some(target) = target {
                     editor.update(&mut cx, |editor, cx| {
                         let Some(workspace) = editor.workspace() else {
-                            return;
+                            return false;
                         };
                         let pane = workspace.read(cx).active_pane().clone();
 
@@ -7761,12 +7780,12 @@ impl Editor {
                                 });
                             });
                         }
+                        true
                     })
                 } else {
-                    Ok(())
+                    Ok(false)
                 }
             })
-            .detach_and_log_err(cx);
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
             cx.spawn(|editor, mut cx| async move {
@@ -7815,9 +7834,9 @@ impl Editor {
                     .context("location tasks")?;
 
                 let Some(workspace) = workspace else {
-                    return Ok(());
+                    return Ok(false);
                 };
-                workspace
+                let opened = workspace
                     .update(&mut cx, |workspace, cx| {
                         Self::open_locations_in_multibuffer(
                             workspace, locations, replica_id, title, split, cx,
@@ -7825,9 +7844,10 @@ impl Editor {
                     })
                     .ok();
 
-                anyhow::Ok(())
+                anyhow::Ok(opened.is_some())
             })
-            .detach_and_log_err(cx);
+        } else {
+            Task::ready(Ok(false))
         }
     }
 
@@ -7887,15 +7907,40 @@ impl Editor {
         _: &FindAllReferences,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let buffer = self.buffer.read(cx);
-        let head = self.selections.newest::<usize>(cx).head();
-        let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
-        let replica_id = self.replica_id(cx);
+        let multi_buffer = self.buffer.read(cx);
+        let selection = self.selections.newest::<usize>(cx);
+        let head = selection.head();
 
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head_anchor = multi_buffer_snapshot.anchor_at(
+            head,
+            if head < selection.tail() {
+                Bias::Right
+            } else {
+                Bias::Left
+            },
+        );
+        match self
+            .find_all_references_task_sources
+            .binary_search_by(|task_anchor| task_anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+        {
+            Ok(_) => {
+                log::info!(
+                    "Ignoring repeated FindAllReferences invocation with the position of already running task"
+                );
+                return None;
+            }
+            Err(i) => {
+                self.find_all_references_task_sources.insert(i, head_anchor);
+            }
+        }
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let replica_id = self.replica_id(cx);
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn(|editor, mut cx| async move {
+        let open_task = cx.spawn(|editor, mut cx| async move {
             let mut locations = references.await?;
             let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
             let head_offset = text::ToOffset::to_offset(&head, &snapshot);
@@ -7977,6 +8022,21 @@ impl Editor {
             })?;
 
             Ok(())
+        });
+        Some(cx.spawn(|editor, mut cx| async move {
+            open_task.await?;
+            editor.update(&mut cx, |editor, _| {
+                if let Ok(i) =
+                    editor
+                        .find_all_references_task_sources
+                        .binary_search_by(|task_anchor| {
+                            task_anchor.cmp(&head_anchor, &multi_buffer_snapshot)
+                        })
+                {
+                    editor.find_all_references_task_sources.remove(i);
+                }
+            })?;
+            anyhow::Ok(())
         }))
     }
 

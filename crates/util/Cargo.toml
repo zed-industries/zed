@@ -17,7 +17,6 @@ test-support = ["tempfile", "git2"]
 
 [dependencies]
 anyhow.workspace = true
-backtrace = "0.3"
 collections.workspace = true
 dirs = "3.0"
 futures.workspace = true
@@ -26,13 +25,13 @@ globset.workspace = true
 isahc.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-parking_lot.workspace = true
 rand.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-smol.workspace = true
+async-fs.workspace = true
+futures-lite.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
