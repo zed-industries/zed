@@ -78,7 +78,7 @@ backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 
-[build-dependencies]
+[target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.65.1"
 cbindgen = "0.26.0"
 
