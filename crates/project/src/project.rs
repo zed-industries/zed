@@ -4963,14 +4963,16 @@ impl Project {
                         symbols.extend(lsp_symbols.into_iter().filter_map(
                             |(symbol_name, symbol_kind, symbol_location)| {
                                 let abs_path = symbol_location.uri.to_file_path().ok()?;
-                                let mut worktree_id = source_worktree_id;
+
                                 let path;
+                                let worktree_id;
                                 if let Some((worktree, rel_path)) =
                                     this.find_local_worktree(&abs_path, cx)
                                 {
                                     worktree_id = worktree.read(cx).id();
                                     path = rel_path;
                                 } else {
+                                    worktree_id = source_worktree_id;
                                     path = relativize_path(&worktree_abs_path, &abs_path);
                                 }
 

@@ -70,6 +70,8 @@ fn test_line_endings(cx: &mut gpui::AppContext) {
 
 #[gpui::test]
 fn test_select_language(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
@@ -145,6 +147,8 @@ fn test_select_language(cx: &mut AppContext) {
 
 #[gpui::test(iterations = 10)]
 async fn test_first_line_pattern(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
     let languages = LanguageRegistry::test(cx.executor());
     let languages = Arc::new(languages);
 

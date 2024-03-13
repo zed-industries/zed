@@ -852,11 +852,7 @@ struct BracketConfig {
 
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
-        Self::new_with_id(
-            LanguageId(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst)),
-            config,
-            ts_language,
-        )
+        Self::new_with_id(LanguageId::new(), config, ts_language)
     }
 
     fn new_with_id(

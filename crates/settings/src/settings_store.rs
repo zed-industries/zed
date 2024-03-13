@@ -1017,7 +1017,7 @@ mod tests {
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
                 worktree_id: 1,
-                path: Path::new("/root1/something")
+                path: Path::new("/root1/something"),
             })),
             &UserSettings {
                 name: "John Doe".to_string(),
