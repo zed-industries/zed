@@ -53,19 +53,24 @@ pub trait NodeRuntime: Send + Sync {
         server_path: &Path,
         directory: &PathBuf,
         latest_version: &str,
-    ) -> Result<bool> {
+    ) -> bool {
         if fs::metadata(server_path).await.is_err() {
-            return Ok(true);
+            return true;
         }
 
         let package_json_path = directory.join("package.json");
 
         let mut contents = String::new();
-        let mut file = fs::File::open(package_json_path).await?;
 
-        file.read_to_string(&mut contents).await?;
+        let Some(mut file) = fs::File::open(package_json_path).await.log_err() else {
+            return true;
+        };
 
-        let package_json: Value = serde_json::from_str(&contents)?;
+        file.read_to_string(&mut contents).await.log_err();
+
+        let Some(package_json): Option<Value> = serde_json::from_str(&contents).log_err() else {
+            return true;
+        };
 
         let installed_version = package_json
             .get("dependencies")
@@ -73,20 +78,20 @@ pub trait NodeRuntime: Send + Sync {
             .and_then(|server_name| server_name.as_str());
 
         let Some(installed_version) = installed_version else {
-            return Ok(true);
+            return true;
         };
 
         let Some(latest_version) = Version::parse(latest_version).log_err() else {
-            return Ok(true);
+            return true;
         };
 
         let installed_version = installed_version.trim_start_matches(|c: char| !c.is_ascii_digit());
 
         let Some(installed_version) = Version::parse(installed_version).log_err() else {
-            return Ok(true);
+            return true;
         };
 
-        Ok(installed_version < latest_version)
+        installed_version < latest_version
     }
 }
 

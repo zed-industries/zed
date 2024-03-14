@@ -60,7 +60,7 @@ impl LspAdapter for AstroLspAdapter {
         let should_install_npm_package = self
             .node
             .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
-            .await?;
+            .await;
 
         if should_install_npm_package {
             self.node

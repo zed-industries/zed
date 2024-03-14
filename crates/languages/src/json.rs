@@ -113,7 +113,7 @@ impl LspAdapter for JsonLspAdapter {
         let should_install_language_server = self
             .node
             .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
-            .await?;
+            .await;
 
         if should_install_language_server {
             self.node

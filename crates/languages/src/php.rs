@@ -67,7 +67,7 @@ impl LspAdapter for IntelephenseLspAdapter {
                 &container_dir,
                 latest_version.0.as_str(),
             )
-            .await?;
+            .await;
 
         if should_install_language_server {
             self.node

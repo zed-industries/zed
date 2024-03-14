@@ -87,7 +87,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                 &container_dir,
                 latest_version.typescript_version.as_str(),
             )
-            .await?;
+            .await;
 
         if should_install_language_server {
             self.node
