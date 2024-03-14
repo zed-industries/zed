@@ -1378,7 +1378,7 @@ impl ProjectPanel {
         let is_selected = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
-        let width = self.width.unwrap_or(px(0.));
+        let width = self.size(cx);
 
         let filename_text_color = details
             .git_status
@@ -1717,7 +1717,7 @@ mod tests {
     use collections::HashSet;
     use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
-    use project::{project_settings::ProjectSettings, FakeFs};
+    use project::{FakeFs, WorktreeSettings};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
@@ -1819,8 +1819,8 @@ mod tests {
         init_test(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                    project_settings.file_scan_exclusions =
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions =
                         Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
                 });
             });
@@ -3026,8 +3026,8 @@ mod tests {
         init_test_with_editor(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                    project_settings.file_scan_exclusions = Some(Vec::new());
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
                     project_panel_settings.auto_reveal_entries = Some(false)
@@ -3264,8 +3264,8 @@ mod tests {
         init_test_with_editor(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                    project_settings.file_scan_exclusions = Some(Vec::new());
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
                     project_panel_settings.auto_reveal_entries = Some(false)
@@ -3582,8 +3582,8 @@ mod tests {
             Project::init_settings(cx);
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                    project_settings.file_scan_exclusions = Some(Vec::new());
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
             });
         });

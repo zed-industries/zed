@@ -6,10 +6,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
-    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
-    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace,
-    WindowContext,
+    actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::ops::DerefMut;
@@ -729,12 +728,12 @@ impl Render for ExtensionsPage {
                     return this.py_4().child(self.render_empty_state(cx));
                 }
 
+                let view = cx.view().clone();
+                let scroll_handle = self.list.clone();
                 this.child(
-                    canvas({
-                        let view = cx.view().clone();
-                        let scroll_handle = self.list.clone();
+                    canvas(
                         move |bounds, cx| {
-                            uniform_list::<_, ExtensionCard, _>(
+                            let mut list = uniform_list::<_, ExtensionCard, _>(
                                 view,
                                 "entries",
                                 count,
@@ -743,14 +742,12 @@ impl Render for ExtensionsPage {
                             .size_full()
                             .pb_4()
                             .track_scroll(scroll_handle)
-                            .into_any_element()
-                            .draw(
-                                bounds.origin,
-                                bounds.size.map(AvailableSpace::Definite),
-                                cx,
-                            )
-                        }
-                    })
+                            .into_any_element();
+                            list.layout(bounds.origin, bounds.size.into(), cx);
+                            list
+                        },
+                        |_bounds, mut list, cx| list.paint(cx),
+                    )
                     .size_full(),
                 )
             }))

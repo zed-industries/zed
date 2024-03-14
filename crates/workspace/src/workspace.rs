@@ -32,7 +32,7 @@ use gpui::{
     FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    VisualContext, WeakView, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -262,7 +262,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(move |cx| async move {
                     if let Some(paths) = paths.await.log_err().flatten() {
                         cx.update(|cx| {
-                            open_paths(&paths, app_state, None, cx).detach_and_log_err(cx)
+                            open_paths(&paths, app_state, OpenOptions::default(), cx)
+                                .detach_and_log_err(cx)
                         })
                         .ok();
                     }
@@ -361,8 +362,7 @@ pub struct AppState {
     pub user_store: Model<UserStore>,
     pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub build_window_options:
-        fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
+    pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
@@ -405,7 +405,7 @@ impl AppState {
         }
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
-        let languages = Arc::new(LanguageRegistry::test());
+        let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::default());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
@@ -423,7 +423,7 @@ impl AppState {
             user_store,
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
         })
     }
 }
@@ -618,6 +618,7 @@ impl Workspace {
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
+                NewFile.boxed_clone(),
                 cx,
             )
         });
@@ -689,18 +690,16 @@ impl Workspace {
             cx.observe_window_bounds(move |_, cx| {
                 if let Some(display) = cx.display() {
                     // Transform fixed bounds to be stored in terms of the containing display
-                    let mut bounds = cx.window_bounds();
-                    if let WindowBounds::Fixed(window_bounds) = &mut bounds {
-                        let display_bounds = display.bounds();
-                        window_bounds.origin.x -= display_bounds.origin.x;
-                        window_bounds.origin.y -= display_bounds.origin.y;
-                    }
+                    let mut window_bounds = cx.window_bounds();
+                    let display_bounds = display.bounds();
+                    window_bounds.origin.x -= display_bounds.origin.x;
+                    window_bounds.origin.y -= display_bounds.origin.y;
 
                     if let Some(display_uuid) = display.uuid().log_err() {
                         cx.background_executor()
                             .spawn(DB.set_window_bounds(
                                 workspace_id,
-                                SerializedWindowsBounds(bounds),
+                                SerializedWindowsBounds(window_bounds),
                                 display_uuid,
                             ))
                             .detach_and_log_err(cx);
@@ -846,19 +845,16 @@ impl Workspace {
 
                             // Stored bounds are relative to the containing display.
                             // So convert back to global coordinates if that screen still exists
-                            if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                let screen = cx
-                                    .update(|cx| {
-                                        cx.displays().into_iter().find(|display| {
-                                            display.uuid().ok() == Some(serialized_display)
-                                        })
+                            let screen = cx
+                                .update(|cx| {
+                                    cx.displays().into_iter().find(|display| {
+                                        display.uuid().ok() == Some(serialized_display)
                                     })
-                                    .ok()??;
-                                let screen_bounds = screen.bounds();
-                                window_bounds.origin.x += screen_bounds.origin.x;
-                                window_bounds.origin.y += screen_bounds.origin.y;
-                                bounds = WindowBounds::Fixed(window_bounds);
-                            }
+                                })
+                                .ok()??;
+                            let screen_bounds = screen.bounds();
+                            bounds.origin.x += screen_bounds.origin.x;
+                            bounds.origin.y += screen_bounds.origin.y;
 
                             Some((bounds, serialized_display))
                         })
@@ -866,9 +862,8 @@ impl Workspace {
                 };
 
                 // Use the serialized workspace to construct the new window
-                let options =
-                    cx.update(|cx| (app_state.build_window_options)(bounds, display, cx))?;
-
+                let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
+                options.bounds = bounds;
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
@@ -1414,8 +1409,18 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
-            cx.update(|cx| open_paths(&paths, app_state, window_to_replace, cx))?
-                .await?;
+            cx.update(|cx| {
+                open_paths(
+                    &paths,
+                    app_state,
+                    OpenOptions {
+                        replace_window: window_to_replace,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })?
+            .await?;
             Ok(())
         })
     }
@@ -1443,18 +1448,12 @@ impl Workspace {
                     OpenVisible::None => Some(false),
                     OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
                         Some(Some(metadata)) => Some(!metadata.is_dir),
-                        Some(None) => {
-                            log::error!("No metadata for file {abs_path:?}");
-                            None
-                        }
+                        Some(None) => Some(true),
                         None => None,
                     },
                     OpenVisible::OnlyDirectories => match fs.metadata(abs_path).await.log_err() {
                         Some(Some(metadata)) => Some(metadata.is_dir),
-                        Some(None) => {
-                            log::error!("No metadata for file {abs_path:?}");
-                            None
-                        }
+                        Some(None) => Some(false),
                         None => None,
                     },
                 };
@@ -1482,15 +1481,7 @@ impl Workspace {
                 let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
                     let (worktree, project_path) = project_path?;
-                    if fs.is_file(&abs_path).await {
-                        Some(
-                            this.update(&mut cx, |this, cx| {
-                                this.open_path(project_path, pane, true, cx)
-                            })
-                            .log_err()?
-                            .await,
-                        )
-                    } else {
+                    if fs.is_dir(&abs_path).await {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
@@ -1513,6 +1504,14 @@ impl Workspace {
                         })
                         .log_err()?;
                         None
+                    } else {
+                        Some(
+                            this.update(&mut cx, |this, cx| {
+                                this.open_path(project_path, pane, true, cx)
+                            })
+                            .log_err()?
+                            .await,
+                        )
                     }
                 });
                 tasks.push(task);
@@ -1862,6 +1861,7 @@ impl Workspace {
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
+                NewFile.boxed_clone(),
                 cx,
             )
         });
@@ -2756,7 +2756,6 @@ impl Workspace {
             Some(
                 div()
                     .absolute()
-                    .z_index(100)
                     .right_3()
                     .bottom_3()
                     .w_112()
@@ -3600,7 +3599,7 @@ impl Workspace {
             client,
             user_store,
             fs: project.read(cx).fs().clone(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
         let workspace = Self::new(0, project, app_state, cx);
@@ -3653,17 +3652,15 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
+fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<Bounds<GlobalPixels>> {
     let display_origin = cx
         .update(|cx| Some(cx.displays().first()?.bounds().origin))
         .ok()??;
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
-        .map(|(position, size)| {
-            WindowBounds::Fixed(Bounds {
-                origin: display_origin + position,
-                size,
-            })
+        .map(|(position, size)| Bounds {
+            origin: display_origin + position,
+            size,
         })
 }
 
@@ -3730,7 +3727,9 @@ fn open_items(
                         let fs = app_state.fs.clone();
                         async move {
                             let file_project_path = project_path?;
-                            if fs.is_file(&abs_path).await {
+                            if fs.is_dir(&abs_path).await {
+                                None
+                            } else {
                                 Some((
                                     ix,
                                     workspace
@@ -3740,8 +3739,6 @@ fn open_items(
                                         .log_err()?
                                         .await,
                                 ))
-                            } else {
-                                None
                             }
                         }
                     })
@@ -3832,18 +3829,15 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(colors.border)
-                    .child(
-                        canvas({
-                            let this = cx.view().clone();
-                            move |bounds, cx| {
-                                this.update(cx, |this, _cx| {
-                                    this.bounds = *bounds;
-                                })
-                            }
-                        })
+                    .child({
+                        let this = cx.view().clone();
+                        canvas(
+                            move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
+                            |_, _, _| {},
+                        )
                         .absolute()
-                        .size_full(),
-                    )
+                        .size_full()
+                    })
                     .on_drag_move(
                         cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                             match e.drag(cx).0 {
@@ -3868,7 +3862,6 @@ impl Render for Workspace {
                             }
                         }),
                     )
-                    .child(self.modal_layer.clone())
                     .child(
                         div()
                             .flex()
@@ -3917,11 +3910,10 @@ impl Render for Workspace {
                                 },
                             )),
                     )
-                    .children(self.render_notifications(cx))
                     .children(self.zoomed.as_ref().and_then(|view| {
                         let zoomed_view = view.upgrade()?;
                         let div = div()
-                            .z_index(1)
+                            .occlude()
                             .absolute()
                             .overflow_hidden()
                             .border_color(colors.border)
@@ -3936,7 +3928,9 @@ impl Render for Workspace {
                             Some(DockPosition::Bottom) => div.top_2().border_t(),
                             None => div.top_2().bottom_2().left_2().right_2().border(),
                         })
-                    })),
+                    }))
+                    .child(self.modal_layer.clone())
+                    .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
             .children(if self.project.read(cx).is_disconnected() {
@@ -4128,6 +4122,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 }
 
 actions!(collab, [OpenChannelNotes]);
+actions!(zed, [OpenLog]);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
@@ -4364,6 +4359,13 @@ pub async fn get_any_active_workspace(
 
 fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
+        if let Some(workspace_window) = cx
+            .active_window()
+            .and_then(|window| window.downcast::<Workspace>())
+        {
+            return Some(workspace_window);
+        }
+
         for window in cx.windows() {
             if let Some(workspace_window) = window.downcast::<Workspace>() {
                 workspace_window
@@ -4378,11 +4380,17 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
     .flatten()
 }
 
+#[derive(Default)]
+pub struct OpenOptions {
+    pub open_new_workspace: Option<bool>,
+    pub replace_window: Option<WindowHandle<Workspace>>,
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    requesting_window: Option<WindowHandle<Workspace>>,
+    open_options: OpenOptions,
     cx: &mut AppContext,
 ) -> Task<
     anyhow::Result<(
@@ -4391,24 +4399,62 @@ pub fn open_paths(
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
-    // Open paths in existing workspace if possible
-    let existing = activate_workspace_for_project(cx, {
-        let abs_paths = abs_paths.clone();
-        move |project, cx| project.contains_paths(&abs_paths, cx)
-    });
+    let mut existing = None;
+    let mut best_match = None;
+    let mut open_visible = OpenVisible::All;
+
+    if open_options.open_new_workspace != Some(true) {
+        for window in cx.windows() {
+            let Some(handle) = window.downcast::<Workspace>() else {
+                continue;
+            };
+            if let Ok(workspace) = handle.read(cx) {
+                let m = workspace
+                    .project()
+                    .read(cx)
+                    .visibility_for_paths(&abs_paths, cx);
+                if m > best_match {
+                    existing = Some(handle);
+                    best_match = m;
+                } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
+                    existing = Some(handle)
+                }
+            }
+        }
+    }
+
     cx.spawn(move |mut cx| async move {
+        if open_options.open_new_workspace.is_none() && existing.is_none() {
+            let all_files = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            if futures::future::join_all(all_files)
+                .await
+                .into_iter()
+                .filter_map(|result| result.ok().flatten())
+                .all(|file| !file.is_dir)
+            {
+                existing = activate_any_workspace_window(&mut cx);
+                open_visible = OpenVisible::None;
+            }
+        }
+
         if let Some(existing) = existing {
             Ok((
                 existing,
                 existing
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
+                        cx.activate_window();
+                        workspace.open_paths(abs_paths, open_visible, None, cx)
                     })?
                     .await,
             ))
         } else {
             cx.update(move |cx| {
-                Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
+                Workspace::new_local(
+                    abs_paths,
+                    app_state.clone(),
+                    open_options.replace_window,
+                    cx,
+                )
             })?
             .await
         }
@@ -4494,7 +4540,8 @@ pub fn join_hosted_project(
 
             let window_bounds_override = window_bounds_env_override(&cx);
             cx.update(|cx| {
-                let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+                let mut options = (app_state.build_window_options)(None, cx);
+                options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
                 })
@@ -4552,7 +4599,8 @@ pub fn join_in_room_project(
 
             let window_bounds_override = window_bounds_env_override(&cx);
             cx.update(|cx| {
-                let options = (app_state.build_window_options)(window_bounds_override, None, cx);
+                let mut options = (app_state.build_window_options)(None, cx);
+                options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
                 })
@@ -4662,13 +4710,10 @@ pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
-    type State = AnyElement;
+    type BeforeLayout = AnyElement;
+    type AfterLayout = ();
 
-    fn request_layout(
-        &mut self,
-        _: Option<Self::State>,
-        cx: &mut ElementContext,
-    ) -> (LayoutId, Self::State) {
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4686,28 +4731,32 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.request_layout(cx), overlay)
+        (overlay.before_layout(cx), overlay)
+    }
+
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) {
+        cx.insert_hitbox(bounds, true);
+        overlay.after_layout(cx);
     }
 
     fn paint(
         &mut self,
-        bounds: Bounds<Pixels>,
-        overlay: &mut Self::State,
+        _: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
-        cx.with_z_index(u16::MAX, |cx| {
-            cx.add_opaque_layer(bounds);
-            overlay.paint(cx);
-        })
+        overlay.paint(cx)
     }
 }
 
 impl IntoElement for DisconnectedOverlay {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ui::prelude::ElementId> {
-        None
-    }
 
     fn into_element(self) -> Self::Element {
         self
@@ -5160,6 +5209,11 @@ mod tests {
         cx.deactivate_window();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
+        // Re-activating the window doesn't save the file.
+        cx.update(|cx| cx.activate_window());
+        cx.executor().run_until_parked();
+        item.update(cx, |item, _| assert_eq!(item.save_count, 1));
+
         // Autosave on focus change.
         item.update(cx, |item, cx| {
             cx.focus_self();
@@ -5177,13 +5231,11 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.update(|cx| cx.activate_window());
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
         cx.deactivate_window();
-
         item.update(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave after delay.

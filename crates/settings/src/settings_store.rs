@@ -86,9 +86,8 @@ pub trait Settings: 'static + Send + Sync {
         });
     }
 
-    /// path is a (worktree ID, Path)
     #[track_caller]
-    fn get<'a>(path: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a Self
+    fn get<'a>(path: Option<SettingsLocation>, cx: &'a AppContext) -> &'a Self
     where
         Self: Sized,
     {
@@ -118,6 +117,12 @@ pub trait Settings: 'static + Send + Sync {
     {
         cx.global_mut::<SettingsStore>().override_global(settings)
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct SettingsLocation<'a> {
+    pub worktree_id: usize,
+    pub path: &'a Path,
 }
 
 pub struct SettingsJsonSchemaParams<'a> {
@@ -168,7 +173,7 @@ trait AnySettingValue: 'static + Send + Sync {
         custom: &[DeserializedSetting],
         cx: &mut AppContext,
     ) -> Result<Box<dyn Any>>;
-    fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any;
+    fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: usize, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
@@ -234,7 +239,7 @@ impl SettingsStore {
     ///
     /// Panics if the given setting type has not been registered, or if there is no
     /// value for this setting.
-    pub fn get<T: Settings>(&self, path: Option<(usize, &Path)>) -> &T {
+    pub fn get<T: Settings>(&self, path: Option<SettingsLocation>) -> &T {
         self.setting_values
             .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -659,10 +664,10 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         Ok(DeserializedSetting(Box::new(value)))
     }
 
-    fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any {
-        if let Some((root_id, path)) = path {
+    fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
+        if let Some(SettingsLocation { worktree_id, path }) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
-                if root_id == *settings_root_id && path.starts_with(settings_path) {
+                if worktree_id == *settings_root_id && path.starts_with(settings_path) {
                     return value;
                 }
             }
@@ -1010,7 +1015,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get::<UserSettings>(Some((1, Path::new("/root1/something")))),
+            store.get::<UserSettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root1/something"),
+            })),
             &UserSettings {
                 name: "John Doe".to_string(),
                 age: 31,
@@ -1018,7 +1026,10 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<UserSettings>(Some((1, Path::new("/root1/subdir/something")))),
+            store.get::<UserSettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root1/subdir/something")
+            })),
             &UserSettings {
                 name: "Jane Doe".to_string(),
                 age: 31,
@@ -1026,7 +1037,10 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<UserSettings>(Some((1, Path::new("/root2/something")))),
+            store.get::<UserSettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root2/something")
+            })),
             &UserSettings {
                 name: "John Doe".to_string(),
                 age: 42,
@@ -1034,7 +1048,10 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<MultiKeySettings>(Some((1, Path::new("/root2/something")))),
+            store.get::<MultiKeySettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root2/something")
+            })),
             &MultiKeySettings {
                 key1: "a".to_string(),
                 key2: "b".to_string(),
