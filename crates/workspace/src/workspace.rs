@@ -5935,6 +5935,48 @@ mod tests {
             }
         }
 
+        struct TestAlternatePngItemView {
+            focus_handle: FocusHandle,
+        }
+
+        const TEST_ALTERNATE_PNG_KIND: &str = "TestAlternatePngItemView";
+        impl Item for TestAlternatePngItemView {
+            type Event = ();
+
+            fn serialized_item_kind() -> Option<&'static str> {
+                Some(TEST_ALTERNATE_PNG_KIND)
+            }
+        }
+        impl EventEmitter<()> for TestAlternatePngItemView {}
+        impl FocusableView for TestAlternatePngItemView {
+            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for TestAlternatePngItemView {
+            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+
+        impl ProjectItem for TestAlternatePngItemView {
+            type Item = TestPngItem;
+
+            fn for_project_item(
+                _project: Model<Project>,
+                _item: Model<Self::Item>,
+                cx: &mut ViewContext<Self>,
+            ) -> Self
+            where
+                Self: Sized,
+            {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                }
+            }
+        }
+
         #[gpui::test]
         async fn test_register_project_item(cx: &mut TestAppContext) {
             init_test(cx);
@@ -5982,6 +6024,56 @@ mod tests {
                 .unwrap();
 
             assert_eq!(handle.serialized_item_kind().unwrap(), TEST_IPYNB_KIND);
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "three.txt");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await;
+            assert!(handle.is_err());
+        }
+
+        #[gpui::test]
+        async fn test_register_project_item_two_enter_one_leaves(cx: &mut TestAppContext) {
+            init_test(cx);
+
+            cx.update(|cx| {
+                register_project_item::<TestPngItemView>(cx);
+                register_project_item::<TestAlternatePngItemView>(cx);
+            });
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/root1",
+                json!({
+                    "one.png": "BINARYDATAHERE",
+                    "two.ipynb": "{ totally a notebook }",
+                    "three.txt": "editing text, sure why not?"
+                }),
+            )
+            .await;
+
+            let project = Project::test(fs, ["root1".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+            let worktree_id = project.update(cx, |project, cx| {
+                project.worktrees().next().unwrap().read(cx).id()
+            });
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "one.png");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await
+                .unwrap();
+
+            // This _must_ be the second item registered
+            assert_eq!(
+                handle.serialized_item_kind().unwrap(),
+                TEST_ALTERNATE_PNG_KIND
+            );
 
             let handle = workspace
                 .update(cx, |workspace, cx| {
