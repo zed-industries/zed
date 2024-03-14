@@ -3422,8 +3422,23 @@ impl Workspace {
                     docks,
                 };
 
-                cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace))
-                    .detach();
+                cx.spawn(|mut cx| async move {
+                    persistence::DB.save_workspace(serialized_workspace).await;
+                    let workspaces = WORKSPACE_DB
+                        .recent_workspaces_on_disk()
+                        .await
+                        .unwrap_or_default();
+                    let mut paths = Vec::new();
+                    for (_, location) in &workspaces {
+                        let locations = location.paths();
+                        let path = locations[0].to_str();
+                        if let Some(p) = path {
+                            paths.push(p.to_owned());
+                        }
+                    }
+                    cx.update(|cx| (*cx).set_recents(paths))
+                })
+                .detach();
             }
         }
     }

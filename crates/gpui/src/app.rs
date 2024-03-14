@@ -1132,7 +1132,7 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Sets the list of recent files for this application. This will replace any existing recents.
+    /// Sets the list of recent files for this application.
     pub fn set_recents(&mut self, paths: Vec<String>) {
         self.platform.set_recents(paths);
     }

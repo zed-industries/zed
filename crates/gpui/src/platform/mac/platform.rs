@@ -137,11 +137,6 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
-        decl.add_method(
-            sel!(application:openFile:),
-            // dummy for now, replace later
-            open_urls as extern "C" fn(&mut Object, Sel, id, id),
-        );
 
         decl.register()
     }
