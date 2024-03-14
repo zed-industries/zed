@@ -23,7 +23,7 @@ use gpui::{
 use menu::Confirm;
 use project::{
     search::{SearchInputs, SearchQuery},
-    Entry, Project,
+    Project,
 };
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 
@@ -34,7 +34,7 @@ use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
@@ -990,13 +990,10 @@ impl ProjectSearchView {
 
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
-        dir_entry: &Entry,
+        dir_path: &Path,
         cx: &mut ViewContext<Workspace>,
     ) {
-        if !dir_entry.is_dir() {
-            return;
-        }
-        let Some(filter_str) = dir_entry.path.to_str() else {
+        let Some(filter_str) = dir_path.to_str() else {
             return;
         };
 
@@ -2814,7 +2811,7 @@ pub mod tests {
         assert!(one_file_entry.is_file());
         window
             .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
+                ProjectSearchView::new_search_in_directory(workspace, &one_file_entry.path, cx)
             })
             .unwrap();
         let active_search_entry = cx.read(|cx| {
@@ -2841,7 +2838,7 @@ pub mod tests {
         assert!(a_dir_entry.is_dir());
         window
             .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
+                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.path, cx)
             })
             .unwrap();
 
