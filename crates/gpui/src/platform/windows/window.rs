@@ -49,6 +49,7 @@ pub(crate) struct WindowsWindowInner {
     platform_inner: Rc<WindowsPlatformInner>,
     pub(crate) handle: AnyWindowHandle,
     scale_factor: f32,
+    display: RefCell<Rc<WindowsDisplay>>,
 }
 
 impl WindowsWindowInner {
@@ -57,6 +58,7 @@ impl WindowsWindowInner {
         cs: &CREATESTRUCTW,
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
+        display: Rc<WindowsDisplay>,
     ) -> Self {
         let origin = Cell::new(Point::new((cs.x as f64).into(), (cs.y as f64).into()));
         let size = Cell::new(Size {
@@ -101,6 +103,7 @@ impl WindowsWindowInner {
         };
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
+        let display = RefCell::new(display);
         Self {
             hwnd,
             origin,
@@ -112,7 +115,46 @@ impl WindowsWindowInner {
             platform_inner,
             handle,
             scale_factor: 1.0,
+            display,
         }
+    }
+
+    fn is_maximized(&self) -> bool {
+        let mut placement = WINDOWPLACEMENT::default();
+        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+        if unsafe { GetWindowPlacement(self.hwnd, &mut placement) }.is_ok() {
+            return placement.showCmd == SW_SHOWMAXIMIZED.0 as u32;
+        }
+        return false;
+    }
+
+    fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
+        let top_and_bottom_borders = 2;
+        let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
+        let title_bar_size = unsafe {
+            GetThemePartSize(
+                theme,
+                HDC::default(),
+                WP_CAPTION.0,
+                CS_ACTIVE.0,
+                None,
+                TS_TRUE,
+            )
+        }?;
+        unsafe { CloseThemeData(theme) }?;
+
+        let mut height =
+            (title_bar_size.cy as f32 * self.scale_factor).round() as i32 + top_and_bottom_borders;
+
+        if self.is_maximized() {
+            let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+            height += unsafe { (GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2) as i32 };
+        }
+
+        let mut rect = RECT::default();
+        unsafe { GetClientRect(self.hwnd, &mut rect) }?;
+        rect.bottom = rect.top + height;
+        Ok(rect)
     }
 
     fn is_maximized(&self) -> bool {
@@ -251,6 +293,24 @@ impl WindowsWindowInner {
         let x = lparam.signed_loword() as f64;
         let y = lparam.signed_hiword() as f64;
         self.origin.set(Point::new(x.into(), y.into()));
+        let size = self.size.get();
+        let center_x = x as f32 + size.width.0 / 2.0;
+        let center_y = y as f32 + size.height.0 / 2.0;
+        let monitor_bounds = self.display.borrow().bounds();
+        // center of the window may have moved to another monitor
+        if center_x < monitor_bounds.left().0
+            || center_x > monitor_bounds.right().0
+            || center_y < monitor_bounds.top().0
+            || center_y > monitor_bounds.bottom().0
+        {
+            let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
+            println!("Monitor: {}, {}", monitor.0, monitor.is_invalid());
+            if !monitor.is_invalid() && self.display.borrow().handle != monitor {
+                // we will get the same monitor if we only have one monitor
+                println!("Reach here");
+                (*self.display.borrow_mut()) = Rc::new(WindowsDisplay::new_with_handle(monitor));
+            }
+        }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.moved.as_mut() {
             callback()
@@ -1012,13 +1072,13 @@ struct Callbacks {
 pub(crate) struct WindowsWindow {
     inner: Rc<WindowsWindowInner>,
     drag_drop_handler: IDropTarget,
-    display: Rc<WindowsDisplay>,
 }
 
 struct WindowCreateContext {
     inner: Option<Rc<WindowsWindowInner>>,
     platform_inner: Rc<WindowsPlatformInner>,
     handle: AnyWindowHandle,
+    display: Rc<WindowsDisplay>,
 }
 
 impl WindowsWindow {
@@ -1048,6 +1108,9 @@ impl WindowsWindow {
             inner: None,
             platform_inner: platform_inner.clone(),
             handle,
+            // todo(windows) move window to target monitor
+            // options.display_id
+            display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1076,12 +1139,9 @@ impl WindowsWindow {
             };
             drag_drop_handler
         };
-        // todo(windows) move window to target monitor
-        // options.display_id
         let wnd = Self {
             inner: context.inner.unwrap(),
             drag_drop_handler,
-            display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
         };
         platform_inner
             .raw_window_handles
@@ -1158,7 +1218,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        self.display.clone()
+        self.inner.display.borrow().clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1501,6 +1561,7 @@ unsafe extern "system" fn wnd_proc(
             cs,
             ctx.platform_inner.clone(),
             ctx.handle,
+            ctx.display.clone(),
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
