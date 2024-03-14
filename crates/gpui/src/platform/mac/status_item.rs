@@ -252,7 +252,7 @@ impl platform::Window for StatusItem {
         }
     }
 
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         unimplemented!()
     }
 

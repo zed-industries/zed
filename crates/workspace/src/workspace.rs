@@ -694,15 +694,28 @@ impl Workspace {
                     let display_bounds = display.bounds();
                     window_bounds.origin.x -= display_bounds.origin.x;
                     window_bounds.origin.y -= display_bounds.origin.y;
+                    let fullscreen = cx.is_fullscreen();
 
                     if let Some(display_uuid) = display.uuid().log_err() {
-                        cx.background_executor()
-                            .spawn(DB.set_window_bounds(
-                                workspace_id,
-                                SerializedWindowsBounds(window_bounds),
-                                display_uuid,
-                            ))
-                            .detach_and_log_err(cx);
+                        // Only update the window bounds when not full screen,
+                        // so we can remember the last non-fullscreen bounds
+                        // across restarts
+                        if fullscreen {
+                            cx.background_executor()
+                                .spawn(DB.set_fullscreen(workspace_id, true))
+                                .detach_and_log_err(cx);
+                        } else {
+                            cx.background_executor()
+                                .spawn(DB.set_fullscreen(workspace_id, false))
+                                .detach_and_log_err(cx);
+                            cx.background_executor()
+                                .spawn(DB.set_window_bounds(
+                                    workspace_id,
+                                    SerializedWindowsBounds(window_bounds),
+                                    display_uuid,
+                                ))
+                                .detach_and_log_err(cx);
+                        }
                     }
                 }
                 cx.notify();
@@ -834,36 +847,41 @@ impl Workspace {
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override(&cx);
-                let (bounds, display) = if let Some(bounds) = window_bounds_override {
-                    (Some(bounds), None)
-                } else {
-                    serialized_workspace
-                        .as_ref()
-                        .and_then(|serialized_workspace| {
-                            let serialized_display = serialized_workspace.display?;
-                            let mut bounds = serialized_workspace.bounds?;
 
-                            // Stored bounds are relative to the containing display.
-                            // So convert back to global coordinates if that screen still exists
-                            let screen = cx
-                                .update(|cx| {
-                                    cx.displays().into_iter().find(|display| {
-                                        display.uuid().ok() == Some(serialized_display)
-                                    })
-                                })
-                                .ok()??;
-                            let screen_bounds = screen.bounds();
-                            bounds.origin.x += screen_bounds.origin.x;
-                            bounds.origin.y += screen_bounds.origin.y;
-
-                            Some((bounds, serialized_display))
+                let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
+                    (Some(bounds), None, false)
+                } else if let Some((serialized_display, mut bounds, fullscreen)) =
+                    serialized_workspace.as_ref().and_then(|workspace| {
+                        Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
+                    })
+                {
+                    // Stored bounds are relative to the containing display.
+                    // So convert back to global coordinates if that screen still exists
+                    let screen_bounds = cx
+                        .update(|cx| {
+                            cx.displays()
+                                .into_iter()
+                                .find(|display| display.uuid().ok() == Some(serialized_display))
                         })
-                        .unzip()
+                        .ok()
+                        .flatten()
+                        .map(|screen| screen.bounds());
+
+                    if let Some(screen_bounds) = screen_bounds {
+                        bounds.origin.x += screen_bounds.origin.x;
+                        bounds.origin.y += screen_bounds.origin.y;
+                    }
+
+                    (Some(bounds), Some(serialized_display), fullscreen)
+                } else {
+                    let display = DB.last_monitor().log_err().flatten();
+                    (None, display, false)
                 };
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
                 options.bounds = bounds;
+                options.fullscreen = fullscreen;
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
@@ -3420,6 +3438,7 @@ impl Workspace {
                     bounds: Default::default(),
                     display: Default::default(),
                     docks,
+                    fullscreen: cx.is_fullscreen(),
                 };
 
                 cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace))

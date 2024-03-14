@@ -338,9 +338,6 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
         })
 }
 
-// Fixed, Maximized, Fullscreen, and 'Inherent / default'
-// Platform part, you don't, you only need Fixed, Maximized, Fullscreen
-
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -386,7 +383,7 @@ impl Window {
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         if fullscreen {
-            platform_window.toggle_full_screen();
+            platform_window.toggle_fullscreen();
         }
 
         platform_window.on_close(Box::new({
@@ -807,8 +804,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Retusn whether or not the window is currently fullscreen
-    pub fn is_full_screen(&self) -> bool {
-        self.window.platform_window.is_full_screen()
+    pub fn is_fullscreen(&self) -> bool {
+        self.window.platform_window.is_fullscreen()
     }
 
     fn appearance_changed(&mut self) {
@@ -1481,8 +1478,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Toggle full screen status on the current window at the platform level.
-    pub fn toggle_full_screen(&self) {
-        self.window.platform_window.toggle_full_screen();
+    pub fn toggle_fullscreen(&self) {
+        self.window.platform_window.toggle_fullscreen();
     }
 
     /// Present a platform dialog.

@@ -197,12 +197,12 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         let mut lock = self.0.lock();
         lock.is_fullscreen = !lock.is_fullscreen;
     }
 
-    fn is_full_screen(&self) -> bool {
+    fn is_fullscreen(&self) -> bool {
         self.0.lock().is_fullscreen
     }
 

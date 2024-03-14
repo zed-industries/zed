@@ -941,7 +941,7 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
         this.executor
@@ -953,7 +953,7 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn is_full_screen(&self) -> bool {
+    fn is_fullscreen(&self) -> bool {
         let this = self.0.lock();
         let window = this.native_window;
 
