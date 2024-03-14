@@ -1,8 +1,9 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
 use collections::HashMap;
+use editor::Anchor;
 use gpui::{Action, KeyContext};
-use language::CursorShape;
+use language::{CursorShape, Selection, TransactionId};
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
 
@@ -66,6 +67,10 @@ pub struct EditorState {
     pub post_count: Option<usize>,
 
     pub operator_stack: Vec<Operator>,
+
+    pub current_tx: Option<TransactionId>,
+    pub current_anchor: Option<Selection<Anchor>>,
+    pub undo_modes: HashMap<TransactionId, Mode>,
 }
 
 #[derive(Default, Clone, Debug)]

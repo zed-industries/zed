@@ -4380,6 +4380,18 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
     .flatten()
 }
 
+fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Workspace>())
+        .filter(|workspace| {
+            workspace
+                .read(cx)
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
+        })
+        .collect()
+}
+
 #[derive(Default)]
 pub struct OpenOptions {
     pub open_new_workspace: Option<bool>,
@@ -4404,20 +4416,17 @@ pub fn open_paths(
     let mut open_visible = OpenVisible::All;
 
     if open_options.open_new_workspace != Some(true) {
-        for window in cx.windows() {
-            let Some(handle) = window.downcast::<Workspace>() else {
-                continue;
-            };
-            if let Ok(workspace) = handle.read(cx) {
+        for window in local_workspace_windows(cx) {
+            if let Ok(workspace) = window.read(cx) {
                 let m = workspace
-                    .project()
+                    .project
                     .read(cx)
                     .visibility_for_paths(&abs_paths, cx);
                 if m > best_match {
-                    existing = Some(handle);
+                    existing = Some(window);
                     best_match = m;
                 } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
-                    existing = Some(handle)
+                    existing = Some(window)
                 }
             }
         }
@@ -4432,8 +4441,19 @@ pub fn open_paths(
                 .filter_map(|result| result.ok().flatten())
                 .all(|file| !file.is_dir)
             {
-                existing = activate_any_workspace_window(&mut cx);
-                open_visible = OpenVisible::None;
+                cx.update(|cx| {
+                    for window in local_workspace_windows(cx) {
+                        if let Ok(workspace) = window.read(cx) {
+                            let project = workspace.project().read(cx);
+                            if project.is_remote() {
+                                continue;
+                            }
+                            existing = Some(window);
+                            open_visible = OpenVisible::None;
+                            break;
+                        }
+                    }
+                })?;
             }
         }
 

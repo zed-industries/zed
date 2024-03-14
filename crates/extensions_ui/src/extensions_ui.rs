@@ -391,11 +391,14 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .children(extension.description.as_ref().map(|description| {
-                        Label::new(description.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Default)
+                        h_flex().overflow_x_hidden().child(
+                            Label::new(description.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        )
                     }))
                     .child(
                         IconButton::new(

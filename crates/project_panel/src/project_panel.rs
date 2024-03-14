@@ -23,7 +23,13 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, ffi::OsStr, ops::Range, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    ffi::OsStr,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
@@ -991,12 +997,22 @@ impl ProjectPanel {
         _: &NewSearchInDirectory,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some((_, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
             if entry.is_dir() {
-                let entry = entry.clone();
+                let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
+                let dir_path = if include_root {
+                    let mut full_path = PathBuf::from(worktree.root_name());
+                    full_path.push(&entry.path);
+                    Arc::from(full_path)
+                } else {
+                    entry.path.clone()
+                };
+
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        search::ProjectSearchView::new_search_in_directory(workspace, &entry, cx);
+                        search::ProjectSearchView::new_search_in_directory(
+                            workspace, &dir_path, cx,
+                        );
                     })
                     .ok();
             }

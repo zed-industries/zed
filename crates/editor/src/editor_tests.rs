@@ -9309,6 +9309,304 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let cols = 4;
+    let rows = 10;
+    let sample_text_1 = sample_text(rows, cols, 'a');
+    assert_eq!(
+        sample_text_1,
+        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+    );
+    let sample_text_2 = sample_text(rows, cols, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let sample_text_3 = sample_text(rows, cols, 'v');
+    assert_eq!(
+        sample_text_3,
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+    );
+
+    let buffer_1 = cx.new_model(|cx| {
+        Buffer::new(
+            0,
+            BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            sample_text_1.clone(),
+        )
+    });
+
+    let buffer_2 = cx.new_model(|cx| {
+        Buffer::new(
+            1,
+            BufferId::new(cx.entity_id().as_u64() + 1).unwrap(),
+            sample_text_2.clone(),
+        )
+    });
+
+    let buffer_3 = cx.new_model(|cx| {
+        Buffer::new(
+            2,
+            BufferId::new(cx.entity_id().as_u64() + 2).unwrap(),
+            sample_text_3.clone(),
+        )
+    });
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": sample_text_1,
+            "other.rs": sample_text_2,
+            "lib.rs": sample_text_3,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let multi_buffer_editor =
+        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    let multibuffer_item_id = workspace
+        .update(cx, |workspace, cx| {
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "active item should be None before the first item is added"
+            );
+            workspace.add_item_to_active_pane(Box::new(multi_buffer_editor.clone()), cx);
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after adding the multi buffer");
+            assert!(
+                !active_item.is_singleton(cx),
+                "A multi buffer was expected to active after adding"
+            );
+            active_item.item_id()
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.change_selections(Some(Autoscroll::Next), cx, |s| s.select_ranges(Some(1..2)));
+        editor.open_excerpts(&OpenExcerpts, cx);
+    });
+    cx.executor().run_until_parked();
+    let first_item_id = workspace
+        .update(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after navigating into the 1st buffer");
+            let first_item_id = active_item.item_id();
+            assert_ne!(
+                first_item_id, multibuffer_item_id,
+                "Should navigate into the 1st buffer and activate it"
+            );
+            assert!(
+                active_item.is_singleton(cx),
+                "New active item should be a singleton buffer"
+            );
+            assert_eq!(
+                active_item
+                    .act_as::<Editor>(cx)
+                    .expect("should have navigated into an editor for the 1st buffer")
+                    .read(cx)
+                    .text(cx),
+                sample_text_1
+            );
+
+            workspace
+                .go_back(workspace.active_pane().downgrade(), cx)
+                .detach_and_log_err(cx);
+
+            first_item_id
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    workspace
+        .update(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after navigating back");
+            assert_eq!(
+                active_item.item_id(),
+                multibuffer_item_id,
+                "Should navigate back to the multi buffer"
+            );
+            assert!(!active_item.is_singleton(cx));
+        })
+        .unwrap();
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            s.select_ranges(Some(39..40))
+        });
+        editor.open_excerpts(&OpenExcerpts, cx);
+    });
+    cx.executor().run_until_parked();
+    let second_item_id = workspace
+        .update(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after navigating into the 2nd buffer");
+            let second_item_id = active_item.item_id();
+            assert_ne!(
+                second_item_id, multibuffer_item_id,
+                "Should navigate away from the multibuffer"
+            );
+            assert_ne!(
+                second_item_id, first_item_id,
+                "Should navigate into the 2nd buffer and activate it"
+            );
+            assert!(
+                active_item.is_singleton(cx),
+                "New active item should be a singleton buffer"
+            );
+            assert_eq!(
+                active_item
+                    .act_as::<Editor>(cx)
+                    .expect("should have navigated into an editor")
+                    .read(cx)
+                    .text(cx),
+                sample_text_2
+            );
+
+            workspace
+                .go_back(workspace.active_pane().downgrade(), cx)
+                .detach_and_log_err(cx);
+
+            second_item_id
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    workspace
+        .update(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after navigating back from the 2nd buffer");
+            assert_eq!(
+                active_item.item_id(),
+                multibuffer_item_id,
+                "Should navigate back from the 2nd buffer to the multi buffer"
+            );
+            assert!(!active_item.is_singleton(cx));
+        })
+        .unwrap();
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            s.select_ranges(Some(60..70))
+        });
+        editor.open_excerpts(&OpenExcerpts, cx);
+    });
+    cx.executor().run_until_parked();
+    workspace
+        .update(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after navigating into the 3rd buffer");
+            let third_item_id = active_item.item_id();
+            assert_ne!(
+                third_item_id, multibuffer_item_id,
+                "Should navigate into the 3rd buffer and activate it"
+            );
+            assert_ne!(third_item_id, first_item_id);
+            assert_ne!(third_item_id, second_item_id);
+            assert!(
+                active_item.is_singleton(cx),
+                "New active item should be a singleton buffer"
+            );
+            assert_eq!(
+                active_item
+                    .act_as::<Editor>(cx)
+                    .expect("should have navigated into an editor")
+                    .read(cx)
+                    .text(cx),
+                sample_text_3
+            );
+
+            workspace
+                .go_back(workspace.active_pane().downgrade(), cx)
+                .detach_and_log_err(cx);
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    workspace
+        .update(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_item(cx)
+                .expect("should have an active item after navigating back from the 3rd buffer");
+            assert_eq!(
+                active_item.item_id(),
+                multibuffer_item_id,
+                "Should navigate back from the 3rd buffer to the multi buffer"
+            );
+            assert!(!active_item.is_singleton(cx));
+        })
+        .unwrap();
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point

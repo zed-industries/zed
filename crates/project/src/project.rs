@@ -6166,6 +6166,7 @@ impl Project {
                 Some(tree.snapshot())
             })
             .collect::<Vec<_>>();
+        let include_root = snapshots.len() > 1;
 
         let background = cx.background_executor().clone();
         let path_count: usize = snapshots
@@ -6199,8 +6200,18 @@ impl Project {
                 });
                 if is_ignored && !query.include_ignored() {
                     return None;
-                } else if let Some(path) = snapshot.file().map(|file| file.path()) {
-                    Some((path.clone(), (buffer, snapshot)))
+                } else if let Some(file) = snapshot.file() {
+                    let matched_path = if include_root {
+                        query.file_matches(Some(&file.full_path(cx)))
+                    } else {
+                        query.file_matches(Some(file.path()))
+                    };
+
+                    if matched_path {
+                        Some((file.path().clone(), (buffer, snapshot)))
+                    } else {
+                        None
+                    }
                 } else {
                     unnamed_files.push(buffer);
                     None
@@ -6215,6 +6226,7 @@ impl Project {
                 self.fs.clone(),
                 workers,
                 query.clone(),
+                include_root,
                 path_count,
                 snapshots,
                 matching_paths_tx,
@@ -6251,21 +6263,15 @@ impl Project {
                                 while let Some((entry, buffer_index)) = buffers_rx.next().await {
                                     let buffer_matches = if let Some((_, snapshot)) = entry.as_ref()
                                     {
-                                        if query.file_matches(
-                                            snapshot.file().map(|file| file.path().as_ref()),
-                                        ) {
-                                            query
-                                                .search(snapshot, None)
-                                                .await
-                                                .iter()
-                                                .map(|range| {
-                                                    snapshot.anchor_before(range.start)
-                                                        ..snapshot.anchor_after(range.end)
-                                                })
-                                                .collect()
-                                        } else {
-                                            Vec::new()
-                                        }
+                                        query
+                                            .search(snapshot, None)
+                                            .await
+                                            .iter()
+                                            .map(|range| {
+                                                snapshot.anchor_before(range.start)
+                                                    ..snapshot.anchor_after(range.end)
+                                            })
+                                            .collect()
                                     } else {
                                         Vec::new()
                                     };
@@ -6337,6 +6343,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         workers: usize,
         query: SearchQuery,
+        include_root: bool,
         path_count: usize,
         snapshots: Vec<LocalSnapshot>,
         matching_paths_tx: Sender<SearchMatchCandidate>,
@@ -6405,7 +6412,16 @@ impl Project {
                                     if unnamed_buffers.contains_key(&entry.path) {
                                         continue;
                                     }
-                                    let matches = if query.file_matches(Some(&entry.path)) {
+
+                                    let matched_path = if include_root {
+                                        let mut full_path = PathBuf::from(snapshot.root_name());
+                                        full_path.push(&entry.path);
+                                        query.file_matches(Some(&full_path))
+                                    } else {
+                                        query.file_matches(Some(&entry.path))
+                                    };
+
+                                    let matches = if matched_path {
                                         abs_path.clear();
                                         abs_path.push(&snapshot.abs_path());
                                         abs_path.push(&entry.path);

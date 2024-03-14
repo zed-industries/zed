@@ -25,7 +25,7 @@ use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, Global, KeystrokeEvent, Subscription,
     View, ViewContext, WeakView, WindowContext,
 };
-use language::{CursorShape, Point, Selection, SelectionGoal};
+use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
@@ -209,9 +209,11 @@ impl Vim {
             EditorEvent::SelectionsChanged { local: true } => {
                 let editor = editor.read(cx);
                 if editor.leader_peer_id().is_none() {
-                    let newest = editor.selections.newest::<usize>(cx);
+                    let newest = editor.selections.newest_anchor().clone();
                     let is_multicursor = editor.selections.count() > 1;
-                    local_selections_changed(newest, is_multicursor, cx);
+                    Vim::update(cx, |vim, cx| {
+                        vim.local_selections_changed(newest, is_multicursor, cx);
+                    })
                 }
             }
             EditorEvent::InputIgnored { text } => {
@@ -222,6 +224,12 @@ impl Vim {
                 text,
                 utf16_range_to_replace: range_to_replace,
             } => Vim::record_insertion(text, range_to_replace.clone(), cx),
+            EditorEvent::TransactionBegun { transaction_id } => Vim::update(cx, |vim, cx| {
+                vim.transaction_begun(*transaction_id, cx);
+            }),
+            EditorEvent::TransactionUndone { transaction_id } => Vim::update(cx, |vim, cx| {
+                vim.transaction_undone(transaction_id, cx);
+            }),
             _ => {}
         }));
 
@@ -350,10 +358,13 @@ impl Vim {
         let state = self.state();
         let last_mode = state.mode;
         let prior_mode = state.last_mode;
+        let prior_tx = state.current_tx;
         self.update_state(|state| {
             state.last_mode = last_mode;
             state.mode = mode;
             state.operator_stack.clear();
+            state.current_tx.take();
+            state.current_anchor.take();
         });
         if mode != Mode::Insert {
             self.take_count(cx);
@@ -371,6 +382,11 @@ impl Vim {
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
                 visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
+            }
+            if last_mode == Mode::Insert {
+                if let Some(prior_tx) = prior_tx {
+                    editor.group_until_transaction(prior_tx, cx)
+                }
             }
 
             editor.change_selections(None, cx, |s| {
@@ -470,6 +486,83 @@ impl Vim {
 
     fn active_operator(&self) -> Option<Operator> {
         self.state().operator_stack.last().copied()
+    }
+
+    fn transaction_begun(&mut self, transaction_id: TransactionId, _: &mut WindowContext) {
+        self.update_state(|state| {
+            let mode = if (state.mode == Mode::Insert || state.mode == Mode::Normal)
+                && state.current_tx.is_none()
+            {
+                state.current_tx = Some(transaction_id);
+                state.last_mode
+            } else {
+                state.mode
+            };
+            if mode == Mode::VisualLine || mode == Mode::VisualBlock {
+                state.undo_modes.insert(transaction_id, mode);
+            }
+        });
+    }
+
+    fn transaction_undone(&mut self, transaction_id: &TransactionId, cx: &mut WindowContext) {
+        if !self.state().mode.is_visual() {
+            return;
+        };
+        self.update_active_editor(cx, |vim, editor, cx| {
+            let original_mode = vim.state().undo_modes.get(transaction_id);
+            editor.change_selections(None, cx, |s| match original_mode {
+                Some(Mode::VisualLine) => {
+                    s.move_with(|map, selection| {
+                        selection.collapse_to(
+                            map.prev_line_boundary(selection.start.to_point(map)).1,
+                            SelectionGoal::None,
+                        )
+                    });
+                }
+                Some(Mode::VisualBlock) => {
+                    let mut first = s.first_anchor();
+                    first.collapse_to(first.start, first.goal);
+                    s.select_anchors(vec![first]);
+                }
+                _ => {
+                    s.move_with(|_, selection| {
+                        selection.collapse_to(selection.start, selection.goal);
+                    });
+                }
+            });
+        });
+        self.switch_mode(Mode::Normal, true, cx)
+    }
+
+    fn local_selections_changed(
+        &mut self,
+        newest: Selection<editor::Anchor>,
+        is_multicursor: bool,
+        cx: &mut WindowContext,
+    ) {
+        let state = self.state();
+        if state.mode == Mode::Insert && state.current_tx.is_some() {
+            if state.current_anchor.is_none() {
+                self.update_state(|state| state.current_anchor = Some(newest));
+            } else if state.current_anchor.as_ref().unwrap() != &newest {
+                if let Some(tx_id) = self.update_state(|state| state.current_tx.take()) {
+                    self.update_active_editor(cx, |_, editor, cx| {
+                        editor.group_until_transaction(tx_id, cx)
+                    });
+                }
+            }
+        } else if state.mode == Mode::Normal && newest.start != newest.end {
+            if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
+                self.switch_mode(Mode::VisualBlock, false, cx);
+            } else {
+                self.switch_mode(Mode::Visual, false, cx)
+            }
+        } else if newest.start == newest.end
+            && !is_multicursor
+            && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&state.mode)
+        {
+            self.switch_mode(Mode::Normal, true, cx)
+        }
     }
 
     fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
@@ -666,25 +759,4 @@ impl Settings for VimSettings {
     ) -> Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }
-}
-
-fn local_selections_changed(
-    newest: Selection<usize>,
-    is_multicursor: bool,
-    cx: &mut WindowContext,
-) {
-    Vim::update(cx, |vim, cx| {
-        if vim.state().mode == Mode::Normal && !newest.is_empty() {
-            if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
-                vim.switch_mode(Mode::VisualBlock, false, cx);
-            } else {
-                vim.switch_mode(Mode::Visual, false, cx)
-            }
-        } else if newest.is_empty()
-            && !is_multicursor
-            && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&vim.state().mode)
-        {
-            vim.switch_mode(Mode::Normal, true, cx)
-        }
-    })
 }

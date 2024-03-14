@@ -11,7 +11,9 @@ use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
 use repository::GitRepository;
 use rope::Rope;
-use smol::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(any(test, feature = "test-support"))]
+use smol::io::AsyncReadExt;
+use smol::io::AsyncWriteExt;
 use std::io::Write;
 use std::sync::Arc;
 use std::{
@@ -214,12 +216,9 @@ impl Fs for RealFs {
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
-        let mut file = smol::fs::File::open(path).await?;
-        // We use `read_exact` here instead of `read_to_string` as the latter is *very*
-        // happy to reallocate often, which comes into play when we're loading large files.
-        let mut storage = vec![0; file.metadata().await?.len() as usize];
-        file.read_exact(&mut storage).await?;
-        Ok(String::from_utf8(storage)?)
+        let path = path.to_path_buf();
+        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
+        Ok(text)
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
@@ -1496,7 +1495,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use std::os::windows::io::AsRawHandle;
 
     use smol::fs::windows::OpenOptionsExt;
-    use windows_sys::Win32::{
+    use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
             GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
@@ -1505,7 +1504,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 
     let file = smol::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
         .open(path)
         .await?;
 
@@ -1513,10 +1512,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
     // This function supports Windows XP+
     smol::unblock(move || {
-        let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
-        if ret == 0 {
-            return Err(anyhow!(format!("{}", std::io::Error::last_os_error())));
-        };
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
 
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })
