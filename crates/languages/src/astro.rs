@@ -55,15 +55,18 @@ impl LspAdapter for AstroLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
+        let package_name = "@astrojs/language-server";
 
-        self.node
-            .npm_install_latest_package_if_outdated(
-                "@astrojs/language-server",
-                &server_path,
-                &container_dir,
-                &latest_version,
-            )
+        let should_install_npm_package = self
+            .node
+            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
             .await?;
+
+        if should_install_npm_package {
+            self.node
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .await?;
+        }
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,

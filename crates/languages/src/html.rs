@@ -56,15 +56,18 @@ impl LspAdapter for HtmlLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
+        let package_name = "vscode-langservers-extracted";
 
-        self.node
-            .npm_install_latest_package_if_outdated(
-                "vscode-langservers-extracted",
-                &server_path,
-                &container_dir,
-                &latest_version,
-            )
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
             .await?;
+
+        if should_install_language_server {
+            self.node
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .await?;
+        }
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,

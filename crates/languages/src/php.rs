@@ -57,15 +57,23 @@ impl LspAdapter for IntelephenseLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<IntelephenseVersion>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
+        let package_name = "intelephense";
 
-        self.node
-            .npm_install_latest_package_if_outdated(
-                "intelephense",
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                package_name,
                 &server_path,
                 &container_dir,
-                &latest_version.0.as_str(),
+                latest_version.0.as_str(),
             )
             .await?;
+
+        if should_install_language_server {
+            self.node
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.0.as_str())])
+                .await?;
+        }
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,

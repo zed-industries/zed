@@ -43,19 +43,11 @@ pub trait NodeRuntime: Send + Sync {
 
     async fn npm_package_latest_version(&self, name: &str) -> Result<String>;
 
-    async fn npm_install_latest_package_if_outdated(
-        &self,
-        server_name: &str,
-        server_path: &Path,
-        directory: &PathBuf,
-        latest_version: &str,
-    ) -> Result<()>;
-
     async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
         -> Result<()>;
 
     // In the case of errors or missing data, we assume that we should install the language server.
-    async fn should_install_language_server(
+    async fn should_install_npm_package(
         &self,
         server_name: &str,
         server_path: &Path,
@@ -282,24 +274,6 @@ impl NodeRuntime for RealNodeRuntime {
             .ok_or_else(|| anyhow!("no version found for npm package {}", name))
     }
 
-    async fn npm_install_latest_package_if_outdated(
-        &self,
-        server_name: &str,
-        server_path: &Path,
-        directory: &PathBuf,
-        latest_version: &str,
-    ) -> Result<()> {
-        let should_install_language_server = self
-            .should_install_language_server(server_name, server_path, directory, latest_version)
-            .await
-            .unwrap_or(true);
-        if !should_install_language_server {
-            return Ok(());
-        }
-        self.npm_install_packages(directory, &[(server_name, latest_version)])
-            .await
-    }
-
     async fn npm_install_packages(
         &self,
         directory: &Path,
@@ -360,15 +334,5 @@ impl NodeRuntime for FakeNodeRuntime {
         packages: &[(&str, &str)],
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
-    }
-
-    async fn npm_install_latest_package_if_outdated(
-        &self,
-        _: &str,
-        _: &Path,
-        _: &PathBuf,
-        _: &str,
-    ) -> Result<()> {
-        unreachable!()
     }
 }
