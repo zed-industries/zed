@@ -2094,7 +2094,7 @@ impl Conversation {
         let buffer = self.buffer.read(cx);
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
-            while let Some((start_ix, message_anchor)) = message_anchors.next() {
+            if let Some((start_ix, message_anchor)) = message_anchors.next() {
                 let metadata = self.messages_metadata.get(&message_anchor.id)?;
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
