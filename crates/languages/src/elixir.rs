@@ -1,18 +1,20 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
+use project::project_settings::ProjectSettings;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
+use serde_json::Value;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
     env::consts,
     ops::Deref,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
@@ -270,6 +272,18 @@ impl LspAdapter for ElixirLspAdapter {
             runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
             text: text[display_range].to_string(),
             filter_range,
+        })
+    }
+
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        let settings = ProjectSettings::get_global(cx)
+            .lsp
+            .get("elixir-ls")
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default();
+
+        serde_json::json!({
+            "elixirLS": settings
         })
     }
 }
