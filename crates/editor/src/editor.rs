@@ -5697,6 +5697,9 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(EditorEvent::Edited);
+            cx.emit(EditorEvent::TransactionUndone {
+                transaction_id: tx_id,
+            });
         }
     }
 
@@ -5722,6 +5725,11 @@ impl Editor {
     pub fn finalize_last_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+    }
+
+    pub fn group_until_transaction(&mut self, tx_id: TransactionId, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.group_until_transaction(tx_id, cx));
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
@@ -8551,6 +8559,9 @@ impl Editor {
         {
             self.selection_history
                 .insert_transaction(tx_id, self.selections.disjoint_anchors());
+            cx.emit(EditorEvent::TransactionBegun {
+                transaction_id: tx_id,
+            })
         }
     }
 
@@ -10165,6 +10176,12 @@ pub enum EditorEvent {
         autoscroll: bool,
     },
     Closed,
+    TransactionUndone {
+        transaction_id: clock::Lamport,
+    },
+    TransactionBegun {
+        transaction_id: clock::Lamport,
+    },
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
