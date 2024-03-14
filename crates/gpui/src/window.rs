@@ -338,9 +338,6 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
         })
 }
 
-// Fixed, Maximized, Fullscreen, and 'Inherent / default'
-// Platform part, you don't, you only need Fixed, Maximized, Fullscreen
-
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
