@@ -101,6 +101,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
+use std::ops::Not as _;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -2951,13 +2952,10 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        self.insert_with_autoindent_mode(
-            text,
-            Some(AutoindentMode::Block {
-                original_indent_columns: Vec::new(),
-            }),
-            cx,
-        );
+        let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
+            original_indent_columns: Vec::new(),
+        });
+        self.insert_with_autoindent_mode(text, autoindent, cx);
     }
 
     fn insert_with_autoindent_mode(
