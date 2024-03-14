@@ -1002,12 +1002,11 @@ impl<'a> ElementContext<'a> {
                 .insert_primitive(MonochromeSprite {
                     order: 0,
                     pad: 0,
-                    vec_pad: [0, 0],
-                    transformation: TransformationMatrix::unit(),
                     bounds,
                     content_mask,
                     color,
                     tile,
+                    transformation: TransformationMatrix::unit(),
                 });
         }
         Ok(())
@@ -1101,12 +1100,11 @@ impl<'a> ElementContext<'a> {
             .insert_primitive(MonochromeSprite {
                 order: 0,
                 pad: 0,
-                vec_pad: [0, 0],
                 bounds,
                 content_mask,
-                transformation,
                 color,
                 tile,
+                transformation,
             });
 
         Ok(())

@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, Bounds, Element, ElementContext, Hitbox, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Pixels, Point, SharedString, Size, StyleRefinement, Styled,
-    TransformationMatrix,
+    geometry::Invert as _, point, px, size, Bounds, Element, ElementContext, Hitbox,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, SharedString, Size,
+    StyleRefinement, Styled, TransformationMatrix,
 };
 use util::ResultExt;
 
@@ -71,8 +71,8 @@ impl Element for Svg {
                     let transformation = self
                         .transformation
                         .as_ref()
-                        .map(|transformation| transformation.into_matrix(bounds.size))
-                        .unwrap_or(TransformationMatrix::unit());
+                        .map(|transformation| transformation.into_matrix(bounds.center()))
+                        .unwrap_or_default();
 
                     cx.paint_svg(bounds, path.clone(), transformation, color)
                         .log_err();
@@ -155,10 +155,12 @@ impl Transformation {
         self
     }
 
-    fn into_matrix(self, size: Size<Pixels>) -> TransformationMatrix {
+    fn into_matrix(self, center: Point<Pixels>) -> TransformationMatrix {
+        //Note: if you read it as a sequence, start from the bottom
         TransformationMatrix::unit()
-            .translate(self.translate)
-            .rotation(self.rotate, size)
-            .scale(self.scale, size)
+            .translate(center + self.translate)
+            .rotate(self.rotate)
+            .scale(self.scale)
+            .translate(center.invert())
     }
 }
