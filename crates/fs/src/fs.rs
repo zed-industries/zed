@@ -124,7 +124,7 @@ impl Fs for RealFs {
         smol::fs::unix::symlink(target, path).await?;
 
         #[cfg(target_family = "windows")]
-        Err(anyhow!("not supported yet on windows"))?;
+        windows_symlink(target, path).await?;
 
         Ok(())
     }
@@ -1519,10 +1519,23 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     .await
 }
 
+#[cfg(target_os = "windows")]
 async fn windows_symlink(target: PathBuf, path: &Path) -> Result<()> {
-    let src = path.canonicalize()?;
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Foundation::{CloseHandle, HWND},
+            System::Threading::{WaitForSingleObject, INFINITE},
+            UI::{
+                Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW},
+                WindowsAndMessaging::SW_HIDE,
+            },
+        },
+    };
+
+    let path_full_path = path.canonicalize()?;
     let target_full_path;
-    if src.is_file() {
+    if path_full_path.is_file() {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
             target_full_path = parent.canonicalize()?.join(target.file_name().unwrap());
@@ -1531,40 +1544,66 @@ async fn windows_symlink(target: PathBuf, path: &Path) -> Result<()> {
             target_full_path = std::env::current_dir()?.join(target);
         }
     } else {
-        std::fs::create_dir_all(target)?;
+        std::fs::create_dir_all(&target)?;
         target_full_path = target.canonicalize()?;
     }
 
     let verb = "runas".to_string();
     let exe_path = "cmd.exe".to_string();
-    let params_path = format!("/c mklink {} {}", target_full_path.display(), src.display());
+    let params_path = if path_full_path.is_file() {
+        format!(
+            "/c mklink {} {}",
+            path_full_path.display(),
+            target_full_path.display()
+        )
+    } else {
+        format!(
+            "/c mklink /D {} {}",
+            path_full_path.display(),
+            target_full_path.display(),
+        )
+    };
     smol::unblock(move || {
+        // Creating symbolic links in Windows requires elevation, and a running program
+        // cannot elevate permissions; elevation can only occur at startup of a process.
+        // Therefore, here we use `ShellExecuteExW` to create a child process. This child
+        // process elevates permissions during startup, prompting the user with a UAC popup
+        // for authorization.
+        // Once the child process has the necessary permissions, it creates the symbolic link
+        // and then exits.
         let verb_str: Vec<u16> = verb.encode_utf16().chain(Some(0)).collect();
         let exe_str: Vec<u16> = exe_path.encode_utf16().chain(Some(0)).collect();
         let params_str: Vec<u16> = params_path.encode_utf16().chain(Some(0)).collect();
 
         let mut info = SHELLEXECUTEINFOW::default();
         info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-        // info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
         info.lpDirectory = PCWSTR::null();
         info.hwnd = HWND(0);
         info.lpVerb = PCWSTR::from_raw(verb_str.as_ptr());
         info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
         info.lpParameters = PCWSTR::from_raw(params_str.as_ptr());
         info.nShow = SW_HIDE.0;
-        let result = ShellExecuteExW(&mut info);
+        let result = unsafe { ShellExecuteExW(&mut info) };
 
         if result.is_err() {
-            println!(
+            return Err(anyhow!(
                 "Error occurred while executing ShellExecuteExW: {}",
                 std::io::Error::last_os_error()
-            );
-        } else {
-            println!("Process executed successfully.");
-            WaitForSingleObject(info.hProcess, INFINITE);
-            CloseHandle(info.hProcess);
+            ));
         }
+        unsafe {
+            WaitForSingleObject(info.hProcess, INFINITE);
+            CloseHandle(info.hProcess).inspect_err(|_| {
+                log::error!(
+                    "unable to close child process: {}",
+                    std::io::Error::last_os_error()
+                )
+            })?;
+        }
+        Ok(())
     })
+    .await
 }
 
 #[cfg(test)]
