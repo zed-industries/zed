@@ -59,6 +59,19 @@ pub(crate) struct WindowsPlatformInner {
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
 
+impl WindowsPlatformInner {
+    pub(crate) fn try_get_windows_inner_from_hwnd(
+        &self,
+        hwnd: HWND,
+    ) -> Option<Rc<WindowsWindowInner>> {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|entry| *entry == &hwnd)
+            .and_then(|hwnd| try_get_window_inner(*hwnd))
+    }
+}
+
 impl Drop for WindowsPlatformInner {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.event) }.ok();
@@ -280,11 +293,7 @@ impl Platform for WindowsPlatform {
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
         self.inner
-            .raw_window_handles
-            .read()
-            .iter()
-            .find(|hwnd| *hwnd == &active_window_hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
+            .try_get_windows_inner_from_hwnd(active_window_hwnd)
             .map(|inner| inner.handle)
     }
 

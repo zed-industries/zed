@@ -982,7 +982,10 @@ impl WindowsWindowInner {
         // wparam is the window that just lost focus (may be null)
         // SEE: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
         let lost_focus_hwnd = HWND(wparam.0 as isize);
-        if let Some(lost_focus_window) = try_get_window_inner(lost_focus_hwnd) {
+        if let Some(lost_focus_window) = self
+            .platform_inner
+            .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
+        {
             lost_focus_window
                 .callbacks
                 .borrow_mut()
