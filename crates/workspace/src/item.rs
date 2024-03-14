@@ -847,6 +847,14 @@ pub mod test {
     }
 
     impl project::Item for TestProjectItem {
+        fn try_open(
+            project: &Model<Project>,
+            path: &ProjectPath,
+            cx: &mut AppContext,
+        ) -> Option<Task<gpui::Result<Model<Self>>>> {
+            unimplemented!()
+        }
+
         fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
             self.entry_id
         }

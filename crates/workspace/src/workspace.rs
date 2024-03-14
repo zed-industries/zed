@@ -26,13 +26,13 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyModel, AnyView,
-    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
-    DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
-    LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
-    PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext, WindowHandle, WindowOptions,
+    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element,
+    ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
+    GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke, LayoutId, ManagedView,
+    Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render,
+    SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -275,17 +275,37 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 }
 
 #[derive(Clone, Default, Deref, DerefMut)]
-struct ProjectItemBuilders(
-    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>,
-);
+struct ProjectItemOpeners(Vec<ProjectItemOpener>);
 
-impl Global for ProjectItemBuilders {}
+type ProjectItemOpener = fn(
+    &Model<Project>,
+    &ProjectPath,
+    &mut WindowContext,
+)
+    -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
 
+type WorkspaceItemBuilder = Box<dyn FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+
+impl Global for ProjectItemOpeners {}
+
+/// Registers a [ProjectItem] for the app. When opening a file, all the registered
+/// items will get a chance to open the file, starting from the project item that
+/// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
-    let builders = cx.default_global::<ProjectItemBuilders>();
-    builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
-        let item = model.downcast::<I::Item>().unwrap();
-        Box::new(cx.new_view(|cx| I::for_project_item(project, item, cx)))
+    let builders = cx.default_global::<ProjectItemOpeners>();
+    builders.push(|project, project_path, cx| {
+        let project_item = <I::Item as project::Item>::try_open(&project, project_path, cx)?;
+        let project = project.clone();
+        Some(cx.spawn(|cx| async move {
+            let project_item = project_item.await?;
+            let project_entry_id: Option<ProjectEntryId> =
+                project_item.read_with(&cx, |item, cx| project::Item::entry_id(item, cx))?;
+            let build_workspace_item = Box::new(|cx: &mut ViewContext<Pane>| {
+                Box::new(cx.new_view(|cx| I::for_project_item(project, project_item, cx)))
+                    as Box<dyn ItemHandle>
+            }) as Box<_>;
+            Ok((project_entry_id, build_workspace_item))
+        }))
     });
 }
 
@@ -2051,26 +2071,17 @@ impl Workspace {
         &mut self,
         path: ProjectPath,
         cx: &mut WindowContext,
-    ) -> Task<
-        Result<(
-            Option<ProjectEntryId>,
-            impl 'static + Send + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
-        )>,
-    > {
+    ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
-        let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-        cx.spawn(|mut cx| async move {
-            let (project_entry_id, project_item) = project_item.await?;
-            let build_item = cx.update(|cx| {
-                cx.default_global::<ProjectItemBuilders>()
-                    .get(&project_item.entity_type())
-                    .ok_or_else(|| anyhow!("no item builder for project item"))
-                    .cloned()
-            })??;
-            let build_item =
-                move |cx: &mut ViewContext<Pane>| build_item(project, project_item, cx);
-            Ok((project_entry_id, build_item))
-        })
+        let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
+        let Some(open_project_item) = project_item_builders
+            .iter()
+            .rev()
+            .find_map(|open_project_item| open_project_item(&project, &path, cx))
+        else {
+            return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
+        };
+        open_project_item
     }
 
     pub fn open_project_item<T>(
