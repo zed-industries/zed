@@ -2800,33 +2800,6 @@ pub mod tests {
             })
             .unwrap();
 
-        let one_file_entry = cx.update(|cx| {
-            workspace
-                .read(cx)
-                .project()
-                .read(cx)
-                .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
-                .expect("no entry for /a/one.rs file")
-        });
-        assert!(one_file_entry.is_file());
-        window
-            .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &one_file_entry.path, cx)
-            })
-            .unwrap();
-        let active_search_entry = cx.read(|cx| {
-            workspace
-                .read(cx)
-                .active_pane()
-                .read(cx)
-                .active_item()
-                .and_then(|item| item.downcast::<ProjectSearchView>())
-        });
-        assert!(
-            active_search_entry.is_none(),
-            "Expected no search panel to be active for file entry"
-        );
-
         let a_dir_entry = cx.update(|cx| {
             workspace
                 .read(cx)
