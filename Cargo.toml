@@ -340,6 +340,7 @@ version = "0.53.0"
 features = [
     "implement",
     "Wdk_System_SystemServices",
+    "Win32_Globalization",
     "Win32_Graphics_DirectComposition",
     "Win32_Graphics_Gdi",
     "Win32_Security",
@@ -353,6 +354,7 @@ features = [
     "Win32_System_Time",
     "Win32_System_Threading",
     "Win32_UI_Controls",
+    "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
