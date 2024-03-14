@@ -137,7 +137,7 @@ impl WindowsWindowInner {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
             WM_MOVE => self.handle_move_msg(lparam),
-            WM_SIZE => self.handle_size_msg(lparam),
+            WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_PAINT => self.handle_paint_msg(),
             WM_CLOSE => self.handle_close_msg(msg, wparam, lparam),
             WM_DESTROY => self.handle_destroy_msg(),
@@ -199,12 +199,15 @@ impl WindowsWindowInner {
         LRESULT(0)
     }
 
-    fn handle_size_msg(&self, lparam: LPARAM) -> LRESULT {
+    fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let width = lparam.loword().max(1) as f64;
         let height = lparam.hiword().max(1) as f64;
         self.renderer
             .borrow_mut()
             .update_drawable_size(Size { width, height });
+        if wparam.0 as u32 == SIZE_MINIMIZED {
+            return LRESULT(0);
+        }
         let width = width.into();
         let height = height.into();
         self.size.set(Size { width, height });
@@ -968,8 +971,16 @@ impl PlatformWindow for WindowsWindow {
     // todo(windows)
     fn show_character_palette(&self) {}
 
-    // todo(windows)
-    fn minimize(&self) {}
+    fn minimize(&self) {
+        let hwnd = self.inner.hwnd;
+        self.inner
+            .platform_inner
+            .foreground_executor
+            .spawn(async move {
+                unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+            })
+            .detach();
+    }
 
     // todo(windows)
     fn zoom(&self) {}
