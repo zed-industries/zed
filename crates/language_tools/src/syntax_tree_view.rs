@@ -148,7 +148,7 @@ impl SyntaxTreeView {
         if did_reparse {
             prev_layer = buffer_state.active_layer.take();
         }
-        if buffer_state.buffer != buffer || buffer_state.excerpt_id != buffer_state.excerpt_id {
+        if buffer_state.buffer != buffer || buffer_state.excerpt_id != excerpt_id {
             buffer_state.buffer = buffer.clone();
             buffer_state.excerpt_id = excerpt_id;
             buffer_state.active_layer = None;

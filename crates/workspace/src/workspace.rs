@@ -2663,7 +2663,7 @@ impl Workspace {
         if self
             .follower_states
             .values()
-            .all(|state| state.leader_id != state.leader_id)
+            .all(|state| state.leader_id != leader_id)
         {
             let project_id = self.project.read(cx).remote_id();
             let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
