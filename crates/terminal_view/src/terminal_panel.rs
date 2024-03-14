@@ -5,9 +5,9 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, Action, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, Workspace,
 };
 
 use anyhow::Result;
@@ -69,6 +69,7 @@ impl TerminalPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
+                NewTerminal.boxed_clone(),
                 cx,
             );
             pane.set_can_split(false, cx);

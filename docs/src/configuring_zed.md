@@ -380,6 +380,25 @@ To override settings for a language, add an entry for that language server's nam
 
 `boolean` values
 
+## File Types
+
+- Setting: `file_types`
+- Description: Configure how Zed selects a language for a file based on its filename or extension.
+- Default: `{}`
+
+**Examples**
+
+To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
+
+```json
+{
+  "file_types": {
+    "C++": ["c"],
+    "TOML": ["MyLockFile"]
+  }
+}
+```
+
 ## Git
 
 - Description: Configuration for git-related features.

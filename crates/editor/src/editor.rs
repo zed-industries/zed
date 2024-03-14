@@ -101,6 +101,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
+use std::ops::Not as _;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -2951,13 +2952,10 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        self.insert_with_autoindent_mode(
-            text,
-            Some(AutoindentMode::Block {
-                original_indent_columns: Vec::new(),
-            }),
-            cx,
-        );
+        let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
+            original_indent_columns: Vec::new(),
+        });
+        self.insert_with_autoindent_mode(text, autoindent, cx);
     }
 
     fn insert_with_autoindent_mode(
@@ -5697,6 +5695,9 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(EditorEvent::Edited);
+            cx.emit(EditorEvent::TransactionUndone {
+                transaction_id: tx_id,
+            });
         }
     }
 
@@ -5722,6 +5723,11 @@ impl Editor {
     pub fn finalize_last_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+    }
+
+    pub fn group_until_transaction(&mut self, tx_id: TransactionId, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.group_until_transaction(tx_id, cx));
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
@@ -8551,6 +8557,9 @@ impl Editor {
         {
             self.selection_history
                 .insert_transaction(tx_id, self.selections.disjoint_anchors());
+            cx.emit(EditorEvent::TransactionBegun {
+                transaction_id: tx_id,
+            })
         }
     }
 
@@ -9302,8 +9311,7 @@ impl Editor {
             .redacted_ranges(search_range, |file| {
                 if let Some(file) = file {
                     file.is_private()
-                        && EditorSettings::get(Some((file.worktree_id(), file.path())), cx)
-                            .redact_private_values
+                        && EditorSettings::get(Some(file.as_ref().into()), cx).redact_private_values
                 } else {
                     false
                 }
@@ -9523,9 +9531,8 @@ impl Editor {
                 } else {
                     workspace.active_pane().clone()
                 };
-                pane.update(cx, |pane, _| pane.disable_history());
 
-                for (buffer, ranges) in new_selections_by_buffer.into_iter() {
+                for (buffer, ranges) in new_selections_by_buffer {
                     let editor = workspace.open_project_item::<Self>(pane.clone(), buffer, cx);
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
@@ -9533,8 +9540,6 @@ impl Editor {
                         });
                     });
                 }
-
-                pane.update(cx, |pane, _| pane.enable_history());
             })
         });
     }
@@ -9645,22 +9650,16 @@ impl Editor {
         telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn report_editor_event(
-        &self,
-        _operation: &'static str,
-        _file_extension: Option<String>,
-        _cx: &AppContext,
-    ) {
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
         file_extension: Option<String>,
         cx: &AppContext,
     ) {
+        if cfg!(any(test, feature = "test-support")) {
+            return;
+        }
+
         let Some(project) = &self.project else { return };
 
         // If None, we are in a file without an extension
@@ -10172,6 +10171,12 @@ pub enum EditorEvent {
         autoscroll: bool,
     },
     Closed,
+    TransactionUndone {
+        transaction_id: clock::Lamport,
+    },
+    TransactionBegun {
+        transaction_id: clock::Lamport,
+    },
 }
 
 impl EventEmitter<EditorEvent> for Editor {}

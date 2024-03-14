@@ -34,7 +34,7 @@ impl ElmLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for ElmLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(SERVER_NAME.into())

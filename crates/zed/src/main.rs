@@ -142,9 +142,9 @@ fn main() {
         ));
 
         let client = client::Client::new(clock, http.clone(), cx);
-        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        let mut languages =
+            LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         let copilot_language_server_id = languages.next_language_server_id();
-        languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
@@ -184,8 +184,6 @@ fn main() {
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
 
-        cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
-            .detach();
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -1005,31 +1003,19 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 #[cfg(debug_assertions)]
-async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
-    use std::time::Duration;
-
-    let reload_debounce = Duration::from_millis(250);
-
-    let mut events = fs
-        .watch("crates/zed/src/languages".as_ref(), reload_debounce)
-        .await;
-
-    while (events.next().await).is_some() {
-        languages.reload();
-    }
-}
-
-#[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
+    let path = {
+        let p = Path::new("assets/icons/file_icons/file_types.json");
+        let Ok(full_path) = p.canonicalize() else {
+            return;
+        };
+        full_path
+    };
+
     cx.spawn(|cx| async move {
-        let mut events = fs
-            .watch(
-                "assets/icons/file_icons/file_types.json".as_ref(),
-                Duration::from_millis(100),
-            )
-            .await;
+        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 cx.update_global(|file_types, _| {
@@ -1044,6 +1030,3 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
-
-#[cfg(not(debug_assertions))]
-async fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>) {}

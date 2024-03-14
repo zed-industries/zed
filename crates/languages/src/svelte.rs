@@ -30,7 +30,7 @@ impl SvelteLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for SvelteLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("svelte-language-server".into())

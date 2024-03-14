@@ -33,7 +33,7 @@ impl PurescriptLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for PurescriptLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("purescript-language-server".into())

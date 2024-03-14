@@ -1330,6 +1330,7 @@ impl Interactivity {
         !self.mouse_up_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
+            || !self.click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
@@ -1949,9 +1950,9 @@ impl Interactivity {
                         scroll_offset.y += delta_y;
                     }
 
+                    cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
                         cx.refresh();
-                        cx.stop_propagation();
                     }
                 }
             });

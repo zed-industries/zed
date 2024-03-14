@@ -1042,8 +1042,8 @@ mod tests {
     use util::test::marked_text_ranges;
 
     #[gpui::test]
-    fn test_render_markdown_with_mentions() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_mentions(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
@@ -1090,8 +1090,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_auto_detect_links(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body: "Here is a link https://zed.dev to zeds website".to_string(),
@@ -1130,8 +1130,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links_and_additional_formatting() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body: "**Here is a link https://zed.dev to zeds website**".to_string(),

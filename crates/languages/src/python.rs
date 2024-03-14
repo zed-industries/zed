@@ -28,7 +28,7 @@ impl PythonLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())

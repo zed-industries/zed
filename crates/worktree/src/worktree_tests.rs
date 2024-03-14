@@ -1204,6 +1204,43 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = temp_tree(json!({
+        ".git": {
+            "HEAD": "ref: refs/heads/main\n",
+            "foo": "foo contents",
+        },
+    }));
+    let dot_git_worktree_dir = dir.path().join(".git");
+
+    let tree = Worktree::local(
+        build_client(cx),
+        dot_git_worktree_dir.clone(),
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(tree, &[], &["HEAD", "foo"], &[])
+    });
+
+    std::fs::write(dot_git_worktree_dir.join("new_file"), "new file contents")
+        .unwrap_or_else(|e| panic!("Failed to create in {dot_git_worktree_dir:?} a new file: {e}"));
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(tree, &[], &["HEAD", "foo", "new_file"], &[])
+    });
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     init_test(cx);
