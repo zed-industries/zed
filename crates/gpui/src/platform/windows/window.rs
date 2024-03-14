@@ -909,10 +909,10 @@ impl PlatformWindow for WindowsWindow {
     fn zoom(&self) {}
 
     // todo(windows)
-    fn toggle_full_screen(&self) {}
+    fn toggle_fullscreen(&self) {}
 
     // todo(windows)
-    fn is_full_screen(&self) -> bool {
+    fn is_fullscreen(&self) -> bool {
         false
     }
 

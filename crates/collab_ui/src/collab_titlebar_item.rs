@@ -64,7 +64,7 @@ impl Render for CollabTitlebarItem {
             .w_full()
             .h(titlebar_height(cx))
             .map(|this| {
-                if cx.is_full_screen() {
+                if cx.is_fullscreen() {
                     this.pl_2()
                 } else {
                     // Use pixels here instead of a rem-based size because the macOS traffic

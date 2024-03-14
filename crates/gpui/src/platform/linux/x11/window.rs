@@ -438,12 +438,12 @@ impl PlatformWindow for X11Window {
     }
 
     // todo(linux)
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         unimplemented!()
     }
 
     // todo(linux)
-    fn is_full_screen(&self) -> bool {
+    fn is_fullscreen(&self) -> bool {
         false
     }
 
