@@ -521,7 +521,7 @@ impl ExtensionsPage {
                     .gap_2()
                     .border_1()
                     .border_color(editor_border)
-                    .min_w(rems(384. / 16.))
+                    .min_w(rems_from_px(384.))
                     .rounded_lg()
                     .child(Icon::new(IconName::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx)),
