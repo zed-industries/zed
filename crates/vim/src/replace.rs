@@ -133,3 +133,201 @@ fn undo_replace(vim: &mut Vim, maybe_times: Option<usize>, cx: &mut WindowContex
         });
     });
 }
+
+#[cfg(test)]
+mod test {
+    use indoc::indoc;
+
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+
+    #[gpui::test]
+    async fn test_enter_and_exit_replace_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.simulate_keystroke("shift-r");
+        assert_eq!(cx.mode(), Mode::Replace);
+        cx.simulate_keystroke("escape");
+        assert_eq!(cx.mode(), Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_replace_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        // test normal replace
+        cx.set_shared_state(indoc! {"
+            ˇThe quick brown
+            fox jumps over
+            the lazy dog."})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            Oneˇ quick brown
+            fox jumps over
+            the lazy dog."})
+            .await;
+        assert_eq!(Mode::Replace, cx.neovim_mode().await);
+
+        // test replace with line ending
+        cx.set_shared_state(indoc! {"
+            The quick browˇn
+            fox jumps over
+            the lazy dog."})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            The quick browOneˇ
+            fox jumps over
+            the lazy dog."})
+            .await;
+
+        // test replace with blank line
+        cx.set_shared_state(indoc! {"
+        The quick brown
+        ˇ
+        fox jumps over
+        the lazy dog."})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            The quick brown
+            Oneˇ
+            fox jumps over
+            the lazy dog."})
+            .await;
+
+        // test replace with multi cursor
+        cx.set_shared_state(indoc! {"
+            ˇThe quick brown
+            fox jumps over
+            the lazy ˇdog."})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            Oneˇ quick brown
+            fox jumps over
+            the lazy Oneˇ."})
+            .await;
+
+        // test replace with newline
+        cx.set_shared_state(indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-r", "enter", "O", "n", "e"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            The qu
+            Oneˇ brown
+            fox jumps over
+            the lazy dog."})
+            .await;
+
+        // test replace with multi cursor and newline
+        cx.set_shared_state(indoc! {"
+            ˇThe quick brown
+            fox jumps over
+            the lazy ˇdog."})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-r", "O", "n", "e"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            Oneˇ quick brown
+            fox jumps over
+            the lazy Oneˇ."})
+            .await;
+        cx.simulate_shared_keystrokes(["enter", "T", "w", "o"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            One
+            Twoˇck brown
+            fox jumps over
+            the lazy One
+            Twoˇ"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_replace_mode_undo(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        const UNDO_REPLACE_EXAMPLES: &[&'static str] = &[
+            // replace undo with single line
+            "ˇThe quick brown fox jumps over the lazy dog.",
+            // replace undo with ending line
+            indoc! {"
+                The quick browˇn
+                fox jumps over
+                the lazy dog."
+            },
+            // replace undo with empty line
+            indoc! {"
+                The quick brown
+                ˇ
+                fox jumps over
+                the lazy dog."
+            },
+            // replace undo with multi cursor
+            indoc! {"
+                The quick browˇn
+                fox jumps over
+                the lazy ˇdog."
+            },
+        ];
+
+        for example in UNDO_REPLACE_EXAMPLES {
+            // normal undo
+            cx.assert_binding_matches(
+                [
+                    "shift-r",
+                    "O",
+                    "n",
+                    "e",
+                    "backspace",
+                    "backspace",
+                    "backspace",
+                ],
+                example,
+            )
+            .await;
+            // undo with new line
+            cx.assert_binding_matches(
+                [
+                    "shift-r",
+                    "O",
+                    "enter",
+                    "e",
+                    "backspace",
+                    "backspace",
+                    "backspace",
+                ],
+                example,
+            )
+            .await;
+            cx.assert_binding_matches(
+                [
+                    "shift-r",
+                    "O",
+                    "enter",
+                    "n",
+                    "enter",
+                    "e",
+                    "backspace",
+                    "backspace",
+                    "backspace",
+                    "backspace",
+                    "backspace",
+                ],
+                example,
+            )
+            .await;
+        }
+    }
+}
