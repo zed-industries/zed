@@ -5235,16 +5235,19 @@ impl Project {
                     project_id.ok_or_else(|| anyhow!("Remote project without remote_id"))?;
 
                 for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
+                    let (server_id, completion) = {
+                        let completions_guard = completions.read();
+                        let completion = &completions_guard[completion_index];
+                        if completion.documentation.is_some() {
+                            continue;
+                        }
 
-                    did_resolve = true;
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
+                        did_resolve = true;
+                        let server_id = completion.server_id;
+                        let completion = completion.lsp_completion.clone();
+
+                        (server_id, completion)
+                    };
 
                     Self::resolve_completion_documentation_remote(
                         project_id,
@@ -5259,15 +5262,18 @@ impl Project {
                 }
             } else {
                 for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
+                    let (server_id, completion) = {
+                        let completions_guard = completions.read();
+                        let completion = &completions_guard[completion_index];
+                        if completion.documentation.is_some() {
+                            continue;
+                        }
 
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
+                        let server_id = completion.server_id;
+                        let completion = completion.lsp_completion.clone();
+
+                        (server_id, completion)
+                    };
 
                     let server = this
                         .read_with(&mut cx, |project, _| {
