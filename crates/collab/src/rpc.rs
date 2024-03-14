@@ -486,9 +486,9 @@ impl Server {
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, ?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "error handling message")
+                            tracing::error!(%error, total_duration_ms, processing_duration_ms, queue_duration_ms, "error handling message")
                         }
-                        Ok(()) => tracing::info!(?total_duration_ms, ?processing_duration_ms, ?queue_duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(total_duration_ms, processing_duration_ms, queue_duration_ms, "finished handling message"),
                     }
                 }
                 .instrument(span)
