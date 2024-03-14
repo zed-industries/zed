@@ -874,7 +874,8 @@ impl Workspace {
 
                     (Some(bounds), Some(serialized_display), fullscreen)
                 } else {
-                    (None, None, false)
+                    let display = DB.last_monitor().log_err().flatten();
+                    (None, display, false)
                 };
 
                 // Use the serialized workspace to construct the new window

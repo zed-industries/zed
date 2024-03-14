@@ -421,6 +421,16 @@ impl WorkspaceDb {
     }
 
     query! {
+        pub fn last_monitor() -> Result<Option<Uuid>> {
+            SELECT display
+            FROM workspaces
+            WHERE workspace_location IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
+        }
+    }
+
+    query! {
         pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
             DELETE FROM workspaces
             WHERE workspace_id IS ?
