@@ -1231,6 +1231,9 @@ impl ProjectSearchView {
         if !self.panels_with_errors.is_empty() {
             return None;
         }
+        if query.as_ref().is_some_and(|query| query.is_empty()) {
+            return None;
+        }
         query
     }
 
