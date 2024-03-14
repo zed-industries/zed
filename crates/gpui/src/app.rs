@@ -1134,7 +1134,6 @@ impl AppContext {
 
     /// Sets the list of recent files for this application. This will replace any existing recents.
     pub fn set_recents(&mut self, paths: Vec<&str>) {
-        println!("setting recents");
         self.platform.set_recents(paths);
     }
 
