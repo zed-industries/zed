@@ -241,7 +241,7 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn set_recents(&self, paths: Vec<&str>) {
+    fn set_recents(&self, _paths: Vec<String>) {
         unimplemented!()
     }
 

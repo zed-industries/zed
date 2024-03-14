@@ -772,12 +772,12 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_recents(&self, paths: Vec<&str>) {
+    fn set_recents(&self, paths: Vec<String>) {
         unsafe {
             let document_controller: id =
                 msg_send![class!(NSDocumentController), sharedDocumentController];
             for path in paths {
-                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path));
+                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path.as_str()));
                 let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
             }
         }

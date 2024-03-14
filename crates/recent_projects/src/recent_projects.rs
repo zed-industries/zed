@@ -57,7 +57,16 @@ impl RecentProjects {
                 .await
                 .unwrap_or_default();
             println!("{workspaces:?}");
+            let mut paths = Vec::new();
+            for (_, location) in &workspaces {
+                let locations = location.paths();
+                let path = locations[0].to_str();
+                if let Some(p) = path {
+                    paths.push(p.to_owned());
+                }
+            }
             this.update(&mut cx, move |this, cx| {
+                (*cx).set_recents(paths);
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.workspaces = workspaces;
                     picker.update_matches(picker.query(cx), cx)

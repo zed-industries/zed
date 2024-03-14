@@ -260,7 +260,7 @@ fn main() {
         extensions_ui::init(cx);
 
         cx.set_menus(app_menus());
-        cx.set_recents(vec!["/Users/danielzhu/Documents"]);
+        // cx.set_recents(vec!["/Users/danielzhu/Documents".to_owned()]);
         initialize_workspace(app_state.clone(), cx);
 
         // todo(linux): unblock this
