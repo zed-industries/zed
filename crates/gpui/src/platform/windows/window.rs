@@ -19,60 +19,24 @@ use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use smallvec::SmallVec;
+use std::result::Result;
 use windows::{
-    core::{implement, w, HSTRING, PCWSTR},
+    core::*,
     Win32::{
-        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, POINTL, S_OK, WPARAM},
-        Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
-        System::{
-            Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
-            Ole::{
-                IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
-                CF_HDROP, DROPEFFECT, DROPEFFECT_LINK, DROPEFFECT_NONE,
-            },
-            SystemServices::{
-                MK_LBUTTON, MK_MBUTTON, MK_RBUTTON, MK_XBUTTON1, MK_XBUTTON2, MODIFIERKEYS_FLAGS,
-            },
-        },
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::{Com::*, Ole::*, SystemServices::*},
         UI::{
-            Controls::{
-                TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
-                TD_INFORMATION_ICON, TD_WARNING_ICON,
-            },
-            Input::{
-                Ime::{
-                    ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext,
-                    ImmSetCandidateWindow, CANDIDATEFORM, CFS_CANDIDATEPOS, GCS_COMPSTR,
-                },
-                KeyboardAndMouse::{
-                    GetKeyState, VIRTUAL_KEY, VK_0, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
-                    VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU,
-                    VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
-                },
-            },
-            Shell::{DragQueryFileW, HDROP},
-            WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, LoadCursorW, PostQuitMessage,
-                RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
-                GWLP_USERDATA, HMENU, IDC_ARROW, SW_MAXIMIZE, SW_SHOW, WHEEL_DELTA,
-                WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_IME_CHAR,
-                WM_IME_COMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-                WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-                WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN,
-                WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
-                WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1, XBUTTON2,
-            },
+            Controls::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            Shell::*,
+            WindowsAndMessaging::*,
         },
     },
 };
 
-use crate::{
-    platform::blade::BladeRenderer, AnyWindowHandle, Bounds, GlobalPixels, HiLoWord, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptLevel, Scene, ScrollDelta, Size, TouchPhase,
-    WindowAppearance, WindowParams, WindowsDisplay, WindowsPlatformInner,
-};
+use crate::platform::blade::BladeRenderer;
+use crate::*;
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
