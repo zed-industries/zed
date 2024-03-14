@@ -1533,21 +1533,21 @@ async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
         },
     };
 
-    let path_full_path = smol::fs::canonicalize(path).await?;
-    let target_full_path;
-    if path_full_path.is_file() {
-        if let Some(parent) = target.parent() {
+    let target_full_path = smol::fs::canonicalize(target).await?;
+    let path_full_path;
+    if target_full_path.is_file() {
+        if let Some(parent) = path.parent() {
             smol::fs::create_dir_all(parent).await?;
-            target_full_path = smol::fs::canonicalize(parent)
+            path_full_path = smol::fs::canonicalize(parent)
                 .await?
-                .join(target.file_name().unwrap());
+                .join(path.file_name().unwrap());
         } else {
             // no parent, PathBuf("foo.txt")
-            target_full_path = std::env::current_dir()?.join(target);
+            path_full_path = std::env::current_dir()?.join(path);
         }
     } else {
-        smol::fs::create_dir_all(&target).await?;
-        target_full_path = smol::fs::canonicalize(target).await?;
+        smol::fs::create_dir_all(&path).await?;
+        path_full_path = smol::fs::canonicalize(path).await?;
     }
 
     let verb = "runas".to_string();
