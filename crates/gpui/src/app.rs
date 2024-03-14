@@ -1132,9 +1132,9 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Sets the list of recent files for this application.
-    pub fn set_recents(&mut self, paths: Vec<String>) {
-        self.platform.set_recents(paths);
+    /// Adds given path to list of recent paths.
+    pub fn note_recent(&mut self, path: &PathBuf) {
+        self.platform.note_recent(path);
     }
 
     /// Dispatch an action to the currently active window or global action handler

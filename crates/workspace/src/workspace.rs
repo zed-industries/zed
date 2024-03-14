@@ -3412,7 +3412,7 @@ impl Workspace {
             if !location.paths().is_empty() {
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
                 let docks = build_serialized_docks(self, cx);
-
+                (*cx).note_recent(&location.paths()[0]);
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
                     location,
@@ -3421,24 +3421,8 @@ impl Workspace {
                     display: Default::default(),
                     docks,
                 };
-
-                cx.spawn(|mut cx| async move {
-                    persistence::DB.save_workspace(serialized_workspace).await;
-                    let workspaces = WORKSPACE_DB
-                        .recent_workspaces_on_disk()
-                        .await
-                        .unwrap_or_default();
-                    let mut paths = Vec::new();
-                    for (_, location) in &workspaces {
-                        let locations = location.paths();
-                        let path = locations[0].to_str();
-                        if let Some(p) = path {
-                            paths.push(p.to_owned());
-                        }
-                    }
-                    cx.update(|cx| (*cx).set_recents(paths))
-                })
-                .detach();
+                cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace))
+                    .detach();
             }
         }
     }
