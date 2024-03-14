@@ -157,7 +157,7 @@
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
-  // The number of lines to keep above/below the cursor when scrolling.
+  // The number of lines to keep above/below the cursor when moving the cursor.
   "vertical_scroll_margin": 3,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
