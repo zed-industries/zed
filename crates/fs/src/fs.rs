@@ -1538,12 +1538,17 @@ async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
     if target_full_path.is_file() {
         if let Some(parent) = path.parent() {
             smol::fs::create_dir_all(parent).await?;
-            path_full_path = smol::fs::canonicalize(parent)
-                .await?
-                .join(path.file_name().unwrap());
+            if parent.as_os_str().is_empty() {
+                // PathBuf("foo.txt")
+                path_full_path = std::env::current_dir().unwrap().join(path);
+            } else {
+                path_full_path = smol::fs::canonicalize(parent)
+                    .await?
+                    .join(path.file_name().unwrap());
+            }
         } else {
-            // no parent, PathBuf("foo.txt")
-            path_full_path = std::env::current_dir()?.join(path);
+            // can not link root dir
+            return Err(anyhow!("can not link root dir!"));
         }
     } else {
         smol::fs::create_dir_all(&path).await?;
