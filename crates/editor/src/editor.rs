@@ -9531,9 +9531,8 @@ impl Editor {
                 } else {
                     workspace.active_pane().clone()
                 };
-                pane.update(cx, |pane, _| pane.disable_history());
 
-                for (buffer, ranges) in new_selections_by_buffer.into_iter() {
+                for (buffer, ranges) in new_selections_by_buffer {
                     let editor = workspace.open_project_item::<Self>(pane.clone(), buffer, cx);
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
@@ -9541,8 +9540,6 @@ impl Editor {
                         });
                     });
                 }
-
-                pane.update(cx, |pane, _| pane.enable_history());
             })
         });
     }
