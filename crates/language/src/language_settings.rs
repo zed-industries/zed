@@ -103,10 +103,10 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
-    /// Which code actions to run on save
-    pub code_actions_on_format: HashMap<String, bool>,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
+    /// Which code actions to run on save
+    pub code_actions_on_format: HashMap<String, bool>,
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
@@ -233,11 +233,6 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
-
-    /// Which code actions to run on save
-    ///
-    /// Default: {} (or {"source.organizeImports": true} for Go).
-    pub code_actions_on_format: Option<HashMap<String, bool>>,
     // Controls how the editor handles the autoclosed characters.
     // When set to `false`(default), skipping over and auto-removing of the closing characters
     // happen only for auto-inserted characters.
@@ -246,6 +241,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
+    /// Which code actions to run on save
+    ///
+    /// Default: {} (or {"source.organizeImports": true} for Go).
+    pub code_actions_on_format: Option<HashMap<String, bool>>,
 }
 
 /// The contents of the GitHub Copilot settings.
