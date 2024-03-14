@@ -5281,7 +5281,6 @@ dependencies = [
  "rope",
  "rust-embed",
  "schemars",
- "semver",
  "serde",
  "serde_derive",
  "serde_json",
