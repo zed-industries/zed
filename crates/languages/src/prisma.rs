@@ -48,21 +48,21 @@ impl LspAdapter for PrismaLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<String>().unwrap();
+        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
-        if fs::metadata(&server_path).await.is_err() {
-            self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[("@prisma/language-server", version.as_str())],
-                )
-                .await?;
-        }
+        self.node
+            .npm_install_latest_package_if_outdated(
+                "@prisma/language-server",
+                &server_path,
+                &container_dir,
+                &latest_version,
+            )
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,

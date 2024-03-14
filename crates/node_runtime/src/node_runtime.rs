@@ -1,7 +1,10 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use futures::AsyncReadExt;
+use semver::Version;
 use serde::Deserialize;
+use serde_json::Value;
 use smol::{fs, io::BufReader, lock::Mutex, process::Command};
 use std::process::{Output, Stdio};
 use std::{
@@ -10,6 +13,7 @@ use std::{
     sync::Arc,
 };
 use util::http::HttpClient;
+use util::ResultExt;
 
 const VERSION: &str = "v18.15.0";
 
@@ -39,8 +43,59 @@ pub trait NodeRuntime: Send + Sync {
 
     async fn npm_package_latest_version(&self, name: &str) -> Result<String>;
 
+    async fn npm_install_latest_package_if_outdated(
+        &self,
+        server_name: &str,
+        server_path: &Path,
+        directory: &PathBuf,
+        latest_version: &str,
+    ) -> Result<()>;
+
     async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
         -> Result<()>;
+
+    // In the case of errors or missing data, we assume that we should install the language server.
+    async fn should_install_language_server(
+        &self,
+        server_name: &str,
+        server_path: &Path,
+        directory: &PathBuf,
+        latest_version: &str,
+    ) -> Result<bool> {
+        if fs::metadata(server_path).await.is_err() {
+            return Ok(true);
+        }
+
+        let package_json_path = directory.join("package.json");
+
+        let mut contents = String::new();
+        let mut file = fs::File::open(package_json_path).await?;
+
+        file.read_to_string(&mut contents).await?;
+
+        let package_json: Value = serde_json::from_str(&contents)?;
+
+        let installed_version = package_json
+            .get("dependencies")
+            .and_then(|deps| deps.get(server_name))
+            .and_then(|server_name| server_name.as_str());
+
+        let Some(installed_version) = installed_version else {
+            return Ok(true);
+        };
+
+        let Some(latest_version) = Version::parse(latest_version).log_err() else {
+            return Ok(true);
+        };
+
+        let installed_version = installed_version.trim_start_matches(|c: char| !c.is_ascii_digit());
+
+        let Some(installed_version) = Version::parse(installed_version).log_err() else {
+            return Ok(true);
+        };
+
+        Ok(installed_version < latest_version)
+    }
 }
 
 pub struct RealNodeRuntime {
@@ -227,6 +282,24 @@ impl NodeRuntime for RealNodeRuntime {
             .ok_or_else(|| anyhow!("no version found for npm package {}", name))
     }
 
+    async fn npm_install_latest_package_if_outdated(
+        &self,
+        server_name: &str,
+        server_path: &Path,
+        directory: &PathBuf,
+        latest_version: &str,
+    ) -> Result<()> {
+        let should_install_language_server = self
+            .should_install_language_server(server_name, server_path, directory, latest_version)
+            .await
+            .unwrap_or(true);
+        if !should_install_language_server {
+            return Ok(());
+        }
+        self.npm_install_packages(directory, &[(server_name, latest_version)])
+            .await
+    }
+
     async fn npm_install_packages(
         &self,
         directory: &Path,
@@ -239,6 +312,7 @@ impl NodeRuntime for RealNodeRuntime {
 
         let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
         arguments.extend_from_slice(&[
+            "--save-exact",
             "--fetch-retry-mintimeout",
             "2000",
             "--fetch-retry-maxtimeout",
@@ -286,5 +360,15 @@ impl NodeRuntime for FakeNodeRuntime {
         packages: &[(&str, &str)],
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
+    }
+
+    async fn npm_install_latest_package_if_outdated(
+        &self,
+        _: &str,
+        _: &Path,
+        _: &PathBuf,
+        _: &str,
+    ) -> Result<()> {
+        unreachable!()
     }
 }

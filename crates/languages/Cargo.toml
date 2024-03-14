@@ -28,6 +28,7 @@ regex.workspace = true
 rope.workspace = true
 rust-embed = "8.2.0"
 schemars.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
