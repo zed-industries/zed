@@ -3920,7 +3920,7 @@ dependencies = [
  "text",
  "time",
  "util",
- "windows-sys 0.52.0",
+ "windows 0.53.0",
 ]
 
 [[package]]
