@@ -380,6 +380,16 @@ To override settings for a language, add an entry for that language server's nam
 
 `boolean` values
 
+## Always Treat Brackets As Autoclosed
+
+- Description: Controls how the editor handles the autoclosed characters.
+- Setting: `always_treat_brackets_as_autoclosed`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## File Types
 
 - Setting: `file_types`
@@ -573,6 +583,8 @@ The following settings can be overridden for each specific language:
 - `show_whitespaces`
 - `soft_wrap`
 - `tab_size`
+- `use_autoclose`
+- `always_treat_brackets_as_autoclosed`
 
 These values take in the same options as the root-level settings with the same name.
 
