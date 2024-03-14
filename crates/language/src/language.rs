@@ -408,7 +408,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn fetch_server_binary(
         &self,
-        lastest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary>;
