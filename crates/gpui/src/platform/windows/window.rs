@@ -297,17 +297,15 @@ impl WindowsWindowInner {
         let center_x = x as f32 + size.width.0 / 2.0;
         let center_y = y as f32 + size.height.0 / 2.0;
         let monitor_bounds = self.display.borrow().bounds();
-        // center of the window may have moved to another monitor
         if center_x < monitor_bounds.left().0
             || center_x > monitor_bounds.right().0
             || center_y < monitor_bounds.top().0
             || center_y > monitor_bounds.bottom().0
         {
+            // center of the window may have moved to another monitor
             let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
-            println!("Monitor: {}, {}", monitor.0, monitor.is_invalid());
             if !monitor.is_invalid() && self.display.borrow().handle != monitor {
-                // we will get the same monitor if we only have one monitor
-                println!("Reach here");
+                // we will get the same monitor if we only have one
                 (*self.display.borrow_mut()) = Rc::new(WindowsDisplay::new_with_handle(monitor));
             }
         }
