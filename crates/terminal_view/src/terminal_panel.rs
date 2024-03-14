@@ -379,6 +379,15 @@ impl TerminalPanel {
                         .ok();
                 }),
             );
+            // TODO kb focus the current terminal
+            self.activate_terminal_view(existing_item_index, cx);
+            let task_workspace = self.workspace.clone();
+            cx.spawn(|_, mut cx| async move {
+                task_workspace
+                    .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                    .ok()
+            })
+            .detach();
         }
     }
 
