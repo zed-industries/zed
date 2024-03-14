@@ -515,7 +515,9 @@
       "ctrl-w": "editor::DeleteToPreviousWordStart",
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
-      "ctrl-d": "vim::Outdent"
+      "ctrl-d": "vim::Outdent",
+      "ctrl-r \"": "editor::Paste",
+      "ctrl-r +": "editor::Paste"
     }
   },
   {
