@@ -19,6 +19,7 @@ use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use smallvec::SmallVec;
+use std::result::Result;
 use windows::{
     core::*,
     Win32::{
@@ -33,10 +34,9 @@ use windows::{
         },
     },
 };
-use std::result::Result;
 
-use crate::*;
 use crate::platform::blade::BladeRenderer;
+use crate::*;
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
