@@ -1,5 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke};
 
 /// The way a [`KeyBinding`] should be displayed.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -158,12 +158,15 @@ impl RenderOnce for Key {
             .py_0()
             .map(|this| {
                 if single_char {
-                    this.w(rems(14. / 16.)).flex().flex_none().justify_center()
+                    this.w(rems_from_px(14.))
+                        .flex()
+                        .flex_none()
+                        .justify_center()
                 } else {
                     this.px_0p5()
                 }
             })
-            .h(rems(14. / 16.))
+            .h(rems_from_px(14.))
             .text_ui()
             .line_height(relative(1.))
             .text_color(cx.theme().colors().text_muted)
@@ -184,7 +187,7 @@ pub struct KeyIcon {
 
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div().w(rems(14. / 16.)).child(
+        div().w(rems_from_px(14.)).child(
             Icon::new(self.icon)
                 .size(IconSize::Small)
                 .color(Color::Muted),

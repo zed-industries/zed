@@ -1,5 +1,5 @@
 use gpui::{relative, DefiniteLength, MouseButton};
-use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
+use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -278,10 +278,10 @@ pub enum ButtonSize {
 impl ButtonSize {
     fn height(self) -> Rems {
         match self {
-            ButtonSize::Large => rems(32. / 16.),
-            ButtonSize::Default => rems(22. / 16.),
-            ButtonSize::Compact => rems(18. / 16.),
-            ButtonSize::None => rems(16. / 16.),
+            ButtonSize::Large => rems_from_px(32.),
+            ButtonSize::Default => rems_from_px(22.),
+            ButtonSize::Compact => rems_from_px(18.),
+            ButtonSize::None => rems_from_px(16.),
         }
     }
 }

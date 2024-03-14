@@ -1,4 +1,4 @@
-use gpui::{rems, svg, IntoElement, Rems};
+use gpui::{svg, IntoElement, Rems};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -15,10 +15,10 @@ pub enum IconSize {
 impl IconSize {
     pub fn rems(self) -> Rems {
         match self {
-            IconSize::Indicator => rems(10. / 16.),
-            IconSize::XSmall => rems(12. / 16.),
-            IconSize::Small => rems(14. / 16.),
-            IconSize::Medium => rems(16. / 16.),
+            IconSize::Indicator => rems_from_px(10.),
+            IconSize::XSmall => rems_from_px(12.),
+            IconSize::Small => rems_from_px(14.),
+            IconSize::Medium => rems_from_px(16.),
         }
     }
 }
