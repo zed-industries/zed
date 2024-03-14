@@ -20,7 +20,7 @@ For macOS users, you can also install Zed using [Homebrew](https://brew.sh/):
 brew install zed
 ```
 
-Alternatively, to install the preview version:
+Alternatively, to install the Preview release:
 
 ```sh
 brew tap homebrew/cask-versions
