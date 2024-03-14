@@ -49,16 +49,16 @@ pub trait NodeRuntime: Send + Sync {
     // In the case of errors or missing data, we assume that we should install the language server.
     async fn should_install_npm_package(
         &self,
-        server_name: &str,
-        server_path: &Path,
-        directory: &PathBuf,
+        package_name: &str,
+        executable_path: &Path,
+        executable_root_directory: &PathBuf,
         latest_version: &str,
     ) -> bool {
-        if fs::metadata(server_path).await.is_err() {
+        if fs::metadata(executable_path).await.is_err() {
             return true;
         }
 
-        let package_json_path = directory.join("package.json");
+        let package_json_path = executable_root_directory.join("package.json");
 
         let mut contents = String::new();
 
@@ -74,7 +74,7 @@ pub trait NodeRuntime: Send + Sync {
 
         let installed_version = package_json
             .get("dependencies")
-            .and_then(|deps| deps.get(server_name))
+            .and_then(|deps| deps.get(package_name))
             .and_then(|server_name| server_name.as_str());
 
         let Some(installed_version) = installed_version else {
