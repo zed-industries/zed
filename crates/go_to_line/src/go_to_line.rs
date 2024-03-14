@@ -337,7 +337,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<GoToLine> {
-        cx.dispatch_action(Toggle::default());
+        cx.dispatch_action(Toggle);
         workspace.update(cx, |workspace, cx| {
             workspace.active_modal::<GoToLine>(cx).unwrap().clone()
         })

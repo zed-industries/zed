@@ -447,7 +447,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<OutlineViewDelegate>> {
-        cx.dispatch_action(Toggle::default());
+        cx.dispatch_action(Toggle);
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)
