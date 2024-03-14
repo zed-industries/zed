@@ -31,7 +31,7 @@ impl HtmlLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for HtmlLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-html-language-server".into())

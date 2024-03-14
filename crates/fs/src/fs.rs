@@ -56,6 +56,7 @@ pub trait Fs: Send + Sync {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
+    async fn is_dir(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
     async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
@@ -262,6 +263,12 @@ impl Fs for RealFs {
         smol::fs::metadata(path)
             .await
             .map_or(false, |metadata| metadata.is_file())
+    }
+
+    async fn is_dir(&self, path: &Path) -> bool {
+        smol::fs::metadata(path)
+            .await
+            .map_or(false, |metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
@@ -500,7 +507,12 @@ impl FakeFsState {
     fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
             .try_read_path(target, true)
-            .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
+            .ok_or_else(|| {
+                anyhow!(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("not found: {}", target.display())
+                ))
+            })?
             .0)
     }
 
@@ -1258,6 +1270,12 @@ impl Fs for FakeFs {
         } else {
             false
         }
+    }
+
+    async fn is_dir(&self, path: &Path) -> bool {
+        self.metadata(path)
+            .await
+            .is_ok_and(|metadata| metadata.is_some_and(|metadata| metadata.is_dir))
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {

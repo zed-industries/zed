@@ -30,7 +30,7 @@ impl AstroLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for AstroLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("astro-language-server".into())

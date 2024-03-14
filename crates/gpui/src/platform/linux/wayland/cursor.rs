@@ -35,10 +35,26 @@ impl Cursor {
     }
 
     pub fn set_icon(&mut self, wl_pointer: &WlPointer, cursor_icon_name: String) {
+        let mut cursor_icon_name = cursor_icon_name.clone();
         if self.current_icon_name != cursor_icon_name {
-            if self.theme.is_ok() {
-                if let Some(cursor) = self.theme.as_mut().unwrap().get_cursor(&cursor_icon_name) {
-                    let buffer: &CursorImageBuffer = &cursor[0];
+            if let Ok(theme) = &mut self.theme {
+                let mut buffer: Option<&CursorImageBuffer>;
+
+                if let Some(cursor) = theme.get_cursor(&cursor_icon_name) {
+                    buffer = Some(&cursor[0]);
+                } else if let Some(cursor) = theme.get_cursor("default") {
+                    buffer = Some(&cursor[0]);
+                    cursor_icon_name = "default".to_string();
+                    log::warn!(
+                        "Linux: Wayland: Unable to get cursor icon: {}. Using default cursor icon",
+                        cursor_icon_name
+                    );
+                } else {
+                    buffer = None;
+                    log::warn!("Linux: Wayland: Unable to get default cursor too!");
+                }
+
+                if let Some(buffer) = &mut buffer {
                     let (width, height) = buffer.dimensions();
                     let (hot_x, hot_y) = buffer.hotspot();
 
@@ -53,11 +69,6 @@ impl Cursor {
                     self.surface.commit();
 
                     self.current_icon_name = cursor_icon_name;
-                } else {
-                    log::warn!(
-                        "Linux: Wayland: Unable to get cursor icon: {}",
-                        cursor_icon_name
-                    );
                 }
             } else {
                 log::warn!("Linux: Wayland: Unable to load cursor themes");

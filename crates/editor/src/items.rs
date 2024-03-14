@@ -1247,65 +1247,15 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::AppContext;
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-        time::SystemTime,
-    };
+    use language::TestFile;
+    use std::path::Path;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut AppContext) {
         let file = TestFile {
             path: Path::new("").into(),
-            full_path: PathBuf::from(""),
+            root_name: String::new(),
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
-    }
-
-    struct TestFile {
-        path: Arc<Path>,
-        full_path: PathBuf,
-    }
-
-    impl language::File for TestFile {
-        fn path(&self) -> &Arc<Path> {
-            &self.path
-        }
-
-        fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
-            self.full_path.clone()
-        }
-
-        fn as_local(&self) -> Option<&dyn language::LocalFile> {
-            unimplemented!()
-        }
-
-        fn mtime(&self) -> SystemTime {
-            unimplemented!()
-        }
-
-        fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn worktree_id(&self) -> usize {
-            0
-        }
-
-        fn is_deleted(&self) -> bool {
-            unimplemented!()
-        }
-
-        fn as_any(&self) -> &dyn std::any::Any {
-            unimplemented!()
-        }
-
-        fn to_proto(&self) -> rpc::proto::File {
-            unimplemented!()
-        }
-
-        fn is_private(&self) -> bool {
-            false
-        }
     }
 }

@@ -14,6 +14,7 @@ use serde_json::json;
 use std::{os, task::Poll};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
+use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {

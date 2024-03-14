@@ -89,12 +89,15 @@ async fn get_authenticated_user(
     Query(params): Query<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<AuthenticatedUserResponse>> {
+    let initial_channel_id = app.config.auto_join_channel_id;
+
     let user = app
         .db
         .get_or_create_user_by_github_account(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            initial_channel_id,
         )
         .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
@@ -179,11 +182,13 @@ async fn add_contributor(
     Extension(app): Extension<Arc<AppState>>,
     extract::Json(params): extract::Json<AuthenticatedUserParams>,
 ) -> Result<()> {
+    let initial_channel_id = app.config.auto_join_channel_id;
     app.db
         .add_contributor(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            initial_channel_id,
         )
         .await
 }

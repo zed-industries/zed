@@ -7,7 +7,6 @@ use crate::{ElevationIndex, UiTextSize};
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
-        .z_index(index.z_index())
         .rounded(px(8.))
         .border()
         .border_color(cx.theme().colors().border_variant)

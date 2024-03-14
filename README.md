@@ -10,7 +10,7 @@ You can [download](https://zed.dev/download) Zed today for macOS (v10.15+).
 
 Support for additional platforms is on our [roadmap](https://zed.dev/roadmap):
 
-- Linux ([tracking issue](https://github.com/zed-industries/zed/issues/5395))
+- Linux ([tracking issue](https://github.com/zed-industries/zed/issues/7015))
 - Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
 - Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
 

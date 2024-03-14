@@ -9,14 +9,13 @@ use crate::{
 };
 
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{div, TestAppContext, VisualTestContext, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageRegistry,
-    Override, Point,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -4447,10 +4446,8 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_rust::language()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(language.clone());
+    cx.language_registry().add(language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
     });
 
@@ -4649,12 +4646,10 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_typescript::language_tsx()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(html_language.clone());
-    registry.add(javascript_language.clone());
+    cx.language_registry().add(html_language.clone());
+    cx.language_registry().add(javascript_language.clone());
 
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(html_language), cx);
     });
 
@@ -4829,11 +4824,8 @@ async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
         .unwrap(),
     );
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(rust_language.clone());
-
+    cx.language_registry().add(rust_language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(rust_language), cx);
     });
 
@@ -5206,20 +5198,39 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
         editor.handle_input(":", cx);
         assert_eq!(editor.text(cx), "Hello 👋 😄".unindent());
 
-        editor.handle_input(":1:", cx);
-        assert_eq!(editor.text(cx), "Hello 👋 😄:1:".unindent());
+        // Ensure shortcode gets replaced when it is part of a word that only consists of emojis
+        editor.handle_input(":wave", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄:wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋".unindent());
+
+        editor.handle_input(":1", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1:".unindent());
 
         // Ensure shortcode does not get replaced when it is part of a word
-        editor.handle_input(" Test:wave:", cx);
-        assert_eq!(editor.text(cx), "Hello 👋 😄:1: Test:wave:".unindent());
+        editor.handle_input(" Test:wave", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1: Test:wave".unindent());
+
+        editor.handle_input(":", cx);
+        assert_eq!(editor.text(cx), "Hello 👋 😄👋:1: Test:wave:".unindent());
 
         editor.set_auto_replace_emoji_shortcode(false);
 
         // Ensure shortcode does not get replaced when auto replace is off
-        editor.handle_input(" :wave:", cx);
+        editor.handle_input(" :wave", cx);
         assert_eq!(
             editor.text(cx),
-            "Hello 👋 😄:1: Test:wave: :wave:".unindent()
+            "Hello 👋 😄👋:1: Test:wave: :wave".unindent()
+        );
+
+        editor.handle_input(":", cx);
+        assert_eq!(
+            editor.text(cx),
+            "Hello 👋 😄👋:1: Test:wave: :wave:".unindent()
         );
     });
 }
@@ -6120,12 +6131,10 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
         Some(tree_sitter_rust::language()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(language.clone());
-
     let mut cx = EditorTestContext::new(cx).await;
+
+    cx.language_registry().add(language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
     });
 
@@ -6275,12 +6284,9 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_typescript::language_tsx()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(html_language.clone());
-    registry.add(javascript_language.clone());
-
+    cx.language_registry().add(html_language.clone());
+    cx.language_registry().add(javascript_language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(html_language), cx);
     });
 
@@ -6854,7 +6860,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                bounds: WindowBounds::Fixed(Bounds::from_corners(
+                bounds: Some(Bounds::from_corners(
                     gpui::Point::new(0_f64.into(), 0_f64.into()),
                     gpui::Point::new(10_f64.into(), 80_f64.into()),
                 )),
@@ -7423,6 +7429,8 @@ fn test_split_words() {
     assert_eq!(split("Hello_World"), &["Hello_", "World"]);
     assert_eq!(split("helloWOrld"), &["hello", "WOrld"]);
     assert_eq!(split("helloworld"), &["helloworld"]);
+
+    assert_eq!(split(":do_the_thing"), &[":", "do_", "the_", "thing"]);
 }
 
 #[gpui::test]
@@ -8312,6 +8320,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             "Some other server name".into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: Some(json!({
                     "some other init value": false
@@ -8330,6 +8339,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: Some(json!({
                     "anotherInitValue": false
@@ -8348,6 +8358,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: Some(json!({
                     "anotherInitValue": false
@@ -8366,6 +8377,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         project_settings.lsp.insert(
             language_server_name.into(),
             LspSettings {
+                binary: None,
                 settings: None,
                 initialization_options: None,
             },

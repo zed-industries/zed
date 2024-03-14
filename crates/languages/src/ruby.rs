@@ -6,7 +6,7 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for RubyLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("solargraph".into())

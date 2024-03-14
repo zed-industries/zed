@@ -467,10 +467,6 @@ impl ChatPanel {
             .group("")
             .when(!is_continuation_from_previous, |this| this.pt_2())
             .child(
-                self.render_popover_buttons(&cx, message_id, can_delete_message)
-                    .neg_mt_2p5(),
-            )
-            .child(
                 div()
                     .group("")
                     .bg(background)
@@ -497,9 +493,10 @@ impl ChatPanel {
                                 )
                                 .child(
                                     Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
                                         message.timestamp,
+                                        OffsetDateTime::now_utc(),
                                         self.local_timezone,
+                                        time_format::TimestampFormat::EnhancedAbsolute,
                                     ))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
@@ -583,6 +580,10 @@ impl ChatPanel {
                     )
                 },
             )
+            .child(
+                self.render_popover_buttons(&cx, message_id, can_delete_message)
+                    .neg_mt_2p5(),
+            )
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -600,11 +601,9 @@ impl ChatPanel {
     ) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .child(
                 div()
                     .absolute()
-                    .z_index(1)
                     .right_8()
                     .w_6()
                     .rounded_tl_md()
@@ -638,7 +637,6 @@ impl ChatPanel {
             .child(
                 div()
                     .absolute()
-                    .z_index(1)
                     .right_2()
                     .w_6()
                     .rounded_tr_md()
@@ -855,7 +853,7 @@ impl Render for ChatPanel {
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_flex().z_index(1).child(
+                h_flex().child(
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()
@@ -1044,8 +1042,8 @@ mod tests {
     use util::test::marked_text_ranges;
 
     #[gpui::test]
-    fn test_render_markdown_with_mentions() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_mentions(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
@@ -1092,8 +1090,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_auto_detect_links(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body: "Here is a link https://zed.dev to zeds website".to_string(),
@@ -1132,8 +1130,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links_and_additional_formatting() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body: "**Here is a link https://zed.dev to zeds website**".to_string(),

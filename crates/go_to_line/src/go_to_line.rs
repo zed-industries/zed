@@ -1,6 +1,6 @@
 pub mod cursor_position;
 
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Editor};
+use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
@@ -33,6 +33,8 @@ impl FocusableView for GoToLine {
     }
 }
 impl EventEmitter<DismissEvent> for GoToLine {}
+
+enum GoToLineRowHighlights {}
 
 impl GoToLine {
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
@@ -84,7 +86,7 @@ impl GoToLine {
             .update(cx, |_, cx| {
                 let scroll_position = self.prev_scroll_position.take();
                 self.active_editor.update(cx, |editor, cx| {
-                    editor.highlight_rows(None);
+                    editor.clear_row_highlights::<GoToLineRowHighlights>();
                     if let Some(scroll_position) = scroll_position {
                         editor.set_scroll_position(scroll_position, cx);
                     }
@@ -112,9 +114,13 @@ impl GoToLine {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                let display_point = point.to_display_point(&snapshot);
-                let row = display_point.row();
-                active_editor.highlight_rows(Some(row..row + 1));
+                let anchor = snapshot.buffer_snapshot.anchor_before(point);
+                active_editor.clear_row_highlights::<GoToLineRowHighlights>();
+                active_editor.highlight_rows::<GoToLineRowHighlights>(
+                    anchor..anchor,
+                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    cx,
+                );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
             cx.notify();
@@ -205,5 +211,179 @@ impl Render for GoToLine {
                             .child(Label::new(help_text).color(Color::Muted)),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use gpui::{TestAppContext, VisualTestContext};
+    use indoc::indoc;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use workspace::{AppState, Workspace};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": indoc!{"
+                    struct SingleLine; // display line 0
+                                       // display line 1
+                    struct MultiLine { // display line 2
+                        field_1: i32,  // display line 3
+                        field_2: i32,  // display line 4
+                    }                  // display line 5
+                                       // display line 7
+                    struct Another {   // display line 8
+                        field_1: i32,  // display line 9
+                        field_2: i32,  // display line 10
+                        field_3: i32,  // display line 11
+                        field_4: i32,  // display line 12
+                    }                  // display line 13
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees().next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Initially opened go to line modal should not highlight any rows"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.simulate_input("1");
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![0],
+            "Go to line modal should highlight a row, corresponding to the query"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.simulate_input("8");
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![13],
+            "If the query is too large, the last row should be highlighted"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::Cancel);
+        drop(go_to_line_view);
+        editor.update(cx, |_, _| {});
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "After cancelling and closing the modal, no rows should be highlighted"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Reopened modal should not highlight any rows"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        let expected_highlighted_row = 4;
+        cx.simulate_input("5");
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![expected_highlighted_row]
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+        cx.dispatch_action(menu::Confirm);
+        drop(go_to_line_view);
+        editor.update(cx, |_, _| {});
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "After confirming and closing the modal, no rows should be highlighted"
+        );
+        // On confirm, should place the caret on the highlighted row.
+        assert_single_caret_at_row(&editor, expected_highlighted_row, cx);
+    }
+
+    fn open_go_to_line_view(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> View<GoToLine> {
+        cx.dispatch_action(Toggle::default());
+        workspace.update(cx, |workspace, cx| {
+            workspace.active_modal::<GoToLine>(cx).unwrap().clone()
+        })
+    }
+
+    fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
+        editor.update(cx, |editor, cx| {
+            editor.highlighted_display_rows(cx).into_keys().collect()
+        })
+    }
+
+    #[track_caller]
+    fn assert_single_caret_at_row(
+        editor: &View<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        let selections = editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .all::<rope::Point>(cx)
+                .into_iter()
+                .map(|s| s.start..s.end)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            selections.len() == 1,
+            "Expected one caret selection but got: {selections:?}"
+        );
+        let selection = &selections[0];
+        assert!(
+            selection.start == selection.end,
+            "Expected a single caret selection, but got: {selection:?}"
+        );
+        assert_eq!(selection.start.row, buffer_row);
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            crate::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
+        })
     }
 }

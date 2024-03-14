@@ -1,8 +1,8 @@
-use xcb::x;
+use x11rb::protocol::xproto;
 
 use crate::{Modifiers, MouseButton, NavigationDirection};
 
-pub(crate) fn button_of_key(detail: x::Button) -> Option<MouseButton> {
+pub(crate) fn button_of_key(detail: xproto::Button) -> Option<MouseButton> {
     Some(match detail {
         1 => MouseButton::Left,
         2 => MouseButton::Middle,
@@ -13,22 +13,22 @@ pub(crate) fn button_of_key(detail: x::Button) -> Option<MouseButton> {
     })
 }
 
-pub(crate) fn modifiers_from_state(state: x::KeyButMask) -> Modifiers {
+pub(crate) fn modifiers_from_state(state: xproto::KeyButMask) -> Modifiers {
     Modifiers {
-        control: state.contains(x::KeyButMask::CONTROL),
-        alt: state.contains(x::KeyButMask::MOD1),
-        shift: state.contains(x::KeyButMask::SHIFT),
-        command: state.contains(x::KeyButMask::MOD4),
+        control: state.contains(xproto::KeyButMask::CONTROL),
+        alt: state.contains(xproto::KeyButMask::MOD1),
+        shift: state.contains(xproto::KeyButMask::SHIFT),
+        command: state.contains(xproto::KeyButMask::MOD4),
         function: false,
     }
 }
 
-pub(crate) fn button_from_state(state: x::KeyButMask) -> Option<MouseButton> {
-    Some(if state.contains(x::KeyButMask::BUTTON1) {
+pub(crate) fn button_from_state(state: xproto::KeyButMask) -> Option<MouseButton> {
+    Some(if state.contains(xproto::KeyButMask::BUTTON1) {
         MouseButton::Left
-    } else if state.contains(x::KeyButMask::BUTTON2) {
+    } else if state.contains(xproto::KeyButMask::BUTTON2) {
         MouseButton::Middle
-    } else if state.contains(x::KeyButMask::BUTTON3) {
+    } else if state.contains(xproto::KeyButMask::BUTTON3) {
         MouseButton::Right
     } else {
         return None;

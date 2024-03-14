@@ -455,9 +455,7 @@ fn subscribe_for_terminal_events(
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
                 if terminal.task().is_none() {
-                    if let Some(foreground_info) = &terminal.foreground_process_info {
-                        let cwd = foreground_info.cwd.clone();
-
+                    if let Some(cwd) = terminal.get_cwd() {
                         let item_id = cx.entity_id();
                         let workspace_id = this.workspace_id;
                         cx.background_executor()

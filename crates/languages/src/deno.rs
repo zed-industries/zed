@@ -56,7 +56,7 @@ impl DenoLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for DenoLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("deno-language-server".into())
