@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use windows::{
     core::{implement, w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINTL, S_OK, WPARAM},
+        Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, POINTL, S_OK, WPARAM},
         Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT},
         System::{
             Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
@@ -39,22 +39,28 @@ use windows::{
                 TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TD_ERROR_ICON,
                 TD_INFORMATION_ICON, TD_WARNING_ICON,
             },
-            Input::KeyboardAndMouse::{
-                GetKeyState, VIRTUAL_KEY, VK_0, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
-                VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT,
-                VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
+            Input::{
+                Ime::{
+                    ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext,
+                    ImmSetCandidateWindow, CANDIDATEFORM, CFS_CANDIDATEPOS, GCS_COMPSTR,
+                },
+                KeyboardAndMouse::{
+                    GetKeyState, VIRTUAL_KEY, VK_0, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END,
+                    VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU,
+                    VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
+                },
             },
             Shell::{DragQueryFileW, HDROP},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, LoadCursorW, PostQuitMessage,
                 RegisterClassW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW,
                 GWLP_USERDATA, HMENU, IDC_ARROW, SW_MAXIMIZE, SW_SHOW, WHEEL_DELTA,
-                WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_KEYDOWN,
-                WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY,
-                WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
-                WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1,
-                XBUTTON2,
+                WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_IME_CHAR,
+                WM_IME_COMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+                WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+                WM_MOUSEWHEEL, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN,
+                WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+                WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE, XBUTTON1, XBUTTON2,
             },
         },
     },
@@ -211,6 +217,9 @@ impl WindowsWindowInner {
             WM_KEYDOWN => self.handle_keydown_msg(msg, wparam, lparam),
             WM_KEYUP => self.handle_keyup_msg(msg, wparam),
             WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
+            WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
+            WM_IME_COMPOSITION => self.handle_ime_composition(msg, wparam, lparam),
+            WM_IME_CHAR => self.handle_ime_char(wparam),
             _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
         }
     }
@@ -610,6 +619,99 @@ impl WindowsWindowInner {
             }
         }
         LRESULT(1)
+    }
+
+    fn handle_ime_position(&self) -> LRESULT {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return LRESULT(1);
+            };
+            // we are composing, this should never fail
+            let caret_range = input_handler.selected_text_range().unwrap();
+            let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
+            self.input_handler.set(Some(input_handler));
+            let config = CANDIDATEFORM {
+                dwStyle: CFS_CANDIDATEPOS,
+                ptCurrentPos: POINT {
+                    x: caret_position.origin.x.0 as i32,
+                    y: caret_position.origin.y.0 as i32 + (caret_position.size.height.0 as i32 / 2),
+                },
+                ..Default::default()
+            };
+            ImmSetCandidateWindow(ctx, &config as _);
+            ImmReleaseContext(self.hwnd, ctx);
+            LRESULT(0)
+        }
+    }
+
+    fn parse_ime_compostion_string(&self) -> Option<(String, usize)> {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
+            let result = if string_len >= 0 {
+                let mut buffer = vec![0u8; string_len as usize + 2];
+                // let mut buffer = [0u8; MAX_PATH as _];
+                ImmGetCompositionStringW(
+                    ctx,
+                    GCS_COMPSTR,
+                    Some(buffer.as_mut_ptr() as _),
+                    string_len as _,
+                );
+                let wstring = std::slice::from_raw_parts::<u16>(
+                    buffer.as_mut_ptr().cast::<u16>(),
+                    string_len as usize / 2,
+                );
+                let string = String::from_utf16_lossy(wstring);
+                Some((string, string_len as usize / 2))
+            } else {
+                None
+            };
+            ImmReleaseContext(self.hwnd, ctx);
+            result
+        }
+    }
+
+    fn handle_ime_composition(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
+            let Some((string, string_len)) = self.parse_ime_compostion_string() else {
+                return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+            };
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+            };
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                string.as_str(),
+                Some(0..string_len),
+            );
+            self.input_handler.set(Some(input_handler));
+            unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
+        } else {
+            // currently, we don't care other stuff
+            unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
+        }
+    }
+
+    fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
+        let src = [wparam.0 as u16];
+        let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
+            return None;
+        };
+        Some(first_char.to_string())
+    }
+
+    fn handle_ime_char(&self, wparam: WPARAM) -> LRESULT {
+        let Some(ime_char) = self.parse_ime_char(wparam) else {
+            return LRESULT(1);
+        };
+        let Some(mut input_handler) = self.input_handler.take() else {
+            return LRESULT(1);
+        };
+        input_handler.replace_text_in_range(None, &ime_char);
+        self.input_handler.set(Some(input_handler));
+        self.invalidate_client_area();
+        LRESULT(0)
     }
 
     fn handle_drag_drop(&self, input: PlatformInput) {
