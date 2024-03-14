@@ -279,7 +279,13 @@ impl Platform for WindowsPlatform {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
-        try_get_window_inner(active_window_hwnd).map(|inner| inner.handle)
+        self.inner
+            .raw_window_handles
+            .read()
+            .iter()
+            .find(|hwnd| *hwnd == &active_window_hwnd)
+            .and_then(|hwnd| try_get_window_inner(*hwnd))
+            .map(|inner| inner.handle)
     }
 
     fn open_window(
