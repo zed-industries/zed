@@ -57,21 +57,23 @@ impl WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_threadpool(&self, runnable: Runnable) -> anyhow::Result<()> {
+    fn dispatch_on_threadpool(&self, runnable: Runnable) {
         unsafe {
             let ptr = Box::into_raw(Box::new(runnable));
             let environment = get_threadpool_environment(self.threadpool);
-            let work =
+            let Ok(work) =
                 CreateThreadpoolWork(Some(threadpool_runner), Some(ptr as _), Some(&environment))
                     .inspect_err(|_| {
-                    log::error!(
-                        "unable to dispatch work on thread pool: {}",
-                        std::io::Error::last_os_error()
-                    )
-                })?;
+                        log::error!(
+                            "unable to dispatch work on thread pool: {}",
+                            std::io::Error::last_os_error()
+                        )
+                    })
+            else {
+                return;
+            };
             SubmitThreadpoolWork(work);
         }
-        Ok(())
     }
 }
 
@@ -81,7 +83,7 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
-        let _ = self.dispatch_on_threadpool(runnable);
+        self.dispatch_on_threadpool(runnable);
         if let Some(label) = label {
             log::debug!("TaskLabel: {label:?}");
         }
@@ -97,7 +99,7 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
         if duration.as_millis() == 0 {
-            let _ = self.dispatch_on_threadpool(runnable);
+            self.dispatch_on_threadpool(runnable);
             return;
         }
         unsafe {
