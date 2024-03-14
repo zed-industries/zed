@@ -154,7 +154,7 @@ impl RenderOnce for PlatformTitlebar {
             .map(|mut this| {
                 this.style().background = self.titlebar_bg;
                 if cfg!(macos) {
-                    if !cx.is_full_screen() {
+                    if !cx.is_fullscreen() {
                         // Use pixels here instead of a rem-based size because the macOS traffic
                         // lights are a static size, and don't scale with the rest of the UI.
                         return this.pl(px(80.));
