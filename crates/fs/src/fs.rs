@@ -124,7 +124,7 @@ impl Fs for RealFs {
         smol::fs::unix::symlink(target, path).await?;
 
         #[cfg(target_family = "windows")]
-        windows_symlink(target, path).await?;
+        windows_create_symlink(target, path).await?;
 
         Ok(())
     }
@@ -1520,7 +1520,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 }
 
 #[cfg(target_os = "windows")]
-async fn windows_symlink(target: PathBuf, path: &Path) -> Result<()> {
+async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
     use windows::{
         core::PCWSTR,
         Win32::{
