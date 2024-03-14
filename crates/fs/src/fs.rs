@@ -11,6 +11,8 @@ use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
 use repository::GitRepository;
 use rope::Rope;
+#[cfg(any(test, feature = "test-support"))]
+use smol::io::AsyncReadExt;
 use smol::io::AsyncWriteExt;
 use std::io::Write;
 use std::sync::Arc;
