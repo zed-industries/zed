@@ -31,12 +31,7 @@ use windows::{
     },
 };
 
-use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Task, WindowAppearance, WindowParams, WindowsDispatcher, WindowsDisplay,
-    WindowsTextSystem, WindowsWindow,
-};
+use crate::*;
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
@@ -282,9 +277,9 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo(windows)
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        None
+        let active_window_hwnd = unsafe { GetActiveWindow() };
+        try_get_window_inner(active_window_hwnd).map(|inner| inner.handle)
     }
 
     fn open_window(
