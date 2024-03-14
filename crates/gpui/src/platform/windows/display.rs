@@ -2,7 +2,10 @@ use itertools::Itertools;
 use smallvec::SmallVec;
 use std::rc::Rc;
 use uuid::Uuid;
-use windows::Win32::{Foundation::*, Graphics::Gdi::*};
+use windows::{
+    core::*,
+    Win32::{Foundation::*, Graphics::Gdi::*},
+};
 
 use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
 
@@ -96,6 +99,24 @@ impl WindowsDisplay {
                 )) as Rc<dyn PlatformDisplay>
             })
             .collect()
+    }
+
+    pub(crate) fn frequency(&self) -> Option<u32> {
+        available_monitors()
+            .get(self.display_id.0 as usize)
+            .and_then(|hmonitor| get_monitor_info(*hmonitor).ok())
+            .and_then(|info| {
+                let mut devmode = DEVMODEW::default();
+                unsafe {
+                    EnumDisplaySettingsW(
+                        PCWSTR(info.szDevice.as_ptr()),
+                        ENUM_CURRENT_SETTINGS,
+                        &mut devmode,
+                    )
+                }
+                .as_bool()
+                .then(|| devmode.dmDisplayFrequency)
+            })
     }
 }
 
