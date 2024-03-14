@@ -388,6 +388,10 @@ codegen-units = 1
 dbg_macro = "deny"
 todo = "deny"
 
+# Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
+# warning on this rule produces a lot of noise.
+single_range_in_vec_init = "allow"
+
 # These are all of the rules that currently have violations in the Zed
 # codebase.
 #
@@ -414,7 +418,6 @@ map_entry = "allow"
 non_canonical_clone_impl = "allow"
 non_canonical_partial_ord_impl = "allow"
 reversed_empty_ranges = "allow"
-single_range_in_vec_init = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]
