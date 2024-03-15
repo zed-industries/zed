@@ -553,7 +553,6 @@ impl Platform for WindowsPlatform {
                 }
                 PCWSTR::from_raw(file_name_buffer[0..(file_name_length + 1)].as_ptr())
             };
-            println!("file name: {}<-", file_name.display());
 
             let version_info_block = {
                 let mut version_handle = std::mem::zeroed();
