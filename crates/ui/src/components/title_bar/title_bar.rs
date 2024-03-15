@@ -8,13 +8,13 @@ pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
 }
 
 #[derive(IntoElement)]
-pub struct PlatformTitlebar {
+pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl PlatformTitlebar {
+impl TitleBar {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             platform_style: PlatformStyle::platform(),
@@ -87,7 +87,7 @@ impl PlatformTitlebar {
                 .justify_center()
                 .content_center()
                 .items_center()
-                .w(PlatformTitlebar::windows_caption_button_width(cx))
+                .w(TitleBar::windows_caption_button_width(cx))
                 .hover(|style| style.bg(hover_color))
                 .active(|style| style.bg(active_color))
                 .child(icon_text)
@@ -125,21 +125,21 @@ impl PlatformTitlebar {
     }
 }
 
-impl InteractiveElement for PlatformTitlebar {
+impl InteractiveElement for TitleBar {
     fn interactivity(&mut self) -> &mut Interactivity {
         self.content.interactivity()
     }
 }
 
-impl StatefulInteractiveElement for PlatformTitlebar {}
+impl StatefulInteractiveElement for TitleBar {}
 
-impl ParentElement for PlatformTitlebar {
+impl ParentElement for TitleBar {
     fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
 
-impl RenderOnce for PlatformTitlebar {
+impl RenderOnce for TitleBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let titlebar_height = titlebar_height(cx);
         let titlebar_top_padding = self.top_padding(cx);
