@@ -1,6 +1,3 @@
-// allowing due to multiple platform conditional code
-#![allow(unused_imports)]
-
 use gpui::{
     div,
     prelude::FluentBuilder,
@@ -47,7 +44,7 @@ impl PlatformStyle {
 #[derive(IntoElement)]
 pub struct PlatformTitlebar {
     platform: PlatformStyle,
-    titlebar_bg: Fill,
+    background: Fill,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -59,12 +56,31 @@ impl Styled for PlatformTitlebar {
 }
 
 impl PlatformTitlebar {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            platform: PlatformStyle::platform(),
+            background: transparent_black().into(),
+            content: div().id(id.into()),
+            children: SmallVec::new(),
+        }
+    }
+
     /// Change the platform style used
     pub fn with_platform_style(self, style: PlatformStyle) -> Self {
         Self {
             platform: style,
             ..self
         }
+    }
+
+    /// Sets the background color of titlebar.
+    pub fn background<F>(mut self, fill: F) -> Self
+    where
+        F: Into<Fill>,
+        Self: Sized,
+    {
+        self.background = fill.into();
+        self
     }
 
     fn titlebar_top_padding(&self, cx: &WindowContext) -> Pixels {
@@ -84,97 +100,82 @@ impl PlatformTitlebar {
     }
 
     fn render_window_controls_right(&self, cx: &mut WindowContext) -> impl Element {
-        if self.platform.windows() {
-            let btn_height = titlebar_height(cx) - self.titlebar_top_padding(cx);
-            let close_btn_hover_color = Rgba {
-                r: 232.0 / 255.0,
-                g: 17.0 / 255.0,
-                b: 32.0 / 255.0,
-                a: 1.0,
-            };
-
-            let btn_hover_color = match cx.appearance() {
-                Light | VibrantLight => Rgba {
-                    r: 0.1,
-                    g: 0.1,
-                    b: 0.1,
-                    a: 0.2,
-                },
-                Dark | VibrantDark => Rgba {
-                    r: 0.9,
-                    g: 0.9,
-                    b: 0.9,
-                    a: 0.1,
-                },
-            };
-
-            fn windows_caption_btn(
-                id: &'static str,
-                icon_text: &'static str,
-                hover_color: Rgba,
-                cx: &WindowContext,
-            ) -> Stateful<Div> {
-                let mut active_color = hover_color;
-                active_color.a *= 0.2;
-                h_flex()
-                    .id(id)
-                    .h_full()
-                    .justify_center()
-                    .content_center()
-                    .items_center()
-                    .w(PlatformTitlebar::windows_caption_button_width(cx))
-                    .hover(|style| style.bg(hover_color))
-                    .active(|style| style.bg(active_color))
-                    .child(icon_text)
-            }
-
-            div()
-                .id("caption-buttons-windows")
-                .flex()
-                .flex_row()
-                .justify_center()
-                .content_stretch()
-                .max_h(btn_height)
-                .min_h(btn_height)
-                .font("Segoe Fluent Icons")
-                .text_size(px(10.0))
-                .children(vec![
-                    windows_caption_btn("minimize", "\u{e921}", btn_hover_color, cx), // minimize icon
-                    windows_caption_btn(
-                        "maximize",
-                        if cx.is_maximized() {
-                            "\u{e923}" // restore icon
-                        } else {
-                            "\u{e922}" // maximize icon
-                        },
-                        btn_hover_color,
-                        cx,
-                    ),
-                    windows_caption_btn("close", "\u{e8bb}", close_btn_hover_color, cx), // close icon
-                ])
-        } else {
-            div().id("caption-buttons-windows")
+        if !self.platform.windows() {
+            return div().id("caption-buttons-windows");
         }
-    }
 
-    /// Sets the background color of titlebar.
-    pub fn titlebar_bg<F>(mut self, fill: F) -> Self
-    where
-        F: Into<Fill>,
-        Self: Sized,
-    {
-        self.titlebar_bg = fill.into();
-        self
-    }
-}
+        let button_height = titlebar_height(cx) - self.titlebar_top_padding(cx);
+        let close_button_hover_color = Rgba {
+            r: 232.0 / 255.0,
+            g: 17.0 / 255.0,
+            b: 32.0 / 255.0,
+            a: 1.0,
+        };
 
-pub fn platform_titlebar(id: impl Into<ElementId>) -> PlatformTitlebar {
-    let id = id.into();
-    PlatformTitlebar {
-        platform: PlatformStyle::platform(),
-        titlebar_bg: transparent_black().into(),
-        content: div().id(id.clone()),
-        children: SmallVec::new(),
+        let button_hover_color = match cx.appearance() {
+            Light | VibrantLight => Rgba {
+                r: 0.1,
+                g: 0.1,
+                b: 0.1,
+                a: 0.2,
+            },
+            Dark | VibrantDark => Rgba {
+                r: 0.9,
+                g: 0.9,
+                b: 0.9,
+                a: 0.1,
+            },
+        };
+
+        fn windows_caption_button(
+            id: &'static str,
+            icon_text: &'static str,
+            hover_color: Rgba,
+            cx: &WindowContext,
+        ) -> Stateful<Div> {
+            let mut active_color = hover_color;
+            active_color.a *= 0.2;
+            h_flex()
+                .id(id)
+                .h_full()
+                .justify_center()
+                .content_center()
+                .items_center()
+                .w(PlatformTitlebar::windows_caption_button_width(cx))
+                .hover(|style| style.bg(hover_color))
+                .active(|style| style.bg(active_color))
+                .child(icon_text)
+        }
+
+        const MINIMIZE_ICON: &str = "\u{e921}";
+        const RESTORE_ICON: &str = "\u{e923}";
+        const MAXIMIZE_ICON: &str = "\u{e922}";
+        const CLOSE_ICON: &str = "\u{e8bb}";
+
+        div()
+            .id("caption-buttons-windows")
+            .flex()
+            .flex_row()
+            .justify_center()
+            .content_stretch()
+            .max_h(button_height)
+            .min_h(button_height)
+            .font("Segoe Fluent Icons")
+            .text_size(px(10.0))
+            .children(vec![
+                windows_caption_button("minimize", MINIMIZE_ICON, button_hover_color, cx),
+                windows_caption_button(
+                    "maximize",
+                    if cx.is_maximized() {
+                        RESTORE_ICON
+                    } else {
+                        MAXIMIZE_ICON
+                    },
+                    button_hover_color,
+                    cx,
+                ),
+                windows_caption_button("close", CLOSE_ICON, close_button_hover_color, cx),
+            ])
     }
 }
 
@@ -183,7 +184,7 @@ impl RenderOnce for PlatformTitlebar {
         let titlebar_height = titlebar_height(cx);
         let titlebar_top_padding = self.titlebar_top_padding(cx);
         let window_controls_right = self.render_window_controls_right(cx);
-        let macos = self.platform.macos();
+
         h_flex()
             .id("titlebar")
             .w_full()
@@ -192,7 +193,7 @@ impl RenderOnce for PlatformTitlebar {
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
-                } else if macos {
+                } else if self.platform.macos() {
                     // Use pixels here instead of a rem-based size because the macOS traffic
                     // lights are a static size, and don't scale with the rest of the UI.
                     this.pl(px(80.))
@@ -200,7 +201,7 @@ impl RenderOnce for PlatformTitlebar {
                     this.pl_2()
                 }
             })
-            .bg(self.titlebar_bg)
+            .bg(self.background)
             .content_stretch()
             .child(
                 self.content
@@ -219,6 +220,7 @@ impl InteractiveElement for PlatformTitlebar {
         self.content.interactivity()
     }
 }
+
 impl StatefulInteractiveElement for PlatformTitlebar {}
 
 impl ParentElement for PlatformTitlebar {
