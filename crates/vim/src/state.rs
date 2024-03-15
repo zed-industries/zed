@@ -46,7 +46,7 @@ impl Default for Mode {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Operator {
     Change,
     Delete,
@@ -192,7 +192,7 @@ impl EditorState {
     }
 
     pub fn active_operator(&self) -> Option<Operator> {
-        self.operator_stack.last().copied()
+        self.operator_stack.last().cloned()
     }
 
     pub fn keymap_context_layer(&self) -> KeyContext {
@@ -219,7 +219,7 @@ impl EditorState {
 
         let active_operator = self.active_operator();
 
-        if let Some(active_operator) = active_operator {
+        if let Some(active_operator) = active_operator.clone() {
             for context_flag in active_operator.context_flags().into_iter() {
                 context.add(*context_flag);
             }
@@ -227,7 +227,10 @@ impl EditorState {
 
         context.set(
             "vim_operator",
-            active_operator.map(|op| op.id()).unwrap_or_else(|| "none"),
+            active_operator
+                .clone()
+                .map(|op| op.id())
+                .unwrap_or_else(|| "none"),
         );
 
         if self.mode == Mode::Replace {

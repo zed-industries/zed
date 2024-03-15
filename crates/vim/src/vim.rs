@@ -106,8 +106,8 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         Vim::update(cx, |vim, cx| vim.switch_mode(mode, false, cx))
     });
     workspace.register_action(
-        |_: &mut Workspace, &PushOperator(operator): &PushOperator, cx| {
-            Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
+        |_: &mut Workspace, PushOperator(operator): &PushOperator, cx| {
+            Vim::update(cx, |vim, cx| vim.push_operator(operator.clone(), cx))
         },
     );
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
@@ -493,7 +493,7 @@ impl Vim {
     }
 
     fn active_operator(&self) -> Option<Operator> {
-        self.state().operator_stack.last().copied()
+        self.state().operator_stack.last().cloned()
     }
 
     fn transaction_begun(&mut self, transaction_id: TransactionId, _: &mut WindowContext) {
