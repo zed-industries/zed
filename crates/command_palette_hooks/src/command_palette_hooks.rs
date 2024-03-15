@@ -11,6 +11,7 @@ use gpui::{Action, AppContext, Global};
 /// Initializes the command palette hooks.
 pub fn init(cx: &mut AppContext) {
     cx.set_global(GlobalCommandPaletteFilter::default());
+    cx.set_global(GlobalCommandPaletteInterceptor::default());
 }
 
 /// A filter for the command palette.
@@ -90,10 +91,12 @@ pub struct CommandInterceptResult {
 }
 
 /// An interceptor for the command palette.
+#[derive(Default)]
 pub struct CommandPaletteInterceptor(
     Option<Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>>,
 );
 
+#[derive(Default)]
 struct GlobalCommandPaletteInterceptor(CommandPaletteInterceptor);
 
 impl Global for GlobalCommandPaletteInterceptor {}
