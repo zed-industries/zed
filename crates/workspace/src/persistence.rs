@@ -421,8 +421,8 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub fn last_monitor() -> Result<Option<Uuid>> {
-            SELECT display
+        pub fn last_window() -> Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
+            SELECT display, window_state, window_x, window_y, window_width, window_height, fullscreen
             FROM workspaces
             WHERE workspace_location IS NOT NULL
             ORDER BY timestamp DESC
