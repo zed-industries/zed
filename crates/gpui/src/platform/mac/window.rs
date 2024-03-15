@@ -724,7 +724,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    // todo(mac)
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
     }
