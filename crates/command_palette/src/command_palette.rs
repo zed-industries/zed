@@ -83,10 +83,8 @@ impl CommandPalette {
                     return None;
                 }
 
-                let name = action.name();
-
                 Some(Command {
-                    name: humanize_action_name(&name),
+                    name: humanize_action_name(action.name()),
                     action,
                 })
             })
