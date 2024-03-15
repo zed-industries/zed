@@ -11,7 +11,7 @@ use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{h_flex, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
-    item::{Item, ItemHandle},
+    item::{Item, ItemHandle, TabContentParams},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
@@ -391,9 +391,9 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
         Label::new("Syntax Tree")
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

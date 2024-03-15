@@ -39,7 +39,7 @@ pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
@@ -646,10 +646,10 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
             Label::new("No problems")
-                .color(if selected {
+                .color(if params.selected {
                     Color::Default
                 } else {
                     Color::Muted
@@ -664,7 +664,7 @@ impl Item for ProjectDiagnosticsEditor {
                             .gap_1()
                             .child(Icon::new(IconName::XCircle).color(Color::Error))
                             .child(Label::new(self.summary.error_count.to_string()).color(
-                                if selected {
+                                if params.selected {
                                     Color::Default
                                 } else {
                                     Color::Muted
@@ -678,7 +678,7 @@ impl Item for ProjectDiagnosticsEditor {
                             .gap_1()
                             .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
                             .child(Label::new(self.summary.warning_count.to_string()).color(
-                                if selected {
+                                if params.selected {
                                     Color::Default
                                 } else {
                                     Color::Muted

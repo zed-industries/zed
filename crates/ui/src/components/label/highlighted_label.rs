@@ -43,6 +43,11 @@ impl LabelCommon for HighlightedLabel {
         self.base = self.base.strikethrough(strikethrough);
         self
     }
+
+    fn italic(mut self, italic: bool) -> Self {
+        self.base = self.base.italic(italic);
+        self
+    }
 }
 
 impl RenderOnce for HighlightedLabel {

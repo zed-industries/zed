@@ -13,7 +13,7 @@ use std::{borrow::Cow, sync::Arc};
 use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
 use util::maybe;
 use workspace::{
-    item::{Item, ItemHandle},
+    item::{Item, ItemHandle, TabContentParams},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -628,9 +628,9 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
         Label::new("LSP Logs")
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

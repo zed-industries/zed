@@ -1,5 +1,5 @@
 use crate::{
-    item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
+    item::{ClosePosition, Item, ItemHandle, ItemSettings, TabContentParams, WeakItemHandle},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
@@ -10,9 +10,9 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
-    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, MouseDownEvent,
+    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -166,6 +166,7 @@ pub struct Pane {
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
+    preview_item_id: Option<EntityId>,
     last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
@@ -262,6 +263,7 @@ impl Pane {
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
+            preview_item_id: None,
             last_focused_view_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -501,10 +503,27 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
+    /// Marks the item with the given ID as the preview item.
+    /// This will be ignored if the global setting `preview_tabs` is disabled.
+    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
+        if ItemSettings::get_global(cx).enable_preview_tabs {
+            self.preview_item_id = item_id;
+        }
+    }
+
+    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
+        if let Some(preview_item_id) = self.preview_item_id {
+            if preview_item_id == item_id {
+                self.set_preview_item_id(None, cx)
+            }
+        }
+    }
+
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
+        allow_preview: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
@@ -522,11 +541,33 @@ impl Pane {
         }
 
         if let Some((index, existing_item)) = existing_item {
+            // If the item is already open, and the item is a preview item
+            // and we are not allowing items to open as preview, mark the item as persistent.
+            if let Some(preview_item_id) = self.preview_item_id {
+                if let Some(tab) = self.items.get(index) {
+                    if tab.item_id() == preview_item_id && !allow_preview {
+                        self.set_preview_item_id(None, cx);
+                    }
+                }
+            }
+
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
+            if allow_preview {
+                if let Some(preview_item_id) = self.preview_item_id {
+                    self.items.retain(|item| item.item_id() != preview_item_id);
+                }
+            }
+
             let new_item = build_item(cx);
             self.add_item(new_item.clone(), true, focus_item, None, cx);
+            if allow_preview {
+                self.set_preview_item_id(Some(new_item.item_id()), cx);
+            } else {
+                self.set_preview_item_id(None, cx);
+            }
+
             new_item
         }
     }
@@ -1300,8 +1341,19 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
+        let is_preview = self
+            .preview_item_id
+            .map(|id| id == item.item_id())
+            .unwrap_or(false);
 
-        let label = item.tab_content(Some(detail), is_active, cx);
+        let label = item.tab_content(
+            TabContentParams {
+                detail: Some(detail),
+                selected: is_active,
+                preview: is_preview,
+            },
+            cx,
+        );
         let close_side = &ItemSettings::get_global(cx).close_position;
 
         let indicator = maybe!({
@@ -1341,6 +1393,16 @@ impl Pane {
                 cx.listener(move |pane, _event, cx| {
                     pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                         .detach_and_log_err(cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |pane, event: &MouseDownEvent, cx| {
+                    if let Some(id) = pane.preview_item_id {
+                        if id == item_id && event.click_count > 1 {
+                            pane.set_preview_item_id(None, cx);
+                        }
+                    }
                 }),
             )
             .on_drag(
@@ -1654,6 +1716,12 @@ impl Pane {
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
+        if let Some(preview_item_id) = self.preview_item_id {
+            if item_id == preview_item_id {
+                self.set_preview_item_id(None, cx);
+            }
+        }
+
         let from_pane = dragged_tab.pane.clone();
         self.workspace
             .update(cx, |_, cx| {
@@ -2667,7 +2735,14 @@ mod tests {
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        let label = self.item.tab_content(Some(self.detail), false, cx);
+        let label = self.item.tab_content(
+            TabContentParams {
+                detail: Some(self.detail),
+                selected: false,
+                preview: false,
+            },
+            cx,
+        );
         Tab::new("")
             .selected(self.is_active)
             .child(label)
