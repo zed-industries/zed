@@ -1173,11 +1173,6 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
 
 extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
     unsafe {
-        let action: Sel = msg_send![item, action];
-        // hacky way to make sure dock menu items are always enabled
-        if action == sel!(openWorkspace:) {
-            return true;
-        }
         let mut result = false;
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
