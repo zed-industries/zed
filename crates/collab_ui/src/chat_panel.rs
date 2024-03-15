@@ -5,7 +5,7 @@ use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, C
 use client::{ChannelId, Client};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::{actions, Editor};
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
     CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle,
@@ -71,10 +71,7 @@ struct SerializedChatPanel {
     width: Option<Pixels>,
 }
 
-actions!(
-    chat_panel,
-    [ToggleFocus, CloseReplyPreview, CancelEditMessage]
-);
+actions!(chat_panel, [ToggleFocus]);
 
 impl ChatPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -904,13 +901,18 @@ impl ChatPanel {
         })
     }
 
-    fn close_reply_preview(&mut self, _: &CloseReplyPreview, cx: &mut ViewContext<Self>) {
+    fn close_reply_preview(&mut self, cx: &mut ViewContext<Self>) {
         self.message_editor
             .update(cx, |editor, _| editor.clear_reply_to_message_id());
     }
 
-    fn cancel_edit_message(&mut self, _: &CancelEditMessage, cx: &mut ViewContext<Self>) {
+    fn cancel_edit_message(&mut self, cx: &mut ViewContext<Self>) {
         self.message_editor.update(cx, |editor, cx| {
+            // only clear the editor input if we were editing a message
+            if editor.edit_message_id().is_none() {
+                return;
+            }
+
             editor.clear_edit_message_id();
 
             let buffer = editor
@@ -1003,15 +1005,9 @@ impl Render for ChatPanel {
                         .child(
                             IconButton::new("cancel-edit-message", IconName::Close)
                                 .shape(ui::IconButtonShape::Square)
-                                .tooltip(|cx| {
-                                    Tooltip::for_action(
-                                        "Cancel edit message",
-                                        &CancelEditMessage,
-                                        cx,
-                                    )
-                                })
+                                .tooltip(|cx| Tooltip::text("Cancel edit message", cx))
                                 .on_click(cx.listener(move |this, _, cx| {
-                                    this.cancel_edit_message(&CancelEditMessage, cx);
+                                    this.cancel_edit_message(cx);
                                 })),
                         ),
                 )
@@ -1042,15 +1038,9 @@ impl Render for ChatPanel {
                                 .child(
                                     IconButton::new("close-reply-preview", IconName::Close)
                                         .shape(ui::IconButtonShape::Square)
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action(
-                                                "Close reply preview",
-                                                &CloseReplyPreview,
-                                                cx,
-                                            )
-                                        })
+                                        .tooltip(|cx| Tooltip::text("Close reply preview", cx))
                                         .on_click(cx.listener(move |this, _, cx| {
-                                            this.close_reply_preview(&CloseReplyPreview, cx);
+                                            this.close_reply_preview(cx);
                                         })),
                                 ),
                         )
@@ -1060,10 +1050,11 @@ impl Render for ChatPanel {
             .children(
                 Some(
                     h_flex()
-                        .key_context("MessageEditor")
-                        .on_action(cx.listener(ChatPanel::close_reply_preview))
-                        .on_action(cx.listener(ChatPanel::cancel_edit_message))
                         .p_2()
+                        .on_action(cx.listener(|this, _: &actions::Cancel, cx| {
+                            this.cancel_edit_message(cx);
+                            this.close_reply_preview(cx);
+                        }))
                         .map(|el| el.child(self.message_editor.clone())),
                 )
                 .filter(|_| self.active_chat.is_some()),
