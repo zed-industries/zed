@@ -13,8 +13,10 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [dependencies]
+collections.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true

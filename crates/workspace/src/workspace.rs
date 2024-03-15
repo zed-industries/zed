@@ -578,7 +578,16 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
-                    this.serialize_workspace(cx);
+                    let workspace_serialization = this.serialize_workspace(cx);
+                    cx.spawn(|workspace, mut cx| async move {
+                        workspace_serialization.await;
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                workspace.refresh_recent_documents(cx)
+                            })?
+                            .await
+                    })
+                    .detach_and_log_err(cx)
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -748,15 +757,15 @@ impl Workspace {
                 ThemeSettings::reload_current_theme(cx);
             }),
             cx.observe(&left_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
+                this.serialize_workspace(cx).detach();
                 cx.notify();
             }),
             cx.observe(&bottom_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
+                this.serialize_workspace(cx).detach();
                 cx.notify();
             }),
             cx.observe(&right_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
+                this.serialize_workspace(cx).detach();
                 cx.notify();
             }),
             cx.on_release(|this, window, cx| {
@@ -913,10 +922,6 @@ impl Workspace {
                 })?
             };
 
-            window
-                .update(&mut cx, |_, cx| cx.activate_window())
-                .log_err();
-
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
@@ -925,6 +930,14 @@ impl Workspace {
                 .await
                 .unwrap_or_default();
 
+            window
+                .update(&mut cx, |workspace, cx| {
+                    workspace
+                        .refresh_recent_documents(cx)
+                        .detach_and_log_err(cx);
+                    cx.activate_window()
+                })
+                .log_err();
             Ok((window, opened_items))
         })
     }
@@ -1764,7 +1777,7 @@ impl Workspace {
         }
 
         cx.notify();
-        self.serialize_workspace(cx);
+        self.serialize_workspace(cx).detach();
     }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
@@ -1778,7 +1791,7 @@ impl Workspace {
 
         cx.focus_self();
         cx.notify();
-        self.serialize_workspace(cx);
+        self.serialize_workspace(cx).detach();
     }
 
     /// Transfer focus to the panel of the given type.
@@ -1823,7 +1836,7 @@ impl Workspace {
                     self.active_pane.update(cx, |pane, cx| pane.focus(cx))
                 }
 
-                self.serialize_workspace(cx);
+                self.serialize_workspace(cx).detach();
                 cx.notify();
                 return panel;
             }
@@ -2377,7 +2390,7 @@ impl Workspace {
             }
         }
 
-        self.serialize_workspace(cx);
+        self.serialize_workspace(cx).detach();
     }
 
     pub fn split_pane(
@@ -3333,12 +3346,12 @@ impl Workspace {
             cx.background_executor()
                 .timer(Duration::from_millis(100))
                 .await;
-            this.update(&mut cx, |this, cx| this.serialize_workspace(cx))
+            this.update(&mut cx, |this, cx| this.serialize_workspace(cx).detach())
                 .log_err();
         }));
     }
 
-    fn serialize_workspace(&self, cx: &mut WindowContext) {
+    fn serialize_workspace(&self, cx: &mut WindowContext) -> Task<()> {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
@@ -3441,7 +3454,6 @@ impl Workspace {
             if !location.paths().is_empty() {
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
                 let docks = build_serialized_docks(self, cx);
-
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
                     location,
@@ -3451,11 +3463,37 @@ impl Workspace {
                     docks,
                     fullscreen: cx.is_fullscreen(),
                 };
-
-                cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace))
-                    .detach();
+                return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
             }
         }
+        Task::ready(())
+    }
+
+    fn refresh_recent_documents(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        if !self.project.read(cx).is_local() {
+            return Task::ready(Ok(()));
+        }
+        cx.spawn(|cx| async move {
+            let recents = WORKSPACE_DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default();
+            let mut unique_paths = HashMap::default();
+            for (id, workspace) in &recents {
+                for path in workspace.paths().iter() {
+                    unique_paths.insert(path.clone(), id);
+                }
+            }
+            let current_paths = unique_paths
+                .into_iter()
+                .sorted_by_key(|(_, id)| *id)
+                .map(|(path, _)| path)
+                .collect::<Vec<_>>();
+            cx.update(|cx| {
+                cx.clear_recent_documents();
+                cx.add_recent_documents(&current_paths);
+            })
+        })
     }
 
     pub(crate) fn load_workspace(
@@ -3539,7 +3577,9 @@ impl Workspace {
             })?;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-            workspace.update(&mut cx, |workspace, cx| workspace.serialize_workspace(cx))?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.serialize_workspace(cx).detach()
+            })?;
 
             Ok(opened_items)
         })
