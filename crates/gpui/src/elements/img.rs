@@ -218,10 +218,10 @@ impl Element for Img {
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
-            match (style.size.width, style.size.height) {
-                (Length::Auto, Length::Auto) => {
-                    if let Some(data) = self.source.data(cx) {
-                        let image_size = data.size();
+            if let Some(data) = self.source.data(cx) {
+                let image_size = data.size();
+                match (style.size.width, style.size.height) {
+                    (Length::Auto, Length::Auto) => {
                         style.size = Size {
                             width: Length::Definite(DefiniteLength::Absolute(
                                 AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
@@ -229,10 +229,10 @@ impl Element for Img {
                             height: Length::Definite(DefiniteLength::Absolute(
                                 AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
                             )),
-                        };
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
             cx.request_layout(&style, [])
         });
