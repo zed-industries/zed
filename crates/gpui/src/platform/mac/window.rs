@@ -411,6 +411,14 @@ impl MacWindowState {
         self.display_link = None;
     }
 
+    fn is_maximized(&self) -> bool {
+        unsafe {
+            let bounds = self.bounds();
+            let screen_size = self.native_window.screen().visibleFrame().into();
+            bounds.size == screen_size
+        }
+    }
+
     fn is_fullscreen(&self) -> bool {
         unsafe {
             let style_mask = self.native_window.styleMask();
@@ -718,7 +726,7 @@ impl PlatformWindow for MacWindow {
 
     // todo(mac)
     fn is_maximized(&self) -> bool {
-        unimplemented!()
+        self.0.as_ref().lock().is_maximized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
