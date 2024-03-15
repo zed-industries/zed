@@ -596,11 +596,17 @@ impl Database {
                 nonce: ActiveValue::Unchanged(channel_message.nonce),
             };
 
-            channel_message::Entity::update(updated_message)
+            let result = channel_message::Entity::update_many()
+                .set(updated_message)
                 .filter(channel_message::Column::Id.eq(message_id))
                 .filter(channel_message::Column::SenderId.eq(user_id))
                 .exec(&*tx)
                 .await?;
+            if result.rows_affected == 0 {
+                return Err(anyhow!(
+                    "Attempted to edit a message (id: {message_id}) which does not exist anymore."
+                ))?;
+            }
 
             // we have to fetch the old mentions,
             // so we don't send a notification when the message has been edited that you are mentioned in
