@@ -4809,7 +4809,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(ui::titlebar_height(cx))
+            .top(ui::TitleBar::height(cx))
             .size_full()
             .flex()
             .items_center()
