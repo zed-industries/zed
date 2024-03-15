@@ -241,9 +241,9 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn note_recent(&self, _path: &PathBuf) {
-        unimplemented!()
-    }
+    fn note_recent(&self, _path: &PathBuf) {}
+
+    fn clear_recents(&self) {}
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 

@@ -785,6 +785,9 @@ impl Workspace {
             Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
         )>,
     > {
+        for path in &abs_paths {
+            cx.note_recent(path);
+        }
         let project_handle = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -886,7 +889,6 @@ impl Workspace {
                 })?
                 .await
                 .unwrap_or_default();
-
             Ok((window, opened_items))
         })
     }
@@ -3412,7 +3414,6 @@ impl Workspace {
             if !location.paths().is_empty() {
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
                 let docks = build_serialized_docks(self, cx);
-                (*cx).note_recent(&location.paths()[0]);
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
                     location,

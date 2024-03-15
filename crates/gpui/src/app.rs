@@ -1137,6 +1137,10 @@ impl AppContext {
         self.platform.note_recent(path);
     }
 
+    /// Clears the list of recent paths.
+    pub fn clear_recents(&mut self) {
+        self.platform.clear_recents();
+    }
     /// Dispatch an action to the currently active window or global action handler
     /// See [action::Action] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {

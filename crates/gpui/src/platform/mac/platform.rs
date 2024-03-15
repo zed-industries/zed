@@ -776,6 +776,14 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn clear_recents(&self) {
+        unsafe {
+            let document_controller: id =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
+            let _: () = msg_send![document_controller, clearRecentDocuments:nil];
+        }
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         unsafe {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];

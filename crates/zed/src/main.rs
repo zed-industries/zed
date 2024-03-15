@@ -50,7 +50,7 @@ use util::{
 };
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceStore};
+use workspace::{AppState, WorkspaceStore, WORKSPACE_DB};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
@@ -260,7 +260,19 @@ fn main() {
         extensions_ui::init(cx);
 
         cx.set_menus(app_menus());
-        // cx.set_recents(vec!["/Users/danielzhu/Documents".to_owned()]);
+        cx.spawn(|cx| async move {
+            let recents = WORKSPACE_DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default();
+            cx.update(|cx| {
+                cx.clear_recents();
+                for (_, recent) in recents.iter().rev() {
+                    cx.note_recent(&recent.paths()[0]);
+                }
+            })
+        })
+        .detach();
         initialize_workspace(app_state.clone(), cx);
 
         // todo(linux): unblock this

@@ -430,6 +430,10 @@ impl RecentProjectsDelegate {
                     .await
                     .unwrap_or_default();
                 this.update(&mut cx, move |picker, cx| {
+                    (*cx).clear_recents();
+                    for (_, workspace) in workspaces.iter().rev() {
+                        (*cx).note_recent(&workspace.paths()[0]);
+                    }
                     picker.delegate.workspaces = workspaces;
                     picker.delegate.set_selected_index(ix - 1, cx);
                     picker.delegate.reset_selected_match_index = false;
