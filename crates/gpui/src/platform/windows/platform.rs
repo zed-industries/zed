@@ -62,6 +62,7 @@ pub(crate) struct WindowsPlatformInner {
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+    pub icon: HICON,
 }
 
 impl WindowsPlatformInner {
@@ -156,6 +157,7 @@ impl WindowsPlatform {
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
+        let icon = load_icon();
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -165,6 +167,7 @@ impl WindowsPlatform {
             raw_window_handles,
             dispatch_event,
             settings,
+            icon,
         });
         Self { inner }
     }
@@ -885,4 +888,28 @@ fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
         let _ = (&period,);
         (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
     }
+}
+
+fn load_icon() -> HICON {
+    let icon_str = "app-main-icon".encode_utf16().chain(Some(0)).collect_vec();
+    let icon_name = PCWSTR::from_raw(icon_str.as_ptr());
+    let Ok(handle) = unsafe {
+        LoadImageW(
+            None,
+            icon_name,
+            IMAGE_ICON,
+            0,
+            0,
+            LR_LOADFROMFILE | LR_DEFAULTSIZE | LR_SHARED | LR_LOADTRANSPARENT,
+        )
+    }
+    .inspect_err(|_| {
+        log::error!(
+            "unable to load icon file: {}",
+            std::io::Error::last_os_error()
+        )
+    }) else {
+        return HICON::default();
+    };
+    HICON(handle.0)
 }
