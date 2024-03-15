@@ -33,7 +33,6 @@ use windows::{
         Security::Credentials::*,
         Storage::FileSystem::{
             GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
-            VS_VERSION_INFO,
         },
         System::{
             Com::*,

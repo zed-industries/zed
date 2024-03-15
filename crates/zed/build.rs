@@ -60,6 +60,8 @@ fn main() {
         let mut res = winresource::WindowsResource::new();
         res.set(
             "LegalCopyright",
+            // todo(windows)
+            // is this copyright string correct?
             "Copyright (C) 2024 Zed Industries. All rights reserved",
         );
         if let Err(e) = res.compile() {
