@@ -322,7 +322,7 @@ if [ "$local_arch" = true ]; then
     sign_binaries "$app_path" "$local_target_triple"
 else
     # Create universal binary
-    cp "$app_path_x64" target/release/
+    cp -R "$app_path_x64" target/release/
     app_path=target/release/$(basename "$app_path_x64")
     lipo \
         -create \
