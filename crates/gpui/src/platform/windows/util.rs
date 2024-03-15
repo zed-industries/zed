@@ -1,9 +1,4 @@
-use windows::Win32::{
-    Foundation::{HWND, LPARAM, WPARAM},
-    UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, GetWindowLongW, SetWindowLongPtrW, SetWindowLongW, WINDOW_LONG_PTR_INDEX,
-    },
-};
+use windows::Win32::{Foundation::*, UI::WindowsAndMessaging::*};
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;
