@@ -71,15 +71,7 @@ pub fn hex_to_hsla(s: &str) -> Result<RGBAColor, String> {
         _ => return Err("Invalid hexadecimal string length".to_string()),
     };
 
-    // Test if the most significant bit of a byte is set. If that is the case,
-    // the string contains unicode characters and can't be a color string.
-    // Otherwise, the string is pure ASCII.
-    if u64::from_ne_bytes(arr) & u64::from_ne_bytes([0x80; 8]) != 0 {
-        return Err(format!("Invalid hexadecimal string: {}", s));
-    }
-    // SAFETY: We have proven that this string is ASCII in the test above.
-    let hex = unsafe { std::str::from_utf8_unchecked(&arr) };
-
+    let hex = std::str::from_utf8(&arr).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
     let hex_val =
         u32::from_str_radix(hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
 
