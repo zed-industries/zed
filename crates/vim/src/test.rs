@@ -270,6 +270,11 @@ async fn test_status_indicator(cx: &mut gpui::TestAppContext) {
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
         Some(Mode::Insert)
     );
+    cx.simulate_keystrokes(["escape", "shift-r"]);
+    assert_eq!(
+        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
+        Some(Mode::Replace)
+    );
 
     // shows even in search
     cx.simulate_keystrokes(["escape", "v", "/"]);

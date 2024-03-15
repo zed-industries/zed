@@ -387,7 +387,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
     let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state().mode {
-        Mode::Normal => normal_motion(motion, operator, count, cx),
+        Mode::Normal | Mode::Replace => normal_motion(motion, operator, count, cx),
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
@@ -800,7 +800,11 @@ fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Display
     point
 }
 
-fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+pub(crate) fn backspace(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    times: usize,
+) -> DisplayPoint {
     for _ in 0..times {
         point = movement::left(map, point);
         if point.is_zero() {
