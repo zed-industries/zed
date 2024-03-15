@@ -14,14 +14,14 @@ use smallvec::SmallVec;
 
 use crate::h_flex;
 
-enum PlatformStyle {
+pub enum PlatformStyle {
     Linux,
     Windows,
     MacOs,
 }
 
 impl PlatformStyle {
-    fn platform() -> Self {
+    pub fn platform() -> Self {
         if cfg!(windows) {
             Self::Windows
         } else if cfg!(macos) {
@@ -31,11 +31,11 @@ impl PlatformStyle {
         }
     }
 
-    fn windows(&self) -> bool {
+    pub fn windows(&self) -> bool {
         matches!(self, Self::Windows)
     }
 
-    fn macos(&self) -> bool {
+    pub fn macos(&self) -> bool {
         matches!(self, Self::MacOs)
     }
 }
@@ -55,7 +55,8 @@ impl Styled for PlatformTitlebar {
 }
 
 impl PlatformTitlebar {
-    fn with_platform_style(self, style: PlatformStyle) -> Self {
+    /// Change the platform style used
+    pub fn with_platform_style(self, style: PlatformStyle) -> Self {
         Self {
             platform: style,
             ..self
@@ -109,7 +110,7 @@ impl PlatformTitlebar {
                 hover_color: Rgba,
                 cx: &WindowContext,
             ) -> Stateful<Div> {
-                let mut active_color = hover_color.clone();
+                let mut active_color = hover_color;
                 active_color.a *= 0.2;
                 h_flex()
                     .id(id)
