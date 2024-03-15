@@ -110,15 +110,18 @@ fn undo_replace(vim: &mut Vim, maybe_times: Option<usize>, cx: &mut WindowContex
 
                     let mut undo = None;
                     let edit_range = start..end;
-                    for (range, inverse) in vim.state().replacements.iter().rev() {
+                    for (i, (range, inverse)) in vim.state().replacements.iter().rev().enumerate() {
                         if range.start.to_point(&map.buffer_snapshot) <= edit_range.start
                             && range.end.to_point(&map.buffer_snapshot) >= edit_range.end
                         {
-                            undo = Some(inverse);
+                            undo = Some(inverse.clone());
+                            vim.update_state(|state| {
+                                state.replacements.remove(state.replacements.len() - i - 1);
+                            });
                             break;
                         }
                     }
-                    Some((edit_range, undo?.clone()))
+                    Some((edit_range, undo?))
                 })
                 .collect::<Vec<_>>();
 
@@ -329,5 +332,22 @@ mod test {
             )
             .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_replace_multicursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇabcˇabcabc", Mode::Normal);
+        cx.simulate_keystrokes(["shift-r", "1", "2", "3", "4"]);
+        cx.assert_state("1234ˇ234ˇbc", Mode::Replace);
+        assert_eq!(cx.mode(), Mode::Replace);
+        cx.simulate_keystrokes([
+            "backspace",
+            "backspace",
+            "backspace",
+            "backspace",
+            "backspace",
+        ]);
+        cx.assert_state("ˇabˇcabcabc", Mode::Replace);
     }
 }
