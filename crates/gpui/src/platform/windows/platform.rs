@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use ::util::{ResultExt, SemanticVersion};
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
@@ -19,7 +20,6 @@ use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use time::UtcOffset;
-use util::{ResultExt, SemanticVersion};
 use windows::{
     core::*,
     Wdk::System::SystemServices::*,
@@ -31,12 +31,7 @@ use windows::{
     },
 };
 
-use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Task, WindowAppearance, WindowParams, WindowsDispatcher, WindowsDisplay,
-    WindowsTextSystem, WindowsWindow,
-};
+use crate::*;
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
@@ -62,6 +57,19 @@ pub(crate) struct WindowsPlatformInner {
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) event: HANDLE,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+}
+
+impl WindowsPlatformInner {
+    pub(crate) fn try_get_windows_inner_from_hwnd(
+        &self,
+        hwnd: HWND,
+    ) -> Option<Rc<WindowsWindowInner>> {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|entry| *entry == &hwnd)
+            .and_then(|hwnd| try_get_window_inner(*hwnd))
+    }
 }
 
 impl Drop for WindowsPlatformInner {
@@ -282,9 +290,11 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo(windows)
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        None
+        let active_window_hwnd = unsafe { GetActiveWindow() };
+        self.inner
+            .try_get_windows_inner_from_hwnd(active_window_hwnd)
+            .map(|inner| inner.handle)
     }
 
     fn open_window(

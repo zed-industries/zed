@@ -47,7 +47,7 @@ pub(crate) struct WindowsWindowInner {
     renderer: RefCell<BladeRenderer>,
     callbacks: RefCell<Callbacks>,
     platform_inner: Rc<WindowsPlatformInner>,
-    handle: AnyWindowHandle,
+    pub(crate) handle: AnyWindowHandle,
     scale_factor: f32,
 }
 
@@ -178,6 +178,7 @@ impl WindowsWindowInner {
         match msg {
             WM_ACTIVATE => self.handle_activate_msg(msg, wparam, lparam),
             WM_CREATE => self.handle_create_msg(lparam),
+            WM_SETFOCUS => self.handle_set_focus_msg(msg, wparam, lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(msg, wparam, lparam),
@@ -968,6 +969,31 @@ impl WindowsWindowInner {
 
         unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
     }
+
+    fn handle_set_focus_msg(&self, _msg: u32, wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
+        // wparam is the window that just lost focus (may be null)
+        // SEE: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
+        let lost_focus_hwnd = HWND(wparam.0 as isize);
+        if let Some(lost_focus_window) = self
+            .platform_inner
+            .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
+        {
+            lost_focus_window
+                .callbacks
+                .borrow_mut()
+                .active_status_change
+                .as_mut()
+                .map(|mut cb| cb(false));
+        }
+
+        self.callbacks
+            .borrow_mut()
+            .active_status_change
+            .as_mut()
+            .map(|mut cb| cb(true));
+
+        LRESULT(0)
+    }
 }
 
 #[derive(Default)]
@@ -1234,7 +1260,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn activate(&self) {
-        unsafe { ShowWindowAsync(self.inner.hwnd, SW_NORMAL) };
+        unsafe { SetActiveWindow(self.inner.hwnd) };
+        unsafe { SetFocus(self.inner.hwnd) };
+        unsafe { SetForegroundWindow(self.inner.hwnd) };
     }
 
     // todo(windows)
@@ -1497,6 +1525,10 @@ unsafe extern "system" fn wnd_proc(
 }
 
 pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
+    if hwnd == HWND(0) {
+        return None;
+    }
+
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowInner>;
     if !ptr.is_null() {
         let inner = unsafe { &*ptr };
