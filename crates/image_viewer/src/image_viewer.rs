@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use workspace::item::{Item, ProjectItem};
 
-const IMAGE_VIEWER_KIND: &str = "ImageView";
+const _IMAGE_VIEWER_KIND: &str = "ImageView";
 
 pub struct ImageView {
     path: ProjectPath,
@@ -65,6 +65,21 @@ impl project::Item for ImageItem {
 
 impl Item for ImageView {
     type Event = ();
+
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        _selected: bool,
+        _cx: &WindowContext,
+    ) -> AnyElement {
+        self.path
+            .path
+            .file_name()
+            .unwrap_or_else(|| self.path.path.as_os_str())
+            .to_string_lossy()
+            .to_string()
+            .into_any_element()
+    }
 }
 
 impl EventEmitter<()> for ImageView {}
@@ -76,7 +91,7 @@ impl FocusableView for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let path = dbg!(self.project.read(cx).absolute_path(dbg!(&self.path), cx));
+        let path = self.project.read(cx).absolute_path(&self.path, cx);
 
         let im = path
             .map(|path| img(path).into_any())

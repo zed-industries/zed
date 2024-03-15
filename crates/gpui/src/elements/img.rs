@@ -224,7 +224,6 @@ impl Element for Img {
                         let image_size = data.size();
                         style.size = Size {
                             width: Length::Definite(DefiniteLength::Absolute(
-                                // TODO: Figure out the correct conversion
                                 AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
                             )),
                             height: Length::Definite(DefiniteLength::Absolute(
