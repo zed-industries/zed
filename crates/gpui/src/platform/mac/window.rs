@@ -419,6 +419,11 @@ impl MacWindowState {
         }
     }
 
+    // todo(macos)
+    fn is_minimized(&self) -> bool {
+        false
+    }
+
     fn is_fullscreen(&self) -> bool {
         unsafe {
             let style_mask = self.native_window.styleMask();
@@ -726,6 +731,10 @@ impl PlatformWindow for MacWindow {
 
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
+    }
+
+    fn is_minimized(&self) -> bool {
+        self.0.as_ref().lock().is_minimized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
