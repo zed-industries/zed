@@ -12,7 +12,7 @@ use gpui::{
     AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
     Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    WeakFocusHandle, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -166,7 +166,7 @@ pub struct Pane {
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
-    last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
+    last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
     new_item_menu: Option<View<ContextMenu>>,
@@ -262,7 +262,7 @@ impl Pane {
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
-            last_focused_view_by_item: Default::default(),
+            last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
                 backward_stack: Default::default(),
@@ -380,18 +380,20 @@ impl Pane {
             if self.focus_handle.is_focused(cx) {
                 // Pane was focused directly. We need to either focus a view inside the active item,
                 // or focus the active item itself
-                if let Some(weak_last_focused_view) =
-                    self.last_focused_view_by_item.get(&active_item.item_id())
+                if let Some(weak_last_focus_handle) =
+                    self.last_focus_handle_by_item.get(&active_item.item_id())
                 {
-                    weak_last_focused_view.focus(cx);
-                    return;
+                    if let Some(focus_handle) = weak_last_focus_handle.upgrade() {
+                        focus_handle.focus(cx);
+                        return;
+                    }
                 }
 
                 active_item.focus_handle(cx).focus(cx);
             } else if let Some(focused) = cx.focused() {
                 if !self.context_menu_focused(cx) {
-                    self.last_focused_view_by_item
-                        .insert(active_item.item_id(), focused);
+                    self.last_focus_handle_by_item
+                        .insert(active_item.item_id(), focused.downgrade());
                 }
             }
         }
