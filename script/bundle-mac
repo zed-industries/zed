@@ -321,8 +321,6 @@ function sign_binaries() {
 if [ "$local_arch" = true ]; then
     sign_binaries "$app_path" "$local_target_triple"
 else
-    sign_binaries "$app_path_x64" "x86_64-apple-darwin"
-    sign_binaries "$app_path_aarch64" "aarch64-apple-darwin"
     # Create universal binary
     cp "$app_path_x64" target/release/
     app_path=target/release/$(basename "$app_path_x64")
@@ -337,4 +335,7 @@ else
         -output \
         "${app_path}/Contents/MacOS/cli"
     sign_binaries "$app_path" "."
+
+    sign_binaries "$app_path_x64" "x86_64-apple-darwin"
+    sign_binaries "$app_path_aarch64" "aarch64-apple-darwin"
 fi
