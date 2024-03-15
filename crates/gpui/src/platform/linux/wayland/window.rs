@@ -281,7 +281,7 @@ impl PlatformWindow for WaylandWindow {
 
     // todo(linux)
     fn is_maximized(&self) -> bool {
-        unimplemented!()
+        false
     }
 
     fn content_size(&self) -> Size<Pixels> {

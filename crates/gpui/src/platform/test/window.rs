@@ -112,7 +112,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn is_maximized(&self) -> bool {
-        unimplemented!()
+        false
     }
 
     fn content_size(&self) -> Size<Pixels> {

@@ -335,7 +335,7 @@ impl PlatformWindow for X11Window {
 
     // todo(linux)
     fn is_maximized(&self) -> bool {
-        unimplemented!()
+        false
     }
 
     fn content_size(&self) -> Size<Pixels> {
