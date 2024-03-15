@@ -1,4 +1,4 @@
-use gpui::{transparent_black, AnyElement, Fill, Interactivity, Rgba, Stateful, WindowAppearance};
+use gpui::{AnyElement, Interactivity, Rgba, Stateful, WindowAppearance};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -36,7 +36,6 @@ impl PlatformStyle {
 #[derive(IntoElement)]
 pub struct PlatformTitlebar {
     platform: PlatformStyle,
-    background: Fill,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -45,7 +44,6 @@ impl PlatformTitlebar {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             platform: PlatformStyle::platform(),
-            background: transparent_black().into(),
             content: div().id(id.into()),
             children: SmallVec::new(),
         }
@@ -54,16 +52,6 @@ impl PlatformTitlebar {
     /// Sets the platform style.
     pub fn platform_style(mut self, style: PlatformStyle) -> Self {
         self.platform = style;
-        self
-    }
-
-    /// Sets the background color of the titlebar.
-    pub fn background<F>(mut self, fill: F) -> Self
-    where
-        F: Into<Fill>,
-        Self: Sized,
-    {
-        self.background = fill.into();
         self
     }
 
@@ -163,6 +151,20 @@ impl PlatformTitlebar {
     }
 }
 
+impl InteractiveElement for PlatformTitlebar {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.content.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for PlatformTitlebar {}
+
+impl ParentElement for PlatformTitlebar {
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
+    }
+}
+
 impl RenderOnce for PlatformTitlebar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let titlebar_height = titlebar_height(cx);
@@ -185,7 +187,7 @@ impl RenderOnce for PlatformTitlebar {
                     this.pl_2()
                 }
             })
-            .bg(self.background)
+            .bg(cx.theme().colors().title_bar_background)
             .content_stretch()
             .child(
                 self.content
@@ -197,19 +199,5 @@ impl RenderOnce for PlatformTitlebar {
                     .children(self.children),
             )
             .child(window_controls_right)
-    }
-}
-
-impl InteractiveElement for PlatformTitlebar {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.content.interactivity()
-    }
-}
-
-impl StatefulInteractiveElement for PlatformTitlebar {}
-
-impl ParentElement for PlatformTitlebar {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
-        self.children.extend(elements)
     }
 }

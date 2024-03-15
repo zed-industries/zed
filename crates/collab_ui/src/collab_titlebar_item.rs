@@ -59,7 +59,6 @@ impl Render for CollabTitlebarItem {
         let workspace = self.workspace.upgrade();
 
         PlatformTitlebar::new("collab-titlebar")
-            .background(cx.theme().colors().title_bar_background)
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {
