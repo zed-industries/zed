@@ -9593,6 +9593,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-configuration"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba3a3adc5c275d719af8cb4272ea1c4a6d668a777f37e115f6d11ddbc1c8e0e7"
+dependencies = [
+ "bitflags 1.3.2",
+ "core-foundation",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
+dependencies = [
+ "core-foundation-sys 0.8.6",
+ "libc",
+]
+
+[[package]]
 name = "system-interface"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11025,6 +11046,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "system-configuration",
  "take-until",
  "tempfile",
  "tendril",

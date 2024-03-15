@@ -1,4 +1,4 @@
-use crate::http_proxy_from_env;
+use crate::proxy::http_proxy_from_env;
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
