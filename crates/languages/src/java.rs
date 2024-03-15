@@ -125,23 +125,14 @@ impl LspAdapter for JavaLspAdapter {
     ) -> Option<CodeLabel> {
         match completion.kind {
             Some(
-                lsp::CompletionItemKind::VARIABLE
+                lsp::CompletionItemKind::METHOD
+                | lsp::CompletionItemKind::VARIABLE
                 | lsp::CompletionItemKind::CONSTANT
                 | lsp::CompletionItemKind::FIELD,
             ) => {
                 if let Some((name, detail)) = completion.label.split_once(" : ") {
-                    let highlight_id = language.grammar()?.highlight_id_for_name("constant")?;
-                    let mut label = CodeLabel::plain(format!("{name}: {detail}"), None);
-
-                    label.runs.push((0..name.len(), highlight_id));
-
-                    return Some(label);
-                }
-            }
-            Some(lsp::CompletionItemKind::METHOD) => {
-                if let Some((name, detail)) = completion.label.split_once(" : ") {
                     let text = format!("{detail} {name}");
-                    let source = Rope::from(format!("{text} {{}}").as_str());
+                    let source = Rope::from(text.as_str());
                     let runs = language.highlight_text(&source, 0..text.len());
 
                     return Some(CodeLabel {
@@ -199,7 +190,7 @@ impl LspAdapter for JavaLspAdapter {
             }
             Some(kind) if kind != lsp::CompletionItemKind::SNIPPET => {
                 // Run `RUST_LOG=warn cargo run` to run and show warnings!
-                warn!("Unimplemented Java completion: {completion:#?}")
+                warn!("Unimplemented Java completion: {completion:#?}");
             }
             _ => (),
         }
