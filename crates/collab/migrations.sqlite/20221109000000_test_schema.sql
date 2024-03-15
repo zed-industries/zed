@@ -198,7 +198,7 @@ CREATE TABLE "channels" (
     "name" VARCHAR NOT NULL,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL,
-    "parent_path" TEXT,
+    "parent_path" TEXT NOT NULL,
     "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE
 );
 
