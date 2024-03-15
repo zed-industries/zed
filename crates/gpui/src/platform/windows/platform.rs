@@ -21,35 +21,13 @@ use smallvec::SmallVec;
 use time::UtcOffset;
 use util::{ResultExt, SemanticVersion};
 use windows::{
-    core::{IUnknown, HRESULT, HSTRING, PCWSTR, PWSTR},
-    Wdk::System::SystemServices::RtlGetVersion,
+    core::*,
+    Wdk::System::SystemServices::*,
     Win32::{
-        Foundation::{CloseHandle, HANDLE, HWND},
-        Graphics::{
-            DirectComposition::DCompositionWaitForCompositorClock,
-            Gdi::{RedrawWindow, HRGN, RDW_INVALIDATE, RDW_UPDATENOW},
-        },
-        System::{
-            Com::{CoCreateInstance, CreateBindCtx, CLSCTX_ALL},
-            Ole::{OleInitialize, OleUninitialize},
-            Threading::{CreateEventW, INFINITE},
-            Time::{GetTimeZoneInformation, TIME_ZONE_ID_INVALID},
-        },
-        UI::{
-            Input::KeyboardAndMouse::GetDoubleClickTime,
-            Shell::{
-                FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
-                SHCreateItemFromParsingName, ShellExecuteW, FILEOPENDIALOGOPTIONS,
-                FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
-            },
-            WindowsAndMessaging::{
-                DispatchMessageW, LoadImageW, PeekMessageW, PostQuitMessage, SetCursor,
-                SystemParametersInfoW, TranslateMessage, HCURSOR, IDC_ARROW, IDC_CROSS, IDC_HAND,
-                IDC_IBEAM, IDC_NO, IDC_SIZENS, IDC_SIZEWE, IMAGE_CURSOR, LR_DEFAULTSIZE, LR_SHARED,
-                MSG, PM_REMOVE, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SW_SHOWDEFAULT,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WM_QUIT, WM_SETTINGCHANGE,
-            },
-        },
+        Foundation::*,
+        Graphics::{DirectComposition::*, Gdi::*},
+        System::{Com::*, Ole::*, Threading::*, Time::*},
+        UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
 };
 

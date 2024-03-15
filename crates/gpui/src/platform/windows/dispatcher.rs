@@ -10,15 +10,7 @@ use async_task::Runnable;
 use flume::Sender;
 use parking::Parker;
 use parking_lot::Mutex;
-use windows::Win32::{
-    Foundation::{BOOLEAN, HANDLE},
-    System::Threading::{
-        CreateThreadpool, CreateThreadpoolWork, CreateTimerQueueTimer, DeleteTimerQueueTimer,
-        SetEvent, SetThreadpoolThreadMinimum, SubmitThreadpoolWork, PTP_CALLBACK_INSTANCE,
-        PTP_POOL, PTP_WORK, TP_CALLBACK_ENVIRON_V3, TP_CALLBACK_PRIORITY_NORMAL,
-        WT_EXECUTEONLYONCE,
-    },
-};
+use windows::Win32::{Foundation::*, System::Threading::*};
 
 use crate::{PlatformDispatcher, TaskLabel};
 
