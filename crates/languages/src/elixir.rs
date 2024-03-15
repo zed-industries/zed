@@ -65,7 +65,7 @@ impl Settings for ElixirSettings {
 
 pub struct ElixirLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for ElixirLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("elixir-ls".into())
@@ -292,7 +292,7 @@ async fn get_cached_server_binary_elixir_ls(
 
 pub struct NextLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for NextLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("next-ls".into())
@@ -446,7 +446,7 @@ pub struct LocalLspAdapter {
     pub arguments: Vec<String>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for LocalLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("local-ls".into())

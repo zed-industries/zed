@@ -3,7 +3,7 @@ use crate::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
         TransformBlock,
     },
-    editor_settings::{DoubleClickInMultibuffer, ShowScrollbar},
+    editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -258,12 +258,28 @@ impl EditorElement {
         register_action(view, cx, Editor::go_to_prev_diagnostic);
         register_action(view, cx, Editor::go_to_hunk);
         register_action(view, cx, Editor::go_to_prev_hunk);
-        register_action(view, cx, Editor::go_to_definition);
-        register_action(view, cx, Editor::go_to_definition_split);
-        register_action(view, cx, Editor::go_to_implementation);
-        register_action(view, cx, Editor::go_to_implementation_split);
-        register_action(view, cx, Editor::go_to_type_definition);
-        register_action(view, cx, Editor::go_to_type_definition_split);
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_definition(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_definition_split(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_implementation(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor
+                .go_to_implementation_split(a, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_type_definition(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor
+                .go_to_type_definition_split(a, cx)
+                .detach_and_log_err(cx);
+        });
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
@@ -439,10 +455,15 @@ impl EditorElement {
                 cx,
             );
         } else {
+            let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+            let multi_cursor_modifier = match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.alt,
+                MultiCursorModifier::Cmd => modifiers.command,
+            };
             editor.select(
                 SelectPhase::Begin {
                     position,
-                    add: modifiers.alt,
+                    add: multi_cursor_modifier,
                     click_count,
                 },
                 cx,
@@ -487,7 +508,13 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if !pending_nonempty_selections && event.modifiers.command && text_hitbox.is_hovered(cx) {
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let multi_cursor_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => event.modifiers.command,
+            MultiCursorModifier::Cmd => event.modifiers.alt,
+        };
+
+        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(cx) {
             let point = position_map.point_for_position(text_hitbox.bounds, event.position);
             editor.handle_click_hovered_link(point, event.modifiers, cx);
 
@@ -1634,6 +1661,12 @@ impl EditorElement {
         em_width: Pixels,
         cx: &mut ElementContext,
     ) {
+        struct MeasuredHoverPopover {
+            element: AnyElement,
+            size: Size<Pixels>,
+            horizontal_offset: Pixels,
+        }
+
         let max_size = size(
             (120. * em_width) // Default size
                 .min(hitbox.size.width / 2.) // Shrink to half of the editor width
@@ -1653,7 +1686,7 @@ impl EditorElement {
                 cx,
             )
         });
-        let Some((position, mut hover_popovers)) = hover_popovers else {
+        let Some((position, hover_popovers)) = hover_popovers else {
             return;
         };
 
@@ -1663,47 +1696,69 @@ impl EditorElement {
         let hovered_row_layout =
             &line_layouts[(position.row() - visible_display_row_range.start) as usize].line;
 
-        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-        // height. This is the size we will use to decide whether to render popovers above or below
-        // the hovered line.
-        let first_size = hover_popovers[0].measure(available_space, cx);
-        let height_to_reserve = first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * line_height;
-
         // Compute Hovered Point
         let x =
             hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
         let y = position.row() as f32 * line_height - scroll_pixel_position.y;
         let hovered_point = content_origin + point(x, y);
 
-        if hovered_point.y - height_to_reserve > Pixels::ZERO {
+        let mut overall_height = Pixels::ZERO;
+        let mut measured_hover_popovers = Vec::new();
+        for mut hover_popover in hover_popovers {
+            let size = hover_popover.measure(available_space, cx);
+            let horizontal_offset =
+                (text_hitbox.upper_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
+
+            overall_height += HOVER_POPOVER_GAP + size.height;
+
+            measured_hover_popovers.push(MeasuredHoverPopover {
+                element: hover_popover,
+                size,
+                horizontal_offset,
+            });
+        }
+        overall_height += HOVER_POPOVER_GAP;
+
+        fn draw_occluder(width: Pixels, origin: gpui::Point<Pixels>, cx: &mut ElementContext) {
+            let mut occlusion = div()
+                .size_full()
+                .occlude()
+                .on_mouse_move(|_, cx| cx.stop_propagation())
+                .into_any_element();
+            occlusion.measure(size(width, HOVER_POPOVER_GAP).into(), cx);
+            cx.defer_draw(occlusion, origin, 2);
+        }
+
+        if hovered_point.y > overall_height {
             // There is enough space above. Render popovers above the hovered point
             let mut current_y = hovered_point.y;
-            for mut hover_popover in hover_popovers {
-                let size = hover_popover.measure(available_space, cx);
-                let mut popover_origin = point(hovered_point.x, current_y - size.height);
+            for (position, popover) in measured_hover_popovers.into_iter().with_position() {
+                let size = popover.size;
+                let popover_origin = point(
+                    hovered_point.x + popover.horizontal_offset,
+                    current_y - size.height,
+                );
 
-                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
-                if x_out_of_bounds < Pixels::ZERO {
-                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                cx.defer_draw(popover.element, popover_origin, 2);
+                if position != itertools::Position::Last {
+                    let origin = point(popover_origin.x, popover_origin.y - HOVER_POPOVER_GAP);
+                    draw_occluder(size.width, origin, cx);
                 }
-
-                cx.defer_draw(hover_popover, popover_origin, 2);
 
                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
             }
         } else {
             // There is not enough space above. Render popovers below the hovered point
             let mut current_y = hovered_point.y + line_height;
-            for mut hover_popover in hover_popovers {
-                let size = hover_popover.measure(available_space, cx);
-                let mut popover_origin = point(hovered_point.x, current_y);
+            for (position, popover) in measured_hover_popovers.into_iter().with_position() {
+                let size = popover.size;
+                let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
 
-                let x_out_of_bounds = text_hitbox.upper_right().x - (popover_origin.x + size.width);
-                if x_out_of_bounds < Pixels::ZERO {
-                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                cx.defer_draw(popover.element, popover_origin, 2);
+                if position != itertools::Position::Last {
+                    let origin = point(popover_origin.x, popover_origin.y + size.height);
+                    draw_occluder(size.width, origin, cx);
                 }
-
-                cx.defer_draw(hover_popover, popover_origin, 2);
 
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
             }
@@ -2123,12 +2178,16 @@ impl EditorElement {
                         top: Pixels::ZERO,
                         right: Pixels::ZERO,
                         bottom: Pixels::ZERO,
-                        left: px(1.),
+                        left: ScrollbarLayout::BORDER_WIDTH,
                     },
                     cx.theme().colors().scrollbar_track_border,
                 ));
                 let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
                 let is_singleton = self.editor.read(cx).is_singleton(cx);
+                let left = scrollbar_layout.hitbox.left();
+                let right = scrollbar_layout.hitbox.right();
+                let column_width =
+                    px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
                 if is_singleton && scrollbar_settings.selections {
                     let start_anchor = Anchor::min();
                     let end_anchor = Anchor::max();
@@ -2140,26 +2199,18 @@ impl EditorElement {
                             &layout.position_map.snapshot,
                             50000,
                         );
+                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
+                    let right_x = left_x + column_width;
                     for range in background_ranges {
-                        let start_y = scrollbar_layout.y_for_row(range.start().row() as f32);
-                        let mut end_y = scrollbar_layout.y_for_row(range.end().row() as f32);
-                        if end_y - start_y < px(1.) {
-                            end_y = start_y + px(1.);
-                        }
-                        let bounds = Bounds::from_corners(
-                            point(scrollbar_layout.hitbox.left(), start_y),
-                            point(scrollbar_layout.hitbox.right(), end_y),
-                        );
+                        let (start_y, end_y) =
+                            scrollbar_layout.ys_for_marker(range.start().row(), range.end().row());
+                        let bounds =
+                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
                         cx.paint_quad(quad(
                             bounds,
                             Corners::default(),
                             cx.theme().status().info,
-                            Edges {
-                                top: Pixels::ZERO,
-                                right: px(1.),
-                                bottom: Pixels::ZERO,
-                                left: px(1.),
-                            },
+                            Edges::default(),
                             cx.theme().colors().scrollbar_thumb_border,
                         ));
                     }
@@ -2171,68 +2222,49 @@ impl EditorElement {
                         &layout.position_map.snapshot,
                         cx.theme().colors(),
                     );
+                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
+                    let right_x = left_x + column_width;
                     for hunk in selection_ranges {
                         let start_display = Point::new(hunk.0.start.row(), 0)
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
                         let end_display = Point::new(hunk.0.end.row(), 0)
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
-                        let mut end_y = if hunk.0.start == hunk.0.end {
-                            scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
-                        } else {
-                            scrollbar_layout.y_for_row(end_display.row() as f32)
-                        };
-
-                        if end_y - start_y < px(1.) {
-                            end_y = start_y + px(1.);
-                        }
-                        let bounds = Bounds::from_corners(
-                            point(scrollbar_layout.hitbox.left(), start_y),
-                            point(scrollbar_layout.hitbox.right(), end_y),
-                        );
-
+                        let (start_y, end_y) =
+                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
+                        let bounds =
+                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
                         cx.paint_quad(quad(
                             bounds,
                             Corners::default(),
                             cx.theme().status().info,
-                            Edges {
-                                top: Pixels::ZERO,
-                                right: px(1.),
-                                bottom: Pixels::ZERO,
-                                left: px(1.),
-                            },
+                            Edges::default(),
                             cx.theme().colors().scrollbar_thumb_border,
                         ));
                     }
                 }
 
                 if is_singleton && scrollbar_settings.git_diff {
+                    let left_x = left + ScrollbarLayout::BORDER_WIDTH;
+                    let right_x = left_x + column_width;
                     for hunk in layout
                         .position_map
                         .snapshot
                         .buffer_snapshot
                         .git_diff_hunks_in_range(0..layout.max_row)
                     {
-                        let start_display = Point::new(hunk.associated_range.start, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = Point::new(hunk.associated_range.end, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
-                        let mut end_y = if hunk.associated_range.start == hunk.associated_range.end
-                        {
-                            scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
-                        } else {
-                            scrollbar_layout.y_for_row(end_display.row() as f32)
-                        };
-
-                        if end_y - start_y < px(1.) {
-                            end_y = start_y + px(1.);
+                        let start_display_row = Point::new(hunk.associated_range.start, 0)
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot)
+                            .row();
+                        let mut end_display_row = Point::new(hunk.associated_range.end, 0)
+                            .to_display_point(&layout.position_map.snapshot.display_snapshot)
+                            .row();
+                        if end_display_row != start_display_row {
+                            end_display_row -= 1;
                         }
-                        let bounds = Bounds::from_corners(
-                            point(scrollbar_layout.hitbox.left(), start_y),
-                            point(scrollbar_layout.hitbox.right(), end_y),
-                        );
-
+                        let (start_y, end_y) =
+                            scrollbar_layout.ys_for_marker(start_display_row, end_display_row);
+                        let bounds =
+                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
                         let color = match hunk.status() {
                             DiffHunkStatus::Added => cx.theme().status().created,
                             DiffHunkStatus::Modified => cx.theme().status().modified,
@@ -2242,12 +2274,7 @@ impl EditorElement {
                             bounds,
                             Corners::default(),
                             color,
-                            Edges {
-                                top: Pixels::ZERO,
-                                right: px(1.),
-                                bottom: Pixels::ZERO,
-                                left: px(1.),
-                            },
+                            Edges::default(),
                             cx.theme().colors().scrollbar_thumb_border,
                         ));
                     }
@@ -2271,6 +2298,7 @@ impl EditorElement {
                             std::cmp::Reverse(diagnostic.diagnostic.severity)
                         });
 
+                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + 2.0 * column_width;
                     for diagnostic in diagnostics {
                         let start_display = diagnostic
                             .range
@@ -2280,21 +2308,10 @@ impl EditorElement {
                             .range
                             .end
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let start_y = scrollbar_layout.y_for_row(start_display.row() as f32);
-                        let mut end_y = if diagnostic.range.start == diagnostic.range.end {
-                            scrollbar_layout.y_for_row((end_display.row() + 1) as f32)
-                        } else {
-                            scrollbar_layout.y_for_row(end_display.row() as f32)
-                        };
-
-                        if end_y - start_y < px(1.) {
-                            end_y = start_y + px(1.);
-                        }
-                        let bounds = Bounds::from_corners(
-                            point(scrollbar_layout.hitbox.left(), start_y),
-                            point(scrollbar_layout.hitbox.right(), end_y),
-                        );
-
+                        let (start_y, end_y) =
+                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
+                        let bounds =
+                            Bounds::from_corners(point(left_x, start_y), point(right, end_y));
                         let color = match diagnostic.diagnostic.severity {
                             DiagnosticSeverity::ERROR => cx.theme().status().error,
                             DiagnosticSeverity::WARNING => cx.theme().status().warning,
@@ -2305,12 +2322,7 @@ impl EditorElement {
                             bounds,
                             Corners::default(),
                             color,
-                            Edges {
-                                top: Pixels::ZERO,
-                                right: px(1.),
-                                bottom: Pixels::ZERO,
-                                left: px(1.),
-                            },
+                            Edges::default(),
                             cx.theme().colors().scrollbar_thumb_border,
                         ));
                     }
@@ -2322,9 +2334,9 @@ impl EditorElement {
                     cx.theme().colors().scrollbar_thumb_background,
                     Edges {
                         top: Pixels::ZERO,
-                        right: px(1.),
+                        right: Pixels::ZERO,
                         bottom: Pixels::ZERO,
-                        left: px(1.),
+                        left: ScrollbarLayout::BORDER_WIDTH,
                     },
                     cx.theme().colors().scrollbar_thumb_border,
                 ));
@@ -3422,6 +3434,9 @@ struct ScrollbarLayout {
 }
 
 impl ScrollbarLayout {
+    const BORDER_WIDTH: Pixels = px(1.0);
+    const MIN_MARKER_HEIGHT: Pixels = px(2.0);
+
     fn thumb_bounds(&self) -> Bounds<Pixels> {
         let thumb_top = self.y_for_row(self.visible_row_range.start) - self.first_row_y_offset;
         let thumb_bottom = self.y_for_row(self.visible_row_range.end) + self.first_row_y_offset;
@@ -3433,6 +3448,15 @@ impl ScrollbarLayout {
 
     fn y_for_row(&self, row: f32) -> Pixels {
         self.hitbox.top() + self.first_row_y_offset + row * self.row_height
+    }
+
+    fn ys_for_marker(&self, start_row: u32, end_row: u32) -> (Pixels, Pixels) {
+        let start_y = self.y_for_row(start_row as f32);
+        let mut end_y = self.y_for_row((end_row + 1) as f32);
+        if end_y - start_y < Self::MIN_MARKER_HEIGHT {
+            end_y = start_y + Self::MIN_MARKER_HEIGHT;
+        }
+        (start_y, end_y)
     }
 }
 

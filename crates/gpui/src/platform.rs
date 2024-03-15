@@ -1,6 +1,6 @@
 // todo(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
-// todo("windows"): remove
+// todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
@@ -22,10 +22,10 @@ mod test;
 mod windows;
 
 use crate::{
-    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
-    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
-    SharedString, Size, Task, TaskLabel, WindowContext,
+    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels,
+    GlyphId, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -118,6 +118,8 @@ pub(crate) trait Platform: 'static {
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
+    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
+    fn clear_recent_documents(&self) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -168,9 +170,9 @@ unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn is_maximized(&self) -> bool;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
-    fn titlebar_height(&self) -> Pixels;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Rc<dyn PlatformDisplay>;
     fn mouse_position(&self) -> Point<Pixels>;
@@ -191,10 +193,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
-    fn toggle_full_screen(&self);
-    fn is_full_screen(&self) -> bool;
+    fn toggle_fullscreen(&self);
+    fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);
@@ -204,8 +206,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
-
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    #[cfg(target_os = "windows")]
+    fn get_raw_handle(&self) -> windows::HWND;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -596,7 +600,7 @@ pub enum WindowKind {
 
 /// Platform level interface
 /// bounds: Bounds<GlobalPixels>
-/// full_screen: bool
+/// fullscreen: bool
 
 /// The appearance of the window, as defined by the operating system.
 ///

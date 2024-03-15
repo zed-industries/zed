@@ -2406,6 +2406,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
+ "derive_more",
  "gpui",
 ]
 
@@ -3920,7 +3921,7 @@ dependencies = [
  "text",
  "time",
  "util",
- "windows-sys 0.52.0",
+ "windows 0.53.0",
 ]
 
 [[package]]
@@ -5337,6 +5338,7 @@ dependencies = [
  "tree-sitter-zig",
  "unindent",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -6090,6 +6092,7 @@ dependencies = [
  "async-trait",
  "futures 0.3.28",
  "log",
+ "semver",
  "serde",
  "serde_json",
  "smol",
@@ -7599,9 +7602,11 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "editor",
  "fuzzy",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "menu",
  "ordered-float 2.10.0",
@@ -8728,6 +8733,12 @@ dependencies = [
  "cpufeatures",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae1a47186c03a32177042e55dbc5fd5aee900b8e0069a8d70fba96a9375cd012"
 
 [[package]]
 name = "sha2"
@@ -11034,6 +11045,7 @@ checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
 dependencies = [
  "getrandom 0.2.10",
  "serde",
+ "sha1_smol",
 ]
 
 [[package]]
@@ -12748,7 +12760,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.127.0"
+version = "0.128.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

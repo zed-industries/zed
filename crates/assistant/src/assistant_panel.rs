@@ -2094,7 +2094,7 @@ impl Conversation {
         let buffer = self.buffer.read(cx);
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
-            while let Some((start_ix, message_anchor)) = message_anchors.next() {
+            if let Some((start_ix, message_anchor)) = message_anchors.next() {
                 let metadata = self.messages_metadata.get(&message_anchor.id)?;
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
@@ -3268,7 +3268,7 @@ mod tests {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
@@ -3399,7 +3399,7 @@ mod tests {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let completion_provider = Arc::new(FakeCompletionProvider::new());
 
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
@@ -3498,7 +3498,7 @@ mod tests {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
@@ -3582,7 +3582,7 @@ mod tests {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
         cx.update(init);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation =
             cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));

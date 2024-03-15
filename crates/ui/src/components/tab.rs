@@ -1,7 +1,9 @@
-use crate::prelude::*;
+use std::cmp::Ordering;
+
 use gpui::{AnyElement, IntoElement, Stateful};
 use smallvec::SmallVec;
-use std::cmp::Ordering;
+
+use crate::{prelude::*, BASE_REM_SIZE_IN_PX};
 
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -51,9 +53,9 @@ impl Tab {
         }
     }
 
-    pub const CONTAINER_HEIGHT_IN_REMS: f32 = 29. / 16.;
+    pub const CONTAINER_HEIGHT_IN_REMS: f32 = 29. / BASE_REM_SIZE_IN_PX;
 
-    const CONTENT_HEIGHT_IN_REMS: f32 = 28. / 16.;
+    const CONTENT_HEIGHT_IN_REMS: f32 = 28. / BASE_REM_SIZE_IN_PX;
 
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;

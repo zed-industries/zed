@@ -209,12 +209,25 @@ jobs:
       - name: Create macOS app bundle
         run: script/bundle-mac
 
-      - name: Upload app bundle to workflow run if main branch or specific label
+      - name: Upload app bundle (universal) to workflow run if main branch or specific label
         uses: actions/upload-artifact@v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
+      - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
+        uses: actions/upload-artifact@v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}_aarch64.dmg
+          path: target/aarch64-apple-darwin/release/Zed.dmg
+
+      - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
+        uses: actions/upload-artifact@v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}_x86_64.dmg
+          path: target/x86_64-apple-darwin/release/Zed.dmg
 
       - uses: softprops/action-gh-release@v1
         name: Upload app bundle to release
@@ -222,7 +235,9 @@ jobs:
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
-          files: target/release/Zed.dmg
+          files: |
+            target/aarch64-apple-darwin/release/Zed.dmg
+            target/x86_64-apple-darwin/release/Zed.dmg
           body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

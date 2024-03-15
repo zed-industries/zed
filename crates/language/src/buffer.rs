@@ -3527,6 +3527,55 @@ impl Completion {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestFile {
+    pub path: Arc<Path>,
+    pub root_name: String,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl File for TestFile {
+    fn path(&self) -> &Arc<Path> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
+        PathBuf::from(&self.root_name).join(self.path.as_ref())
+    }
+
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        None
+    }
+
+    fn mtime(&self) -> Option<SystemTime> {
+        unimplemented!()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
+        self.path().file_name().unwrap_or(self.root_name.as_ref())
+    }
+
+    fn worktree_id(&self) -> usize {
+        0
+    }
+
+    fn is_deleted(&self) -> bool {
+        unimplemented!()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        unimplemented!()
+    }
+
+    fn to_proto(&self) -> rpc::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+}
+
 pub(crate) fn contiguous_ranges(
     values: impl Iterator<Item = u32>,
     max_len: usize,

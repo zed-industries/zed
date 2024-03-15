@@ -29,7 +29,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -155,6 +155,14 @@ impl FocusHandle {
         }
     }
 
+    /// Converts this focus handle into a weak variant, which does not prevent it from being released.
+    pub fn downgrade(&self) -> WeakFocusHandle {
+        WeakFocusHandle {
+            id: self.id,
+            handles: Arc::downgrade(&self.handles),
+        }
+    }
+
     /// Moves the focus to the element associated with this handle.
     pub fn focus(&self, cx: &mut WindowContext) {
         cx.focus(self)
@@ -204,6 +212,41 @@ impl Drop for FocusHandle {
             .get(self.id)
             .unwrap()
             .fetch_sub(1, SeqCst);
+    }
+}
+
+/// A weak reference to a focus handle.
+#[derive(Clone, Debug)]
+pub struct WeakFocusHandle {
+    pub(crate) id: FocusId,
+    handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+}
+
+impl WeakFocusHandle {
+    /// Attempts to upgrade the [WeakFocusHandle] to a [FocusHandle].
+    pub fn upgrade(&self) -> Option<FocusHandle> {
+        let handles = self.handles.upgrade()?;
+        FocusHandle::for_id(self.id, &handles)
+    }
+}
+
+impl PartialEq for WeakFocusHandle {
+    fn eq(&self, other: &WeakFocusHandle) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for WeakFocusHandle {}
+
+impl PartialEq<FocusHandle> for WeakFocusHandle {
+    fn eq(&self, other: &FocusHandle) -> bool {
+        self.id == other.id
+    }
+}
+
+impl PartialEq<WeakFocusHandle> for FocusHandle {
+    fn eq(&self, other: &WeakFocusHandle) -> bool {
+        self.id == other.id
     }
 }
 
@@ -338,9 +381,6 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
         })
 }
 
-// Fixed, Maximized, Fullscreen, and 'Inherent / default'
-// Platform part, you don't, you only need Fixed, Maximized, Fullscreen
-
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -386,7 +426,7 @@ impl Window {
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         if fullscreen {
-            platform_window.toggle_full_screen();
+            platform_window.toggle_fullscreen();
         }
 
         platform_window.on_close(Box::new({
@@ -480,7 +520,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, cx| cx.dispatch_event(event))
                     .log_err()
-                    .unwrap_or(false)
+                    .unwrap_or(DispatchEventResult::default())
             })
         });
 
@@ -532,6 +572,12 @@ impl Window {
     ) -> (Subscription, impl FnOnce()) {
         self.focus_listeners.insert((), value)
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DispatchEventResult {
+    pub propagate: bool,
+    pub default_prevented: bool,
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
@@ -645,6 +691,12 @@ impl<'a> WindowContext<'a> {
             style.refine(refinement);
         }
         style
+    }
+
+    /// Check if the platform window is maximized
+    /// On some platforms (namely Windows) this is different than the bounds being the size of the display
+    pub fn is_maximized(&self) -> bool {
+        self.window.platform_window.is_maximized()
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -807,8 +859,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Retusn whether or not the window is currently fullscreen
-    pub fn is_full_screen(&self) -> bool {
-        self.window.platform_window.is_full_screen()
+    pub fn is_fullscreen(&self) -> bool {
+        self.window.platform_window.is_fullscreen()
     }
 
     fn appearance_changed(&mut self) {
@@ -956,12 +1008,6 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.focus = self.window.focus;
         self.window.next_frame.window_active = self.window.active.get();
 
-        // Set the cursor only if we're the active window.
-        if self.is_window_active() {
-            let cursor_style = self.compute_cursor_style().unwrap_or(CursorStyle::Arrow);
-            self.platform.set_cursor_style(cursor_style);
-        }
-
         // Register requested input handler with the platform window.
         if let Some(input_handler) = self.window.next_frame.input_handlers.pop() {
             self.window
@@ -1017,6 +1063,8 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
+
+        self.reset_cursor_style();
         self.window.refreshing = false;
         self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
@@ -1031,26 +1079,31 @@ impl<'a> WindowContext<'a> {
         profiling::finish_frame!();
     }
 
-    fn compute_cursor_style(&mut self) -> Option<CursorStyle> {
-        // TODO: maybe we should have a HashMap keyed by HitboxId.
-        let request = self
-            .window
-            .next_frame
-            .cursor_styles
-            .iter()
-            .rev()
-            .find(|request| request.hitbox_id.is_hovered(self))?;
-        Some(request.style)
+    fn reset_cursor_style(&self) {
+        // Set the cursor only if we're the active window.
+        if self.is_window_active() {
+            let style = self
+                .window
+                .rendered_frame
+                .cursor_styles
+                .iter()
+                .rev()
+                .find(|request| request.hitbox_id.is_hovered(self))
+                .map(|request| request.style)
+                .unwrap_or(CursorStyle::Arrow);
+            self.platform.set_cursor_style(style);
+        }
     }
 
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
     pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
         let keystroke = keystroke.with_simulated_ime();
-        if self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
+        let result = self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held: false,
-        })) {
+        }));
+        if !result.propagate {
             return true;
         }
 
@@ -1083,7 +1136,7 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
-    pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
+    pub fn dispatch_event(&mut self, event: PlatformInput) -> DispatchEventResult {
         self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
@@ -1157,12 +1210,10 @@ impl<'a> WindowContext<'a> {
                         click_count: 1,
                     })
                 }
-                FileDropEvent::Exited => PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    position: Point::default(),
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                }),
+                FileDropEvent::Exited => {
+                    self.active_drag.take();
+                    PlatformInput::FileDrop(FileDropEvent::Exited)
+                }
             },
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
@@ -1173,11 +1224,18 @@ impl<'a> WindowContext<'a> {
             self.dispatch_key_event(any_key_event);
         }
 
-        !self.app.propagate_event
+        DispatchEventResult {
+            propagate: self.app.propagate_event,
+            default_prevented: self.window.default_prevented,
+        }
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
-        self.window.mouse_hit_test = self.window.rendered_frame.hit_test(self.mouse_position());
+        let hit_test = self.window.rendered_frame.hit_test(self.mouse_position());
+        if hit_test != self.window.mouse_hit_test {
+            self.window.mouse_hit_test = hit_test;
+            self.reset_cursor_style();
+        }
 
         let mut mouse_listeners = mem::take(&mut self.window.rendered_frame.mouse_listeners);
         self.with_element_context(|cx| {
@@ -1479,8 +1537,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Toggle full screen status on the current window at the platform level.
-    pub fn toggle_full_screen(&self) {
-        self.window.platform_window.toggle_full_screen();
+    pub fn toggle_fullscreen(&self) {
+        self.window.platform_window.toggle_fullscreen();
     }
 
     /// Present a platform dialog.
@@ -1638,6 +1696,14 @@ impl<'a> WindowContext<'a> {
             .next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl WindowContext<'_> {
+    /// Returns the raw HWND handle for the window.
+    pub fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+        self.window.platform_window.get_raw_handle()
     }
 }
 

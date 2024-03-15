@@ -15,7 +15,7 @@ use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct OmniSharpAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for OmniSharpAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("OmniSharp".into())

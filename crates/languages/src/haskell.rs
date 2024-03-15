@@ -6,7 +6,7 @@ use std::{any::Any, path::PathBuf};
 
 pub struct HaskellLanguageServer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for HaskellLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("hls".into())

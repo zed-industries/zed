@@ -323,7 +323,13 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmparser = "0.121"
 wasm-encoder = "0.41"
-wasmtime = { version = "18.0", default-features = false, features = ["async", "demangle", "runtime", "cranelift", "component-model"] }
+wasmtime = { version = "18.0", default-features = false, features = [
+    "async",
+    "demangle",
+    "runtime",
+    "cranelift",
+    "component-model",
+] }
 wasmtime-wasi = "18.0"
 which = "6.0.0"
 wit-component = "0.20"
@@ -334,23 +340,35 @@ version = "0.53.0"
 features = [
     "implement",
     "Wdk_System_SystemServices",
-    "Win32_Graphics_Gdi",
+    "Win32_Globalization",
     "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_Gdi",
     "Win32_UI_Controls",
+    "Win32_Graphics_DirectWrite",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_System_Com",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Controls",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Time",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
-    "Win32_System_Threading",
     "Win32_System_DataExchange",
     "Win32_System_Ole",
-    "Win32_System_Com",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Time",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ]
 
 [patch.crates-io]
@@ -383,6 +401,10 @@ codegen-units = 1
 dbg_macro = "deny"
 todo = "deny"
 
+# Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
+# warning on this rule produces a lot of noise.
+single_range_in_vec_init = "allow"
+
 # These are all of the rules that currently have violations in the Zed
 # codebase.
 #
@@ -401,17 +423,11 @@ style = "allow"
 # Individual rules that have violations in the codebase:
 almost_complete_range = "allow"
 arc_with_non_send_sync = "allow"
-await_holding_lock = "allow"
 borrowed_box = "allow"
-derive_ord_xor_partial_ord = "allow"
-eq_op = "allow"
 let_underscore_future = "allow"
 map_entry = "allow"
-never_loop = "allow"
-non_canonical_clone_impl = "allow"
 non_canonical_partial_ord_impl = "allow"
 reversed_empty_ranges = "allow"
-single_range_in_vec_init = "allow"
 type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]

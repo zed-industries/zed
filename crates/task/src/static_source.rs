@@ -38,6 +38,7 @@ impl Task for StaticTask {
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),
+            reveal: self.definition.reveal,
             env: definition_env,
         })
     }
@@ -64,6 +65,7 @@ pub struct StaticSource {
 
 /// Static task definition from the tasks config file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct Definition {
     /// Human readable name of the task to display in the UI.
     pub label: String,
@@ -84,6 +86,22 @@ pub(crate) struct Definition {
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
+    /// What to do with the terminal pane and tab, after the command was started:
+    /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
+    /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
+    #[serde(default)]
+    pub reveal: RevealStrategy,
+}
+
+/// What to do with the terminal pane and tab, after the command was started.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RevealStrategy {
+    /// Always show the terminal pane, add and focus the corresponding task's tab in it.
+    #[default]
+    Always,
+    /// Do not change terminal pane focus, but still add/reuse the task's tab there.
+    Never,
 }
 
 /// A group of Tasks defined in a JSON file.

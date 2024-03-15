@@ -14,11 +14,11 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, PlatformTitlebar, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, titlebar_height, Workspace};
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -58,25 +58,15 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        h_flex()
-            .id("titlebar")
-            .justify_between()
-            .w_full()
-            .h(titlebar_height(cx))
-            .map(|this| {
-                if cx.is_full_screen() {
-                    this.pl_2()
-                } else {
-                    // Use pixels here instead of a rem-based size because the macOS traffic
-                    // lights are a static size, and don't scale with the rest of the UI.
-                    this.pl(px(80.))
-                }
-            })
-            .bg(cx.theme().colors().title_bar_background)
-            .on_click(|event, cx| {
-                if event.up.click_count == 2 {
-                    cx.zoom_window();
-                }
+        PlatformTitlebar::new("collab-titlebar")
+            .background(cx.theme().colors().title_bar_background)
+            // note: on windows titlebar behaviour is handled by the platform implementation
+            .when(cfg!(not(windows)), |this| {
+                this.on_click(|event, cx| {
+                    if event.up.click_count == 2 {
+                        cx.zoom_window();
+                    }
+                })
             })
             // left side
             .child(

@@ -222,7 +222,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.zoom_window();
             })
             .register_action(|_, _: &ToggleFullScreen, cx| {
-                cx.toggle_full_screen();
+                cx.toggle_fullscreen();
             })
             .register_action(|_, action: &OpenZedUrl, cx| {
                 OpenListener::global(cx).open_urls(vec![action.url.clone()])
@@ -3024,15 +3024,18 @@ mod tests {
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         let settings = cx.update(|cx| SettingsStore::test(cx));
         cx.set_global(settings);
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor().clone());
+        let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::FakeNodeRuntime::new();
         cx.update(|cx| {
             languages::init(languages.clone(), node_runtime, cx);
         });
         for name in languages.language_names() {
-            languages.language_for_name(&name).await.unwrap();
+            languages
+                .language_for_name(&name)
+                .await
+                .with_context(|| format!("language name {name}"))
+                .unwrap();
         }
         cx.run_until_parked();
     }

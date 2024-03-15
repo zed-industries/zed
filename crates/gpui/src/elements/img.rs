@@ -68,6 +68,7 @@ pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     grayscale: bool,
+    object_fit: ObjectFit,
 }
 
 /// Create a new image element.
@@ -76,6 +77,82 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         interactivity: Interactivity::default(),
         source: source.into(),
         grayscale: false,
+        object_fit: ObjectFit::Contain,
+    }
+}
+
+/// How to fit the image into the bounds of the element.
+pub enum ObjectFit {
+    /// The image will be stretched to fill the bounds of the element.
+    Fill,
+    /// The image will be scaled to fit within the bounds of the element.
+    Contain,
+    /// The image will be scaled to cover the bounds of the element.
+    Cover,
+    /// The image will maintain its original size.
+    None,
+}
+
+impl ObjectFit {
+    /// Get the bounds of the image within the given bounds.
+    pub fn get_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+        image_size: Size<DevicePixels>,
+    ) -> Bounds<Pixels> {
+        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
+        let image_ratio = image_size.width / image_size.height;
+        let bounds_ratio = bounds.size.width / bounds.size.height;
+
+        match self {
+            ObjectFit::Fill => bounds,
+            ObjectFit::Contain => {
+                let new_size = if bounds_ratio > image_ratio {
+                    size(
+                        image_size.width * (bounds.size.height / image_size.height),
+                        bounds.size.height,
+                    )
+                } else {
+                    size(
+                        bounds.size.width,
+                        image_size.height * (bounds.size.width / image_size.width),
+                    )
+                };
+
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                    ),
+                    size: new_size,
+                }
+            }
+            ObjectFit::Cover => {
+                let new_size = if bounds_ratio > image_ratio {
+                    size(
+                        bounds.size.width,
+                        image_size.height * (bounds.size.width / image_size.width),
+                    )
+                } else {
+                    size(
+                        image_size.width * (bounds.size.height / image_size.height),
+                        bounds.size.height,
+                    )
+                };
+
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                    ),
+                    size: new_size,
+                }
+            }
+            ObjectFit::None => Bounds {
+                origin: bounds.origin,
+                size: image_size,
+            },
+        }
     }
 }
 
@@ -83,6 +160,11 @@ impl Img {
     /// Set the image to be displayed in grayscale.
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
+        self
+    }
+    /// Set the object fit for the image.
+    pub fn object_fit(mut self, object_fit: ObjectFit) -> Self {
+        self.object_fit = object_fit;
         self
     }
 }
@@ -133,7 +215,7 @@ impl Element for Img {
                             .now_or_never()
                             .and_then(|result| result.ok())
                         {
-                            let new_bounds = preserve_aspect_ratio(bounds, data.size());
+                            let new_bounds = self.object_fit.get_bounds(bounds, data.size());
                             cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
                                 .log_err();
                         } else {
@@ -147,7 +229,7 @@ impl Element for Img {
                     }
 
                     ImageSource::Data(data) => {
-                        let new_bounds = preserve_aspect_ratio(bounds, data.size());
+                        let new_bounds = self.object_fit.get_bounds(bounds, data.size());
                         cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
                             .log_err();
                     }
@@ -155,7 +237,7 @@ impl Element for Img {
                     #[cfg(target_os = "macos")]
                     ImageSource::Surface(surface) => {
                         let size = size(surface.width().into(), surface.height().into());
-                        let new_bounds = preserve_aspect_ratio(bounds, size);
+                        let new_bounds = self.object_fit.get_bounds(bounds, size);
                         // TODO: Add support for corner_radii and grayscale.
                         cx.paint_surface(new_bounds, surface);
                     }
@@ -181,31 +263,5 @@ impl Styled for Img {
 impl InteractiveElement for Img {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
-    }
-}
-
-fn preserve_aspect_ratio(bounds: Bounds<Pixels>, image_size: Size<DevicePixels>) -> Bounds<Pixels> {
-    let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
-    let image_ratio = image_size.width / image_size.height;
-    let bounds_ratio = bounds.size.width / bounds.size.height;
-
-    let new_size = if bounds_ratio > image_ratio {
-        size(
-            image_size.width * (bounds.size.height / image_size.height),
-            bounds.size.height,
-        )
-    } else {
-        size(
-            bounds.size.width,
-            image_size.height * (bounds.size.width / image_size.width),
-        )
-    };
-
-    Bounds {
-        origin: point(
-            bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-            bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-        ),
-        size: new_size,
     }
 }

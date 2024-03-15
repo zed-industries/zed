@@ -13,7 +13,7 @@ use std::{
 
 pub struct DartLanguageServer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for DartLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("dart".into())

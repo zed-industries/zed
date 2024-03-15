@@ -1,7 +1,7 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, GlobalPixels, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    Size, TestPlatform, TileId, WindowAppearance, WindowParams,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult,
+    GlobalPixels, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ pub(crate) struct TestWindowState {
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
-    input_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
+    input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
@@ -102,7 +102,7 @@ impl TestWindow {
         drop(lock);
         let result = callback(event);
         self.0.lock().input_callback = Some(callback);
-        result
+        !result.propagate
     }
 }
 
@@ -111,16 +111,16 @@ impl PlatformWindow for TestWindow {
         self.0.lock().bounds
     }
 
+    fn is_maximized(&self) -> bool {
+        false
+    }
+
     fn content_size(&self) -> Size<Pixels> {
         self.bounds().size.into()
     }
 
     fn scale_factor(&self) -> f32 {
         2.0
-    }
-
-    fn titlebar_height(&self) -> Pixels {
-        unimplemented!()
     }
 
     fn appearance(&self) -> WindowAppearance {
@@ -197,18 +197,18 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         let mut lock = self.0.lock();
         lock.is_fullscreen = !lock.is_fullscreen;
     }
 
-    fn is_full_screen(&self) -> bool {
+    fn is_fullscreen(&self) -> bool {
         self.0.lock().is_fullscreen
     }
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)
     }
 
@@ -248,6 +248,11 @@ impl PlatformWindow for TestWindow {
 
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+        unimplemented!()
     }
 }
 

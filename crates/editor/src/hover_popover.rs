@@ -824,6 +824,8 @@ mod tests {
         .next()
         .await;
 
+        let languages = cx.language_registry().clone();
+
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
             let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
@@ -835,7 +837,7 @@ mod tests {
                 }],
             );
 
-            let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
+            let rendered = smol::block_on(parse_blocks(&blocks, &languages, None));
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -916,6 +918,7 @@ mod tests {
     fn test_render_blocks(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
         let editor = cx.add_window(|cx| Editor::single_line(cx));
         editor
             .update(cx, |editor, _cx| {
@@ -1028,7 +1031,7 @@ mod tests {
                     expected_styles,
                 } in &rows[0..]
                 {
-                    let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
+                    let rendered = smol::block_on(parse_blocks(&blocks, &languages, None));
 
                     let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                     let expected_highlights = ranges
