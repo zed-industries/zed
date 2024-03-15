@@ -1,6 +1,6 @@
 // todo(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
-// todo("windows"): remove
+// todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
@@ -209,7 +209,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     #[cfg(target_os = "windows")]
-    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
+    fn get_raw_handle(&self) -> windows::HWND;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

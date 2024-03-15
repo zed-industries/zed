@@ -249,6 +249,11 @@ impl PlatformWindow for TestWindow {
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
     }
+
+    #[cfg(target_os = "windows")]
+    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+        unimplemented!()
+    }
 }
 
 pub(crate) struct TestAtlasState {

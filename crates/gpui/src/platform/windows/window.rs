@@ -1126,11 +1126,6 @@ impl PlatformWindow for WindowsWindow {
         self.inner.scale_factor
     }
 
-    fn titlebar_height(&self) -> Pixels {
-        let titlebar_rect = self.inner.get_titlebar_rect().unwrap();
-        ((titlebar_rect.bottom - titlebar_rect.top) as f64).into()
-    }
-
     // todo(windows)
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Dark
@@ -1331,7 +1326,7 @@ impl PlatformWindow for WindowsWindow {
         self.inner.renderer.borrow().sprite_atlas().clone()
     }
 
-    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+    fn get_raw_handle(&self) -> HWND {
         self.inner.hwnd
     }
 }
