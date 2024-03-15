@@ -192,7 +192,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
                         tracing_subscriber::fmt::format()
                             .json()
                             .flatten_event(true)
-                            .with_span_list(true),
+                            .with_span_list(false),
                     )
                     .with_filter(filter),
             ) as Box<dyn Layer<_> + Send + Sync>

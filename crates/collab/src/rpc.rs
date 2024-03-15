@@ -467,16 +467,9 @@ impl Server {
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let received_at = envelope.received_at;
-                let span = info_span!(
-                    "handle message",
-                    payload_type = envelope.payload_type_name()
-                );
-                span.in_scope(|| {
                     tracing::info!(
-                        payload_type = envelope.payload_type_name(),
                         "message received"
                     );
-                });
                 let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
@@ -491,7 +484,6 @@ impl Server {
                         Ok(()) => tracing::info!(total_duration_ms, processing_duration_ms, queue_duration_ms, "finished handling message"),
                     }
                 }
-                .instrument(span)
                 .boxed()
             }),
         );
@@ -622,7 +614,7 @@ impl Server {
                     _ = teardown.changed().fuse() => return,
                     result = handle_io => {
                         if let Err(error) = result {
-                            tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
+                            tracing::error!(?error, "error handling I/O");
                         }
                         break;
                     }
@@ -631,6 +623,8 @@ impl Server {
                         let (permit, message) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
+                            // note: we copy all the fields from the parent span so we can query them in the logs.
+                            // (https://github.com/tokio-rs/tracing/issues/2670).
                             let span = tracing::info_span!("receive message", %user_id, %login, %connection_id, %address, type_name);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
@@ -648,10 +642,10 @@ impl Server {
                                     foreground_message_handlers.push(handle_message);
                                 }
                             } else {
-                                tracing::error!(%user_id, %login, %connection_id, %address, "no message handler");
+                                tracing::error!("no message handler");
                             }
                         } else {
-                            tracing::info!(%user_id, %login, %connection_id, %address, "connection closed");
+                            tracing::info!("connection closed");
                             break;
                         }
                     }
@@ -659,9 +653,9 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
+            tracing::info!("signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
-                tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
+                tracing::error!(?error, "error signing out");
             }
 
         }.instrument(span)
