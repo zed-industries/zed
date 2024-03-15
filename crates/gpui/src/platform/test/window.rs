@@ -123,10 +123,6 @@ impl PlatformWindow for TestWindow {
         2.0
     }
 
-    fn titlebar_height(&self) -> Pixels {
-        32.0.into()
-    }
-
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Light
     }

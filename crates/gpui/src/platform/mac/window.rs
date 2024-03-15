@@ -737,10 +737,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().scale_factor()
     }
 
-    fn titlebar_height(&self) -> Pixels {
-        self.0.as_ref().lock().titlebar_height()
-    }
-
     fn appearance(&self) -> WindowAppearance {
         unsafe {
             let appearance: id = msg_send![self.0.lock().native_window, effectiveAppearance];

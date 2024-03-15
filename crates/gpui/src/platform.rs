@@ -173,7 +173,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
-    fn titlebar_height(&self) -> Pixels;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Rc<dyn PlatformDisplay>;
     fn mouse_position(&self) -> Point<Pixels>;
@@ -207,8 +206,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
-
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    #[cfg(target_os = "windows")]
+    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

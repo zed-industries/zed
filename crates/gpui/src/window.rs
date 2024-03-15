@@ -693,11 +693,6 @@ impl<'a> WindowContext<'a> {
         style
     }
 
-    /// Get the platform window titlebar height
-    pub fn titlebar_height(&self) -> Pixels {
-        self.window.platform_window.titlebar_height()
-    }
-
     /// Check if the platform window is maximized
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {
@@ -1701,6 +1696,14 @@ impl<'a> WindowContext<'a> {
             .next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl WindowContext<'_> {
+    /// Returns the raw HWND handle for the window.
+    pub fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+        self.window.platform_window.get_raw_handle()
     }
 }
 

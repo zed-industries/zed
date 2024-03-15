@@ -297,11 +297,6 @@ impl PlatformWindow for WaylandWindow {
     }
 
     // todo(linux)
-    fn titlebar_height(&self) -> Pixels {
-        unimplemented!()
-    }
-
-    // todo(linux)
     fn appearance(&self) -> WindowAppearance {
         WindowAppearance::Light
     }

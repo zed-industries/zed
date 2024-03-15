@@ -25,7 +25,13 @@ use futures::{
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
-use gpui::*;
+use gpui::{
+    actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, KeyContext, Keystroke,
+    LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
+    Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
+};
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -64,7 +70,11 @@ use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{px, Label};
+use ui::{
+    div, Context as _, Div, Element, ElementContext, InteractiveElement as _, IntoElement, Label,
+    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
+    WindowContext,
+};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -410,6 +420,7 @@ impl AppState {
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
         use settings::SettingsStore;
+        use ui::Context as _;
 
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -4798,7 +4809,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(cx.titlebar_height())
+            .top(ui::titlebar_height(cx))
             .size_full()
             .flex()
             .items_center()
@@ -4854,7 +4865,10 @@ mod tests {
         },
     };
     use fs::FakeFs;
-    use gpui::{px, DismissEvent, Empty, TestAppContext, VisualTestContext};
+    use gpui::{
+        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
+        VisualTestContext,
+    };
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
@@ -5831,6 +5845,8 @@ mod tests {
     }
 
     mod register_project_item_tests {
+        use ui::Context as _;
+
         use super::*;
 
         const TEST_PNG_KIND: &str = "TestPngItemView";

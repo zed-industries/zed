@@ -4,9 +4,9 @@
 use gpui::{
     div,
     prelude::FluentBuilder,
-    px, AnyElement, Div, Element, ElementId, Fill, InteractiveElement, Interactivity, IntoElement,
-    ParentElement, Pixels, RenderOnce, Rgba, Stateful, StatefulInteractiveElement, StyleRefinement,
-    Styled,
+    px, transparent_black, AnyElement, Div, Element, ElementId, Fill, InteractiveElement,
+    Interactivity, IntoElement, ParentElement, Pixels, RenderOnce, Rgba, Stateful,
+    StatefulInteractiveElement, StyleRefinement, Styled,
     WindowAppearance::{Dark, Light, VibrantDark, VibrantLight},
     WindowContext,
 };
@@ -20,11 +20,15 @@ pub enum PlatformStyle {
     MacOs,
 }
 
+pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
+    (1.75 * cx.rem_size()).max(px(32.))
+}
+
 impl PlatformStyle {
     pub fn platform() -> Self {
-        if cfg!(windows) {
+        if cfg!(target_os = "windows") {
             Self::Windows
-        } else if cfg!(macos) {
+        } else if cfg!(target_os = "macos") {
             Self::MacOs
         } else {
             Self::Linux
@@ -43,7 +47,7 @@ impl PlatformStyle {
 #[derive(IntoElement)]
 pub struct PlatformTitlebar {
     platform: PlatformStyle,
-    titlebar_bg: Option<Fill>,
+    titlebar_bg: Fill,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -81,7 +85,7 @@ impl PlatformTitlebar {
 
     fn render_window_controls_right(&self, cx: &mut WindowContext) -> impl Element {
         if self.platform.windows() {
-            let btn_height = cx.titlebar_height() - self.titlebar_top_padding(cx);
+            let btn_height = titlebar_height(cx) - self.titlebar_top_padding(cx);
             let close_btn_hover_color = Rgba {
                 r: 232.0 / 255.0,
                 g: 17.0 / 255.0,
@@ -133,7 +137,7 @@ impl PlatformTitlebar {
                 .max_h(btn_height)
                 .min_h(btn_height)
                 .font("Segoe Fluent Icons")
-                .text_size(gpui::Pixels(10.0))
+                .text_size(px(10.0))
                 .children(vec![
                     windows_caption_btn("minimize", "\u{e921}", btn_hover_color, cx), // minimize icon
                     windows_caption_btn(
@@ -159,7 +163,7 @@ impl PlatformTitlebar {
         F: Into<Fill>,
         Self: Sized,
     {
-        self.titlebar_bg = Some(fill.into());
+        self.titlebar_bg = fill.into();
         self
     }
 }
@@ -168,7 +172,7 @@ pub fn platform_titlebar(id: impl Into<ElementId>) -> PlatformTitlebar {
     let id = id.into();
     PlatformTitlebar {
         platform: PlatformStyle::platform(),
-        titlebar_bg: None,
+        titlebar_bg: transparent_black().into(),
         content: div().id(id.clone()),
         children: SmallVec::new(),
     }
@@ -176,7 +180,7 @@ pub fn platform_titlebar(id: impl Into<ElementId>) -> PlatformTitlebar {
 
 impl RenderOnce for PlatformTitlebar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let titlebar_height = cx.titlebar_height();
+        let titlebar_height = titlebar_height(cx);
         let titlebar_top_padding = self.titlebar_top_padding(cx);
         let window_controls_right = self.render_window_controls_right(cx);
         let macos = self.platform.macos();
@@ -184,21 +188,19 @@ impl RenderOnce for PlatformTitlebar {
             .id("titlebar")
             .w_full()
             .pt(titlebar_top_padding)
-            .max_h(titlebar_height)
-            .min_h(titlebar_height)
-            .map(|mut this| {
-                this.style().background = self.titlebar_bg;
-
-                if macos {
-                    if !cx.is_fullscreen() {
-                        // Use pixels here instead of a rem-based size because the macOS traffic
-                        // lights are a static size, and don't scale with the rest of the UI.
-                        return this.pl(px(80.));
-                    }
+            .h(titlebar_height)
+            .map(|this| {
+                if cx.is_fullscreen() {
+                    this.pl_2()
+                } else if macos {
+                    // Use pixels here instead of a rem-based size because the macOS traffic
+                    // lights are a static size, and don't scale with the rest of the UI.
+                    this.pl(px(80.))
+                } else {
+                    this.pl_2()
                 }
-
-                this
             })
+            .bg(self.titlebar_bg)
             .content_stretch()
             .child(
                 self.content

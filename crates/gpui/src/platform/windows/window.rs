@@ -1330,6 +1330,10 @@ impl PlatformWindow for WindowsWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.inner.renderer.borrow().sprite_atlas().clone()
     }
+
+    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+        self.inner.hwnd
+    }
 }
 
 #[implement(IDropTarget)]
