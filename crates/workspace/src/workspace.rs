@@ -26,13 +26,13 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyModel, AnyView,
-    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
-    DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
-    LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
-    PromptLevel, Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext, WindowHandle, WindowOptions,
+    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element,
+    ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
+    GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke, LayoutId, ManagedView,
+    Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render,
+    SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -275,17 +275,37 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 }
 
 #[derive(Clone, Default, Deref, DerefMut)]
-struct ProjectItemBuilders(
-    HashMap<TypeId, fn(Model<Project>, AnyModel, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>>,
-);
+struct ProjectItemOpeners(Vec<ProjectItemOpener>);
 
-impl Global for ProjectItemBuilders {}
+type ProjectItemOpener = fn(
+    &Model<Project>,
+    &ProjectPath,
+    &mut WindowContext,
+)
+    -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
 
+type WorkspaceItemBuilder = Box<dyn FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>>;
+
+impl Global for ProjectItemOpeners {}
+
+/// Registers a [ProjectItem] for the app. When opening a file, all the registered
+/// items will get a chance to open the file, starting from the project item that
+/// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
-    let builders = cx.default_global::<ProjectItemBuilders>();
-    builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
-        let item = model.downcast::<I::Item>().unwrap();
-        Box::new(cx.new_view(|cx| I::for_project_item(project, item, cx)))
+    let builders = cx.default_global::<ProjectItemOpeners>();
+    builders.push(|project, project_path, cx| {
+        let project_item = <I::Item as project::Item>::try_open(&project, project_path, cx)?;
+        let project = project.clone();
+        Some(cx.spawn(|cx| async move {
+            let project_item = project_item.await?;
+            let project_entry_id: Option<ProjectEntryId> =
+                project_item.read_with(&cx, |item, cx| project::Item::entry_id(item, cx))?;
+            let build_workspace_item = Box::new(|cx: &mut ViewContext<Pane>| {
+                Box::new(cx.new_view(|cx| I::for_project_item(project, project_item, cx)))
+                    as Box<dyn ItemHandle>
+            }) as Box<_>;
+            Ok((project_entry_id, build_workspace_item))
+        }))
     });
 }
 
@@ -2051,26 +2071,17 @@ impl Workspace {
         &mut self,
         path: ProjectPath,
         cx: &mut WindowContext,
-    ) -> Task<
-        Result<(
-            Option<ProjectEntryId>,
-            impl 'static + Send + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
-        )>,
-    > {
+    ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
-        let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-        cx.spawn(|mut cx| async move {
-            let (project_entry_id, project_item) = project_item.await?;
-            let build_item = cx.update(|cx| {
-                cx.default_global::<ProjectItemBuilders>()
-                    .get(&project_item.entity_type())
-                    .ok_or_else(|| anyhow!("no item builder for project item"))
-                    .cloned()
-            })??;
-            let build_item =
-                move |cx: &mut ViewContext<Pane>| build_item(project, project_item, cx);
-            Ok((project_entry_id, build_item))
-        })
+        let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
+        let Some(open_project_item) = project_item_builders
+            .iter()
+            .rev()
+            .find_map(|open_project_item| open_project_item(&project, &path, cx))
+        else {
+            return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
+        };
+        open_project_item
     }
 
     pub fn open_project_item<T>(
@@ -4811,7 +4822,7 @@ mod tests {
         },
     };
     use fs::FakeFs;
-    use gpui::{px, DismissEvent, TestAppContext, VisualTestContext};
+    use gpui::{px, DismissEvent, Empty, TestAppContext, VisualTestContext};
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
@@ -5785,6 +5796,293 @@ mod tests {
             let right_dock = workspace.right_dock();
             assert!(!right_dock.read(cx).is_open());
         });
+    }
+
+    mod register_project_item_tests {
+        use super::*;
+
+        const TEST_PNG_KIND: &str = "TestPngItemView";
+        // View
+        struct TestPngItemView {
+            focus_handle: FocusHandle,
+        }
+        // Model
+        struct TestPngItem {}
+
+        impl project::Item for TestPngItem {
+            fn try_open(
+                _project: &Model<Project>,
+                path: &ProjectPath,
+                cx: &mut AppContext,
+            ) -> Option<Task<gpui::Result<Model<Self>>>> {
+                if path.path.extension().unwrap() == "png" {
+                    Some(cx.spawn(|mut cx| async move { cx.new_model(|_| TestPngItem {}) }))
+                } else {
+                    None
+                }
+            }
+
+            fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+                None
+            }
+
+            fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+                None
+            }
+        }
+
+        impl Item for TestPngItemView {
+            type Event = ();
+
+            fn serialized_item_kind() -> Option<&'static str> {
+                Some(TEST_PNG_KIND)
+            }
+        }
+        impl EventEmitter<()> for TestPngItemView {}
+        impl FocusableView for TestPngItemView {
+            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for TestPngItemView {
+            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+
+        impl ProjectItem for TestPngItemView {
+            type Item = TestPngItem;
+
+            fn for_project_item(
+                _project: Model<Project>,
+                _item: Model<Self::Item>,
+                cx: &mut ViewContext<Self>,
+            ) -> Self
+            where
+                Self: Sized,
+            {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                }
+            }
+        }
+
+        const TEST_IPYNB_KIND: &str = "TestIpynbItemView";
+        // View
+        struct TestIpynbItemView {
+            focus_handle: FocusHandle,
+        }
+        // Model
+        struct TestIpynbItem {}
+
+        impl project::Item for TestIpynbItem {
+            fn try_open(
+                _project: &Model<Project>,
+                path: &ProjectPath,
+                cx: &mut AppContext,
+            ) -> Option<Task<gpui::Result<Model<Self>>>> {
+                if path.path.extension().unwrap() == "ipynb" {
+                    Some(cx.spawn(|mut cx| async move { cx.new_model(|_| TestIpynbItem {}) }))
+                } else {
+                    None
+                }
+            }
+
+            fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+                None
+            }
+
+            fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+                None
+            }
+        }
+
+        impl Item for TestIpynbItemView {
+            type Event = ();
+
+            fn serialized_item_kind() -> Option<&'static str> {
+                Some(TEST_IPYNB_KIND)
+            }
+        }
+        impl EventEmitter<()> for TestIpynbItemView {}
+        impl FocusableView for TestIpynbItemView {
+            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for TestIpynbItemView {
+            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+
+        impl ProjectItem for TestIpynbItemView {
+            type Item = TestIpynbItem;
+
+            fn for_project_item(
+                _project: Model<Project>,
+                _item: Model<Self::Item>,
+                cx: &mut ViewContext<Self>,
+            ) -> Self
+            where
+                Self: Sized,
+            {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                }
+            }
+        }
+
+        struct TestAlternatePngItemView {
+            focus_handle: FocusHandle,
+        }
+
+        const TEST_ALTERNATE_PNG_KIND: &str = "TestAlternatePngItemView";
+        impl Item for TestAlternatePngItemView {
+            type Event = ();
+
+            fn serialized_item_kind() -> Option<&'static str> {
+                Some(TEST_ALTERNATE_PNG_KIND)
+            }
+        }
+        impl EventEmitter<()> for TestAlternatePngItemView {}
+        impl FocusableView for TestAlternatePngItemView {
+            fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for TestAlternatePngItemView {
+            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+
+        impl ProjectItem for TestAlternatePngItemView {
+            type Item = TestPngItem;
+
+            fn for_project_item(
+                _project: Model<Project>,
+                _item: Model<Self::Item>,
+                cx: &mut ViewContext<Self>,
+            ) -> Self
+            where
+                Self: Sized,
+            {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                }
+            }
+        }
+
+        #[gpui::test]
+        async fn test_register_project_item(cx: &mut TestAppContext) {
+            init_test(cx);
+
+            cx.update(|cx| {
+                register_project_item::<TestPngItemView>(cx);
+                register_project_item::<TestIpynbItemView>(cx);
+            });
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/root1",
+                json!({
+                    "one.png": "BINARYDATAHERE",
+                    "two.ipynb": "{ totally a notebook }",
+                    "three.txt": "editing text, sure why not?"
+                }),
+            )
+            .await;
+
+            let project = Project::test(fs, ["root1".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+            let worktree_id = project.update(cx, |project, cx| {
+                project.worktrees().next().unwrap().read(cx).id()
+            });
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "one.png");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await
+                .unwrap();
+
+            // Now we can check if the handle we got back errored or not
+            assert_eq!(handle.serialized_item_kind().unwrap(), TEST_PNG_KIND);
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "two.ipynb");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(handle.serialized_item_kind().unwrap(), TEST_IPYNB_KIND);
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "three.txt");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await;
+            assert!(handle.is_err());
+        }
+
+        #[gpui::test]
+        async fn test_register_project_item_two_enter_one_leaves(cx: &mut TestAppContext) {
+            init_test(cx);
+
+            cx.update(|cx| {
+                register_project_item::<TestPngItemView>(cx);
+                register_project_item::<TestAlternatePngItemView>(cx);
+            });
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/root1",
+                json!({
+                    "one.png": "BINARYDATAHERE",
+                    "two.ipynb": "{ totally a notebook }",
+                    "three.txt": "editing text, sure why not?"
+                }),
+            )
+            .await;
+
+            let project = Project::test(fs, ["root1".as_ref()], cx).await;
+            let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+            let worktree_id = project.update(cx, |project, cx| {
+                project.worktrees().next().unwrap().read(cx).id()
+            });
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "one.png");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await
+                .unwrap();
+
+            // This _must_ be the second item registered
+            assert_eq!(
+                handle.serialized_item_kind().unwrap(),
+                TEST_ALTERNATE_PNG_KIND
+            );
+
+            let handle = workspace
+                .update(cx, |workspace, cx| {
+                    let project_path = (worktree_id, "three.txt");
+                    workspace.open_path(project_path, None, true, cx)
+                })
+                .await;
+            assert!(handle.is_err());
+        }
     }
 
     pub fn init_test(cx: &mut TestAppContext) {
