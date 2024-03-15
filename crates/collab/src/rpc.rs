@@ -558,20 +558,21 @@ impl Server {
         user: User,
         zed_version: ZedVersion,
         impersonator: Option<User>,
-        mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
+        send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = ()> {
         let this = self.clone();
         let user_id = user.id;
-        let login = user.github_login;
-        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty);
+        let login = user.github_login.clone();
+        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty, connection_id = field::Empty);
         if let Some(impersonator) = impersonator {
             span.record("impersonator", &impersonator.github_login);
         }
         let mut teardown = self.teardown.subscribe();
         async move {
             if *teardown.borrow() {
-                return Err(anyhow!("server is tearing down"))?;
+                tracing::error!("server is tearing down");
+                return
             }
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
@@ -579,40 +580,8 @@ impl Server {
                     let executor = executor.clone();
                     move |duration| executor.sleep(duration)
                 });
-
-            tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
-            this.peer.send(connection_id, proto::Hello { peer_id: Some(connection_id.into()) })?;
-            tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
-
-            if let Some(send_connection_id) = send_connection_id.take() {
-                let _ = send_connection_id.send(connection_id);
-            }
-
-            if !user.connected_once {
-                this.peer.send(connection_id, proto::ShowContacts {})?;
-                this.app_state.db.set_user_connected_once(user_id, true).await?;
-            }
-
-            let (contacts, channels_for_user, channel_invites) = future::try_join3(
-                this.app_state.db.get_contacts(user_id),
-                this.app_state.db.get_channels_for_user(user_id),
-                this.app_state.db.get_channel_invites_for_user(user_id),
-            ).await?;
-
-            {
-                let mut pool = this.connection_pool.lock();
-                pool.add_connection(connection_id, user_id, user.admin, zed_version);
-                this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
-                this.peer.send(connection_id, build_update_user_channels(&channels_for_user))?;
-                this.peer.send(connection_id, build_channels_update(
-                    channels_for_user,
-                    channel_invites
-                ))?;
-            }
-
-            if let Some(incoming_call) = this.app_state.db.incoming_call_for_user(user_id).await? {
-                this.peer.send(connection_id, incoming_call)?;
-            }
+            tracing::Span::current().record("connection_id", format!("{}", connection_id));
+            tracing::info!("connection opened");
 
             let session = Session {
                 user_id,
@@ -623,7 +592,11 @@ impl Server {
                 live_kit_client: this.app_state.live_kit_client.clone(),
                 _executor: executor.clone()
             };
-            update_user_contacts(user_id, &session).await?;
+
+            if let Err(error) = this.send_initial_client_update(connection_id, user, zed_version, send_connection_id, &session).await {
+                tracing::error!(?error, "failed to send initial client update");
+                return;
+            }
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -646,7 +619,7 @@ impl Server {
                 }.fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
-                    _ = teardown.changed().fuse() => return Ok(()),
+                    _ = teardown.changed().fuse() => return,
                     result = handle_io => {
                         if let Err(error) = result {
                             tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
@@ -691,8 +664,67 @@ impl Server {
                 tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
-            Ok(())
         }.instrument(span)
+    }
+
+    async fn send_initial_client_update(
+        &self,
+        connection_id: ConnectionId,
+        user: User,
+        zed_version: ZedVersion,
+        mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
+        session: &Session,
+    ) -> Result<()> {
+        self.peer.send(
+            connection_id,
+            proto::Hello {
+                peer_id: Some(connection_id.into()),
+            },
+        )?;
+        tracing::info!("sent hello message");
+
+        if let Some(send_connection_id) = send_connection_id.take() {
+            let _ = send_connection_id.send(connection_id);
+        }
+
+        if !user.connected_once {
+            self.peer.send(connection_id, proto::ShowContacts {})?;
+            self.app_state
+                .db
+                .set_user_connected_once(user.id, true)
+                .await?;
+        }
+
+        let (contacts, channels_for_user, channel_invites) = future::try_join3(
+            self.app_state.db.get_contacts(user.id),
+            self.app_state.db.get_channels_for_user(user.id),
+            self.app_state.db.get_channel_invites_for_user(user.id),
+        )
+        .await?;
+
+        {
+            let mut pool = self.connection_pool.lock();
+            pool.add_connection(connection_id, user.id, user.admin, zed_version);
+            self.peer.send(
+                connection_id,
+                build_initial_contacts_update(contacts, &pool),
+            )?;
+            self.peer.send(
+                connection_id,
+                build_update_user_channels(&channels_for_user),
+            )?;
+            self.peer.send(
+                connection_id,
+                build_channels_update(channels_for_user, channel_invites),
+            )?;
+        }
+
+        if let Some(incoming_call) = self.app_state.db.incoming_call_for_user(user.id).await? {
+            self.peer.send(connection_id, incoming_call)?;
+        }
+
+        update_user_contacts(user.id, &session).await?;
+        Ok(())
     }
 
     pub async fn invite_code_redeemed(
@@ -896,7 +928,6 @@ pub async fn handle_websocket_request(
 
     let socket_address = socket_address.to_string();
     ws.on_upgrade(move |socket| {
-        use util::ResultExt;
         let socket = socket
             .map_ok(to_tungstenite_message)
             .err_into()
@@ -913,8 +944,7 @@ pub async fn handle_websocket_request(
                     None,
                     Executor::Production,
                 )
-                .await
-                .log_err();
+                .await;
         }
     })
 }
