@@ -424,6 +424,7 @@ impl ProjectPanel {
                                         });
                                     }),
                                 )
+                                .action("Collapse All", Box::new(CollapseAllEntries))
                             })
                         })
                         .action("New File", Box::new(NewFile))
