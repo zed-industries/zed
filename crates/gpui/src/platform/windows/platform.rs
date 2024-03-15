@@ -27,10 +27,25 @@ use windows::{
     Wdk::System::SystemServices::*,
     Win32::{
         Foundation::*,
+        Globalization::GetUserDefaultLangID,
         Graphics::Gdi::*,
         Media::*,
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
+        Storage::FileSystem::{
+            GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
+            VS_VERSION_INFO,
+        },
+        System::{
+            Com::*,
+            LibraryLoader::*,
+            LibraryLoader::{
+                FindResourceW, FreeResource, GetModuleFileNameW, LoadResource, LockResource,
+            },
+            Ole::*,
+            SystemInformation::*,
+            Threading::*,
+            Time::*,
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
 };
@@ -522,11 +537,95 @@ impl Platform for WindowsPlatform {
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        })
+        unsafe {
+            let mut file_name_buffer = vec![0u16; MAX_PATH as usize];
+            let file_name = {
+                let mut file_name_buffer_capacity = MAX_PATH as usize;
+                let mut file_name_length;
+                loop {
+                    file_name_length = GetModuleFileNameW(None, &mut file_name_buffer) as usize;
+                    if file_name_length < file_name_buffer_capacity {
+                        break;
+                    }
+                    // buffer too small
+                    file_name_buffer_capacity *= 2;
+                    file_name_buffer = vec![0u16; file_name_buffer_capacity];
+                }
+                PCWSTR::from_raw(file_name_buffer[0..(file_name_length + 1)].as_ptr())
+            };
+            println!("file name: {}<-", file_name.display());
+
+            let version_info_block = {
+                let mut version_handle = std::mem::zeroed();
+                let version_info_size =
+                    GetFileVersionInfoSizeW(file_name, Some(&mut version_handle)) as usize;
+                if version_info_size == 0 {
+                    log::error!(
+                        "unable to get version info size: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    return Err(anyhow!("unable to get version info size"));
+                }
+                let mut version_data = vec![0u8; version_info_size + 2];
+                GetFileVersionInfoW(
+                    file_name,
+                    version_handle,
+                    version_info_size as u32,
+                    version_data.as_mut_ptr() as _,
+                )
+                .inspect_err(|_| {
+                    log::error!(
+                        "unable to retrieve version info: {}",
+                        std::io::Error::last_os_error()
+                    )
+                })?;
+                version_data
+            };
+
+            let version_info_raw = {
+                let mut buffer = std::mem::zeroed();
+                let mut size = 0;
+                let entry = "\\".encode_utf16().chain(Some(0)).collect_vec();
+                if !VerQueryValueW(
+                    version_info_block.as_ptr() as _,
+                    PCWSTR::from_raw(entry.as_ptr()),
+                    &mut buffer,
+                    &mut size,
+                )
+                .as_bool()
+                {
+                    log::error!(
+                        "unable to query version info data: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    return Err(anyhow!("the specified resource is not valid"));
+                }
+                if size == 0 {
+                    log::error!(
+                        "unable to query version info data: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    return Err(anyhow!("no value is available for the specified name"));
+                }
+                buffer
+            };
+
+            let version_info = &*(version_info_raw as *mut VS_FIXEDFILEINFO);
+            // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
+            if version_info.dwSignature == 0xFEEF04BD {
+                return Ok(SemanticVersion {
+                    major: ((version_info.dwFileVersionMS >> 16) & 0xFFFF) as usize,
+                    minor: (version_info.dwFileVersionMS & 0xFFFF) as usize,
+                    patch: ((version_info.dwFileVersionLS >> 16) & 0xFFFF) as usize,
+                });
+            } else {
+                log::error!(
+                    "no version info present: {}",
+                    std::io::Error::last_os_error()
+                );
+                return Err(anyhow!("no version info present"));
+            }
+        }
     }
 
     // todo(windows)
