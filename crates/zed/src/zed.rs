@@ -222,7 +222,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.zoom_window();
             })
             .register_action(|_, _: &ToggleFullScreen, cx| {
-                cx.toggle_full_screen();
+                cx.toggle_fullscreen();
             })
             .register_action(|_, action: &OpenZedUrl, cx| {
                 OpenListener::global(cx).open_urls(vec![action.url.clone()])

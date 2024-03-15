@@ -37,8 +37,8 @@ impl RenderOnce for AvatarAudioStatusIndicator {
 
         div()
             .absolute()
-            .bottom(rems(-3. / 16.))
-            .right(rems(-6. / 16.))
+            .bottom(rems_from_px(-3.))
+            .right(rems_from_px(-6.))
             .w(width_in_px + padding_x)
             .h(icon_size.rems())
             .child(

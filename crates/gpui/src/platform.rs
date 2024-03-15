@@ -191,8 +191,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
-    fn toggle_full_screen(&self);
-    fn is_full_screen(&self) -> bool;
+    fn toggle_fullscreen(&self);
+    fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
@@ -596,7 +596,7 @@ pub enum WindowKind {
 
 /// Platform level interface
 /// bounds: Bounds<GlobalPixels>
-/// full_screen: bool
+/// fullscreen: bool
 
 /// The appearance of the window, as defined by the operating system.
 ///

@@ -362,7 +362,7 @@ impl PlatformWindow for WaylandWindow {
         // todo(linux)
     }
 
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         if !self.0.inner.borrow().fullscreen {
             self.0.toplevel.set_fullscreen(None);
         } else {
@@ -370,7 +370,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn is_full_screen(&self) -> bool {
+    fn is_fullscreen(&self) -> bool {
         self.0.inner.borrow_mut().fullscreen
     }
 

@@ -10,6 +10,7 @@ mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
+mod replace;
 mod state;
 mod utils;
 mod visual;
@@ -29,6 +30,7 @@ use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
+use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -104,8 +106,8 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         Vim::update(cx, |vim, cx| vim.switch_mode(mode, false, cx))
     });
     workspace.register_action(
-        |_: &mut Workspace, &PushOperator(operator): &PushOperator, cx| {
-            Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
+        |_: &mut Workspace, PushOperator(operator): &PushOperator, cx| {
+            Vim::update(cx, |vim, cx| vim.push_operator(operator.clone(), cx))
         },
     );
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
@@ -132,6 +134,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     insert::register(workspace, cx);
     motion::register(workspace, cx);
     command::register(workspace, cx);
+    replace::register(workspace, cx);
     object::register(workspace, cx);
     visual::register(workspace, cx);
 }
@@ -418,6 +421,11 @@ impl Vim {
                         if selection.is_empty() {
                             selection.end = movement::right(map, selection.start);
                         }
+                    } else if last_mode == Mode::Replace {
+                        if selection.head().column() != 0 {
+                            let point = movement::left(map, selection.head());
+                            selection.collapse_to(point, selection.goal)
+                        }
                     }
                 });
             })
@@ -485,7 +493,7 @@ impl Vim {
     }
 
     fn active_operator(&self) -> Option<Operator> {
-        self.state().operator_stack.last().copied()
+        self.state().operator_stack.last().cloned()
     }
 
     fn transaction_begun(&mut self, transaction_id: TransactionId, _: &mut WindowContext) {
@@ -608,7 +616,10 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
-            _ => {}
+            _ => match Vim::read(cx).state().mode {
+                Mode::Replace => multi_replace(text, cx),
+                _ => {}
+            },
         }
     }
 

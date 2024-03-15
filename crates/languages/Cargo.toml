@@ -86,3 +86,4 @@ util.workspace = true
 text.workspace = true
 theme.workspace = true
 unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

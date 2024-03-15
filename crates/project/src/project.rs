@@ -118,6 +118,13 @@ const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5
 pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub trait Item {
+    fn try_open(
+        project: &Model<Project>,
+        path: &ProjectPath,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Model<Self>>>>
+    where
+        Self: Sized;
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
@@ -5235,16 +5242,19 @@ impl Project {
                     project_id.ok_or_else(|| anyhow!("Remote project without remote_id"))?;
 
                 for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
+                    let (server_id, completion) = {
+                        let completions_guard = completions.read();
+                        let completion = &completions_guard[completion_index];
+                        if completion.documentation.is_some() {
+                            continue;
+                        }
 
-                    did_resolve = true;
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
+                        did_resolve = true;
+                        let server_id = completion.server_id;
+                        let completion = completion.lsp_completion.clone();
+
+                        (server_id, completion)
+                    };
 
                     Self::resolve_completion_documentation_remote(
                         project_id,
@@ -5259,15 +5269,18 @@ impl Project {
                 }
             } else {
                 for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
+                    let (server_id, completion) = {
+                        let completions_guard = completions.read();
+                        let completion = &completions_guard[completion_index];
+                        if completion.documentation.is_some() {
+                            continue;
+                        }
 
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
+                        let server_id = completion.server_id;
+                        let completion = completion.lsp_completion.clone();
+
+                        (server_id, completion)
+                    };
 
                     let server = this
                         .read_with(&mut cx, |project, _| {
@@ -9610,6 +9623,14 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
 }
 
 impl Item for Buffer {
+    fn try_open(
+        project: &Model<Project>,
+        path: &ProjectPath,
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Model<Self>>>> {
+        Some(project.update(cx, |project, cx| project.open_buffer(path.clone(), cx)))
+    }
+
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
         File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
     }

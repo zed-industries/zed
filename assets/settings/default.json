@@ -47,6 +47,9 @@
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // The key to use for adding multiple cursors
+  // Currently "alt" or "cmd" are supported.
+  "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings
   "vim_mode": false,
   // Whether to show the informational hover box when moving the mouse

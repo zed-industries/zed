@@ -70,6 +70,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) location: WorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) bounds: Option<Bounds<GlobalPixels>>,
+    pub(crate) fullscreen: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
 }

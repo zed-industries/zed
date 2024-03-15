@@ -29,7 +29,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -155,6 +155,14 @@ impl FocusHandle {
         }
     }
 
+    /// Converts this focus handle into a weak variant, which does not prevent it from being released.
+    pub fn downgrade(&self) -> WeakFocusHandle {
+        WeakFocusHandle {
+            id: self.id,
+            handles: Arc::downgrade(&self.handles),
+        }
+    }
+
     /// Moves the focus to the element associated with this handle.
     pub fn focus(&self, cx: &mut WindowContext) {
         cx.focus(self)
@@ -204,6 +212,41 @@ impl Drop for FocusHandle {
             .get(self.id)
             .unwrap()
             .fetch_sub(1, SeqCst);
+    }
+}
+
+/// A weak reference to a focus handle.
+#[derive(Clone, Debug)]
+pub struct WeakFocusHandle {
+    pub(crate) id: FocusId,
+    handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+}
+
+impl WeakFocusHandle {
+    /// Attempts to upgrade the [WeakFocusHandle] to a [FocusHandle].
+    pub fn upgrade(&self) -> Option<FocusHandle> {
+        let handles = self.handles.upgrade()?;
+        FocusHandle::for_id(self.id, &handles)
+    }
+}
+
+impl PartialEq for WeakFocusHandle {
+    fn eq(&self, other: &WeakFocusHandle) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for WeakFocusHandle {}
+
+impl PartialEq<FocusHandle> for WeakFocusHandle {
+    fn eq(&self, other: &FocusHandle) -> bool {
+        self.id == other.id
+    }
+}
+
+impl PartialEq<WeakFocusHandle> for FocusHandle {
+    fn eq(&self, other: &WeakFocusHandle) -> bool {
+        self.id == other.id
     }
 }
 
@@ -338,9 +381,6 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
         })
 }
 
-// Fixed, Maximized, Fullscreen, and 'Inherent / default'
-// Platform part, you don't, you only need Fixed, Maximized, Fullscreen
-
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
@@ -386,7 +426,7 @@ impl Window {
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         if fullscreen {
-            platform_window.toggle_full_screen();
+            platform_window.toggle_fullscreen();
         }
 
         platform_window.on_close(Box::new({
@@ -807,8 +847,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Retusn whether or not the window is currently fullscreen
-    pub fn is_full_screen(&self) -> bool {
-        self.window.platform_window.is_full_screen()
+    pub fn is_fullscreen(&self) -> bool {
+        self.window.platform_window.is_fullscreen()
     }
 
     fn appearance_changed(&mut self) {
@@ -1481,8 +1521,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Toggle full screen status on the current window at the platform level.
-    pub fn toggle_full_screen(&self) {
-        self.window.platform_window.toggle_full_screen();
+    pub fn toggle_fullscreen(&self) {
+        self.window.platform_window.toggle_fullscreen();
     }
 
     /// Present a platform dialog.

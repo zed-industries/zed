@@ -1,4 +1,4 @@
-use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::{Foundation::*, UI::WindowsAndMessaging::*};
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;

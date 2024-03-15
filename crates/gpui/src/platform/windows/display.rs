@@ -3,13 +3,7 @@ use std::rc::Rc;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use uuid::Uuid;
-use windows::Win32::{
-    Foundation::{BOOL, LPARAM, POINT, RECT},
-    Graphics::Gdi::{
-        EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO,
-        MONITORINFOEXW, MONITOR_DEFAULTTOPRIMARY,
-    },
-};
+use windows::Win32::{Foundation::*, Graphics::Gdi::*};
 
 use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
 

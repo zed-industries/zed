@@ -49,7 +49,7 @@ pub trait PromptTemplate {
 }
 
 #[repr(i8)]
-#[derive(PartialEq, Eq, Ord)]
+#[derive(PartialEq, Eq)]
 pub enum PromptPriority {
     /// Ignores truncation.
     Mandatory,
@@ -59,11 +59,17 @@ pub enum PromptPriority {
 
 impl PartialOrd for PromptPriority {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PromptPriority {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (Self::Mandatory, Self::Mandatory) => Some(std::cmp::Ordering::Equal),
-            (Self::Mandatory, Self::Ordered { .. }) => Some(std::cmp::Ordering::Greater),
-            (Self::Ordered { .. }, Self::Mandatory) => Some(std::cmp::Ordering::Less),
-            (Self::Ordered { order: a }, Self::Ordered { order: b }) => b.partial_cmp(a),
+            (Self::Mandatory, Self::Mandatory) => std::cmp::Ordering::Equal,
+            (Self::Mandatory, Self::Ordered { .. }) => std::cmp::Ordering::Greater,
+            (Self::Ordered { .. }, Self::Mandatory) => std::cmp::Ordering::Less,
+            (Self::Ordered { order: a }, Self::Ordered { order: b }) => b.cmp(a),
         }
     }
 }
