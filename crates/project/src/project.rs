@@ -487,7 +487,6 @@ enum SearchMatchCandidate {
     },
 }
 
-type SearchMatchCandidateIndex = usize;
 impl SearchMatchCandidate {
     fn path(&self) -> Option<Arc<Path>> {
         match self {
@@ -505,11 +504,6 @@ impl SearchMatchCandidate {
             }
         )
     }
-}
-
-struct PathSearchResult {
-    paths: Vec<SearchMatchCandidate>,
-    limit_reached: Option<usize>,
 }
 
 pub enum SearchResult {
@@ -6141,6 +6135,11 @@ impl Project {
                 for (buffer, ranges) in result {
                     let _ = tx.send(SearchResult::Buffer { buffer, ranges }).await;
                 }
+
+                if response.limit_reached {
+                    let _ = tx.send(SearchResult::LimitReached).await;
+                }
+
                 Result::<(), anyhow::Error>::Ok(())
             })
             .detach_and_log_err(cx);
@@ -8372,8 +8371,10 @@ impl Project {
                     SearchResult::LimitReached => limit_reached = true,
                 }
             }
-            println!("TODO: limit reached: {:?}", limit_reached);
-            Ok(proto::SearchProjectResponse { locations })
+            Ok(proto::SearchProjectResponse {
+                locations,
+                limit_reached,
+            })
         })
         .await
     }
@@ -9257,6 +9258,7 @@ async fn search_ignored_entry(
                 } else {
                     false
                 };
+
                 if matches {
                     let project_path = SearchMatchCandidate::Path {
                         worktree_id: snapshot.id(),
