@@ -882,32 +882,39 @@ impl Workspace {
 
                 let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None, false)
-                } else if let Some((serialized_display, mut bounds, fullscreen)) =
-                    serialized_workspace.as_ref().and_then(|workspace| {
-                        Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
-                    })
-                {
-                    // Stored bounds are relative to the containing display.
-                    // So convert back to global coordinates if that screen still exists
-                    let screen_bounds = cx
-                        .update(|cx| {
-                            cx.displays()
-                                .into_iter()
-                                .find(|display| display.uuid().ok() == Some(serialized_display))
-                        })
-                        .ok()
-                        .flatten()
-                        .map(|screen| screen.bounds());
-
-                    if let Some(screen_bounds) = screen_bounds {
-                        bounds.origin.x += screen_bounds.origin.x;
-                        bounds.origin.y += screen_bounds.origin.y;
-                    }
-
-                    (Some(bounds), Some(serialized_display), fullscreen)
                 } else {
-                    let display = DB.last_monitor().log_err().flatten();
-                    (None, display, false)
+                    let restorable_bounds = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| {
+                            Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
+                        })
+                        .or_else(|| {
+                            let (display, bounds, fullscreen) = DB.last_window().log_err()?;
+                            Some((display?, bounds?.0, fullscreen.unwrap_or(false)))
+                        });
+
+                    if let Some((serialized_display, mut bounds, fullscreen)) = restorable_bounds {
+                        // Stored bounds are relative to the containing display.
+                        // So convert back to global coordinates if that screen still exists
+                        let screen_bounds = cx
+                            .update(|cx| {
+                                cx.displays()
+                                    .into_iter()
+                                    .find(|display| display.uuid().ok() == Some(serialized_display))
+                            })
+                            .ok()
+                            .flatten()
+                            .map(|screen| screen.bounds());
+
+                        if let Some(screen_bounds) = screen_bounds {
+                            bounds.origin.x += screen_bounds.origin.x;
+                            bounds.origin.y += screen_bounds.origin.y;
+                        }
+
+                        (Some(bounds), Some(serialized_display), fullscreen)
+                    } else {
+                        (None, None, false)
+                    }
                 };
 
                 // Use the serialized workspace to construct the new window
