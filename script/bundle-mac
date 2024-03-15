@@ -324,7 +324,7 @@ else
     sign_binaries "$app_path_x64" "x86_64-apple-darwin"
     sign_binaries "$app_path_aarch64" "aarch64-apple-darwin"
     # Create universal binary
-    cp $app_path_x64 target/release/
+    cp "$app_path_x64" target/release/
     app_path=target/release/$(basename "$app_path_x64")
     lipo \
         -create \
