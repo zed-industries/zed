@@ -466,3 +466,71 @@ async fn test_chat_replies(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
         )
     });
 }
+
+#[gpui::test]
+async fn test_chat_editing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
+        .await;
+
+    // Client A sends a message, client B should see that there is a new message.
+    let channel_chat_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
+
+    let channel_chat_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
+
+    let msg_id = channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    channel_chat_a
+        .update(cx_a, |c, cx| {
+            c.update_message(
+                msg_id,
+                MessageParams {
+                    text: "Updated body".into(),
+                    reply_to_message_id: None,
+                    mentions: Vec::new(),
+                },
+                cx,
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    channel_chat_a.update(cx_a, |channel_chat, _| {
+        assert_eq!(
+            channel_chat.find_loaded_message(msg_id).unwrap().body,
+            "Updated body",
+        )
+    });
+    channel_chat_b.update(cx_b, |channel_chat, _| {
+        assert_eq!(
+            channel_chat.find_loaded_message(msg_id).unwrap().body,
+            "Updated body",
+        )
+    });
+}
