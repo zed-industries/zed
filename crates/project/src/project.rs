@@ -9131,6 +9131,7 @@ impl Project {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn search_snapshots(
     snapshots: &Vec<LocalSnapshot>,
     worker_start_ix: usize,
