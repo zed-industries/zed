@@ -137,6 +137,7 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+
         decl.register()
     }
 }
@@ -766,6 +767,29 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn add_recent_documents(&self, paths: &[PathBuf]) {
+        for path in paths {
+            let Some(path_str) = path.to_str() else {
+                log::error!("Not adding to recent documents a non-unicode path: {path:?}");
+                continue;
+            };
+            unsafe {
+                let document_controller: id =
+                    msg_send![class!(NSDocumentController), sharedDocumentController];
+                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path_str));
+                let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
+            }
+        }
+    }
+
+    fn clear_recent_documents(&self) {
+        unsafe {
+            let document_controller: id =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
+            let _: () = msg_send![document_controller, clearRecentDocuments:nil];
+        }
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         unsafe {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
@@ -1062,7 +1086,6 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
-
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
