@@ -752,10 +752,9 @@ impl WindowsWindowInner {
         }
 
         // let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-
-        let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, 96) };
-        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, 96) };
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, 96) };
+        let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, DEFAULT_DPI_VALUE) };
+        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, DEFAULT_DPI_VALUE) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, DEFAULT_DPI_VALUE) };
 
         // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
         let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
@@ -826,8 +825,8 @@ impl WindowsWindowInner {
         }
 
         // let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, 96) };
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, 96) };
+        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, DEFAULT_DPI_VALUE) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, DEFAULT_DPI_VALUE) };
 
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -841,7 +840,8 @@ impl WindowsWindowInner {
         let titlebar_rect = self.get_titlebar_rect();
         if let Ok(titlebar_rect) = titlebar_rect {
             if cursor_point.y < titlebar_rect.bottom {
-                let caption_btn_width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, 96) };
+                let caption_btn_width =
+                    unsafe { GetSystemMetricsForDpi(SM_CXSIZE, DEFAULT_DPI_VALUE) };
                 if cursor_point.x >= titlebar_rect.right - caption_btn_width {
                     return LRESULT(HTCLOSE as _);
                 } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
@@ -945,7 +945,6 @@ impl WindowsWindowInner {
         drop(callbacks);
 
         if button == MouseButton::Left {
-            println!("Button: {}", wparam.0);
             match wparam.0 as u32 {
                 HTMINBUTTON => unsafe {
                     ShowWindowAsync(self.hwnd, SW_MINIMIZE);
@@ -1594,3 +1593,4 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+const DEFAULT_DPI_VALUE: i32 = 96;
