@@ -56,7 +56,6 @@ pub enum Operator {
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
-    WaitingSurrounds,
     AddSurrounds { target: Option<SurroundsType> },
     ChangeSurrounds { target: Option<Object> },
     DeleteSurrounds,
