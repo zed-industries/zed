@@ -15,7 +15,7 @@ impl Render for PlatformTitlebarStory {
             StorySection::new().child(
                 StoryItem::new(
                     "Default (macOS)",
-                    PlatformTitlebar::new("macos").with_platform_style(PlatformStyle::MacOs),
+                    PlatformTitlebar::new("macos").platform_style(PlatformStyle::MacOs),
                 )
                 .description("")
                 .usage(""),
@@ -25,7 +25,7 @@ impl Render for PlatformTitlebarStory {
             StorySection::new().child(
                 StoryItem::new(
                     "Default (Linux)",
-                    PlatformTitlebar::new("linux").with_platform_style(PlatformStyle::Linux),
+                    PlatformTitlebar::new("linux").platform_style(PlatformStyle::Linux),
                 )
                 .description("")
                 .usage(""),
@@ -35,7 +35,7 @@ impl Render for PlatformTitlebarStory {
             StorySection::new().child(
                 StoryItem::new(
                     "Default (Windows)",
-                    PlatformTitlebar::new("windows").with_platform_style(PlatformStyle::Windows),
+                    PlatformTitlebar::new("windows").platform_style(PlatformStyle::Windows),
                 )
                 .description("")
                 .usage(""),

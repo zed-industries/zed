@@ -68,7 +68,6 @@ impl Render for CollabTitlebarItem {
                     }
                 })
             })
-            .justify_between()
             // left side
             .child(
                 h_flex()

@@ -1,15 +1,7 @@
-use gpui::{
-    div,
-    prelude::FluentBuilder,
-    px, transparent_black, AnyElement, Div, Element, ElementId, Fill, InteractiveElement,
-    Interactivity, IntoElement, ParentElement, Pixels, RenderOnce, Rgba, Stateful,
-    StatefulInteractiveElement, StyleRefinement, Styled,
-    WindowAppearance::{Dark, Light, VibrantDark, VibrantLight},
-    WindowContext,
-};
+use gpui::{transparent_black, AnyElement, Fill, Interactivity, Rgba, Stateful, WindowAppearance};
 use smallvec::SmallVec;
 
-use crate::h_flex;
+use crate::prelude::*;
 
 pub enum PlatformStyle {
     Linux,
@@ -49,12 +41,6 @@ pub struct PlatformTitlebar {
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl Styled for PlatformTitlebar {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.content.style()
-    }
-}
-
 impl PlatformTitlebar {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
@@ -65,15 +51,13 @@ impl PlatformTitlebar {
         }
     }
 
-    /// Change the platform style used
-    pub fn with_platform_style(self, style: PlatformStyle) -> Self {
-        Self {
-            platform: style,
-            ..self
-        }
+    /// Sets the platform style.
+    pub fn platform_style(mut self, style: PlatformStyle) -> Self {
+        self.platform = style;
+        self
     }
 
-    /// Sets the background color of titlebar.
+    /// Sets the background color of the titlebar.
     pub fn background<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,
@@ -83,7 +67,7 @@ impl PlatformTitlebar {
         self
     }
 
-    fn titlebar_top_padding(&self, cx: &WindowContext) -> Pixels {
+    fn top_padding(&self, cx: &WindowContext) -> Pixels {
         if self.platform.windows() && cx.is_maximized() {
             // todo(windows): get padding from win32 api, need HWND from window context somehow
             // should be GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2
@@ -104,7 +88,7 @@ impl PlatformTitlebar {
             return div().id("caption-buttons-windows");
         }
 
-        let button_height = titlebar_height(cx) - self.titlebar_top_padding(cx);
+        let button_height = titlebar_height(cx) - self.top_padding(cx);
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
             g: 17.0 / 255.0,
@@ -113,13 +97,13 @@ impl PlatformTitlebar {
         };
 
         let button_hover_color = match cx.appearance() {
-            Light | VibrantLight => Rgba {
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Rgba {
                 r: 0.1,
                 g: 0.1,
                 b: 0.1,
                 a: 0.2,
             },
-            Dark | VibrantDark => Rgba {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Rgba {
                 r: 0.9,
                 g: 0.9,
                 b: 0.9,
@@ -182,7 +166,7 @@ impl PlatformTitlebar {
 impl RenderOnce for PlatformTitlebar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let titlebar_height = titlebar_height(cx);
-        let titlebar_top_padding = self.titlebar_top_padding(cx);
+        let titlebar_top_padding = self.top_padding(cx);
         let window_controls_right = self.render_window_controls_right(cx);
 
         h_flex()
@@ -205,10 +189,11 @@ impl RenderOnce for PlatformTitlebar {
             .content_stretch()
             .child(
                 self.content
+                    .id("titlebar-content")
                     .flex()
                     .flex_row()
+                    .justify_between()
                     .w_full()
-                    .id("titlebar-content")
                     .children(self.children),
             )
             .child(window_controls_right)
