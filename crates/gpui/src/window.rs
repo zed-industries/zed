@@ -29,7 +29,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -155,6 +155,14 @@ impl FocusHandle {
         }
     }
 
+    /// Converts this focus handle into a weak variant, which does not prevent it from being released.
+    pub fn downgrade(&self) -> WeakFocusHandle {
+        WeakFocusHandle {
+            id: self.id,
+            handles: Arc::downgrade(&self.handles),
+        }
+    }
+
     /// Moves the focus to the element associated with this handle.
     pub fn focus(&self, cx: &mut WindowContext) {
         cx.focus(self)
@@ -204,6 +212,41 @@ impl Drop for FocusHandle {
             .get(self.id)
             .unwrap()
             .fetch_sub(1, SeqCst);
+    }
+}
+
+/// A weak reference to a focus handle.
+#[derive(Clone, Debug)]
+pub struct WeakFocusHandle {
+    pub(crate) id: FocusId,
+    handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+}
+
+impl WeakFocusHandle {
+    /// Attempts to upgrade the [WeakFocusHandle] to a [FocusHandle].
+    pub fn upgrade(&self) -> Option<FocusHandle> {
+        let handles = self.handles.upgrade()?;
+        FocusHandle::for_id(self.id, &handles)
+    }
+}
+
+impl PartialEq for WeakFocusHandle {
+    fn eq(&self, other: &WeakFocusHandle) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for WeakFocusHandle {}
+
+impl PartialEq<FocusHandle> for WeakFocusHandle {
+    fn eq(&self, other: &FocusHandle) -> bool {
+        self.id == other.id
+    }
+}
+
+impl PartialEq<WeakFocusHandle> for FocusHandle {
+    fn eq(&self, other: &WeakFocusHandle) -> bool {
+        self.id == other.id
     }
 }
 
