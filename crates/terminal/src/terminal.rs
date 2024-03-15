@@ -39,7 +39,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::TaskId;
+use task::{static_source::RevealStrategy, TaskId};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -289,6 +289,7 @@ pub struct SpawnTask {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    pub reveal: RevealStrategy,
 }
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213

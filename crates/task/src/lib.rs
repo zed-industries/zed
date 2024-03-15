@@ -6,6 +6,7 @@ pub mod static_source;
 
 use collections::HashMap;
 use gpui::ModelContext;
+use static_source::RevealStrategy;
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,6 +35,8 @@ pub struct SpawnInTerminal {
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     pub allow_concurrent_runs: bool,
+    /// What to do with the terminal pane and tab, after the command was started.
+    pub reveal: RevealStrategy,
 }
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
