@@ -56,5 +56,15 @@ fn main() {
             "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
             manifest.canonicalize().unwrap().display()
         );
+
+        let mut res = winresource::WindowsResource::new();
+        res.set(
+            "LegalCopyright",
+            "Copyright (C) 2024 Zed Industries. All rights reserved",
+        );
+        if let Err(e) = res.compile() {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
     }
 }
