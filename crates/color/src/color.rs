@@ -58,24 +58,30 @@ pub fn hex_to_hsla(s: &str) -> Result<RGBAColor, String> {
     let hex = s.trim_start_matches('#');
 
     // Expand shorthand formats #RGB and #RGBA to #RRGGBB and #RRGGBBAA
-    let hex = match hex.len() {
-        3 => hex.chars().map(|c| c.to_string().repeat(2)).collect(),
-        4 => {
-            let (rgb, alpha) = hex.split_at(3);
-            let rgb = rgb
-                .chars()
-                .map(|c| c.to_string().repeat(2))
-                .collect::<String>();
-            let alpha = alpha.chars().next().unwrap().to_string().repeat(2);
-            format!("{}{}", rgb, alpha)
-        }
-        6 => format!("{}ff", hex), // Add alpha if missing
-        8 => hex.to_string(),      // Already in full format
+    let h = hex.as_bytes();
+    let arr: [u8; 8] = match h.len() {
+        // #RGB => #RRGGBBAA
+        3 => [h[0], h[0], h[1], h[1], h[2], h[2], b'f', b'f'],
+        // #RGBA => #RRGGBBAA
+        4 => [h[0], h[0], h[1], h[1], h[2], h[2], h[3], h[3]],
+        // #RRGGBB => #RRGGBBAA
+        6 => [h[0], h[1], h[2], h[3], h[4], h[5], b'f', b'f'],
+        // Already in #RRGGBBAA
+        8 => h.try_into().unwrap(),
         _ => return Err("Invalid hexadecimal string length".to_string()),
     };
 
+    // Test if the most significant bit of a byte is set. If that is the case,
+    // the string contains unicode characters and can't be a color string.
+    // Otherwise, the string is pure ASCII.
+    if u64::from_ne_bytes(arr) & u64::from_ne_bytes([0x80; 8]) != 0 {
+        return Err(format!("Invalid hexadecimal string: {}", s));
+    }
+    // SAFETY: We have proven that this string is ASCII in the test above.
+    let hex = unsafe { std::str::from_utf8_unchecked(&arr) };
+
     let hex_val =
-        u32::from_str_radix(&hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
+        u32::from_str_radix(hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
 
     Ok(RGBAColor {
         r: ((hex_val >> 24) & 0xFF) as f32 / 255.0,
