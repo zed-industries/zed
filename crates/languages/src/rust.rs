@@ -317,6 +317,48 @@ impl LspAdapter for RustLspAdapter {
     }
 }
 
+pub(crate) struct RustContextProvider;
+
+impl LanguageContextProvider for RustContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut gpui::AppContext,
+    ) -> Result<LanguageContext> {
+        let mut context = DefaultContextProvider.build_context(location.clone(), cx)?;
+        if context.package.is_none() {
+            if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
+                let local_file = file.as_local()?.abs_path(cx);
+                local_file.parent().map(PathBuf::from)
+            }) {
+                // src/
+                //  main.rs
+                //  lib.rs
+                //  foo/
+                //      bar/
+                //          baz.rs <|>
+                //  /bin/
+                //     bin_1.rs
+                //
+                let Some(pkgid) = std::process::Command::new("cargo")
+                    .current_dir(path)
+                    .arg("pkgid")
+                    .output()
+                    .log_err()
+                else {
+                    return Ok(context);
+                };
+                let package_name = String::from_utf8(pkgid.stdout)
+                    .map(|name| name.trim().to_owned())
+                    .ok();
+
+                context.package = package_name;
+            }
+        }
+        Ok(context)
+    }
+}
+
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     async_maybe!({
         let mut last = None;
