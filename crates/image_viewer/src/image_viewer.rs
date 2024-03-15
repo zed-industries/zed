@@ -65,11 +65,8 @@ impl project::Item for ImageItem {
 
 impl Item for ImageView {
     type Event = ();
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some(IMAGE_VIEWER_KIND)
-    }
 }
+
 impl EventEmitter<()> for ImageView {}
 impl FocusableView for ImageView {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -84,26 +81,6 @@ impl Render for ImageView {
         let im = path
             .map(|path| img(path).into_any())
             .unwrap_or_else(|| "No image found".into_any());
-
-        // v_flex()
-        //     .flex_1()
-        //     .size_full()
-        //     .justify_center()
-        //     // .bg(cx.theme().colors().editor_background)
-        //     .track_focus(&self.focus_handle)
-        //     .child(
-        //         h_flex()
-        //             .size_full()
-        //             .justify_center()
-        //             .child(h_flex().flex_1())
-        //             .child(
-        //                 v_flex().child("Image Viewer").child(
-        //                     path.map(|path| img(path).into_any())
-        //                         .unwrap_or_else(|| "No image found".into_any()),
-        //                 ),
-        //             )
-        //             .child(h_flex().flex_1()),
-        //     )
 
         div().size_full().bg(periwinkle()).child(im)
     }
