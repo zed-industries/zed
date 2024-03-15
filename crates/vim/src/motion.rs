@@ -13,12 +13,13 @@ use workspace::Workspace;
 use crate::{
     normal::normal_motion,
     state::{Mode, Operator},
+    surrounds::SurroundsType,
     utils::coerce_punctuation,
     visual::visual_motion,
     Vim,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Motion {
     Left,
     Backspace,
@@ -385,15 +386,29 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     }
 
     let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
-    let operator = Vim::read(cx).active_operator();
+    let active_operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state().mode {
-        Mode::Normal | Mode::Replace => normal_motion(motion, operator, count, cx),
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
+        Mode::Normal | Mode::Replace => {
+            normal_motion(motion.clone(), active_operator.clone(), count, cx)
+        }
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            visual_motion(motion.clone(), count, cx)
+        }
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
-    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+    Vim::update(cx, |vim, cx| {
+        vim.clear_operator(cx);
+        if active_operator == Some(Operator::AddSurrounds { target: None }) {
+            vim.push_operator(
+                Operator::AddSurrounds {
+                    target: Some(SurroundsType::Motion(motion)),
+                },
+                cx,
+            )
+        }
+    });
 }
 
 // Motion handling is specified here:

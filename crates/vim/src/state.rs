@@ -1,6 +1,7 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
-use crate::motion::Motion;
+use crate::surrounds::SurroundsType;
+use crate::{motion::Motion, object::Object};
 use collections::HashMap;
 use editor::Anchor;
 use gpui::{Action, KeyContext};
@@ -55,6 +56,10 @@ pub enum Operator {
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
+    WaitingSurrounds,
+    AddSurrounds { target: Option<SurroundsType> },
+    ChangeSurrounds { target: Option<Object> },
+    DeleteSurrounds,
 }
 
 #[derive(Default, Clone)]
@@ -253,15 +258,22 @@ impl Operator {
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
+            Operator::AddSurrounds { .. } => "ys",
+            Operator::ChangeSurrounds { .. } => "cs",
+            Operator::DeleteSurrounds => "ds",
         }
     }
 
     pub fn context_flags(&self) -> &'static [&'static str] {
         match self {
-            Operator::Object { .. } => &["VimObject"],
-            Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace => {
-                &["VimWaiting"]
-            }
+            Operator::Object { .. }
+            | Operator::ChangeSurrounds { target: None }
+            | Operator::DeleteSurrounds => &["VimObject"],
+            Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Replace
+            | Operator::AddSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds { target: Some(_) } => &["VimWaiting"],
             _ => &[],
         }
     }
