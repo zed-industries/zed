@@ -61,11 +61,11 @@ impl LspAdapter for PythonLspAdapter {
                 .await?;
         }
 
-        return Ok(LanguageServerBinary {
+        Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
             arguments: server_binary_arguments(&server_path),
-        });
+        })
     }
 
     async fn cached_server_binary(
