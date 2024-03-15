@@ -22,10 +22,10 @@ mod test;
 mod windows;
 
 use crate::{
-    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
-    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
-    SharedString, Size, Task, TaskLabel, WindowContext,
+    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels,
+    GlyphId, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -168,6 +168,7 @@ unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn is_maximized(&self) -> bool;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> Pixels;
@@ -194,7 +195,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);

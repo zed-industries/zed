@@ -31,7 +31,7 @@ use super::X11Display;
 #[derive(Default)]
 struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
-    input: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
+    input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen: Option<Box<dyn FnMut(bool)>>,
@@ -303,7 +303,7 @@ impl X11WindowState {
 
     pub fn handle_input(&self, input: PlatformInput) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if fun(input.clone()) {
+            if !fun(input.clone()).propagate {
                 return;
             }
         }
@@ -331,6 +331,11 @@ impl PlatformWindow for X11Window {
             .borrow_mut()
             .bounds
             .map(|v| GlobalPixels(v as f32))
+    }
+
+    // todo(linux)
+    fn is_maximized(&self) -> bool {
+        unimplemented!()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -451,7 +456,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
         self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
