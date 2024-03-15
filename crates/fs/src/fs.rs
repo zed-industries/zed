@@ -1519,6 +1519,15 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     .await
 }
 
+// Creating symbolic links on Windows requires elevation, and a running program
+// cannot elevate permissions; elevation can only occur at startup of a process.
+//
+// Therefore, here we use `ShellExecuteExW` to create a child process. This child
+// process elevates permissions during startup, prompting the user with a UAC popup
+// for authorization.
+//
+// Once the child process has the necessary permissions, it creates the symbolic link
+// and then exits.
 #[cfg(target_os = "windows")]
 async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
     use windows::{
@@ -1571,13 +1580,6 @@ async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
         )
     };
     smol::unblock(move || {
-        // Creating symbolic links in Windows requires elevation, and a running program
-        // cannot elevate permissions; elevation can only occur at startup of a process.
-        // Therefore, here we use `ShellExecuteExW` to create a child process. This child
-        // process elevates permissions during startup, prompting the user with a UAC popup
-        // for authorization.
-        // Once the child process has the necessary permissions, it creates the symbolic link
-        // and then exits.
         let verb_str: Vec<u16> = verb.encode_utf16().chain(Some(0)).collect();
         let exe_str: Vec<u16> = exe_path.encode_utf16().chain(Some(0)).collect();
         let params_str: Vec<u16> = params_path.encode_utf16().chain(Some(0)).collect();
