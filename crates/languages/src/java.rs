@@ -17,7 +17,7 @@ use util::{
 
 pub struct JavaLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for JavaLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("eclipse.jdt.ls".into())
