@@ -48,22 +48,23 @@ impl LspCommand for ExpandMacro {
     type Response = ExpandedMacro;
     type LspRequest = LspExpandMacro;
     type ProtoRequest = proto::LspExtExpandMacro;
+    type RequestContainer = CommandRequest<Self>;
 
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
-        _: &Arc<LanguageServer>,
+        _: &Project,
         _: &AppContext,
     ) -> CommandRequest<Self> {
         CommandRequest {
-            request_params: ExpandMacroParams {
+            params: ExpandMacroParams {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
                 position: point_to_lsp(self.position),
             },
-            servers: vec![LanguageServerToQuery::Primary],
+            server: LanguageServerToQuery::Primary,
         }
     }
 
