@@ -1132,14 +1132,16 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Adds given path to list of recent paths.
-    pub fn note_recent(&mut self, path: &PathBuf) {
-        self.platform.note_recent(path);
+    /// Adds given path to list of recent paths for the application.
+    /// The list is usually shown on the application icon's context menu in the dock,
+    /// and allows to open the recent files via that context menu.
+    pub fn add_recent_documents(&mut self, paths: &[PathBuf]) {
+        self.platform.add_recent_documents(paths);
     }
 
-    /// Clears the list of recent paths.
-    pub fn clear_recents(&mut self) {
-        self.platform.clear_recents();
+    /// Clears the list of recent paths from the application.
+    pub fn clear_recent_documents(&mut self) {
+        self.platform.clear_recent_documents();
     }
     /// Dispatch an action to the currently active window or global action handler
     /// See [action::Action] for more information on how actions work
