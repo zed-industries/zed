@@ -336,12 +336,12 @@ pub trait LspAdapter: 'static + Send + Sync {
                 name.clone(),
                 LanguageServerBinaryStatus::CheckingForUpdate,
             );
-            let version_info = self.fetch_latest_server_version(delegate.as_ref()).await?;
+            let latest_version = self.fetch_latest_server_version(delegate.as_ref()).await?;
 
             log::info!("downloading language server {:?}", name.0);
             delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
             let mut binary = self
-                .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate.as_ref())
+                .fetch_server_binary(latest_version, container_dir.to_path_buf(), delegate.as_ref())
                 .await;
 
             delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
@@ -408,7 +408,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary>;
