@@ -47,12 +47,8 @@ pub(crate) struct WindowsWindowInner {
     renderer: RefCell<BladeRenderer>,
     callbacks: RefCell<Callbacks>,
     platform_inner: Rc<WindowsPlatformInner>,
-<<<<<<< HEAD
-    handle: AnyWindowHandle,
-    scale_factor: f32,
-=======
     pub(crate) handle: AnyWindowHandle,
->>>>>>> 40a686f09 (windows: active window implementation)
+    scale_factor: f32,
 }
 
 impl WindowsWindowInner {
@@ -180,12 +176,9 @@ impl WindowsWindowInner {
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         match msg {
-<<<<<<< HEAD
             WM_ACTIVATE => self.handle_activate_msg(msg, wparam, lparam),
             WM_CREATE => self.handle_create_msg(lparam),
-=======
             WM_SETFOCUS => self.handle_set_focus_msg(msg, wparam, lparam),
->>>>>>> 40a686f09 (windows: active window implementation)
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(msg, wparam, lparam),
@@ -752,7 +745,6 @@ impl WindowsWindowInner {
         func(input);
     }
 
-<<<<<<< HEAD
     /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
     fn handle_calc_client_size(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if wparam.0 == 0 {
@@ -977,7 +969,7 @@ impl WindowsWindowInner {
 
         unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) }
     }
-=======
+
     fn handle_set_focus_msg(&self, _msg: u32, wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
         // wparam is the window that just lost focus (may be null)
         // SEE: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
@@ -1002,7 +994,6 @@ impl WindowsWindowInner {
 
         LRESULT(0)
     }
->>>>>>> 40a686f09 (windows: active window implementation)
 }
 
 #[derive(Default)]
@@ -1274,13 +1265,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn activate(&self) {
-<<<<<<< HEAD
-        unsafe { ShowWindowAsync(self.inner.hwnd, SW_NORMAL) };
-=======
         unsafe { SetActiveWindow(self.inner.hwnd) };
         unsafe { SetFocus(self.inner.hwnd) };
         unsafe { SetForegroundWindow(self.inner.hwnd) };
->>>>>>> 40a686f09 (windows: active window implementation)
     }
 
     // todo(windows)

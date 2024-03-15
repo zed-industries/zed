@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use ::util::{ResultExt, SemanticVersion};
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
@@ -19,7 +20,6 @@ use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use time::UtcOffset;
-use util::{ResultExt, SemanticVersion};
 use windows::{
     core::*,
     Wdk::System::SystemServices::*,
