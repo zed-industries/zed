@@ -71,7 +71,8 @@ pub fn hex_to_hsla(s: &str) -> Result<RGBAColor, String> {
         _ => return Err("Invalid hexadecimal string length".to_string()),
     };
 
-    let hex = std::str::from_utf8(&arr).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
+    let hex =
+        std::str::from_utf8(&arr).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
     let hex_val =
         u32::from_str_radix(hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
 
