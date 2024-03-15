@@ -9,7 +9,7 @@ use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
-use crate::{lsp_command::LspCommand, Project};
+use crate::{lsp_command::LspCommand, CommandRequest, LanguageServerToQuery, Project};
 
 pub enum LspExpandMacro {}
 
@@ -55,12 +55,15 @@ impl LspCommand for ExpandMacro {
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &AppContext,
-    ) -> ExpandMacroParams {
-        ExpandMacroParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+    ) -> CommandRequest<Self> {
+        CommandRequest {
+            request_params: ExpandMacroParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: point_to_lsp(self.position),
             },
-            position: point_to_lsp(self.position),
+            servers: vec![LanguageServerToQuery::Primary],
         }
     }
 

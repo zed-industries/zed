@@ -22,7 +22,7 @@ use debounced_delay::DebouncedDelay;
 use fs::repository::GitRepository;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
-    future::{try_join_all, Shared},
+    future::{join_all, try_join_all, Shared},
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -6605,8 +6605,8 @@ impl Project {
     pub fn request_lsp<R: LspCommand>(
         &self,
         buffer_handle: Model<Buffer>,
-        server: LanguageServerToQuery,
-        request: R,
+        _server: LanguageServerToQuery,
+        command: R,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<R::Response>>
     where
@@ -6615,52 +6615,79 @@ impl Project {
     {
         let buffer = buffer_handle.read(cx);
         if self.is_local() {
-            let language_server = match server {
-                LanguageServerToQuery::Primary => {
-                    match self.primary_language_server_for_buffer(buffer, cx) {
-                        Some((_, server)) => Some(Arc::clone(server)),
-                        None => return Task::ready(Ok(Default::default())),
-                    }
-                }
-                LanguageServerToQuery::Other(id) => self
-                    .language_server_for_buffer(buffer, id, cx)
-                    .map(|(_, server)| Arc::clone(server)),
+            let Some(file) = File::from_dyn(buffer.file()).and_then(File::as_local) else {
+                return Task::ready(Ok(Default::default()));
             };
-            let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-            if let (Some(file), Some(language_server)) = (file, language_server) {
-                let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
-                return cx.spawn(move |this, cx| async move {
-                    if !request.check_capabilities(language_server.capabilities()) {
+            let request = command.to_lsp(&file.abs_path(cx), buffer, self, cx);
+
+            let language_servers: Vec<_> = request
+                .servers
+                .iter()
+                .filter_map(|to_query| match to_query {
+                    LanguageServerToQuery::Primary => self
+                        .primary_language_server_for_buffer(buffer, cx)
+                        .map(|(_, server)| server.clone()),
+
+                    LanguageServerToQuery::Other(id) => self
+                        .language_server_for_buffer(buffer, *id, cx)
+                        .map(|(_, server)| server.clone()),
+                })
+                .collect();
+
+            if language_servers.is_empty() {
+                // TODO: Is this nessesary?
+                return Task::ready(Ok(Default::default()));
+            }
+
+            return cx.spawn(move |this, cx| async move {
+                let tasks = Vec::with_capacity(language_servers.len());
+
+                for language_server in language_servers {
+                    if !command.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
-                    let result = language_server.request::<R::LspRequest>(lsp_params).await;
-                    let response = match result {
-                        Ok(response) => response,
+                    let task = async {
+                        let result = language_server
+                            .request::<R::LspRequest>(request.params)
+                            .await;
 
-                        Err(err) => {
-                            log::warn!(
-                                "Generic lsp request to {} failed: {}",
-                                language_server.name(),
-                                err
-                            );
-                            return Err(err);
-                        }
+                        let response = match result {
+                            Ok(response) => response,
+
+                            Err(err) => {
+                                log::warn!(
+                                    "Generic lsp request to {} failed: {}",
+                                    language_server.name(),
+                                    err
+                                );
+                                return Err(err);
+                            }
+                        };
+
+                        command
+                            .response_from_lsp(
+                                response,
+                                this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
+                                buffer_handle,
+                                language_server.server_id(),
+                                cx,
+                            )
+                            .await
                     };
 
-                    request
-                        .response_from_lsp(
-                            response,
-                            this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
-                            buffer_handle,
-                            language_server.server_id(),
-                            cx,
-                        )
-                        .await
-                });
-            }
+                    tasks.push(task);
+                }
+
+                for Ok(result) in join_all(tasks).await {
+                    // TODO: The command should probably encode if returns an array of
+                    // results or not so the callsite can handle it correctly
+                }
+
+                Ok(Default::default())
+            });
         } else if let Some(project_id) = self.remote_id() {
-            return self.send_lsp_proto_request(buffer_handle, project_id, request, cx);
+            return self.send_lsp_proto_request(buffer_handle, project_id, command, cx);
         }
 
         Task::ready(Ok(Default::default()))
