@@ -66,7 +66,6 @@ pub(crate) fn multi_replace(text: Arc<str>, cx: &mut WindowContext) {
                     })
                     .collect::<Vec<_>>();
 
-                // There is currently an issue with the automatic indent, pending resolution
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(
                         edits.clone(),
