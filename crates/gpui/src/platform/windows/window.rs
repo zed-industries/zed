@@ -125,7 +125,7 @@ impl WindowsWindowInner {
     }
 
     fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
-        let top_and_bottom_borders = 2;
+        const TOP_BOTTOM_BORDERS: i32 = 2;
         let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
         let title_bar_size = unsafe {
             GetThemePartSize(
@@ -139,12 +139,12 @@ impl WindowsWindowInner {
         }?;
         unsafe { CloseThemeData(theme) }?;
 
-        let mut height =
-            (title_bar_size.cy as f32 * self.scale_factor).round() as i32 + top_and_bottom_borders;
+        // let mut height =
+        //     (title_bar_size.cy as f32 * self.scale_factor).round() as i32 + TOP_BOTTOM_BORDERS;
+        let mut height = title_bar_size.cy + TOP_BOTTOM_BORDERS;
 
         if self.is_maximized() {
-            let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-            height += unsafe { (GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2) as i32 };
+            height += unsafe { GetSystemMetrics(SM_CXPADDEDBORDER) * 2 };
         }
 
         let mut rect = RECT::default();
@@ -751,11 +751,11 @@ impl WindowsWindowInner {
             return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
         }
 
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        // let dpi = unsafe { GetDpiForWindow(self.hwnd) };
 
-        let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, dpi) };
-        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+        let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, 96) };
+        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, 96) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, 96) };
 
         // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
         let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
@@ -825,9 +825,9 @@ impl WindowsWindowInner {
             return hit;
         }
 
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+        // let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, 96) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, 96) };
 
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -841,7 +841,7 @@ impl WindowsWindowInner {
         let titlebar_rect = self.get_titlebar_rect();
         if let Ok(titlebar_rect) = titlebar_rect {
             if cursor_point.y < titlebar_rect.bottom {
-                let caption_btn_width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, dpi) };
+                let caption_btn_width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, 96) };
                 if cursor_point.x >= titlebar_rect.right - caption_btn_width {
                     return LRESULT(HTCLOSE as _);
                 } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
@@ -945,6 +945,7 @@ impl WindowsWindowInner {
         drop(callbacks);
 
         if button == MouseButton::Left {
+            println!("Button: {}", wparam.0);
             match wparam.0 as u32 {
                 HTMINBUTTON => unsafe {
                     ShowWindowAsync(self.hwnd, SW_MINIMIZE);
