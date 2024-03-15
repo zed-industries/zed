@@ -20,22 +20,19 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.move_with(|map, selection| {
-                        match &target {
-                            SurroundsType::Object(object) => {
-                                object.expand_selection(map, selection, false);
-                            }
-                            SurroundsType::Motion(motion) => {
-                                motion.expand_selection(
-                                    map,
-                                    selection,
-                                    Some(1),
-                                    true,
-                                    &text_layout_details,
-                                );
-                            }
+                    s.move_with(|map, selection| match &target {
+                        SurroundsType::Object(object) => {
+                            object.expand_selection(map, selection, false);
                         }
-                        let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
+                        SurroundsType::Motion(motion) => {
+                            motion.expand_selection(
+                                map,
+                                selection,
+                                Some(1),
+                                true,
+                                &text_layout_details,
+                            );
+                        }
                     });
                 });
 
@@ -48,7 +45,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                     if pair.start == input_text || pair.end == input_text {
                         // Spaces are added only if the current input is open parenthesis
                         // Does not contain ', ", |", etc
-                        surround = !(pair.end == input_text);
+                        surround = pair.end != input_text;
                         open_str = pair.start;
                         close_str = pair.end;
                         break;
