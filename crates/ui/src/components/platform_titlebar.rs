@@ -3,39 +3,13 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
-pub enum PlatformStyle {
-    Linux,
-    Windows,
-    MacOs,
-}
-
 pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
     (1.75 * cx.rem_size()).max(px(32.))
 }
 
-impl PlatformStyle {
-    pub fn platform() -> Self {
-        if cfg!(target_os = "windows") {
-            Self::Windows
-        } else if cfg!(target_os = "macos") {
-            Self::MacOs
-        } else {
-            Self::Linux
-        }
-    }
-
-    pub fn windows(&self) -> bool {
-        matches!(self, Self::Windows)
-    }
-
-    pub fn macos(&self) -> bool {
-        matches!(self, Self::MacOs)
-    }
-}
-
 #[derive(IntoElement)]
 pub struct PlatformTitlebar {
-    platform: PlatformStyle,
+    platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -43,7 +17,7 @@ pub struct PlatformTitlebar {
 impl PlatformTitlebar {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            platform: PlatformStyle::platform(),
+            platform_style: PlatformStyle::platform(),
             content: div().id(id.into()),
             children: SmallVec::new(),
         }
@@ -51,12 +25,12 @@ impl PlatformTitlebar {
 
     /// Sets the platform style.
     pub fn platform_style(mut self, style: PlatformStyle) -> Self {
-        self.platform = style;
+        self.platform_style = style;
         self
     }
 
     fn top_padding(&self, cx: &WindowContext) -> Pixels {
-        if self.platform.windows() && cx.is_maximized() {
+        if self.platform_style == PlatformStyle::Windows && cx.is_maximized() {
             // todo(windows): get padding from win32 api, need HWND from window context somehow
             // should be GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2
             px(8.0)
@@ -72,7 +46,7 @@ impl PlatformTitlebar {
     }
 
     fn render_window_controls_right(&self, cx: &mut WindowContext) -> impl Element {
-        if !self.platform.windows() {
+        if self.platform_style != PlatformStyle::Windows {
             return div().id("caption-buttons-windows");
         }
 
@@ -179,7 +153,7 @@ impl RenderOnce for PlatformTitlebar {
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
-                } else if self.platform.macos() {
+                } else if self.platform_style == PlatformStyle::Mac {
                     // Use pixels here instead of a rem-based size because the macOS traffic
                     // lights are a static size, and don't scale with the rest of the UI.
                     this.pl(px(80.))

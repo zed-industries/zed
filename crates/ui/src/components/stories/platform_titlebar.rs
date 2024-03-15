@@ -15,7 +15,7 @@ impl Render for PlatformTitlebarStory {
             StorySection::new().child(
                 StoryItem::new(
                     "Default (macOS)",
-                    PlatformTitlebar::new("macos").platform_style(PlatformStyle::MacOs),
+                    PlatformTitlebar::new("macos").platform_style(PlatformStyle::Mac),
                 )
                 .description("")
                 .usage(""),
