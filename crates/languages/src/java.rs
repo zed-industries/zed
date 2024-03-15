@@ -140,14 +140,15 @@ impl LspAdapter for JavaLspAdapter {
             }
             Some(lsp::CompletionItemKind::METHOD) => {
                 if let Some((name, detail)) = completion.label.split_once(" : ") {
-                    let highlight_id = language
-                        .grammar()?
-                        .highlight_id_for_name("function.method")?;
-                    let mut label = CodeLabel::plain(format!("{name}: {detail}"), None);
+                    let text = format!("{detail} {name}");
+                    let source = Rope::from(format!("{text} {{}}").as_str());
+                    let runs = language.highlight_text(&source, 0..text.len());
 
-                    label.runs.push((0..name.len(), highlight_id));
-
-                    return Some(label);
+                    return Some(CodeLabel {
+                        text: text.clone(),
+                        runs,
+                        filter_range: detail.len() + 1..text.len(),
+                    });
                 }
             }
             Some(lsp::CompletionItemKind::ENUM_MEMBER) => {
@@ -197,7 +198,8 @@ impl LspAdapter for JavaLspAdapter {
                 return Some(label);
             }
             Some(kind) if kind != lsp::CompletionItemKind::SNIPPET => {
-                warn!("Unimplemented completion: {completion:#?}")
+                // Run `RUST_LOG=warn cargo run` to run and show warnings!
+                warn!("Unimplemented Java completion: {completion:#?}")
             }
             _ => (),
         }
