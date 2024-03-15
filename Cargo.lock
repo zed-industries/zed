@@ -4810,6 +4810,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_viewer"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "client",
+ "clock",
+ "collections",
+ "convert_case 0.6.0",
+ "copilot",
+ "ctor",
+ "db",
+ "emojis",
+ "env_logger",
+ "futures 0.3.28",
+ "fuzzy",
+ "git",
+ "gpui",
+ "indoc",
+ "itertools 0.11.0",
+ "language",
+ "lazy_static",
+ "linkify",
+ "log",
+ "lsp",
+ "multi_buffer",
+ "ordered-float 2.10.0",
+ "parking_lot",
+ "project",
+ "rand 0.8.5",
+ "release_channel",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "snippet",
+ "sum_tree",
+ "text",
+ "theme",
+ "tree-sitter-html",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "ui",
+ "unindent",
+ "url",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12803,6 +12856,7 @@ dependencies = [
  "futures 0.3.28",
  "go_to_line",
  "gpui",
+ "image_viewer",
  "install_cli",
  "isahc",
  "journal",
