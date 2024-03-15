@@ -88,7 +88,7 @@ pub fn init(cx: &mut AppContext) {
     // will be initialized as disabled by default, so we filter its commands
     // out when starting up.
     CommandPaletteFilter::update_global(cx, |filter, _| {
-        filter.hide_namespace("vim");
+        filter.hide_namespace(Vim::NAMESPACE);
     });
     cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
         vim.set_enabled(VimModeSetting::get_global(cx).0, cx)
