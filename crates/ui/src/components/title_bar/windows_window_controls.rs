@@ -45,8 +45,6 @@ impl RenderOnce for WindowsWindowControls {
             .content_stretch()
             .max_h(self.button_height)
             .min_h(self.button_height)
-            .font("Segoe Fluent Icons")
-            .text_size(px(10.0))
             .child(WindowsCaptionButton::new(
                 "minimize",
                 WindowsCaptionButtonIcon::Minimize,
@@ -110,6 +108,8 @@ impl RenderOnce for WindowsCaptionButton {
             .content_center()
             .w(width)
             .h_full()
+            .font("Segoe Fluent Icons")
+            .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
             .active(|style| {
                 let mut active_color = self.hover_background_color;
