@@ -1593,4 +1593,4 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
-const DEFAULT_DPI_VALUE: i32 = 96;
+const DEFAULT_DPI_VALUE: u32 = 96;
