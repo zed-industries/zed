@@ -5,9 +5,9 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Ok, Result};
 use collections::HashMap;
-use cosmic_text::Font as CosmicTextFont;
 use cosmic_text::{
-    fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, SwashCache,
+    fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont,
+    FontSystem, SwashCache,
 };
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
@@ -31,6 +31,10 @@ struct WindowsTextSystemState {
 impl WindowsTextSystem {
     pub(crate) fn new() -> Self {
         let mut font_system = FontSystem::new();
+
+        // todo(windows) make font loading non-blocking
+        font_system.db_mut().load_system_fonts();
+
         Self(RwLock::new(WindowsTextSystemState {
             font_system,
             swash_cache: SwashCache::new(),
@@ -218,11 +222,10 @@ impl WindowsTextSystemState {
             .get_font_matches(Attrs::new().family(cosmic_text::Family::Name(name)));
         for font in family.as_ref() {
             let font = self.font_system.get_font(*font).unwrap();
-            // TODO: figure out why this is causing fluent icons from loading
-            // if font.as_swash().charmap().map('m') == 0 {
-            //     self.font_system.db_mut().remove_face(font.id());
-            //     continue;
-            // };
+            if font.as_swash().charmap().map('m') == 0 {
+                self.font_system.db_mut().remove_face(font.id());
+                continue;
+            };
 
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);

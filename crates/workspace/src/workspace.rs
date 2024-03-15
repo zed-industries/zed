@@ -72,7 +72,7 @@ use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::Label;
+use ui::{px, Label};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -4753,6 +4753,10 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
     Some(size((width as f64).into(), (height as f64).into()))
 }
 
+pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
+    (1.75 * cx.rem_size()).max(px(32.))
+}
+
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
@@ -4766,7 +4770,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(cx.titlebar_height())
+            .top(titlebar_height(cx))
             .size_full()
             .flex()
             .items_center()

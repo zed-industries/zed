@@ -1,6 +1,7 @@
+use std::rc::Rc;
+
 use itertools::Itertools;
 use smallvec::SmallVec;
-use std::rc::Rc;
 use uuid::Uuid;
 use windows::Win32::{Foundation::*, Graphics::Gdi::*};
 
