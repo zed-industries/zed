@@ -165,14 +165,14 @@ fi
 
 function sign_binaries() {
     local app_path=$1
-    local architecture=$2
+    local architecture_dir=$2
     echo "Copying WebRTC.framework into the frameworks folder"
     mkdir "${app_path}/Contents/Frameworks"
     if [ "$local_arch" = false ]; then
         cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
     else
-        cp -R target/${architecture}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
-        cp -R target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/"
+        cp -R target/${architecture_dir}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+        cp -R target/${architecture_dir}/${target_dir}/cli "${app_path}/Contents/MacOS/"
     fi
 
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
@@ -249,7 +249,7 @@ function sign_binaries() {
             echo "/Applications/$bundle_name"
         fi
     else
-        dmg_target_directory="target/${architecture}/${target_dir}"
+        dmg_target_directory="target/${architecture_dir}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
         dmg_file_path="${dmg_target_directory}/Zed.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
@@ -323,4 +323,18 @@ if [ "$local_arch" = true ]; then
 else
     sign_binaries "$app_path_x64" "x86_64-apple-darwin"
     sign_binaries "$app_path_aarch64" "aarch64-apple-darwin"
+    # Create universal binary
+    cp $app_path_x64 target/release/
+    app_path=target/release/$(basename "$app_path_x64")
+    lipo \
+        -create \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/${binary_name} \
+        -output \
+        "${app_path}/Contents/MacOS/${zed_crate}"
+    lipo \
+        -create \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
+        -output \
+        "${app_path}/Contents/MacOS/cli"
+    sign_binaries "$app_path" "."
 fi
