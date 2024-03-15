@@ -354,6 +354,7 @@ impl ChatPanel {
                 .px_0p5()
                 .gap_x_1()
                 .rounded_md()
+                .overflow_hidden()
                 .hover(|style| style.bg(cx.theme().colors().element_background))
                 .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
                 .child(Avatar::new(user_being_replied_to.avatar_uri.clone()).size(rems(0.7)))
