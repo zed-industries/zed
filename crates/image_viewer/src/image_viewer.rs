@@ -1,12 +1,12 @@
 #![allow(unused_imports)]
 use gpui::{
-    actions, canvas, div, img, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element,
-    ElementContext, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
-    GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke, LayoutId, ManagedView,
-    Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render,
-    SharedString, SharedUri, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext, WindowHandle, WindowOptions,
+    actions, canvas, div, img, impl_actions, periwinkle, point, size, Action, AnyElement, AnyView,
+    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
+    DragMoveEvent, Element, ElementContext, Empty, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, Global, GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke,
+    LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, SharedString, SharedUri, Size, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext, WindowHandle, WindowOptions,
 };
 use ui::{
     h_flex,
@@ -16,30 +16,39 @@ use ui::{
 };
 
 use project::{Project, ProjectEntryId, ProjectPath};
+use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use workspace::item::{Item, ProjectItem};
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
 
 pub struct ImageView {
+    path: ProjectPath,
+    project: Model<Project>,
     focus_handle: FocusHandle,
 }
 
-pub struct ImageItem {}
+pub struct ImageItem {
+    path: ProjectPath,
+    project: Model<Project>,
+}
 
 impl project::Item for ImageItem {
     fn try_open(
-        _project: &Model<Project>,
+        project: &Model<Project>,
         path: &ProjectPath,
         cx: &mut AppContext,
     ) -> Option<Task<gpui::Result<Model<Self>>>> {
+        let path = path.clone();
+        let project = project.clone();
+
         let ext = path
             .path
             .extension()
             .and_then(OsStr::to_str)
             .unwrap_or_default();
         if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "ico"].contains(&ext) {
-            Some(cx.spawn(|mut cx| async move { cx.new_model(|_| ImageItem {}) }))
+            Some(cx.spawn(|mut cx| async move { cx.new_model(|_| ImageItem { path, project }) }))
         } else {
             None
         }
@@ -50,7 +59,7 @@ impl project::Item for ImageItem {
     }
 
     fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-        None
+        Some(self.path.clone())
     }
 }
 
@@ -70,28 +79,33 @@ impl FocusableView for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let uri = SharedUri::from(
-            "https://softwareforgood.com/wp-content/uploads/2018/03/all-the-things.png",
-        );
+        let path = dbg!(self.project.read(cx).absolute_path(dbg!(&self.path), cx));
 
-        let img = img(uri);
+        let im = path
+            .map(|path| img(path).into_any())
+            .unwrap_or_else(|| "No image found".into_any());
 
-        // div().size_full().child("Image Viewer").children(img)
-        // img("https://softwareforgood.com/wp-content/uploads/2018/03/all-the-things.png"),
-        v_flex()
-            .flex_1()
-            .size_full()
-            .justify_center()
-            // .bg(cx.theme().colors().editor_background)
-            .track_focus(&self.focus_handle)
-            .child(
-                h_flex()
-                    .size_full()
-                    .justify_center()
-                    .child(h_flex().flex_1())
-                    .child(v_flex().child("Image Viewer").child(img))
-                    .child(h_flex().flex_1()),
-            )
+        // v_flex()
+        //     .flex_1()
+        //     .size_full()
+        //     .justify_center()
+        //     // .bg(cx.theme().colors().editor_background)
+        //     .track_focus(&self.focus_handle)
+        //     .child(
+        //         h_flex()
+        //             .size_full()
+        //             .justify_center()
+        //             .child(h_flex().flex_1())
+        //             .child(
+        //                 v_flex().child("Image Viewer").child(
+        //                     path.map(|path| img(path).into_any())
+        //                         .unwrap_or_else(|| "No image found".into_any()),
+        //                 ),
+        //             )
+        //             .child(h_flex().flex_1()),
+        //     )
+
+        div().size_full().bg(periwinkle()).child(im)
     }
 }
 
@@ -100,13 +114,15 @@ impl ProjectItem for ImageView {
 
     fn for_project_item(
         _project: Model<Project>,
-        _item: Model<Self::Item>,
+        item: Model<Self::Item>,
         cx: &mut ViewContext<Self>,
     ) -> Self
     where
         Self: Sized,
     {
         Self {
+            path: item.read(cx).path.clone(),
+            project: item.read(cx).project.clone(),
             focus_handle: cx.focus_handle(),
         }
     }
