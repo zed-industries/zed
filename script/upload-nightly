@@ -59,6 +59,8 @@ sha=$(git rev-parse HEAD)
 echo ${sha} > target/latest-sha
 case "$target" in
     macos)
+        uploadToSpaces "target/aarch64-apple-darwin/Zed.dmg" "Zed-aarch64.dmg"
+        uploadToSpaces "target/x86_64-apple-darwin/release/Zed.dmg" "Zed-x86_64.dmg"
         uploadToSpaces "target/release/Zed.dmg" "Zed.dmg"
         uploadToSpaces "target/latest-sha" "latest-sha"
         ;;
