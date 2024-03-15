@@ -4404,11 +4404,19 @@ async fn search(
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
     let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
-    let mut result = HashMap::default();
-    while let Some((buffer, range)) = search_rx.next().await {
-        result.entry(buffer).or_insert(range);
+    let mut results = HashMap::default();
+    while let Some(search_result) = search_rx.next().await {
+        match search_result {
+            SearchResult::Buffer { buffer, ranges } => {
+                results.entry(buffer).or_insert(ranges);
+            }
+            SearchResult::LimitReached => {
+                todo!();
+            }
+        }
     }
-    Ok(result
+    // TODO: return `limit_reached` here too
+    Ok(results
         .into_iter()
         .map(|(buffer, ranges)| {
             buffer.update(cx, |buffer, cx| {
