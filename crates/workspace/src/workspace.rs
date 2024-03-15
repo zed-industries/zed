@@ -26,13 +26,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element,
-    ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
-    GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke, LayoutId, ManagedView,
-    Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render,
-    SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext, WindowHandle, WindowOptions,
+    actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, KeyContext, Keystroke,
+    LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
+    Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -72,7 +70,11 @@ use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{px, Label};
+use ui::{
+    div, Context as _, Div, Element, ElementContext, InteractiveElement as _, IntoElement, Label,
+    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
+    WindowContext,
+};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -418,6 +420,7 @@ impl AppState {
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
         use settings::SettingsStore;
+        use ui::Context as _;
 
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -4793,10 +4796,6 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
     Some(size((width as f64).into(), (height as f64).into()))
 }
 
-pub fn titlebar_height(cx: &mut WindowContext) -> Pixels {
-    (1.75 * cx.rem_size()).max(px(32.))
-}
-
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
@@ -4810,7 +4809,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(titlebar_height(cx))
+            .top(ui::titlebar_height(cx))
             .size_full()
             .flex()
             .items_center()
@@ -4866,7 +4865,10 @@ mod tests {
         },
     };
     use fs::FakeFs;
-    use gpui::{px, DismissEvent, Empty, TestAppContext, VisualTestContext};
+    use gpui::{
+        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
+        VisualTestContext,
+    };
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
@@ -5843,6 +5845,8 @@ mod tests {
     }
 
     mod register_project_item_tests {
+        use ui::Context as _;
+
         use super::*;
 
         const TEST_PNG_KIND: &str = "TestPngItemView";
