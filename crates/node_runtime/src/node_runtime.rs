@@ -46,19 +46,21 @@ pub trait NodeRuntime: Send + Sync {
     async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
         -> Result<()>;
 
-    // In the case of errors or missing data, we assume that we should install the language server.
     async fn should_install_npm_package(
         &self,
         package_name: &str,
-        executable_path: &Path,
-        executable_root_directory: &PathBuf,
+        local_executable_path: &Path,
+        local_package_directory: &PathBuf,
         latest_version: &str,
     ) -> bool {
-        if fs::metadata(executable_path).await.is_err() {
+        // In the case of the local system not having the package installed,
+        // or in the instances where we fail to parse package.json data,
+        // we attempt to install the package.
+        if fs::metadata(local_executable_path).await.is_err() {
             return true;
         }
 
-        let package_json_path = executable_root_directory.join("package.json");
+        let package_json_path = local_package_directory.join("package.json");
 
         let mut contents = String::new();
 
