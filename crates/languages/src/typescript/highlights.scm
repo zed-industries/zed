@@ -96,6 +96,7 @@
   ":"
   "?"
   "`"
+  "'"
   "\""
 ] @punctuation.delimiter
 
