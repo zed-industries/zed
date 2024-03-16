@@ -182,10 +182,6 @@ impl platform::Window for StatusItem {
         self.0.borrow().scale_factor()
     }
 
-    fn titlebar_height(&self) -> f32 {
-        0.
-    }
-
     fn appearance(&self) -> platform::Appearance {
         unsafe {
             let appearance: id =
@@ -252,7 +248,7 @@ impl platform::Window for StatusItem {
         }
     }
 
-    fn toggle_full_screen(&self) {
+    fn toggle_fullscreen(&self) {
         unimplemented!()
     }
 

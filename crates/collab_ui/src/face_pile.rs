@@ -14,25 +14,25 @@ impl FacePile {
     }
 
     pub fn new(faces: SmallVec<[AnyElement; 2]>) -> Self {
-        Self {
-            base: h_flex(),
-            faces,
-        }
+        Self { base: div(), faces }
     }
 }
 
 impl RenderOnce for FacePile {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let player_count = self.faces.len();
-        let player_list = self.faces.into_iter().enumerate().map(|(ix, player)| {
-            let isnt_last = ix < player_count - 1;
-
-            div()
-                .z_index((player_count - ix) as u16)
-                .when(isnt_last, |div| div.neg_mr_1())
-                .child(player)
-        });
-        self.base.children(player_list)
+        // Lay the faces out in reverse so they overlap in the desired order (left to right, front to back)
+        self.base
+            .flex()
+            .flex_row_reverse()
+            .items_center()
+            .justify_start()
+            .children(
+                self.faces
+                    .into_iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(ix, player)| div().when(ix > 0, |div| div.neg_ml_1()).child(player)),
+            )
     }
 }
 

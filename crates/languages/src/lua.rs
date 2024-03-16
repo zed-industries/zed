@@ -16,7 +16,7 @@ use util::{
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for LuaLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("lua-language-server".into())
@@ -79,7 +79,7 @@ impl super::LspAdapter for LuaLspAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo(windows)
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(

@@ -14,4 +14,5 @@ doctest = false
 
 [dependencies]
 collections.workspace = true
+derive_more.workspace = true
 gpui.workspace = true

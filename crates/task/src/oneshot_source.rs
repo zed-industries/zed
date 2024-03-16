@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
+use crate::{
+    static_source::RevealStrategy, SpawnInTerminal, Task, TaskContext, TaskId, TaskSource,
+};
 use gpui::{AppContext, Context, Model};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
@@ -48,6 +50,7 @@ impl Task for OneshotTask {
             env,
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
+            reveal: RevealStrategy::default(),
         })
     }
 }

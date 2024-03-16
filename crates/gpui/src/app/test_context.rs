@@ -171,13 +171,29 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window))
+
+        // Some tests rely on the window size matching the bounds of the test display
+        let bounds = Bounds::maximized(&mut cx);
+        cx.open_window(
+            WindowOptions {
+                bounds: Some(bounds),
+                ..Default::default()
+            },
+            |cx| cx.new_view(build_window),
+        )
     }
 
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| Empty));
+        let bounds = Bounds::maximized(&mut cx);
+        let window = cx.open_window(
+            WindowOptions {
+                bounds: Some(bounds),
+                ..Default::default()
+            },
+            |cx| cx.new_view(|_| Empty),
+        );
         drop(cx);
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
@@ -193,7 +209,14 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window));
+        let bounds = Bounds::maximized(&mut cx);
+        let window = cx.open_window(
+            WindowOptions {
+                bounds: Some(bounds),
+                ..Default::default()
+            },
+            |cx| cx.new_view(build_window),
+        );
         drop(cx);
         let view = window.root_view(self).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
@@ -674,17 +697,10 @@ impl VisualTestContext {
         f: impl FnOnce(&mut WindowContext) -> AnyElement,
     ) {
         self.update(|cx| {
-            let entity_id = cx
-                .window
-                .root_view
-                .as_ref()
-                .expect("Can't draw to this window without a root view")
-                .entity_id();
-
             cx.with_element_context(|cx| {
-                cx.with_view_id(entity_id, |cx| {
-                    f(cx).draw(origin, space, cx);
-                })
+                let mut element = f(cx);
+                element.layout(origin, space, cx);
+                element.paint(cx);
             });
 
             cx.refresh();

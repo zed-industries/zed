@@ -10,11 +10,6 @@ var s_sprite: sampler;
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-struct ViewId {
-    lo: u32,
-    hi: u32,
-}
-
 struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
@@ -172,9 +167,8 @@ fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
 // --- quads --- //
 
 struct Quad {
-    view_id: ViewId,
-    layer_id: u32,
     order: u32,
+    pad: u32,
     bounds: Bounds,
     content_mask: Bounds,
     background: Hsla,
@@ -266,15 +260,12 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 // --- shadows --- //
 
 struct Shadow {
-    view_id: ViewId,
-    layer_id: u32,
     order: u32,
+    blur_radius: f32,
     bounds: Bounds,
     corner_radii: Corners,
     content_mask: Bounds,
     color: Hsla,
-    blur_radius: f32,
-    pad: u32,
 }
 var<storage, read> b_shadows: array<Shadow>;
 
@@ -418,9 +409,8 @@ fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
 // --- underlines --- //
 
 struct Underline {
-    view_id: ViewId,
-    layer_id: u32,
     order: u32,
+    pad: u32,
     bounds: Bounds,
     content_mask: Bounds,
     color: Hsla,
@@ -480,9 +470,8 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 // --- monochrome sprites --- //
 
 struct MonochromeSprite {
-    view_id: ViewId,
-    layer_id: u32,
     order: u32,
+    pad: u32,
     bounds: Bounds,
     content_mask: Bounds,
     color: Hsla,
@@ -523,15 +512,12 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
 // --- polychrome sprites --- //
 
 struct PolychromeSprite {
-    view_id: ViewId,
-    layer_id: u32,
     order: u32,
+    grayscale: u32,
     bounds: Bounds,
     content_mask: Bounds,
     corner_radii: Corners,
     tile: AtlasTile,
-    grayscale: u32,
-    pad: u32,
 }
 var<storage, read> b_poly_sprites: array<PolychromeSprite>;
 

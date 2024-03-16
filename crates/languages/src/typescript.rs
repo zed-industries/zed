@@ -20,7 +20,7 @@ use std::{
 use util::{
     async_maybe,
     fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
+    github::{github_release_with_tag, GitHubLspBinaryVersion},
     ResultExt,
 };
 
@@ -50,7 +50,7 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("typescript-language-server".into())
@@ -71,22 +71,33 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<TypeScriptVersions>().unwrap();
+        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+        let package_name = "typescript";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                package_name,
+                &server_path,
+                &container_dir,
+                latest_version.typescript_version.as_str(),
+            )
+            .await;
+
+        if should_install_language_server {
             self.node
                 .npm_install_packages(
                     &container_dir,
                     &[
-                        ("typescript", version.typescript_version.as_str()),
+                        (package_name, latest_version.typescript_version.as_str()),
                         (
                             "typescript-language-server",
-                            version.server_version.as_str(),
+                            latest_version.server_version.as_str(),
                         ),
                     ],
                 )
@@ -224,7 +235,7 @@ impl EsLintLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
     fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
         let eslint_user_settings = ProjectSettings::get_global(cx)
@@ -254,12 +265,14 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
+
         json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
                 "run": "onType",
-                "nodePath": null,
+                "nodePath": node_path,
                 "workingDirectory": {"mode": "auto"},
                 "workspaceFolder": {
                     "uri": workspace_root,
@@ -283,13 +296,11 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        // At the time of writing the latest vscode-eslint release was released in 2020 and requires
-        // special custom LSP protocol extensions be handled to fully initialize. Download the latest
-        // prerelease instead to sidestep this issue
-        let release = latest_github_release(
+        // We're using this hardcoded release tag, because ESLint's API changed with
+        // >= 2.3 and we haven't upgraded yet.
+        let release = github_release_with_tag(
             "microsoft/vscode-eslint",
-            false,
-            true,
+            "release/2.2.20-Insider",
             delegate.http_client(),
         )
         .await?;

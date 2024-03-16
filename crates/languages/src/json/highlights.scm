@@ -3,7 +3,7 @@
 (string) @string
 
 (pair
-  key: (string) @property)
+  key: (string) @property.json_key)
 
 (number) @number
 

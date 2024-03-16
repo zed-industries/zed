@@ -5,16 +5,16 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, Action, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{SpawnInTerminal, TaskId};
+use task::{static_source::RevealStrategy, SpawnInTerminal, TaskId};
 use terminal::{
     terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
     SpawnTask,
@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, Workspace,
 };
 
 use anyhow::Result;
@@ -69,6 +69,7 @@ impl TerminalPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
+                NewTerminal.boxed_clone(),
                 cx,
             );
             pane.set_can_split(false, cx);
@@ -302,6 +303,7 @@ impl TerminalPanel {
             command: spawn_in_terminal.command.clone(),
             args: spawn_in_terminal.args.clone(),
             env: spawn_in_terminal.env.clone(),
+            reveal: spawn_in_terminal.reveal,
         };
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
@@ -321,6 +323,7 @@ impl TerminalPanel {
         spawn_task.command = shell;
         user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
         spawn_task.args = user_args;
+        let reveal = spawn_task.reveal;
 
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
@@ -378,6 +381,20 @@ impl TerminalPanel {
                         .ok();
                 }),
             );
+
+            match reveal {
+                RevealStrategy::Always => {
+                    self.activate_terminal_view(existing_item_index, cx);
+                    let task_workspace = self.workspace.clone();
+                    cx.spawn(|_, mut cx| async move {
+                        task_workspace
+                            .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                            .ok()
+                    })
+                    .detach();
+                }
+                RevealStrategy::Never => {}
+            }
         }
     }
 
@@ -387,14 +404,20 @@ impl TerminalPanel {
         working_directory: Option<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) {
+        let reveal = spawn_task.reveal;
         self.add_terminal(working_directory, Some(spawn_task), cx);
-        let task_workspace = self.workspace.clone();
-        cx.spawn(|_, mut cx| async move {
-            task_workspace
-                .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
-                .ok()
-        })
-        .detach();
+        match reveal {
+            RevealStrategy::Always => {
+                let task_workspace = self.workspace.clone();
+                cx.spawn(|_, mut cx| async move {
+                    task_workspace
+                        .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                        .ok()
+                })
+                .detach();
+            }
+            RevealStrategy::Never => {}
+        }
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -541,6 +564,7 @@ impl TerminalPanel {
             .workspace
             .update(cx, |workspace, _| workspace.project().clone())
             .ok()?;
+        let reveal = spawn_task.reveal;
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
@@ -550,14 +574,21 @@ impl TerminalPanel {
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
             terminal_to_replace.set_terminal(new_terminal, cx);
         });
-        self.activate_terminal_view(terminal_item_index, cx);
-        let task_workspace = self.workspace.clone();
-        cx.spawn(|_, mut cx| async move {
-            task_workspace
-                .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
-                .ok()
-        })
-        .detach();
+
+        match reveal {
+            RevealStrategy::Always => {
+                self.activate_terminal_view(terminal_item_index, cx);
+                let task_workspace = self.workspace.clone();
+                cx.spawn(|_, mut cx| async move {
+                    task_workspace
+                        .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
+                        .ok()
+                })
+                .detach();
+            }
+            RevealStrategy::Never => {}
+        }
+
         Some(())
     }
 }

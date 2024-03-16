@@ -1,7 +1,6 @@
 use crate::{
-    project_settings::ProjectSettings,
-    worktree::{Entry, EntryKind, PathChange, Worktree},
-    worktree::{Event, Snapshot, WorktreeModelHandle},
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot, Worktree,
+    WorktreeModelHandle,
 };
 use anyhow::Result;
 use client::Client;
@@ -804,7 +803,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions = Some(Vec::new());
             });
         });
@@ -996,7 +995,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions =
                     Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
             });
@@ -1033,7 +1032,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions =
                     Some(vec!["**/node_modules/**".to_string()]);
             });
@@ -1097,7 +1096,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions = Some(vec![
                     "**/.git".to_string(),
                     "node_modules/".to_string(),
@@ -1202,6 +1201,43 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
                 ".gitignore",
             ],
         )
+    });
+}
+
+#[gpui::test]
+async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = temp_tree(json!({
+        ".git": {
+            "HEAD": "ref: refs/heads/main\n",
+            "foo": "foo contents",
+        },
+    }));
+    let dot_git_worktree_dir = dir.path().join(".git");
+
+    let tree = Worktree::local(
+        build_client(cx),
+        dot_git_worktree_dir.clone(),
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(tree, &[], &["HEAD", "foo"], &[])
+    });
+
+    std::fs::write(dot_git_worktree_dir.join("new_file"), "new file contents")
+        .unwrap_or_else(|e| panic!("Failed to create in {dot_git_worktree_dir:?} a new file: {e}"));
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(tree, &[], &["HEAD", "foo", "new_file"], &[])
     });
 }
 
@@ -2541,6 +2577,6 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        ProjectSettings::register(cx);
+        WorktreeSettings::register(cx);
     });
 }

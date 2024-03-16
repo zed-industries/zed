@@ -173,13 +173,16 @@ impl WorktreeState {
             let Some(entry) = worktree.entry_for_id(*entry_id) else {
                 continue;
             };
+            let Some(mtime) = entry.mtime else {
+                continue;
+            };
             if entry.is_ignored || entry.is_symlink || entry.is_external || entry.is_dir() {
                 continue;
             }
             changed_paths.insert(
                 path.clone(),
                 ChangedPathInfo {
-                    mtime: entry.mtime,
+                    mtime,
                     is_deleted: *change == PathChange::Removed,
                 },
             );
@@ -580,7 +583,7 @@ impl SemanticIndex {
                                 }
 
                                 if let Ok(language) = language_registry
-                                    .language_for_file(&absolute_path, None)
+                                    .language_for_file_path(&absolute_path)
                                     .await
                                 {
                                     // Test if file is valid parseable file
@@ -594,18 +597,18 @@ impl SemanticIndex {
                                     {
                                         continue;
                                     }
+                                    let Some(new_mtime) = file.mtime else {
+                                        continue;
+                                    };
 
                                     let stored_mtime = file_mtimes.remove(&file.path.to_path_buf());
-                                    let already_stored = stored_mtime
-                                        .map_or(false, |existing_mtime| {
-                                            existing_mtime == file.mtime
-                                        });
+                                    let already_stored = stored_mtime == Some(new_mtime);
 
                                     if !already_stored {
                                         changed_paths.insert(
                                             file.path.clone(),
                                             ChangedPathInfo {
-                                                mtime: file.mtime,
+                                                mtime: new_mtime,
                                                 is_deleted: false,
                                             },
                                         );
@@ -1141,7 +1144,7 @@ impl SemanticIndex {
 
                     for mut pending_file in pending_files {
                         if let Ok(language) = language_registry
-                            .language_for_file(&pending_file.relative_path, None)
+                            .language_for_file_path(&pending_file.relative_path)
                             .await
                         {
                             if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())

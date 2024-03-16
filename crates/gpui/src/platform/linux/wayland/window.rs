@@ -22,14 +22,14 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
+    PromptLevel, Size, WindowAppearance, WindowParams,
 };
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
-    input: Option<Box<dyn FnMut(crate::PlatformInput) -> bool>>,
+    input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen: Option<Box<dyn FnMut(bool)>>,
@@ -125,24 +125,9 @@ impl WaylandWindowState {
         wl_surf: Arc<wl_surface::WlSurface>,
         viewport: Option<wp_viewport::WpViewport>,
         toplevel: Arc<xdg_toplevel::XdgToplevel>,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Self {
-        if options.bounds == WindowBounds::Maximized {
-            toplevel.set_maximized();
-        } else if options.bounds == WindowBounds::Fullscreen {
-            toplevel.set_fullscreen(None);
-        }
-
-        let bounds: Bounds<u32> = match options.bounds {
-            WindowBounds::Fullscreen | WindowBounds::Maximized => Bounds {
-                origin: Point::default(),
-                size: Size {
-                    width: 500,
-                    height: 500,
-                }, // todo(implement)
-            },
-            WindowBounds::Fixed(bounds) => bounds.map(|p| p.0 as u32),
-        };
+        let bounds = options.bounds.map(|p| p.0 as u32);
 
         Self {
             surface: Arc::clone(&wl_surf),
@@ -252,7 +237,7 @@ impl WaylandWindowState {
 
     pub fn handle_input(&self, input: PlatformInput) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if fun(input.clone()) {
+            if !fun(input.clone()).propagate {
                 return;
             }
         }
@@ -290,8 +275,13 @@ impl HasDisplayHandle for WaylandWindow {
 
 impl PlatformWindow for WaylandWindow {
     // todo(linux)
-    fn bounds(&self) -> WindowBounds {
-        WindowBounds::Maximized
+    fn bounds(&self) -> Bounds<GlobalPixels> {
+        unimplemented!()
+    }
+
+    // todo(linux)
+    fn is_maximized(&self) -> bool {
+        false
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -304,11 +294,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn scale_factor(&self) -> f32 {
         self.0.inner.borrow_mut().scale
-    }
-
-    // todo(linux)
-    fn titlebar_height(&self) -> Pixels {
-        unimplemented!()
     }
 
     // todo(linux)
@@ -331,9 +316,8 @@ impl PlatformWindow for WaylandWindow {
         crate::Modifiers::default()
     }
 
-    // todo(linux)
     fn as_any_mut(&mut self) -> &mut dyn Any {
-        unimplemented!()
+        self
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -378,19 +362,23 @@ impl PlatformWindow for WaylandWindow {
         // todo(linux)
     }
 
-    fn toggle_full_screen(&self) {
-        if !self.0.inner.borrow_mut().fullscreen {
+    fn toggle_fullscreen(&self) {
+        if !self.0.inner.borrow().fullscreen {
             self.0.toplevel.set_fullscreen(None);
         } else {
             self.0.toplevel.unset_fullscreen();
         }
     }
 
+    fn is_fullscreen(&self) -> bool {
+        self.0.inner.borrow_mut().fullscreen
+    }
+
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
         self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
