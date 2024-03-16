@@ -11,7 +11,7 @@ use cosmic_text::{
 };
 
 use itertools::Itertools;
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::RwLock;
 use pathfinder_geometry::{
     rect::{RectF, RectI},
     vector::{Vector2F, Vector2I},
@@ -25,7 +25,6 @@ struct LinuxTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
     fonts: Vec<Arc<CosmicTextFont>>,
-    font_selections: HashMap<Font, FontId>,
     font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
@@ -41,8 +40,6 @@ impl LinuxTextSystem {
             font_system,
             swash_cache: SwashCache::new(),
             fonts: Vec::new(),
-            font_selections: HashMap::default(),
-            // font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_family_name: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
         }))
@@ -84,47 +81,39 @@ impl PlatformTextSystem for LinuxTextSystem {
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
         // todo(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
-        let lock = self.0.upgradable_read();
-        if let Some(font_id) = lock.font_selections.get(font) {
-            Ok(*font_id)
+        let mut lock = self.0.write();
+        let _candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family) {
+            font_ids.as_slice()
         } else {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let _candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
-            {
-                font_ids.as_slice()
-            } else {
-                let font_ids = lock.load_family(&font.family, font.features)?;
-                lock.font_ids_by_family_name
-                    .insert(font.family.clone(), font_ids);
-                lock.font_ids_by_family_name[&font.family].as_ref()
-            };
+            let font_ids = lock.load_family(&font.family, font.features)?;
+            lock.font_ids_by_family_name
+                .insert(font.family.clone(), font_ids);
+            lock.font_ids_by_family_name[&font.family].as_ref()
+        };
 
-            let id = lock
-                .font_system
-                .db()
-                .query(&Query {
-                    families: &[Family::Name(&font.family)],
-                    weight: font.weight.into(),
-                    style: font.style.into(),
-                    stretch: Default::default(),
-                })
-                .context("no font")?;
+        let id = lock
+            .font_system
+            .db()
+            .query(&Query {
+                families: &[Family::Name(&font.family)],
+                weight: font.weight.into(),
+                style: font.style.into(),
+                stretch: Default::default(),
+            })
+            .context("no font")?;
 
-            let font_id = if let Some(font_id) = lock.fonts.iter().position(|font| font.id() == id)
-            {
-                FontId(font_id)
-            } else {
-                // Font isn't in fonts so add it there, this is because we query all the fonts in the db
-                // and maybe we haven't loaded it yet
-                let font_id = FontId(lock.fonts.len());
-                let font = lock.font_system.get_font(id).unwrap();
-                lock.fonts.push(font);
-                font_id
-            };
+        let font_id = if let Some(font_id) = lock.fonts.iter().position(|font| font.id() == id) {
+            FontId(font_id)
+        } else {
+            // Font isn't in fonts so add it there, this is because we query all the fonts in the db
+            // and maybe we haven't loaded it yet
+            let font_id = FontId(lock.fonts.len());
+            let font = lock.font_system.get_font(id).unwrap();
+            lock.fonts.push(font);
+            font_id
+        };
 
-            lock.font_selections.insert(font.clone(), font_id);
-            Ok(font_id)
-        }
+        Ok(font_id)
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
