@@ -55,7 +55,6 @@ impl Default for LinuxTextSystem {
     }
 }
 
-#[allow(unused)]
 impl PlatformTextSystem for LinuxTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
@@ -90,7 +89,7 @@ impl PlatformTextSystem for LinuxTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
+            let _candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
             {
                 font_ids.as_slice()
             } else {
@@ -150,7 +149,6 @@ impl PlatformTextSystem for LinuxTextSystem {
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         let lock = self.0.read();
-        let metrics = lock.fonts[font_id.0].as_swash().metrics(&[]);
         let glyph_metrics = lock.fonts[font_id.0].as_swash().glyph_metrics(&[]);
         let glyph_id = glyph_id.0 as u16;
         // todo(linux): Compute this correctly
@@ -191,10 +189,10 @@ impl PlatformTextSystem for LinuxTextSystem {
     // todo(linux) Confirm that this has been superseded by the LineWrapper
     fn wrap_line(
         &self,
-        text: &str,
-        font_id: FontId,
-        font_size: Pixels,
-        width: Pixels,
+        _text: &str,
+        _font_id: FontId,
+        _font_size: Pixels,
+        _width: Pixels,
     ) -> Vec<usize> {
         unimplemented!()
     }
