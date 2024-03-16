@@ -90,6 +90,8 @@
   "."
   ","
   ":"
+  "`"
+  "\""
 ] @punctuation.delimiter
 
 [
