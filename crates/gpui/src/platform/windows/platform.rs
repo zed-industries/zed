@@ -891,10 +891,26 @@ fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
 }
 
 fn load_icon() -> HICON {
-    let icon_str = "app-main-icon".encode_utf16().chain(Some(0)).collect_vec();
-    // let icon_name = PCWSTR::from_raw(icon_str.as_ptr());
-    let icon_name = PCWSTR::from_raw(2 as usize as _);
-    let Ok(handle) = unsafe { LoadIconW(None, icon_name) }.inspect_err(|_| {
+    // let icon_name = PCWSTR::from_raw(32512 as usize as _);
+    let Ok(module) = unsafe { GetModuleHandleW(None) }.inspect_err(|_| {
+        log::error!(
+            "unable to get module handle: {}",
+            std::io::Error::last_os_error()
+        )
+    }) else {
+        return HICON::default();
+    };
+    let Ok(handle) = unsafe {
+        LoadImageW(
+            module,
+            IDI_APPLICATION,
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_SHARED,
+        )
+    }
+    .inspect_err(|_| {
         log::error!(
             "unable to load icon file: {}",
             std::io::Error::last_os_error()
@@ -902,24 +918,5 @@ fn load_icon() -> HICON {
     }) else {
         return HICON::default();
     };
-    handle
-    // let Ok(handle) = unsafe {
-    //     LoadImageW(
-    //         None,
-    //         PCWSTR::from_raw(99isize as _),
-    //         IMAGE_ICON,
-    //         0,
-    //         0,
-    //         LR_LOADFROMFILE | LR_DEFAULTSIZE | LR_SHARED | LR_LOADTRANSPARENT,
-    //     )
-    // }
-    // .inspect_err(|_| {
-    //     log::error!(
-    //         "unable to load icon file: {}",
-    //         std::io::Error::last_os_error()
-    //     )
-    // }) else {
-    //     return HICON::default();
-    // };
-    // HICON(handle.0)
+    HICON(handle.0)
 }
