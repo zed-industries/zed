@@ -1,24 +1,12 @@
-#![allow(unused_imports)]
 use gpui::{
-    actions, canvas, div, fill, green, img, impl_actions, periwinkle, point, quad, size, white,
-    Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext,
-    Bounds, Context, Div, DragMoveEvent, Element, ElementContext, Empty, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, InteractiveElement,
-    IntoElement, KeyContext, Keystroke, LayoutId, ManagedView, Model, ModelContext, ParentElement,
-    PathPromptOptions, Pixels, Point, PromptLevel, Render, SharedString, SharedUri, Size, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext, WindowHandle,
-    WindowOptions,
+    canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
+    Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use persistence::IMAGE_VIEWER;
-use ui::{
-    h_flex,
-    prelude::*,
-    utils::{DateTimeType, FormatDistance},
-    v_flex, ButtonLike, Tab, TabBar, Tooltip,
-};
+use ui::{h_flex, prelude::*};
 
 use project::{Project, ProjectEntryId, ProjectPath};
-use serde::{Deserialize, Serialize};
 use std::{ffi::OsStr, path::PathBuf};
 use util::ResultExt;
 use workspace::{
@@ -47,7 +35,9 @@ impl project::Item for ImageItem {
             .extension()
             .and_then(OsStr::to_str)
             .unwrap_or_default();
-        if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "ico"].contains(&ext) {
+
+        let format = gpui::ImageFormat::from_extension(ext);
+        if format.is_some() {
             Some(cx.spawn(|mut cx| async move {
                 let abs_path = project
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
@@ -134,6 +124,20 @@ impl Item for ImageView {
             })?)
         })
     }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new_view(|cx| Self {
+            path: self.path.clone(),
+            focus_handle: cx.focus_handle(),
+        }))
+    }
 }
 
 impl EventEmitter<()> for ImageView {}
@@ -144,13 +148,9 @@ impl FocusableView for ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let im = img(self.path.clone()).into_any();
 
-        //
-        // Centered image.
-        // checkboard pattern behind wherever transparent
-        //
         div()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -158,21 +158,43 @@ impl Render for ImageView {
                 canvas(
                     |_, _| (),
                     |bounds, _, cx| {
-                        // let square_size = 10.0;
+                        let square_size = 32.0; // size of each checkerboard square
 
-                        let left_bounds = Bounds::from_corners(
-                            bounds.origin,
-                            point(bounds.center().x, bounds.bottom()),
-                        );
-                        let right_bounds = Bounds::from_corners(
-                            point(bounds.center().x, bounds.top()),
-                            bounds.lower_right(),
-                        );
+                        let start_y = bounds.origin.y.0;
+                        let height = bounds.size.height.0;
+                        let start_x = bounds.origin.x.0;
+                        let width = bounds.size.width.0;
 
-                        cx.paint_quad(fill(left_bounds, periwinkle()));
-                        cx.paint_quad(fill(right_bounds, green()));
+                        let mut y = start_y;
+                        let mut x = start_x;
+                        let mut color_swapper = true;
+                        // draw checkerboard pattern
+                        while y <= start_y + height {
+                            let start_swap = color_swapper;
+                            while x <= start_x + width {
+                                let rect = Bounds::new(
+                                    point(px(x as f32), px(y as f32)),
+                                    size(px(square_size), px(square_size)),
+                                );
+
+                                let color = if color_swapper {
+                                    opaque_grey(0.6, 0.4)
+                                } else {
+                                    opaque_grey(0.7, 0.4)
+                                };
+
+                                cx.paint_quad(fill(rect, color));
+                                color_swapper = !color_swapper;
+                                x += square_size;
+                            }
+                            x = start_x;
+                            color_swapper = !start_swap;
+                            y += square_size;
+                        }
                     },
                 )
+                .border_2()
+                .border_color(cx.theme().styles.colors.border)
                 .size_full()
                 .absolute()
                 .top_0()
@@ -181,7 +203,8 @@ impl Render for ImageView {
             .child(
                 v_flex()
                     .justify_around()
-                    .child(h_flex().justify_around().child(im)),
+                    .h_full()
+                    .child(h_flex().w_full().justify_around().child(im)),
             )
     }
 }
