@@ -599,9 +599,9 @@ impl Platform for WindowsPlatform {
             // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
             if version_info.dwSignature == 0xFEEF04BD {
                 return Ok(SemanticVersion {
-                    major: ((version_info.dwFileVersionMS >> 16) & 0xFFFF) as usize,
-                    minor: (version_info.dwFileVersionMS & 0xFFFF) as usize,
-                    patch: ((version_info.dwFileVersionLS >> 16) & 0xFFFF) as usize,
+                    major: ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
+                    minor: (version_info.dwProductVersionMS & 0xFFFF) as usize,
+                    patch: ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
                 });
             } else {
                 log::error!(
