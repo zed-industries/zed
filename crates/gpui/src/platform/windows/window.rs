@@ -157,44 +157,6 @@ impl WindowsWindowInner {
         Ok(rect)
     }
 
-    fn is_maximized(&self) -> bool {
-        let mut placement = WINDOWPLACEMENT::default();
-        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-        if unsafe { GetWindowPlacement(self.hwnd, &mut placement) }.is_ok() {
-            return placement.showCmd == SW_SHOWMAXIMIZED.0 as u32;
-        }
-        return false;
-    }
-
-    fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
-        let top_and_bottom_borders = 2;
-        let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
-        let title_bar_size = unsafe {
-            GetThemePartSize(
-                theme,
-                HDC::default(),
-                WP_CAPTION.0,
-                CS_ACTIVE.0,
-                None,
-                TS_TRUE,
-            )
-        }?;
-        unsafe { CloseThemeData(theme) }?;
-
-        let mut height =
-            (title_bar_size.cy as f32 * self.scale_factor).round() as i32 + top_and_bottom_borders;
-
-        if self.is_maximized() {
-            let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-            height += unsafe { (GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2) as i32 };
-        }
-
-        let mut rect = RECT::default();
-        unsafe { GetClientRect(self.hwnd, &mut rect) }?;
-        rect.bottom = rect.top + height;
-        Ok(rect)
-    }
-
     fn is_virtual_key_pressed(&self, vkey: VIRTUAL_KEY) -> bool {
         unsafe { GetKeyState(vkey.0 as i32) < 0 }
     }
