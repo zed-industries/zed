@@ -27,24 +27,11 @@ use windows::{
     Wdk::System::SystemServices::*,
     Win32::{
         Foundation::*,
-        Globalization::GetUserDefaultLangID,
         Graphics::Gdi::*,
         Media::*,
         Security::Credentials::*,
-        Storage::FileSystem::{
-            GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
-        },
-        System::{
-            Com::*,
-            LibraryLoader::*,
-            LibraryLoader::{
-                FindResourceW, FreeResource, GetModuleFileNameW, LoadResource, LockResource,
-            },
-            Ole::*,
-            SystemInformation::*,
-            Threading::*,
-            Time::*,
-        },
+        Storage::FileSystem::*,
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
 };
