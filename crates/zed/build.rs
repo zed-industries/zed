@@ -50,7 +50,9 @@ fn main() {
         println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
 
         let manifest = std::path::Path::new("resources/windows/manifest.xml");
-        let icon = std::path::Path::new("resources/windows/app-cion-stable.ico");
+        let icon = std::path::Path::new("resources/windows/app-icon.ico");
+        // let icon = std::path::Path::new("resources/windows/app-icon-preview.ico");
+        // let icon = std::path::Path::new("resources/windows/app-icon-nightly.png");
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rerun-if-changed={}", icon.display());
         println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
