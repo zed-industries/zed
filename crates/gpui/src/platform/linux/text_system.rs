@@ -6,8 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
-    fontdb::Query, Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont,
-    FontSystem, SwashCache,
+    Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont, FontSystem, SwashCache,
 };
 
 use itertools::Itertools;
@@ -82,7 +81,8 @@ impl PlatformTextSystem for LinuxTextSystem {
     fn font_id(&self, font: &Font) -> Result<FontId> {
         // todo(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
         let mut lock = self.0.write();
-        let _candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family) {
+
+        let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family) {
             font_ids.as_slice()
         } else {
             let font_ids = lock.load_family(&font.family, font.features)?;
@@ -91,29 +91,21 @@ impl PlatformTextSystem for LinuxTextSystem {
             lock.font_ids_by_family_name[&font.family].as_ref()
         };
 
-        let id = lock
-            .font_system
-            .db()
-            .query(&Query {
-                families: &[Family::Name(&font.family)],
-                weight: font.weight.into(),
-                style: font.style.into(),
-                stretch: Default::default(),
+        // todo(linux) ideally we would make fontdb's `find_best_match` pub instead of using font-kit here
+        let candidate_properties = candidates
+            .iter()
+            .map(|font_id| {
+                let database_id = lock.fonts[font_id.0].id();
+                let face_info = lock.font_system.db().face(database_id).expect("");
+                face_info_into_properties(face_info)
             })
-            .context("no font")?;
+            .collect::<SmallVec<[_; 4]>>();
 
-        let font_id = if let Some(font_id) = lock.fonts.iter().position(|font| font.id() == id) {
-            FontId(font_id)
-        } else {
-            // Font isn't in fonts so add it there, this is because we query all the fonts in the db
-            // and maybe we haven't loaded it yet
-            let font_id = FontId(lock.fonts.len());
-            let font = lock.font_system.get_font(id).unwrap();
-            lock.fonts.push(font);
-            font_id
-        };
+        let ix =
+            font_kit::matching::find_best_match(&candidate_properties, &font_into_properties(font))
+                .context("requested font family contains no font matching the other parameters")?;
 
-        Ok(font_id)
+        Ok(candidates[ix])
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
@@ -430,5 +422,42 @@ impl From<FontStyle> for cosmic_text::Style {
             FontStyle::Italic => cosmic_text::Style::Italic,
             FontStyle::Oblique => cosmic_text::Style::Oblique,
         }
+    }
+}
+
+fn font_into_properties(font: &crate::Font) -> font_kit::properties::Properties {
+    font_kit::properties::Properties {
+        style: match font.style {
+            crate::FontStyle::Normal => font_kit::properties::Style::Normal,
+            crate::FontStyle::Italic => font_kit::properties::Style::Italic,
+            crate::FontStyle::Oblique => font_kit::properties::Style::Oblique,
+        },
+        weight: font_kit::properties::Weight(font.weight.0),
+        stretch: Default::default(),
+    }
+}
+
+fn face_info_into_properties(
+    face_info: &cosmic_text::fontdb::FaceInfo,
+) -> font_kit::properties::Properties {
+    font_kit::properties::Properties {
+        style: match face_info.style {
+            cosmic_text::Style::Normal => font_kit::properties::Style::Normal,
+            cosmic_text::Style::Italic => font_kit::properties::Style::Italic,
+            cosmic_text::Style::Oblique => font_kit::properties::Style::Oblique,
+        },
+        // both libs use the same values for weight
+        weight: font_kit::properties::Weight(face_info.weight.0.into()),
+        stretch: match face_info.stretch {
+            cosmic_text::Stretch::Condensed => font_kit::properties::Stretch::CONDENSED,
+            cosmic_text::Stretch::Expanded => font_kit::properties::Stretch::EXPANDED,
+            cosmic_text::Stretch::ExtraCondensed => font_kit::properties::Stretch::EXTRA_CONDENSED,
+            cosmic_text::Stretch::ExtraExpanded => font_kit::properties::Stretch::EXTRA_EXPANDED,
+            cosmic_text::Stretch::Normal => font_kit::properties::Stretch::NORMAL,
+            cosmic_text::Stretch::SemiCondensed => font_kit::properties::Stretch::SEMI_CONDENSED,
+            cosmic_text::Stretch::SemiExpanded => font_kit::properties::Stretch::SEMI_EXPANDED,
+            cosmic_text::Stretch::UltraCondensed => font_kit::properties::Stretch::ULTRA_CONDENSED,
+            cosmic_text::Stretch::UltraExpanded => font_kit::properties::Stretch::ULTRA_EXPANDED,
+        },
     }
 }
