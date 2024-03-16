@@ -891,7 +891,6 @@ fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
 }
 
 fn load_icon() -> HICON {
-    // let icon_name = PCWSTR::from_raw(32512 as usize as _);
     let Ok(module) = unsafe { GetModuleHandleW(None) }.inspect_err(|_| {
         log::error!(
             "unable to get module handle: {}",

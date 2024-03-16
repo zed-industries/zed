@@ -64,7 +64,6 @@ fn main() {
 
         let mut res = winresource::WindowsResource::new();
         res.set_icon(icon.to_str().unwrap());
-        // res.set_icon_with_id(icon.to_str().unwrap(), "app-main-icon");
         if let Err(e) = res.compile() {
             eprintln!("{}", e);
             std::process::exit(1);
