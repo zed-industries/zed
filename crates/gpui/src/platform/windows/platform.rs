@@ -4,10 +4,11 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_uint, c_void, OsString},
+    mem::transmute,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -25,8 +26,9 @@ use windows::{
     Wdk::System::SystemServices::*,
     Win32::{
         Foundation::*,
-        Graphics::{DirectComposition::*, Gdi::*},
-        System::{Com::*, Ole::*, Threading::*, Time::*},
+        Graphics::Gdi::*,
+        Media::*,
+        System::{Com::*, LibraryLoader::*, Ole::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
 };
@@ -55,7 +57,7 @@ pub(crate) struct WindowsPlatformInner {
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    pub(crate) event: HANDLE,
+    pub(crate) dispatch_event: HANDLE,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
 
@@ -74,7 +76,7 @@ impl WindowsPlatformInner {
 
 impl Drop for WindowsPlatformInner {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.event) }.ok();
+        unsafe { CloseHandle(self.dispatch_event) }.ok();
     }
 }
 
@@ -148,8 +150,8 @@ impl WindowsPlatform {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, event));
+        let dispatch_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(WindowsTextSystem::new());
@@ -163,7 +165,7 @@ impl WindowsPlatform {
             text_system,
             callbacks,
             raw_window_handles,
-            event,
+            dispatch_event,
             settings,
         });
         Self { inner }
@@ -204,36 +206,54 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let dispatch_event = self.inner.event;
-
+        let dispatch_event = self.inner.dispatch_event;
+        let vsync_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
+        let timer_stop_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
+        begin_vsync_timer(vsync_event, timer_stop_event);
         'a: loop {
-            let mut msg = MSG::default();
-            // will be 0 if woken up by self.inner.event or 1 if the compositor clock ticked
-            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
-            let wait_result =
-                unsafe { DCompositionWaitForCompositorClock(Some(&[dispatch_event]), INFINITE) };
+            let wait_result = unsafe {
+                MsgWaitForMultipleObjects(
+                    Some(&[vsync_event, dispatch_event]),
+                    false,
+                    INFINITE,
+                    QS_ALLINPUT,
+                )
+            };
 
-            // compositor clock ticked so we should draw a frame
-            if wait_result == 1 {
-                self.redraw_all();
-                unsafe {
+            match wait_result {
+                // compositor clock ticked so we should draw a frame
+                WAIT_EVENT(0) => {
+                    self.redraw_all();
+                }
+                // foreground tasks are dispatched
+                WAIT_EVENT(1) => {
+                    self.run_foreground_tasks();
+                }
+                // Windows thread messages are posted
+                WAIT_EVENT(2) => {
                     let mut msg = MSG::default();
-
-                    while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
-                        if msg.message == WM_QUIT {
-                            break 'a;
+                    unsafe {
+                        while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+                            if msg.message == WM_QUIT {
+                                break 'a;
+                            }
+                            if msg.message == WM_SETTINGCHANGE {
+                                self.inner.settings.borrow_mut().update_all();
+                                continue;
+                            }
+                            TranslateMessage(&msg);
+                            DispatchMessageW(&msg);
                         }
-                        if msg.message == WM_SETTINGCHANGE {
-                            self.inner.settings.borrow_mut().update_all();
-                            continue;
-                        }
-                        TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
                     }
                 }
+                _ => {
+                    log::error!("Something went wrong while waiting {:?}", wait_result);
+                    break;
+                }
             }
-            self.run_foreground_tasks();
         }
+        end_vsync_timer(timer_stop_event);
+        unsafe { CloseHandle(dispatch_event) }.log_err();
 
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {
@@ -655,4 +675,73 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     }
 
     Ok(dialog)
+}
+
+fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: HANDLE) {
+    let vsync_fn = select_vsync_fn();
+    std::thread::spawn(move || {
+        while vsync_fn(timer_stop_event) {
+            if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
+                break;
+            }
+        }
+        unsafe { CloseHandle(timer_stop_event) }.log_err();
+    });
+}
+
+fn end_vsync_timer(timer_stop_event: HANDLE) {
+    unsafe { SetEvent(timer_stop_event) }.log_err();
+}
+
+fn select_vsync_fn() -> Box<dyn Fn(HANDLE) -> bool + Send> {
+    if let Some(dcomp_fn) = load_dcomp_vsync_fn() {
+        log::info!("use DCompositionWaitForCompositorClock for vsync");
+        return Box::new(move |timer_stop_event| {
+            // will be 0 if woken up by timer_stop_event or 1 if the compositor clock ticked
+            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
+            (unsafe { dcomp_fn(1, &timer_stop_event, INFINITE) }) == 1
+        });
+    }
+    log::info!("use fallback vsync function");
+    Box::new(fallback_vsync_fn())
+}
+
+fn load_dcomp_vsync_fn() -> Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32> {
+    static FN: OnceLock<Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32>> =
+        OnceLock::new();
+    *FN.get_or_init(|| {
+        let hmodule = unsafe { LoadLibraryW(windows::core::w!("dcomp.dll")) }.ok()?;
+        let address = unsafe {
+            GetProcAddress(
+                hmodule,
+                windows::core::s!("DCompositionWaitForCompositorClock"),
+            )
+        }?;
+        Some(unsafe { transmute(address) })
+    })
+}
+
+fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
+    let freq = WindowsDisplay::primary_monitor()
+        .and_then(|monitor| monitor.frequency())
+        .unwrap_or(60);
+    log::info!("primaly refresh rate is {freq}Hz");
+
+    let interval = (1000 / freq).max(1);
+    log::info!("expected interval is {interval}ms");
+
+    unsafe { timeBeginPeriod(1) };
+
+    struct TimePeriod;
+    impl Drop for TimePeriod {
+        fn drop(&mut self) {
+            unsafe { timeEndPeriod(1) };
+        }
+    }
+    let period = TimePeriod;
+
+    move |timer_stop_event| {
+        let _ = (&period,);
+        (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
+    }
 }
