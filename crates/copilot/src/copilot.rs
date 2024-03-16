@@ -66,33 +66,26 @@ pub fn init(
         let copilot_auth_action_types = [TypeId::of::<SignOut>()];
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
-        let filter = cx.default_global::<CommandPaletteFilter>();
+        let filter = CommandPaletteFilter::global_mut(cx);
 
         match status {
             Status::Disabled => {
-                filter.hidden_action_types.extend(copilot_action_types);
-                filter.hidden_action_types.extend(copilot_auth_action_types);
-                filter
-                    .hidden_action_types
-                    .extend(copilot_no_auth_action_types);
+                filter.hide_action_types(&copilot_action_types);
+                filter.hide_action_types(&copilot_auth_action_types);
+                filter.hide_action_types(&copilot_no_auth_action_types);
             }
             Status::Authorized => {
-                filter
-                    .hidden_action_types
-                    .extend(copilot_no_auth_action_types);
-                for type_id in copilot_action_types
-                    .iter()
-                    .chain(&copilot_auth_action_types)
-                {
-                    filter.hidden_action_types.remove(type_id);
-                }
+                filter.hide_action_types(&copilot_no_auth_action_types);
+                filter.show_action_types(
+                    copilot_action_types
+                        .iter()
+                        .chain(&copilot_auth_action_types),
+                );
             }
             _ => {
-                filter.hidden_action_types.extend(copilot_action_types);
-                filter.hidden_action_types.extend(copilot_auth_action_types);
-                for type_id in &copilot_no_auth_action_types {
-                    filter.hidden_action_types.remove(type_id);
-                }
+                filter.hide_action_types(&copilot_action_types);
+                filter.hide_action_types(&copilot_auth_action_types);
+                filter.show_action_types(copilot_no_auth_action_types.iter());
             }
         }
     })
@@ -1220,7 +1213,7 @@ mod tests {
             Some(self)
         }
 
-        fn mtime(&self) -> std::time::SystemTime {
+        fn mtime(&self) -> Option<std::time::SystemTime> {
             unimplemented!()
         }
 
@@ -1272,7 +1265,7 @@ mod tests {
             _: &clock::Global,
             _: language::RopeFingerprint,
             _: language::LineEnding,
-            _: std::time::SystemTime,
+            _: Option<std::time::SystemTime>,
             _: &mut AppContext,
         ) {
             unimplemented!()

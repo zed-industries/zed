@@ -32,6 +32,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
+use ui::Element as _;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -100,6 +101,15 @@ pub struct BreadcrumbText {
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        _selected: bool,
+        _cx: &WindowContext,
+    ) -> AnyElement {
+        gpui::Empty.into_any()
+    }
+    fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
@@ -112,9 +122,10 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
         None
     }
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
 
-    fn telemetry_event_text(&self) -> Option<&'static str>;
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
 
     /// (model id, Item)
     fn for_each_project_item(
@@ -169,8 +180,6 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
     }
-
-    fn to_item_events(event: &Self::Event, f: impl FnMut(ItemEvent));
 
     fn act_as_type<'a>(
         &'a self,
@@ -555,7 +564,7 @@ impl<T: Item> ItemHandle for View<T> {
         }
 
         cx.defer(|workspace, cx| {
-            workspace.serialize_workspace(cx);
+            workspace.serialize_workspace(cx).detach();
         });
     }
 
@@ -847,6 +856,14 @@ pub mod test {
     }
 
     impl project::Item for TestProjectItem {
+        fn try_open(
+            _project: &Model<Project>,
+            _path: &ProjectPath,
+            _cx: &mut AppContext,
+        ) -> Option<Task<gpui::Result<Model<Self>>>> {
+            None
+        }
+
         fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
             self.entry_id
         }

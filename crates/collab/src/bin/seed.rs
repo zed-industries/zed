@@ -70,6 +70,7 @@ async fn main() {
                 &github_user.login,
                 Some(github_user.id),
                 github_user.email.as_deref(),
+                None,
             )
             .await
             .expect("failed to insert user");

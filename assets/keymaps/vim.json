@@ -119,6 +119,7 @@
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
+      "shift-r": "vim::ToggleReplace",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
@@ -515,7 +516,18 @@
       "ctrl-w": "editor::DeleteToPreviousWordStart",
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
-      "ctrl-d": "vim::Outdent"
+      "ctrl-d": "vim::Outdent",
+      "ctrl-r \"": "editor::Paste",
+      "ctrl-r +": "editor::Paste"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == replace",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-c": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore",
+      "backspace": "vim::UndoReplace"
     }
   },
   {

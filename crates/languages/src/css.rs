@@ -31,7 +31,7 @@ impl CssLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for CssLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-css-language-server".into())
@@ -50,19 +50,22 @@ impl LspAdapter for CssLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<String>().unwrap();
+        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
+        let package_name = "vscode-langservers-extracted";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .await;
+
+        if should_install_language_server {
             self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[("vscode-langservers-extracted", version.as_str())],
-                )
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
                 .await?;
         }
 
@@ -125,4 +128,63 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Context, TestAppContext};
+    use text::BufferId;
+    use unindent::Unindent;
+
+    #[gpui::test]
+    async fn test_outline(cx: &mut TestAppContext) {
+        let language = crate::language("css", tree_sitter_css::language());
+
+        let text = r#"
+            /* Import statement */
+            @import './fonts.css';
+
+            /* multiline list of selectors with nesting */
+            .test-class,
+            div {
+                .nested-class {
+                    color: red;
+                }
+            }
+
+            /* descendant selectors */
+            .test .descendant {}
+
+            /* pseudo */
+            .test:not(:hover) {}
+
+            /* media queries */
+            @media screen and (min-width: 3000px) {
+                .desktop-class {}
+            }
+        "#
+        .unindent();
+
+        let buffer = cx.new_model(|cx| {
+            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
+        });
+        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("@import './fonts.css'", 0),
+                (".test-class, div", 0),
+                (".nested-class", 1),
+                (".test .descendant", 0),
+                (".test:not(:hover)", 0),
+                ("@media screen and (min-width: 3000px)", 0),
+                (".desktop-class", 1),
+            ]
+        );
+    }
 }

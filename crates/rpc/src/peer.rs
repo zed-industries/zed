@@ -63,11 +63,7 @@ pub struct Receipt<T> {
 
 impl<T> Clone for Receipt<T> {
     fn clone(&self) -> Self {
-        Self {
-            sender_id: self.sender_id,
-            message_id: self.message_id,
-            payload_type: PhantomData,
-        }
+        *self
     }
 }
 

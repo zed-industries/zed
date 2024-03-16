@@ -60,6 +60,11 @@ impl Keystroke {
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
 
+            Keysym::ISO_Left_Tab => {
+                handle_consumed_modifiers = false;
+                "tab".to_owned()
+            }
+
             _ => {
                 handle_consumed_modifiers = false;
                 xkb::keysym_get_name(key_sym).to_lowercase()

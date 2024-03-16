@@ -32,7 +32,7 @@ lazy_static! {
     static ref GOPLS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("gopls".into())
@@ -57,6 +57,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let env = delegate.shell_env().await;
         let path = delegate.which("gopls".as_ref()).await?;

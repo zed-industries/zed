@@ -243,7 +243,7 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().elevation_2(cx).flex().flex_row().child(
+        div().occlude().elevation_2(cx).flex().flex_row().child(
             v_flex()
                 .min_w(px(200.))
                 .track_focus(&self.focus_handle)
@@ -272,80 +272,84 @@ impl Render for ContextMenu {
                 })
                 .flex_none()
                 .child(List::new().children(self.items.iter_mut().enumerate().map(
-                    |(ix, item)| match item {
-                        ContextMenuItem::Separator => ListSeparator.into_any_element(),
-                        ContextMenuItem::Header(header) => {
-                            ListSubHeader::new(header.clone()).into_any_element()
-                        }
-                        ContextMenuItem::Entry {
-                            label,
-                            handler,
-                            icon,
-                            action,
-                        } => {
-                            let handler = handler.clone();
-                            let menu = cx.view().downgrade();
-
-                            let label_element = if let Some(icon) = icon {
-                                h_flex()
-                                    .gap_1()
-                                    .child(Label::new(label.clone()))
-                                    .child(Icon::new(*icon))
-                                    .into_any_element()
-                            } else {
-                                Label::new(label.clone()).into_any_element()
-                            };
-
-                            ListItem::new(ix)
+                    |(ix, item)| {
+                        match item {
+                            ContextMenuItem::Separator => ListSeparator.into_any_element(),
+                            ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
                                 .inset(true)
-                                .selected(Some(ix) == self.selected_index)
-                                .on_click(move |_, cx| {
-                                    handler(cx);
-                                    menu.update(cx, |menu, cx| {
-                                        menu.clicked = true;
-                                        cx.emit(DismissEvent);
-                                    })
-                                    .ok();
-                                })
-                                .child(
+                                .into_any_element(),
+                            ContextMenuItem::Entry {
+                                label,
+                                handler,
+                                icon,
+                                action,
+                            } => {
+                                let handler = handler.clone();
+                                let menu = cx.view().downgrade();
+
+                                let label_element = if let Some(icon) = icon {
                                     h_flex()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(label_element)
-                                        .debug_selector(|| format!("MENU_ITEM-{}", label))
-                                        .children(action.as_ref().and_then(|action| {
-                                            self.action_context
-                                                .as_ref()
-                                                .map(|focus| {
-                                                    KeyBinding::for_action_in(&**action, focus, cx)
-                                                })
-                                                .unwrap_or_else(|| {
-                                                    KeyBinding::for_action(&**action, cx)
-                                                })
-                                                .map(|binding| div().ml_1().child(binding))
-                                        })),
-                                )
-                                .into_any_element()
-                        }
-                        ContextMenuItem::CustomEntry {
-                            entry_render,
-                            handler,
-                        } => {
-                            let handler = handler.clone();
-                            let menu = cx.view().downgrade();
-                            ListItem::new(ix)
-                                .inset(true)
-                                .selected(Some(ix) == self.selected_index)
-                                .on_click(move |_, cx| {
-                                    handler(cx);
-                                    menu.update(cx, |menu, cx| {
-                                        menu.clicked = true;
-                                        cx.emit(DismissEvent);
+                                        .gap_1()
+                                        .child(Label::new(label.clone()))
+                                        .child(Icon::new(*icon))
+                                        .into_any_element()
+                                } else {
+                                    Label::new(label.clone()).into_any_element()
+                                };
+
+                                ListItem::new(ix)
+                                    .inset(true)
+                                    .selected(Some(ix) == self.selected_index)
+                                    .on_click(move |_, cx| {
+                                        handler(cx);
+                                        menu.update(cx, |menu, cx| {
+                                            menu.clicked = true;
+                                            cx.emit(DismissEvent);
+                                        })
+                                        .ok();
                                     })
-                                    .ok();
-                                })
-                                .child(entry_render(cx))
-                                .into_any_element()
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(label_element)
+                                            .debug_selector(|| format!("MENU_ITEM-{}", label))
+                                            .children(action.as_ref().and_then(|action| {
+                                                self.action_context
+                                                    .as_ref()
+                                                    .map(|focus| {
+                                                        KeyBinding::for_action_in(
+                                                            &**action, focus, cx,
+                                                        )
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        KeyBinding::for_action(&**action, cx)
+                                                    })
+                                                    .map(|binding| div().ml_1().child(binding))
+                                            })),
+                                    )
+                                    .into_any_element()
+                            }
+                            ContextMenuItem::CustomEntry {
+                                entry_render,
+                                handler,
+                            } => {
+                                let handler = handler.clone();
+                                let menu = cx.view().downgrade();
+                                ListItem::new(ix)
+                                    .inset(true)
+                                    .selected(Some(ix) == self.selected_index)
+                                    .on_click(move |_, cx| {
+                                        handler(cx);
+                                        menu.update(cx, |menu, cx| {
+                                            menu.clicked = true;
+                                            cx.emit(DismissEvent);
+                                        })
+                                        .ok();
+                                    })
+                                    .child(entry_render(cx))
+                                    .into_any_element()
+                            }
                         }
                     },
                 ))),

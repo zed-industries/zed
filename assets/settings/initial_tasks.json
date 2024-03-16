@@ -5,6 +5,7 @@
   {
     "label": "Example task",
     "command": "for i in {1..5}; do echo \"Hello $i/5\"; sleep 1; done",
+    //"args": [],
     // Env overrides for the command, will be appended to the terminal's environment from the settings.
     "env": { "foo": "bar" },
     // Current working directory to spawn the command into, defaults to current project root.
@@ -12,6 +13,10 @@
     // Whether to use a new terminal tab or reuse the existing one to spawn the process, defaults to `false`.
     "use_new_terminal": false,
     // Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish, defaults to `false`.
-    "allow_concurrent_runs": false
+    "allow_concurrent_runs": false,
+    // What to do with the terminal pane and tab, after the command was started:
+    // * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
+    // * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
+    "reveal": "always"
   }
 ]

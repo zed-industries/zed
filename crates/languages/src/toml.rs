@@ -12,7 +12,7 @@ use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct TaploLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TaploLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("taplo-ls".into())
@@ -68,7 +68,7 @@ impl LspAdapter for TaploLspAdapter {
 
             futures::io::copy(decompressed_bytes, &mut file).await?;
 
-            // todo(windows)
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(

@@ -6,7 +6,7 @@ use std::{any::Any, path::PathBuf};
 
 pub struct UiuaLanguageServer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for UiuaLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("uiua".into())

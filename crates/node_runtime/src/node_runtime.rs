@@ -1,7 +1,10 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use futures::AsyncReadExt;
+use semver::Version;
 use serde::Deserialize;
+use serde_json::Value;
 use smol::{fs, io::BufReader, lock::Mutex, process::Command};
 use std::process::{Output, Stdio};
 use std::{
@@ -10,6 +13,7 @@ use std::{
     sync::Arc,
 };
 use util::http::HttpClient;
+use util::ResultExt;
 
 const VERSION: &str = "v18.15.0";
 
@@ -41,6 +45,56 @@ pub trait NodeRuntime: Send + Sync {
 
     async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
         -> Result<()>;
+
+    async fn should_install_npm_package(
+        &self,
+        package_name: &str,
+        local_executable_path: &Path,
+        local_package_directory: &PathBuf,
+        latest_version: &str,
+    ) -> bool {
+        // In the case of the local system not having the package installed,
+        // or in the instances where we fail to parse package.json data,
+        // we attempt to install the package.
+        if fs::metadata(local_executable_path).await.is_err() {
+            return true;
+        }
+
+        let package_json_path = local_package_directory.join("package.json");
+
+        let mut contents = String::new();
+
+        let Some(mut file) = fs::File::open(package_json_path).await.log_err() else {
+            return true;
+        };
+
+        file.read_to_string(&mut contents).await.log_err();
+
+        let Some(package_json): Option<Value> = serde_json::from_str(&contents).log_err() else {
+            return true;
+        };
+
+        let installed_version = package_json
+            .get("dependencies")
+            .and_then(|deps| deps.get(package_name))
+            .and_then(|server_name| server_name.as_str());
+
+        let Some(installed_version) = installed_version else {
+            return true;
+        };
+
+        let Some(latest_version) = Version::parse(latest_version).log_err() else {
+            return true;
+        };
+
+        let installed_version = installed_version.trim_start_matches(|c: char| !c.is_ascii_digit());
+
+        let Some(installed_version) = Version::parse(installed_version).log_err() else {
+            return true;
+        };
+
+        installed_version < latest_version
+    }
 }
 
 pub struct RealNodeRuntime {
@@ -239,6 +293,7 @@ impl NodeRuntime for RealNodeRuntime {
 
         let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
         arguments.extend_from_slice(&[
+            "--save-exact",
             "--fetch-retry-mintimeout",
             "2000",
             "--fetch-retry-maxtimeout",

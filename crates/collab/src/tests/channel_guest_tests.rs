@@ -167,7 +167,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .get_or_create_user_by_github_account("user_b", Some(100), None)
+        .get_or_create_user_by_github_account("user_b", Some(100), None, None)
         .await
         .unwrap();
 
@@ -265,7 +265,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .add_contributor("user_b", Some(100), None)
+        .add_contributor("user_b", Some(100), None, None)
         .await
         .unwrap();
 

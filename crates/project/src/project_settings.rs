@@ -20,25 +20,6 @@ pub struct ProjectSettings {
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
-
-    /// Completely ignore files matching globs from `file_scan_exclusions`
-    ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
-    #[serde(default)]
-    pub file_scan_exclusions: Option<Vec<String>>,
-
-    /// Treat the files matching these globs as `.env` files.
-    /// Default: [ "**/.env*" ]
-    pub private_files: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -60,9 +41,16 @@ pub enum GitGutterSetting {
     Hide,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct BinarySettings {
+    pub path: Option<String>,
+    pub arguments: Option<Vec<String>>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
+    pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
 }
