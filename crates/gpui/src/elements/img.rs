@@ -101,7 +101,8 @@ impl ImageSource {
             ImageSource::Data(data) => {
                 return Some(data.clone());
             }
-            _ => None,
+            #[cfg(target_os = "macos")]
+            ImageSource::Surface(_) => None,
         }
     }
 }
@@ -267,8 +268,12 @@ impl Element for Img {
                         cx.paint_image(bounds, corner_radii, data, self.grayscale)
                             .log_err();
                     }
+                    #[cfg(not(target_os = "macos"))]
+                    None => {
+                        // No renderable image loaded yet. Do nothing.
+                    }
+                    #[cfg(target_os = "macos")]
                     None => match source {
-                        #[cfg(target_os = "macos")]
                         ImageSource::Surface(surface) => {
                             let size = size(surface.width().into(), surface.height().into());
                             let new_bounds = self.object_fit.get_bounds(bounds, size);

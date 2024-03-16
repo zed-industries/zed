@@ -118,10 +118,10 @@ impl Item for ImageView {
                 .get_image_path(item_id, workspace_id)?
                 .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
 
-            Ok(cx.new_view(|cx| ImageView {
+            cx.new_view(|cx| ImageView {
                 path: image_path,
                 focus_handle: cx.focus_handle(),
-            })?)
+            })
         })
     }
 
@@ -155,10 +155,11 @@ impl Render for ImageView {
             .track_focus(&self.focus_handle)
             .size_full()
             .child(
+                // Checkered background behind the image
                 canvas(
                     |_, _| (),
                     |bounds, _, cx| {
-                        let square_size = 32.0; // size of each checkerboard square
+                        let square_size = 32.0;
 
                         let start_y = bounds.origin.y.0;
                         let height = bounds.size.height.0;
@@ -170,10 +171,11 @@ impl Render for ImageView {
                         let mut color_swapper = true;
                         // draw checkerboard pattern
                         while y <= start_y + height {
+                            // Keeping track of the grid in order to be resilient to resizing
                             let start_swap = color_swapper;
                             while x <= start_x + width {
                                 let rect = Bounds::new(
-                                    point(px(x as f32), px(y as f32)),
+                                    point(px(x), px(y)),
                                     size(px(square_size), px(square_size)),
                                 );
 
@@ -202,8 +204,8 @@ impl Render for ImageView {
             )
             .child(
                 v_flex()
-                    .justify_around()
                     .h_full()
+                    .justify_around()
                     .child(h_flex().w_full().justify_around().child(im)),
             )
     }

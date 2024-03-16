@@ -14,11 +14,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 db.workspace = true
 gpui.workspace = true
-text.workspace = true
-theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
