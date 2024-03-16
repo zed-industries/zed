@@ -1,4 +1,5 @@
-use windows::Win32::{Foundation::*, UI::WindowsAndMessaging::*};
+use util::ResultExt;
+use windows::Win32::{Foundation::*, System::Threading::*, UI::WindowsAndMessaging::*};
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;
@@ -67,4 +68,31 @@ pub(crate) unsafe fn set_window_long(
     unsafe {
         SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
     }
+}
+
+pub(crate) struct OwnedHandle(HANDLE);
+
+impl OwnedHandle {
+    pub(crate) fn new(handle: HANDLE) -> Self {
+        Self(handle)
+    }
+
+    #[inline(always)]
+    pub(crate) fn to_raw(&self) -> HANDLE {
+        self.0
+    }
+}
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe { CloseHandle(self.0) }.log_err();
+        }
+    }
+}
+
+pub(crate) fn create_event() -> windows::core::Result<OwnedHandle> {
+    Ok(OwnedHandle::new(unsafe {
+        CreateEventW(None, false, false, None)?
+    }))
 }
