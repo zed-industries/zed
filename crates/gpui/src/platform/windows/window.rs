@@ -144,7 +144,10 @@ impl WindowsWindowInner {
         let mut height = title_bar_size.cy + TOP_BOTTOM_BORDERS;
 
         if self.is_maximized() {
-            height += unsafe { GetSystemMetrics(SM_CXPADDEDBORDER) * 2 };
+            // let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+            height += unsafe {
+                (GetSystemMetricsForDpi(SM_CXPADDEDBORDER, DEFAULT_DPI_VALUE) * 2) as i32
+            };
         }
 
         let mut rect = RECT::default();
