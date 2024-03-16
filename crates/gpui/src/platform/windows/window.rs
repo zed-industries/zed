@@ -898,7 +898,7 @@ impl WindowsWindowInner {
             let x = Pixels::from(cursor_point.x as f32);
             let y = Pixels::from(cursor_point.y as f32);
             let event = MouseDownEvent {
-                button: button.clone(),
+                button,
                 position: Point { x, y },
                 modifiers: self.current_modifiers(),
                 click_count: 1,
@@ -978,19 +978,16 @@ impl WindowsWindowInner {
             .platform_inner
             .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
         {
-            lost_focus_window
-                .callbacks
-                .borrow_mut()
-                .active_status_change
-                .as_mut()
-                .map(|mut cb| cb(false));
+            let mut callbacks = lost_focus_window.callbacks.borrow_mut();
+            if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+                cb(false);
+            }
         }
 
-        self.callbacks
-            .borrow_mut()
-            .active_status_change
-            .as_mut()
-            .map(|mut cb| cb(true));
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+            cb(true);
+        }
 
         LRESULT(0)
     }
