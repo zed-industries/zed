@@ -23,9 +23,17 @@ pub(crate) struct LinuxTextSystem(RwLock<LinuxTextSystemState>);
 struct LinuxTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
-    fonts: Vec<Arc<CosmicTextFont>>,
-    font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
-    postscript_names_by_font_id: HashMap<FontId, String>,
+    /// Contains all already loaded fonts. Indexed by `FontId`.
+    ///
+    /// When a font is requested via `LinuxTextSystem::font_id` all faces of the requested family
+    /// are loaded at once via `Self::load_family`. Not every item in this list is therefore actually
+    /// being used to render text on the screen.
+    // A reference to these fonts is also stored in `font_system`, but calling `FontSystem::get_font`
+    // would require a mutable reference and therefore a write lock
+    loaded_fonts_store: Vec<Arc<CosmicTextFont>>,
+    /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
+    /// for every font face in a family.
+    font_ids_by_family_cache: HashMap<SharedString, SmallVec<[FontId; 4]>>,
 }
 
 impl LinuxTextSystem {
@@ -38,9 +46,8 @@ impl LinuxTextSystem {
         Self(RwLock::new(LinuxTextSystemState {
             font_system,
             swash_cache: SwashCache::new(),
-            fonts: Vec::new(),
-            font_ids_by_family_name: HashMap::default(),
-            postscript_names_by_font_id: HashMap::default(),
+            loaded_fonts_store: Vec::new(),
+            font_ids_by_family_cache: HashMap::default(),
         }))
     }
 }
@@ -74,29 +81,31 @@ impl PlatformTextSystem for LinuxTextSystem {
             .font_system
             .db()
             .faces()
-            .filter_map(|face| Some(face.families.get(0)?.0.clone()))
+            // todo(linux) this will list the same font family multiple times
+            .filter_map(|face| face.families.first().map(|family| family.0.clone()))
             .collect_vec()
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
         // todo(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
-        let mut lock = self.0.write();
+        let mut state = self.0.write();
 
-        let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family) {
+        let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&font.family) {
             font_ids.as_slice()
         } else {
-            let font_ids = lock.load_family(&font.family, font.features)?;
-            lock.font_ids_by_family_name
+            let font_ids = state.load_family(&font.family, font.features)?;
+            state
+                .font_ids_by_family_cache
                 .insert(font.family.clone(), font_ids);
-            lock.font_ids_by_family_name[&font.family].as_ref()
+            state.font_ids_by_family_cache[&font.family].as_ref()
         };
 
         // todo(linux) ideally we would make fontdb's `find_best_match` pub instead of using font-kit here
         let candidate_properties = candidates
             .iter()
             .map(|font_id| {
-                let database_id = lock.fonts[font_id.0].id();
-                let face_info = lock.font_system.db().face(database_id).expect("");
+                let database_id = state.loaded_fonts_store[font_id.0].id();
+                let face_info = state.font_system.db().face(database_id).expect("");
                 face_info_into_properties(face_info)
             })
             .collect::<SmallVec<[_; 4]>>();
@@ -109,7 +118,9 @@ impl PlatformTextSystem for LinuxTextSystem {
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        let metrics = self.0.read().fonts[font_id.0].as_swash().metrics(&[]);
+        let metrics = self.0.read().loaded_fonts_store[font_id.0]
+            .as_swash()
+            .metrics(&[]);
 
         FontMetrics {
             units_per_em: metrics.units_per_em as u32,
@@ -130,7 +141,9 @@ impl PlatformTextSystem for LinuxTextSystem {
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         let lock = self.0.read();
-        let glyph_metrics = lock.fonts[font_id.0].as_swash().glyph_metrics(&[]);
+        let glyph_metrics = lock.loaded_fonts_store[font_id.0]
+            .as_swash()
+            .glyph_metrics(&[]);
         let glyph_id = glyph_id.0 as u16;
         // todo(linux): Compute this correctly
         // see https://github.com/servo/font-kit/blob/master/src/loaders/freetype.rs#L614-L620
@@ -196,6 +209,7 @@ impl LinuxTextSystemState {
         Ok(())
     }
 
+    // todo(linux) handle `FontFeatures`
     #[profiling::function]
     fn load_family(
         &mut self,
@@ -213,19 +227,19 @@ impl LinuxTextSystemState {
                 continue;
             };
 
-            let font_id = FontId(self.fonts.len());
+            let font_id = FontId(self.loaded_fonts_store.len());
             font_ids.push(font_id);
-            self.fonts.push(font);
+            self.loaded_fonts_store.push(font);
         }
         Ok(font_ids)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        let width = self.fonts[font_id.0]
+        let width = self.loaded_fonts_store[font_id.0]
             .as_swash()
             .glyph_metrics(&[])
             .advance_width(glyph_id.0 as u16);
-        let height = self.fonts[font_id.0]
+        let height = self.loaded_fonts_store[font_id.0]
             .as_swash()
             .glyph_metrics(&[])
             .advance_height(glyph_id.0 as u16);
@@ -233,7 +247,10 @@ impl LinuxTextSystemState {
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        let glyph_id = self.fonts[font_id.0].as_swash().charmap().map(ch);
+        let glyph_id = self.loaded_fonts_store[font_id.0]
+            .as_swash()
+            .charmap()
+            .map(ch);
         if glyph_id == 0 {
             None
         } else {
@@ -241,18 +258,14 @@ impl LinuxTextSystemState {
         }
     }
 
-    fn is_emoji(&self, font_id: FontId) -> bool {
-        // todo(linux): implement this correctly
-        self.postscript_names_by_font_id
-            .get(&font_id)
-            .map_or(false, |postscript_name| {
-                postscript_name == "AppleColorEmoji"
-            })
+    // todo(linux)
+    fn is_emoji(&self, _font_id: FontId) -> bool {
+        false
     }
 
     // todo(linux) both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let font = &self.fonts[params.font_id.0];
+        let font = &self.loaded_fonts_store[params.font_id.0];
         let font_system = &mut self.font_system;
         let image = self
             .swash_cache
@@ -285,7 +298,7 @@ impl LinuxTextSystemState {
         } else {
             // todo(linux) handle subpixel variants
             let bitmap_size = glyph_bounds.size;
-            let font = &self.fonts[params.font_id.0];
+            let font = &self.loaded_fonts_store[params.font_id.0];
             let font_system = &mut self.font_system;
             let image = self
                 .swash_cache
@@ -313,7 +326,7 @@ impl LinuxTextSystemState {
         let mut offs = 0;
         for run in font_runs {
             // todo(linux) We need to check we are doing utf properly
-            let font = &self.fonts[run.font_id.0];
+            let font = &self.loaded_fonts_store[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
                 offs..offs + run.len,
@@ -338,7 +351,7 @@ impl LinuxTextSystemState {
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
             let font_id = FontId(
-                self.fonts
+                self.loaded_fonts_store
                     .iter()
                     .position(|font| font.id() == font_id)
                     .unwrap(),
