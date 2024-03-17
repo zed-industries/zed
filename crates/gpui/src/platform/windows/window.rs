@@ -176,7 +176,7 @@ impl WindowsWindowInner {
         let height = self.title_bar_height();
         let mut rect = RECT::default();
         unsafe { GetClientRect(self.hwnd, &mut rect) }?;
-        rect.bottom = rect.top + (height.round().0 as i32);
+        rect.bottom = rect.top + ((height * self.scale_factor).round().0 as i32);
         Ok(rect)
     }
 
