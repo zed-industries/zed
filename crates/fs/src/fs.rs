@@ -1,9 +1,13 @@
 pub mod repository;
 
 use anyhow::{anyhow, Result};
+#[cfg(target_os = "windows")]
+use serde::{Deserialize, Serialize};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicIsize;
 
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
@@ -112,6 +116,35 @@ pub struct Metadata {
 }
 
 pub struct RealFs;
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Serialize, Deserialize)]
+struct SymlinkData {
+    target: PathBuf,
+    path: PathBuf,
+}
+
+#[cfg(target_os = "windows")]
+static PIPE_HANDLE: AtomicIsize = AtomicIsize::new(0);
+
+impl Drop for RealFs {
+    fn drop(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            use std::sync::atomic::Ordering;
+
+            use windows::Win32::{Foundation::HANDLE, System::Pipes::DisconnectNamedPipe};
+
+            let pipe_handle = PIPE_HANDLE.load(Ordering::SeqCst);
+            PIPE_HANDLE.store(0, Ordering::SeqCst);
+            unsafe {
+                if DisconnectNamedPipe(HANDLE(pipe_handle)).is_err() {
+                    log::error!("Disconnect pipe error: {}", std::io::Error::last_os_error());
+                }
+            }
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
@@ -1519,6 +1552,39 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     .await
 }
 
+#[cfg(target_os = "windows")]
+pub async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
+    use std::sync::atomic::Ordering;
+
+    use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::WriteFile};
+
+    load_pipe().await?;
+    let (target_full_path, path_full_path) = generate_full_path(target, path).await?;
+    smol::unblock(move || {
+        let symlink = SymlinkData {
+            target: target_full_path,
+            path: path_full_path,
+        };
+        let raw_data = serde_json::to_vec(&symlink).unwrap();
+        let mut bytes_read = 0u32;
+        println!("Sent: {} bytes", raw_data.len());
+        unsafe {
+            WriteFile(
+                HANDLE(PIPE_HANDLE.load(Ordering::SeqCst)),
+                Some(&raw_data),
+                Some(&mut bytes_read as _),
+                None,
+            )
+        }
+        .inspect_err(|_| log::error!("error call pipe: {}", std::io::Error::last_os_error()))?;
+        if bytes_read != raw_data.len() as u32 {
+            log::error!("not all bytes read: {}/{}", bytes_read, raw_data.len());
+        }
+        Ok(())
+    })
+    .await
+}
+
 // Creating symbolic links on Windows requires elevation, and a running program
 // cannot elevate permissions; elevation can only occur at startup of a process.
 //
@@ -1529,19 +1595,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 // Once the child process has the necessary permissions, it creates the symbolic link
 // and then exits.
 #[cfg(target_os = "windows")]
-async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
-    use windows::{
-        core::PCWSTR,
-        Win32::{
-            Foundation::{CloseHandle, HWND},
-            System::Threading::{WaitForSingleObject, INFINITE},
-            UI::{
-                Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW},
-                WindowsAndMessaging::SW_HIDE,
-            },
-        },
-    };
-
+async fn generate_full_path(target: PathBuf, path: &Path) -> Result<(PathBuf, PathBuf)> {
     let target_full_path = smol::fs::canonicalize(target).await?;
     let path_full_path;
     if target_full_path.is_file() {
@@ -1563,56 +1617,86 @@ async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
         smol::fs::create_dir_all(&path).await?;
         path_full_path = smol::fs::canonicalize(path).await?;
     }
+    Ok((target_full_path, path_full_path))
+}
 
-    let verb = "runas".to_string();
-    let exe_path = "cmd.exe".to_string();
-    let params_path = if path_full_path.is_file() {
-        format!(
-            "/c mklink {} {}",
-            path_full_path.display(),
-            target_full_path.display()
-        )
-    } else {
-        format!(
-            "/c mklink /D {} {}",
-            path_full_path.display(),
-            target_full_path.display(),
-        )
+#[cfg(target_os = "windows")]
+async fn load_pipe() -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Storage::FileSystem::PIPE_ACCESS_DUPLEX,
+            System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_MESSAGE},
+            UI::{
+                Shell::{ShellExecuteExW, SHELLEXECUTEINFOW},
+                WindowsAndMessaging::SW_SHOWNORMAL,
+            },
+        },
     };
-    smol::unblock(move || {
-        let verb_str: Vec<u16> = verb.encode_utf16().chain(Some(0)).collect();
-        let exe_str: Vec<u16> = exe_path.encode_utf16().chain(Some(0)).collect();
-        let params_str: Vec<u16> = params_path.encode_utf16().chain(Some(0)).collect();
 
-        let mut info = SHELLEXECUTEINFOW::default();
-        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-        info.fMask = SEE_MASK_NOCLOSEPROCESS;
-        info.lpDirectory = PCWSTR::null();
-        info.hwnd = HWND(0);
-        info.lpVerb = PCWSTR::from_raw(verb_str.as_ptr());
-        info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
-        info.lpParameters = PCWSTR::from_raw(params_str.as_ptr());
-        info.nShow = SW_HIDE.0;
-        let result = unsafe { ShellExecuteExW(&mut info) };
+    const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
+    const MAX_INSTANCES: u32 = 4;
+    const BUFFER_SIZE: u32 = 512;
 
-        if result.is_err() {
-            return Err(anyhow!(
-                "Error occurred while executing ShellExecuteExW: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        unsafe {
-            WaitForSingleObject(info.hProcess, INFINITE);
-            CloseHandle(info.hProcess).inspect_err(|_| {
-                log::error!(
-                    "unable to close child process: {}",
-                    std::io::Error::last_os_error()
+    if PIPE_HANDLE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        smol::unblock(|| {
+            let handle = unsafe {
+                CreateNamedPipeW(
+                    PIPE_NAME,
+                    PIPE_ACCESS_DUPLEX,
+                    PIPE_TYPE_MESSAGE,
+                    MAX_INSTANCES,
+                    BUFFER_SIZE,
+                    BUFFER_SIZE,
+                    0,
+                    None,
                 )
+            };
+            if handle.is_invalid() {
+                log::error!("error create pipes: {}", std::io::Error::last_os_error());
+                return Err(anyhow!("unable to create pipes"));
+            }
+
+            let exe_path = get_exe_path()?;
+            let exe_str: Vec<u16> = exe_path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let mut info = SHELLEXECUTEINFOW::default();
+            info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+            info.lpVerb = windows::core::w!("runas");
+            info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
+            // info.nShow = SW_HIDE.0;
+            info.nShow = SW_SHOWNORMAL.0;
+            unsafe { ShellExecuteExW(&mut info) }.inspect_err(|_| {
+                log::error!(
+                    "unable to launch child process: {}",
+                    std::io::Error::last_os_error()
+                );
             })?;
-        }
+            PIPE_HANDLE.store(handle.0, std::sync::atomic::Ordering::SeqCst);
+            unsafe {
+                ConnectNamedPipe(handle, None).inspect_err(|_| {
+                    log::error!(
+                        "unable to connect named pipe: {}",
+                        std::io::Error::last_os_error()
+                    );
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    } else {
         Ok(())
-    })
-    .await
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_exe_path() -> Result<PathBuf> {
+    let path = std::env::current_exe()?;
+    let Some(parent) = path.parent() else {
+        return Err(anyhow!("unable to get zed.exe folder"));
+    };
+    Ok(parent.to_path_buf().join("fs_symlink.exe"))
 }
 
 #[cfg(test)]

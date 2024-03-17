@@ -29,6 +29,7 @@ members = [
     "crates/feedback",
     "crates/file_finder",
     "crates/fs",
+    "crates/fs_symlink",
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
@@ -363,6 +364,8 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
 ]
 
 [patch.crates-io]

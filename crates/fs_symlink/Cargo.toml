@@ -1,0 +1,25 @@
+[package]
+name = "fs_symlink"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "fs_symlink"
+path = "src/main.rs"
+doctest = false
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]
