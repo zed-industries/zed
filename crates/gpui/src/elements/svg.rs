@@ -111,6 +111,16 @@ pub struct Transformation {
     rotate: f32,
 }
 
+impl Default for Transformation {
+    fn default() -> Self {
+        Self {
+            scale: size(1.0, 1.0),
+            translate: point(px(0.0), px(0.0)),
+            rotate: 0.0,
+        }
+    }
+}
+
 impl Transformation {
     /// Create a new Transformation with the specified scale.
     pub fn scale(scale: Size<f32>) -> Self {

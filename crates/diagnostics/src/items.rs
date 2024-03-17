@@ -1,8 +1,10 @@
+use std::{f32::consts::PI, time::Duration};
+
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
-    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, WeakView,
+    rems, Animation, AnimationExt, EventEmitter, IntoElement, ParentElement, Render, Styled,
+    Subscription, Transformation, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
@@ -66,7 +68,17 @@ impl Render for DiagnosticIndicator {
             Some(
                 h_flex()
                     .gap_2()
-                    .child(Icon::new(IconName::ArrowCircle).size(IconSize::Small))
+                    .child(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transformation(Transformation::rotate(delta * 2.0 * PI))
+                                },
+                            ),
+                    )
                     .child(
                         Label::new("Checking…")
                             .size(LabelSize::Small)
