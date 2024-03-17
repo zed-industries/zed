@@ -135,8 +135,8 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+        // using USER_DEFAULT_SCREEN_DPI because GPUI handles the scale with the scale factor
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
         px(padding as f32)
     }
 
@@ -163,18 +163,12 @@ impl WindowsWindowInner {
         }
         .expect("GetThemePartSize invalid parameters");
         unsafe { CloseThemeData(theme) }.log_err();
-        // todo(windows) use self.scale_factor
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        let scale_factor = dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32;
-        let mut height = px(title_bar_size.cy as f32 * scale_factor);
-        height += px(TOP_BOTTOM_BORDERS as f32);
-        height += self.title_bar_top_offset();
-        height
+        px(title_bar_size.cy as f32) + self.title_bar_top_offset()
     }
 
     pub(crate) fn caption_button_width(&self) -> Pixels {
-        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-        let width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, dpi) };
+        // using USER_DEFAULT_SCREEN_DPI because GPUI handles the scale with the scale factor
+        let width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, USER_DEFAULT_SCREEN_DPI) };
         px(width as f32)
     }
 
