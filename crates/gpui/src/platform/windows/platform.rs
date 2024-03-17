@@ -652,14 +652,15 @@ impl Platform for WindowsPlatform {
                 Ok(None)
             } else {
                 let username: String = unsafe { (*credentials).UserName.to_string()? };
-                let password: Vec<u8> = unsafe {
-                    Vec::from_raw_parts(
+                let credential_blob = unsafe {
+                    std::slice::from_raw_parts(
                         (*credentials).CredentialBlob,
                         (*credentials).CredentialBlobSize as usize,
-                        (*credentials).CredentialBlobSize as usize,
                     )
-                    .clone()
                 };
+                let mut password: Vec<u8> = Vec::with_capacity(credential_blob.len());
+                password.resize(password.capacity(), 0);
+                password.clone_from_slice(&credential_blob);
                 unsafe { CredFree(credentials as *const c_void) };
                 Ok(Some((username, password)))
             }
