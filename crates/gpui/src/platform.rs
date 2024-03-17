@@ -5,6 +5,7 @@
 
 mod app_menu;
 mod keystroke;
+mod ui_metrics;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -56,6 +57,7 @@ pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
+pub use ui_metrics::*;
 pub use util::SemanticVersion;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;

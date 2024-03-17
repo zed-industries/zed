@@ -130,7 +130,6 @@ pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
-pub use platform::ui_metrics::*;
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
@@ -146,7 +145,6 @@ pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
 
