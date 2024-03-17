@@ -11,18 +11,18 @@ type PhysicalSize = Size<GlobalPixels>;
 type LogicalSize = Size<Pixels>;
 
 #[derive(Debug, Default)]
-pub(crate) struct DisplaySize {
+pub(crate) struct WindowMetrics {
     origin: Cell<PhysicalPoint>,
     physical_size: Cell<PhysicalSize>,
     logical_size: Cell<LogicalSize>,
     scale_factor: Cell<f32>,
 }
 
-impl DisplaySize {
+impl WindowMetrics {
     /// `x` and `y` should be screen coordinate based
     /// `width` and `height` should be physical pixels
     pub fn new(x: i32, y: i32, width: u32, height: u32, scale_factor: f32) -> Self {
-        DisplaySize {
+        WindowMetrics {
             origin: Cell::new(PhysicalPoint::new_physical(x, y)),
             physical_size: Cell::new(PhysicalSize::new_physical(width, height)),
             logical_size: Cell::new(LogicalSize::new_logical(width, height, scale_factor)),

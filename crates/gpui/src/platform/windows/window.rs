@@ -40,7 +40,7 @@ use crate::*;
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    display_size: DisplaySize,
+    window_metrics: WindowMetrics,
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
     callbacks: RefCell<Callbacks>,
@@ -61,7 +61,7 @@ impl WindowsWindowInner {
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let scale_factor = monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32;
-        let display_size = DisplaySize::new(cs.x, cs.y, cs.cx as u32, cs.cy as u32, scale_factor);
+        let display_size = WindowMetrics::new(cs.x, cs.y, cs.cx as u32, cs.cy as u32, scale_factor);
         let input_handler = Cell::new(None);
         struct RawWindow {
             hwnd: *mut c_void,
@@ -102,7 +102,7 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         Self {
             hwnd,
-            display_size,
+            window_metrics: display_size,
             input_handler,
             renderer,
             callbacks,
@@ -124,7 +124,7 @@ impl WindowsWindowInner {
 
     fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
         let top_and_bottom_borders = 2;
-        let scale_factor = self.display_size.get_scale_factor();
+        let scale_factor = self.window_metrics.get_scale_factor();
         let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
         let title_bar_size = unsafe {
             GetThemePartSize(
@@ -249,8 +249,8 @@ impl WindowsWindowInner {
     fn handle_move_msg(&self, lparam: LPARAM) -> LRESULT {
         let x = lparam.signed_loword() as i32;
         let y = lparam.signed_hiword() as i32;
-        self.display_size.set_origin(x, y);
-        let size = self.display_size.get_physical_size();
+        self.window_metrics.set_origin(x, y);
+        let size = self.window_metrics.get_physical_size();
         let center_x = x as f32 + size.width.0 / 2.0;
         let center_y = y as f32 + size.height.0 / 2.0;
         let monitor_bounds = self.display.borrow().bounds();
@@ -276,14 +276,14 @@ impl WindowsWindowInner {
     fn handle_size_msg(&self, lparam: LPARAM) -> LRESULT {
         let width = lparam.loword() as u32;
         let height = lparam.hiword() as u32;
-        let scale_factor = self.display_size.get_scale_factor();
-        self.display_size.update_size(width, height, scale_factor);
+        let scale_factor = self.window_metrics.get_scale_factor();
+        self.window_metrics.update_size(width, height, scale_factor);
         self.renderer
             .borrow_mut()
-            .update_drawable_size(self.display_size.drawable_size());
+            .update_drawable_size(self.window_metrics.drawable_size());
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.resize.as_mut() {
-            callback(self.display_size.get_logical_size(), scale_factor);
+            callback(self.window_metrics.get_logical_size(), scale_factor);
         }
         self.invalidate_client_area();
         LRESULT(0)
@@ -352,7 +352,7 @@ impl WindowsWindowInner {
             };
             let x = lparam.signed_loword() as i32;
             let y = lparam.signed_hiword() as i32;
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = MouseMoveEvent {
                 position: LogicalPoint::new_logical(x, y, scale_factor),
                 pressed_button,
@@ -588,7 +588,7 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as i32;
             let y = lparam.signed_hiword() as i32;
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = MouseDownEvent {
                 button,
                 position: LogicalPoint::new_logical(x, y, scale_factor),
@@ -607,7 +607,7 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as i32;
             let y = lparam.signed_hiword() as i32;
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = MouseUpEvent {
                 button,
                 position: LogicalPoint::new_logical(x, y, scale_factor),
@@ -628,7 +628,7 @@ impl WindowsWindowInner {
                 * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
             let x = lparam.signed_loword() as i32;
             let y = lparam.signed_hiword() as i32;
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = crate::ScrollWheelEvent {
                 position: LogicalPoint::new_logical(x, y, scale_factor),
                 delta: ScrollDelta::Lines(Point {
@@ -651,7 +651,7 @@ impl WindowsWindowInner {
                 * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
             let x = lparam.signed_loword() as i32;
             let y = lparam.signed_hiword() as i32;
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = crate::ScrollWheelEvent {
                 position: LogicalPoint::new_logical(x, y, scale_factor),
                 delta: ScrollDelta::Lines(Point {
@@ -812,8 +812,8 @@ impl WindowsWindowInner {
         let width = size_rect.right - size_rect.left;
         let height = size_rect.bottom - size_rect.top;
 
-        let scale_factor = self.display_size.get_scale_factor();
-        self.display_size
+        let scale_factor = self.window_metrics.get_scale_factor();
+        self.window_metrics
             .update_size(width as _, height as _, scale_factor);
 
         if self.hide_title_bar {
@@ -839,7 +839,7 @@ impl WindowsWindowInner {
     fn handle_dpi_changed_msg(&self, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let new_dpi = wparam.loword() as f32;
         let scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
-        self.display_size.set_scale_factor(scale_factor);
+        self.window_metrics.set_scale_factor(scale_factor);
         let rect = unsafe { &*(lparam.0 as *const RECT) };
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
@@ -930,7 +930,7 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = MouseMoveEvent {
                 position: LogicalPoint::new_logical(cursor_point.x, cursor_point.y, scale_factor),
                 pressed_button: None,
@@ -962,7 +962,7 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = MouseDownEvent {
                 button: button.clone(),
                 position: LogicalPoint::new_logical(cursor_point.x, cursor_point.y, scale_factor),
@@ -1000,7 +1000,7 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
-            let scale_factor = self.display_size.get_scale_factor();
+            let scale_factor = self.window_metrics.get_scale_factor();
             let event = MouseUpEvent {
                 button,
                 position: LogicalPoint::new_logical(cursor_point.x, cursor_point.y, scale_factor),
@@ -1202,8 +1202,8 @@ impl Drop for WindowsWindow {
 impl PlatformWindow for WindowsWindow {
     fn bounds(&self) -> Bounds<GlobalPixels> {
         Bounds {
-            origin: self.inner.display_size.get_origin(),
-            size: self.inner.display_size.get_physical_size(),
+            origin: self.inner.window_metrics.get_origin(),
+            size: self.inner.window_metrics.get_physical_size(),
         }
     }
 
@@ -1216,12 +1216,12 @@ impl PlatformWindow for WindowsWindow {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        self.inner.display_size.get_logical_size()
+        self.inner.window_metrics.get_logical_size()
     }
 
     // todo(windows)
     fn scale_factor(&self) -> f32 {
-        self.inner.display_size.get_scale_factor()
+        self.inner.window_metrics.get_scale_factor()
     }
 
     // todo(windows)
@@ -1245,7 +1245,11 @@ impl PlatformWindow for WindowsWindow {
             ScreenToClient(self.inner.hwnd, &mut point);
             point
         };
-        LogicalPoint::new_logical(point.x, point.y, self.inner.display_size.get_scale_factor())
+        LogicalPoint::new_logical(
+            point.x,
+            point.y,
+            self.inner.window_metrics.get_scale_factor(),
+        )
     }
 
     // todo(windows)
