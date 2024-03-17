@@ -1168,7 +1168,7 @@ impl ProjectPanel {
                         inode: 0,
                         mtime: entry.mtime,
                         is_symlink: false,
-                        is_ignored: false,
+                        is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,
                         git_status: entry.git_status,
@@ -1400,10 +1400,16 @@ impl ProjectPanel {
         let filename_text_color = details
             .git_status
             .as_ref()
-            .map(|status| match status {
-                GitFileStatus::Added => Color::Created,
-                GitFileStatus::Modified => Color::Modified,
-                GitFileStatus::Conflict => Color::Conflict,
+            .map(|status| {
+                if details.is_ignored {
+                    Color::Disabled
+                } else {
+                    match status {
+                        GitFileStatus::Added => Color::Created,
+                        GitFileStatus::Modified => Color::Modified,
+                        GitFileStatus::Conflict => Color::Conflict,
+                    }
+                }
             })
             .unwrap_or(if is_selected {
                 Color::Default
