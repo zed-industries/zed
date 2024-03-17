@@ -38,7 +38,7 @@ fn main() {
             None,
         )
     }) else {
-        println!("error call pipe: {}", std::io::Error::last_os_error());
+        println!("error open pipe: {}", std::io::Error::last_os_error());
         return;
     };
     let Ok(event) = (unsafe { OpenEventW(EVENT_MODIFY_STATE, false, EVNET_NAME) }) else {
@@ -59,7 +59,7 @@ fn main() {
                 None,
             )
         }) else {
-            println!("Error call pipe: {}", std::io::Error::last_os_error());
+            println!("Error read from pipe: {}", std::io::Error::last_os_error());
             break;
         };
         println!("{} bytes read", bytes_read);
