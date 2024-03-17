@@ -134,9 +134,22 @@ impl WindowsWindowInner {
         return false;
     }
 
-    fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
-        let top_and_bottom_borders = 2;
-        let scale_factor = self.scale_factor.get();
+    pub(crate) fn title_bar_padding(&self) -> Pixels {
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+        px(padding as f32)
+    }
+
+    pub(crate) fn title_bar_top_offset(&self) -> Pixels {
+        if self.is_maximized() {
+            self.title_bar_padding() * 2
+        } else {
+            px(0.)
+        }
+    }
+
+    pub(crate) fn title_bar_height(&self) -> Pixels {
+        const TOP_BOTTOM_BORDERS: i32 = 2;
         let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
         let title_bar_size = unsafe {
             GetThemePartSize(
@@ -147,20 +160,29 @@ impl WindowsWindowInner {
                 None,
                 TS_TRUE,
             )
-        }?;
-        unsafe { CloseThemeData(theme) }?;
-
-        let mut height =
-            (title_bar_size.cy as f32 * scale_factor).round() as i32 + top_and_bottom_borders;
-
-        if self.is_maximized() {
-            let dpi = unsafe { GetDpiForWindow(self.hwnd) };
-            height += unsafe { (GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2) as i32 };
         }
+        .expect("GetThemePartSize invalid parameters");
+        unsafe { CloseThemeData(theme) }.log_err();
+        // todo(windows) use self.scale_factor
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        let scale_factor = dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32;
+        let mut height = px(title_bar_size.cy as f32 * scale_factor);
+        height += px(TOP_BOTTOM_BORDERS as f32);
+        height += self.title_bar_top_offset();
+        height
+    }
 
+    pub(crate) fn caption_button_width(&self) -> Pixels {
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        let width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, dpi) };
+        px(width as f32)
+    }
+
+    fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
+        let height = self.title_bar_height();
         let mut rect = RECT::default();
         unsafe { GetClientRect(self.hwnd, &mut rect) }?;
-        rect.bottom = rect.top + height;
+        rect.bottom = rect.top + (height.round().0 as i32);
         Ok(rect)
     }
 
@@ -1633,7 +1655,7 @@ unsafe extern "system" fn wnd_proc(
     r
 }
 
-pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
+pub fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
     if hwnd == HWND(0) {
         return None;
     }

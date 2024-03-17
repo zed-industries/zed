@@ -1,3 +1,4 @@
+use gpui::{windows_title_bar_height, windows_title_bar_top_offset};
 use gpui::{AnyElement, Interactivity, Stateful};
 use smallvec::SmallVec;
 
@@ -12,8 +13,14 @@ pub struct TitleBar {
 }
 
 impl TitleBar {
+    #[cfg(not(target_os = "windows"))]
     pub fn height(cx: &mut WindowContext) -> Pixels {
         (1.75 * cx.rem_size()).max(px(32.))
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn height(cx: &mut WindowContext) -> Pixels {
+        windows_title_bar_height(cx)
     }
 
     pub fn new(id: impl Into<ElementId>) -> Self {
@@ -31,10 +38,8 @@ impl TitleBar {
     }
 
     fn top_padding(&self, cx: &WindowContext) -> Pixels {
-        if self.platform_style == PlatformStyle::Windows && cx.is_maximized() {
-            // todo(windows): get padding from win32 api, need HWND from window context somehow
-            // should be GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2
-            px(8.)
+        if self.platform_style == PlatformStyle::Windows {
+            windows_title_bar_top_offset(cx)
         } else {
             px(0.)
         }
@@ -57,7 +62,12 @@ impl ParentElement for TitleBar {
 
 impl RenderOnce for TitleBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let height = Self::height(cx);
+        let height = if self.platform_style == PlatformStyle::Windows {
+            windows_title_bar_height(cx)
+        } else {
+            Self::height(cx)
+        };
+
         let top_padding = self.top_padding(cx);
 
         h_flex()
@@ -88,9 +98,7 @@ impl RenderOnce for TitleBar {
                     .children(self.children),
             )
             .when(self.platform_style == PlatformStyle::Windows, |title_bar| {
-                let button_height = Self::height(cx) - top_padding;
-
-                title_bar.child(WindowsWindowControls::new(button_height))
+                title_bar.child(WindowsWindowControls::new(height))
             })
     }
 }

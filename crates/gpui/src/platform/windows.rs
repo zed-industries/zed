@@ -2,6 +2,7 @@ mod dispatcher;
 mod display;
 mod platform;
 mod text_system;
+pub mod ui_metrics;
 mod util;
 mod window;
 

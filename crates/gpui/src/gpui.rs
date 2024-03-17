@@ -130,6 +130,7 @@ pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
+pub use platform::ui_metrics::*;
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
