@@ -1649,7 +1649,7 @@ unsafe extern "system" fn wnd_proc(
     r
 }
 
-pub fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
+pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
     if hwnd == HWND(0) {
         return None;
     }
