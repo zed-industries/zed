@@ -28,7 +28,8 @@ impl Svg {
         self
     }
 
-    /// TODO
+    /// Transform the SVG element with the given transformation.
+    /// Note that this won't effect the hitbox or layout of the element, only the rendering.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
         self
@@ -103,7 +104,7 @@ impl InteractiveElement for Svg {
     }
 }
 
-/// TODO
+/// A transformation to apply to an SVG element.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transformation {
     scale: Size<f32>,
@@ -122,7 +123,7 @@ impl Default for Transformation {
 }
 
 impl Transformation {
-    /// Create a new Transformation with the specified scale.
+    /// Create a new Transformation with the specified scale along each axis.
     pub fn scale(scale: Size<f32>) -> Self {
         Self {
             scale,
@@ -140,7 +141,7 @@ impl Transformation {
         }
     }
 
-    /// Create a new Transformation with the specified rotation.
+    /// Create a new Transformation with the specified rotation in radians.
     pub fn rotate(rotate: f32) -> Self {
         Self {
             scale: size(1.0, 1.0),
@@ -168,7 +169,7 @@ impl Transformation {
     }
 
     fn into_matrix(self, center: Point<Pixels>, scale_factor: f32) -> TransformationMatrix {
-        //Note: if you read it as a sequence, start from the bottom
+        //Note: if you read this as a sequence of matrix mulitplications, start from the bottom
         TransformationMatrix::unit()
             .translate(center.scale(scale_factor) + self.translate.scale(scale_factor))
             .rotate(self.rotate)

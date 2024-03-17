@@ -431,7 +431,7 @@ impl<T> Size<T>
 where
     T: Clone + Default + Debug + Half,
 {
-    /// TODO
+    /// Compute the center point of the size.
     pub fn center(&self) -> Point<T> {
         Point {
             x: self.width.half(),

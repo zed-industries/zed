@@ -67,9 +67,20 @@ pub fn ease_in_out(delta: f32) -> f32 {
     }
 }
 
-/// TODO
+/// Apply the given easing function, first in the forward direction and then in the reverse direction
+pub fn bounce(easing: impl Fn(f32) -> f32) -> impl Fn(f32) -> f32 {
+    move |delta| {
+        if delta < 0.5 {
+            easing(delta * 2.0)
+        } else {
+            easing((1.0 - delta) * 2.0)
+        }
+    }
+}
+
+/// An extension trait for adding the animation wrapper to both Elements and Components
 pub trait AnimationExt {
-    /// TODO
+    /// Render this component or element with an animation
     fn with_animation(
         self,
         id: impl Into<ElementId>,
@@ -90,7 +101,7 @@ pub trait AnimationExt {
 
 impl<E> AnimationExt for E {}
 
-/// TODO
+/// A GPUI element that applies an animation to another element
 pub struct AnimationElement<E> {
     id: ElementId,
     element: Option<E>,
