@@ -3,7 +3,7 @@
 
 use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Invert, Pixels, Point, ScaledPixels, Size,
+    Hsla, Pixels, Point, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -525,22 +525,11 @@ impl TransformationMatrix {
         }
     }
 
-    /// Clockwise rotation in radians, around the center of the given point
-    pub fn rotate_around(self, radian: f32, point: Point<Pixels>) -> Self {
-        self.translate(point.invert())
-            .rotate(radian)
-            .translate(point)
-    }
-
-    /// Scale around the center of the given point
-    pub fn scale_around(self, scale_factor: Size<Pixels>, point: Point<Pixels>) -> Self {
-        self.translate(point.invert())
-            .scale(scale_factor)
-            .translate(point)
-    }
-
     /// Move the origin by a given point
-    pub fn translate(mut self, point: Point<Pixels>) -> Self {
+    pub fn translate(mut self, point: Point<ScaledPixels>) -> Self {
+        if point.x.0 == 0.0 && point.y.0 == 0.0 {
+            return self;
+        }
         self.compose(Self {
             rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
             translation: [point.x.0, point.y.0],
@@ -549,6 +538,9 @@ impl TransformationMatrix {
 
     /// Clockwise rotation in radians around the origin
     pub fn rotate(self, radian: f32) -> Self {
+        if radian == 0.0 {
+            return self;
+        }
         self.compose(Self {
             rotation_scale: [[radian.cos(), -radian.sin()], [radian.sin(), radian.cos()]],
             translation: [0.0, 0.0],
@@ -556,9 +548,12 @@ impl TransformationMatrix {
     }
 
     /// Scale around the origin
-    pub fn scale(self, size: Size<Pixels>) -> Self {
+    pub fn scale(self, size: Size<f32>) -> Self {
+        if size.width == 1.0 && size.height == 1.0 {
+            return self;
+        }
         self.compose(Self {
-            rotation_scale: [[size.width.0, 0.0], [0.0, size.height.0]],
+            rotation_scale: [[size.width, 0.0], [0.0, size.height]],
             translation: [0.0, 0.0],
         })
     }
@@ -568,6 +563,9 @@ impl TransformationMatrix {
     /// applying both transformations: first, `other`, then `self`.
     #[inline]
     pub fn compose(self, other: TransformationMatrix) -> TransformationMatrix {
+        if other == Self::unit() {
+            return self;
+        }
         let mut result = TransformationMatrix {
             rotation_scale: [[0.0; 2]; 2],
             translation: self.translation,

@@ -71,7 +71,9 @@ impl Element for Svg {
                     let transformation = self
                         .transformation
                         .as_ref()
-                        .map(|transformation| transformation.into_matrix(bounds.center()))
+                        .map(|transformation| {
+                            transformation.into_matrix(bounds.center(), cx.scale_factor())
+                        })
                         .unwrap_or_default();
 
                     cx.paint_svg(bounds, path.clone(), transformation, color)
@@ -104,14 +106,14 @@ impl InteractiveElement for Svg {
 /// TODO
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transformation {
-    scale: Size<Pixels>,
+    scale: Size<f32>,
     translate: Point<Pixels>,
     rotate: f32,
 }
 
 impl Transformation {
     /// Create a new Transformation with the specified scale.
-    pub fn scale(scale: Size<Pixels>) -> Self {
+    pub fn scale(scale: Size<f32>) -> Self {
         Self {
             scale,
             translate: point(px(0.0), px(0.0)),
@@ -122,7 +124,7 @@ impl Transformation {
     /// Create a new Transformation with the specified translation.
     pub fn translate(translate: Point<Pixels>) -> Self {
         Self {
-            scale: size(px(1.0), px(1.0)),
+            scale: size(1.0, 1.0),
             translate,
             rotate: 0.0,
         }
@@ -131,14 +133,14 @@ impl Transformation {
     /// Create a new Transformation with the specified rotation.
     pub fn rotate(rotate: f32) -> Self {
         Self {
-            scale: size(px(1.0), px(1.0)),
+            scale: size(1.0, 1.0),
             translate: point(px(0.0), px(0.0)),
             rotate,
         }
     }
 
     /// Update the scaling factor of this transformation.
-    pub fn with_scaling(mut self, scale: Size<Pixels>) -> Self {
+    pub fn with_scaling(mut self, scale: Size<f32>) -> Self {
         self.scale = scale;
         self
     }
@@ -155,12 +157,12 @@ impl Transformation {
         self
     }
 
-    fn into_matrix(self, center: Point<Pixels>) -> TransformationMatrix {
+    fn into_matrix(self, center: Point<Pixels>, scale_factor: f32) -> TransformationMatrix {
         //Note: if you read it as a sequence, start from the bottom
         TransformationMatrix::unit()
-            .translate(center + self.translate)
+            .translate(center.scale(scale_factor) + self.translate.scale(scale_factor))
             .rotate(self.rotate)
             .scale(self.scale)
-            .translate(center.invert())
+            .translate(center.scale(scale_factor).invert())
     }
 }
