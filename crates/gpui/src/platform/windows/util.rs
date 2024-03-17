@@ -1,4 +1,7 @@
-use windows::Win32::{Foundation::*, UI::WindowsAndMessaging::*};
+use windows::{
+    core::*,
+    Win32::{Foundation::*, UI::WindowsAndMessaging::*},
+};
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;
@@ -67,4 +70,10 @@ pub(crate) unsafe fn set_window_long(
     unsafe {
         SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
     }
+}
+
+pub(crate) unsafe fn load_cursor(name: PCWSTR) -> Result<HCURSOR> {
+    Ok(HCURSOR(
+        unsafe { LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED) }?.0,
+    ))
 }

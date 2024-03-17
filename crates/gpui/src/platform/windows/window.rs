@@ -243,6 +243,7 @@ impl WindowsWindowInner {
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(msg, wparam, lparam),
             WM_IME_CHAR => self.handle_ime_char(wparam),
+            WM_SETCURSOR => self.handle_set_cursor(),
             _ => unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) },
         }
     }
@@ -994,6 +995,11 @@ impl WindowsWindowInner {
 
         LRESULT(0)
     }
+
+    fn handle_set_cursor(&self) -> LRESULT {
+        unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
+        LRESULT(1)
+    }
 }
 
 #[derive(Default)]
@@ -1474,7 +1480,7 @@ fn register_wnd_class() -> PCWSTR {
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
+            hCursor: unsafe { load_cursor(IDC_ARROW) }.unwrap(),
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             ..Default::default()

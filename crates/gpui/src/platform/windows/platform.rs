@@ -59,6 +59,8 @@ pub(crate) struct WindowsPlatformInner {
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: HANDLE,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+    // NOTE: standard cursor handles don't need to close.
+    pub(crate) current_cursor: Cell<HCURSOR>,
 }
 
 impl WindowsPlatformInner {
@@ -158,6 +160,11 @@ impl WindowsPlatform {
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
+        let current_cursor = Cell::new(
+            unsafe { load_cursor(IDC_ARROW) }
+                .log_err()
+                .unwrap_or_default(),
+        );
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -167,6 +174,7 @@ impl WindowsPlatform {
             raw_window_handles,
             dispatch_event,
             settings,
+            current_cursor,
         });
         Self { inner }
     }
@@ -577,14 +585,15 @@ impl Platform for WindowsPlatform {
             CursorStyle::OperationNotAllowed => unsafe { load_cursor(IDC_NO) },
             _ => unsafe { load_cursor(IDC_ARROW) },
         };
-        if handle.is_err() {
-            log::error!(
-                "Error loading cursor image: {}",
-                std::io::Error::last_os_error()
-            );
-            return;
+        match handle {
+            Ok(handle) => {
+                self.inner.current_cursor.set(handle);
+                unsafe { SetCursor(handle) };
+            }
+            Err(err) => {
+                log::error!("Error loading cursor image: {err}");
+            }
         }
-        let _ = unsafe { SetCursor(HCURSOR(handle.unwrap().0)) };
     }
 
     // todo(windows)
@@ -632,10 +641,6 @@ impl Drop for WindowsPlatform {
             OleUninitialize();
         }
     }
-}
-
-unsafe fn load_cursor(name: PCWSTR) -> Result<HANDLE> {
-    LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED).map_err(|e| anyhow!(e))
 }
 
 fn open_target(target: &str) {
