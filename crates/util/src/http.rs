@@ -1,17 +1,19 @@
 use crate::http_proxy_from_env;
 pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
+use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
 pub use isahc::{
     http::{Method, StatusCode, Uri},
     Error,
 };
 pub use isahc::{AsyncBody, Request, Response};
-use parking_lot::Mutex;
-use smol::future::FutureExt;
 #[cfg(feature = "test-support")]
 use std::fmt;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 pub use url::Url;
 
 /// An [`HttpClient`] that has a base URL.
@@ -31,22 +33,30 @@ impl HttpClientWithUrl {
 
     /// Returns the base URL.
     pub fn base_url(&self) -> String {
-        self.base_url.lock().clone()
+        self.base_url
+            .lock()
+            .map_or_else(|_| Default::default(), |url| url.clone())
     }
 
     /// Sets the base URL.
     pub fn set_base_url(&self, base_url: impl Into<String>) {
-        *self.base_url.lock() = base_url.into();
+        let base_url = base_url.into();
+        self.base_url
+            .lock()
+            .map(|mut url| {
+                *url = base_url;
+            })
+            .ok();
     }
 
     /// Builds a URL using the given path.
     pub fn build_url(&self, path: &str) -> String {
-        format!("{}{}", self.base_url.lock(), path)
+        format!("{}{}", self.base_url(), path)
     }
 
     /// Builds a Zed API URL using the given path.
     pub fn build_zed_api_url(&self, path: &str) -> String {
-        let base_url = self.base_url.lock().clone();
+        let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://api.zed.dev",
             "https://staging.zed.dev" => "https://api-staging.zed.dev",
@@ -129,21 +139,24 @@ impl HttpClient for isahc::HttpClient {
 }
 
 #[cfg(feature = "test-support")]
+type FakeHttpHandler = Box<
+    dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
+#[cfg(feature = "test-support")]
 pub struct FakeHttpClient {
-    handler: Box<
-        dyn 'static
-            + Send
-            + Sync
-            + Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>,
-    >,
+    handler: FakeHttpHandler,
 }
 
 #[cfg(feature = "test-support")]
 impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
-        Fut: 'static + Send + futures::Future<Output = Result<Response<AsyncBody>, Error>>,
-        F: 'static + Send + Sync + Fn(Request<AsyncBody>) -> Fut,
+        Fut: futures::Future<Output = Result<Response<AsyncBody>, Error>> + Send + 'static,
+        F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
     {
         Arc::new(HttpClientWithUrl {
             base_url: Mutex::new("http://test.example".into()),

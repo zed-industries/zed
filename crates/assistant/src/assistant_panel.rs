@@ -31,9 +31,9 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
@@ -652,7 +652,7 @@ impl AssistantPanel {
         // If Markdown or No Language is Known, increase the randomness for more creative output
         // If Code, decrease temperature to get more deterministic outputs
         let temperature = if let Some(language) = language_name.clone() {
-            if language.to_string() != "Markdown".to_string() {
+            if *language != *"Markdown" {
                 0.5
             } else {
                 1.0
@@ -979,7 +979,7 @@ impl AssistantPanel {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -1284,25 +1284,25 @@ impl Render for AssistantPanel {
                             let view = cx.view().clone();
                             let scroll_handle = self.saved_conversations_scroll_handle.clone();
                             let conversation_count = self.saved_conversations.len();
-                            canvas(move |bounds, cx| {
-                                uniform_list(
-                                    view,
-                                    "saved_conversations",
-                                    conversation_count,
-                                    |this, range, cx| {
-                                        range
-                                            .map(|ix| this.render_saved_conversation(ix, cx))
-                                            .collect()
-                                    },
-                                )
-                                .track_scroll(scroll_handle)
-                                .into_any_element()
-                                .draw(
-                                    bounds.origin,
-                                    bounds.size.map(AvailableSpace::Definite),
-                                    cx,
-                                );
-                            })
+                            canvas(
+                                move |bounds, cx| {
+                                    let mut list = uniform_list(
+                                        view,
+                                        "saved_conversations",
+                                        conversation_count,
+                                        |this, range, cx| {
+                                            range
+                                                .map(|ix| this.render_saved_conversation(ix, cx))
+                                                .collect()
+                                        },
+                                    )
+                                    .track_scroll(scroll_handle)
+                                    .into_any_element();
+                                    list.layout(bounds.origin, bounds.size.into(), cx);
+                                    list
+                                },
+                                |_bounds, mut list, cx| list.paint(cx),
+                            )
                             .size_full()
                             .into_any_element()
                         }),
@@ -1483,7 +1483,7 @@ impl Conversation {
             max_token_count: tiktoken_rs::model::get_context_size(&model.full_name()),
             pending_token_count: Task::ready(None),
             api_url: Some(api_url),
-            model: model.clone(),
+            model,
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -1527,7 +1527,7 @@ impl Conversation {
                 .as_ref()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
-            model: self.model.clone(),
+            model: self.model,
             api_url: self.api_url.clone(),
         }
     }
@@ -1633,26 +1633,23 @@ impl Conversation {
     fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let messages = self
             .messages(cx)
-            .into_iter()
-            .filter_map(|message| {
-                Some(tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(
-                        self.buffer
-                            .read(cx)
-                            .text_for_range(message.offset_range)
-                            .collect(),
-                    ),
-                    name: None,
-                    function_call: None,
-                })
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(
+                    self.buffer
+                        .read(cx)
+                        .text_for_range(message.offset_range)
+                        .collect(),
+                ),
+                name: None,
+                function_call: None,
             })
             .collect::<Vec<_>>();
-        let model = self.model.clone();
+        let model = self.model;
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
@@ -2097,7 +2094,7 @@ impl Conversation {
         let buffer = self.buffer.read(cx);
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
-            while let Some((start_ix, message_anchor)) = message_anchors.next() {
+            if let Some((start_ix, message_anchor)) = message_anchors.next() {
                 let metadata = self.messages_metadata.get(&message_anchor.id)?;
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
@@ -2416,7 +2413,9 @@ impl ConversationEditor {
                 .read(cx)
                 .messages(cx)
                 .map(|message| BlockProperties {
-                    position: buffer.anchor_in_excerpt(excerpt_id, message.anchor),
+                    position: buffer
+                        .anchor_in_excerpt(excerpt_id, message.anchor)
+                        .unwrap(),
                     height: 2,
                     style: BlockStyle::Sticky,
                     render: Arc::new({
@@ -2835,6 +2834,7 @@ impl FocusableView for InlineAssistant {
 }
 
 impl InlineAssistant {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: usize,
         measurements: Rc<Cell<BlockMeasurements>>,
@@ -3200,7 +3200,7 @@ impl InlineAssistant {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -3268,7 +3268,7 @@ mod tests {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
@@ -3399,7 +3399,7 @@ mod tests {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let completion_provider = Arc::new(FakeCompletionProvider::new());
 
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
@@ -3498,7 +3498,7 @@ mod tests {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
@@ -3582,7 +3582,7 @@ mod tests {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
         cx.update(init);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation =
             cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));

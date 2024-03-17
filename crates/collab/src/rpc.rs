@@ -4,8 +4,9 @@ use crate::{
     auth::{self, Impersonator},
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
-        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, ProjectId,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
+        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project, ProjectId,
+        RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId, User,
+        UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -66,7 +67,9 @@ use tracing::{field, info_span, instrument, Instrument};
 use util::SemanticVersion;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+// kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
@@ -197,6 +200,7 @@ impl Server {
             .add_request_handler(share_project)
             .add_message_handler(unshare_project)
             .add_request_handler(join_project)
+            .add_request_handler(join_hosted_project)
             .add_message_handler(leave_project)
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -353,7 +357,7 @@ impl Server {
                                     &refreshed_room.room,
                                     &refreshed_room.channel_members,
                                     &peer,
-                                    &*pool.lock(),
+                                    &pool.lock(),
                                 );
                             }
                             contacts_to_update
@@ -462,29 +466,24 @@ impl Server {
             TypeId::of::<M>(),
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                let span = info_span!(
-                    "handle message",
-                    payload_type = envelope.payload_type_name()
-                );
-                span.in_scope(|| {
+                let received_at = envelope.received_at;
                     tracing::info!(
-                        payload_type = envelope.payload_type_name(),
                         "message received"
                     );
-                });
                 let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
                     let result = future.await;
-                    let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
+                    let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, ?duration_ms, "error handling message")
+                            tracing::error!(%error, total_duration_ms, processing_duration_ms, queue_duration_ms, "error handling message")
                         }
-                        Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(total_duration_ms, processing_duration_ms, queue_duration_ms, "finished handling message"),
                     }
                 }
-                .instrument(span)
                 .boxed()
             }),
         );
@@ -543,6 +542,7 @@ impl Server {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
@@ -550,20 +550,21 @@ impl Server {
         user: User,
         zed_version: ZedVersion,
         impersonator: Option<User>,
-        mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
+        send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = ()> {
         let this = self.clone();
         let user_id = user.id;
-        let login = user.github_login;
-        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty);
+        let login = user.github_login.clone();
+        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty, connection_id = field::Empty);
         if let Some(impersonator) = impersonator {
             span.record("impersonator", &impersonator.github_login);
         }
         let mut teardown = self.teardown.subscribe();
         async move {
             if *teardown.borrow() {
-                return Err(anyhow!("server is tearing down"))?;
+                tracing::error!("server is tearing down");
+                return
             }
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
@@ -571,40 +572,8 @@ impl Server {
                     let executor = executor.clone();
                     move |duration| executor.sleep(duration)
                 });
-
-            tracing::info!(%user_id, %login, %connection_id, %address, "connection opened");
-            this.peer.send(connection_id, proto::Hello { peer_id: Some(connection_id.into()) })?;
-            tracing::info!(%user_id, %login, %connection_id, %address, "sent hello message");
-
-            if let Some(send_connection_id) = send_connection_id.take() {
-                let _ = send_connection_id.send(connection_id);
-            }
-
-            if !user.connected_once {
-                this.peer.send(connection_id, proto::ShowContacts {})?;
-                this.app_state.db.set_user_connected_once(user_id, true).await?;
-            }
-
-            let (contacts, channels_for_user, channel_invites) = future::try_join3(
-                this.app_state.db.get_contacts(user_id),
-                this.app_state.db.get_channels_for_user(user_id),
-                this.app_state.db.get_channel_invites_for_user(user_id),
-            ).await?;
-
-            {
-                let mut pool = this.connection_pool.lock();
-                pool.add_connection(connection_id, user_id, user.admin, zed_version);
-                this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
-                this.peer.send(connection_id, build_update_user_channels(&channels_for_user))?;
-                this.peer.send(connection_id, build_channels_update(
-                    channels_for_user,
-                    channel_invites
-                ))?;
-            }
-
-            if let Some(incoming_call) = this.app_state.db.incoming_call_for_user(user_id).await? {
-                this.peer.send(connection_id, incoming_call)?;
-            }
+            tracing::Span::current().record("connection_id", format!("{}", connection_id));
+            tracing::info!("connection opened");
 
             let session = Session {
                 user_id,
@@ -615,7 +584,11 @@ impl Server {
                 live_kit_client: this.app_state.live_kit_client.clone(),
                 _executor: executor.clone()
             };
-            update_user_contacts(user_id, &session).await?;
+
+            if let Err(error) = this.send_initial_client_update(connection_id, user, zed_version, send_connection_id, &session).await {
+                tracing::error!(?error, "failed to send initial client update");
+                return;
+            }
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -638,10 +611,10 @@ impl Server {
                 }.fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
-                    _ = teardown.changed().fuse() => return Ok(()),
+                    _ = teardown.changed().fuse() => return,
                     result = handle_io => {
                         if let Err(error) = result {
-                            tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
+                            tracing::error!(?error, "error handling I/O");
                         }
                         break;
                     }
@@ -650,6 +623,8 @@ impl Server {
                         let (permit, message) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
+                            // note: we copy all the fields from the parent span so we can query them in the logs.
+                            // (https://github.com/tokio-rs/tracing/issues/2670).
                             let span = tracing::info_span!("receive message", %user_id, %login, %connection_id, %address, type_name);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
@@ -667,10 +642,10 @@ impl Server {
                                     foreground_message_handlers.push(handle_message);
                                 }
                             } else {
-                                tracing::error!(%user_id, %login, %connection_id, %address, "no message handler");
+                                tracing::error!("no message handler");
                             }
                         } else {
-                            tracing::info!(%user_id, %login, %connection_id, %address, "connection closed");
+                            tracing::info!("connection closed");
                             break;
                         }
                     }
@@ -678,13 +653,72 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
+            tracing::info!("signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
-                tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
+                tracing::error!(?error, "error signing out");
             }
 
-            Ok(())
         }.instrument(span)
+    }
+
+    async fn send_initial_client_update(
+        &self,
+        connection_id: ConnectionId,
+        user: User,
+        zed_version: ZedVersion,
+        mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
+        session: &Session,
+    ) -> Result<()> {
+        self.peer.send(
+            connection_id,
+            proto::Hello {
+                peer_id: Some(connection_id.into()),
+            },
+        )?;
+        tracing::info!("sent hello message");
+
+        if let Some(send_connection_id) = send_connection_id.take() {
+            let _ = send_connection_id.send(connection_id);
+        }
+
+        if !user.connected_once {
+            self.peer.send(connection_id, proto::ShowContacts {})?;
+            self.app_state
+                .db
+                .set_user_connected_once(user.id, true)
+                .await?;
+        }
+
+        let (contacts, channels_for_user, channel_invites) = future::try_join3(
+            self.app_state.db.get_contacts(user.id),
+            self.app_state.db.get_channels_for_user(user.id),
+            self.app_state.db.get_channel_invites_for_user(user.id),
+        )
+        .await?;
+
+        {
+            let mut pool = self.connection_pool.lock();
+            pool.add_connection(connection_id, user.id, user.admin, zed_version);
+            self.peer.send(
+                connection_id,
+                build_initial_contacts_update(contacts, &pool),
+            )?;
+            self.peer.send(
+                connection_id,
+                build_update_user_channels(&channels_for_user),
+            )?;
+            self.peer.send(
+                connection_id,
+                build_channels_update(channels_for_user, channel_invites),
+            )?;
+        }
+
+        if let Some(incoming_call) = self.app_state.db.incoming_call_for_user(user.id).await? {
+            self.peer.send(connection_id, incoming_call)?;
+        }
+
+        update_user_contacts(user.id, &session).await?;
+        Ok(())
     }
 
     pub async fn invite_code_redeemed(
@@ -753,13 +787,13 @@ impl<'a> Deref for ConnectionPoolGuard<'a> {
     type Target = ConnectionPool;
 
     fn deref(&self) -> &Self::Target {
-        &*self.guard
+        &self.guard
     }
 }
 
 impl<'a> DerefMut for ConnectionPoolGuard<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.guard
+        &mut self.guard
     }
 }
 
@@ -841,7 +875,7 @@ impl Header for AppVersionHeader {
     }
 }
 
-pub fn routes(server: Arc<Server>) -> Router<Body> {
+pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(
@@ -888,7 +922,6 @@ pub async fn handle_websocket_request(
 
     let socket_address = socket_address.to_string();
     ws.on_upgrade(move |socket| {
-        use util::ResultExt;
         let socket = socket
             .map_ok(to_tungstenite_message)
             .err_into()
@@ -905,8 +938,7 @@ pub async fn handle_websocket_request(
                     None,
                     Executor::Production,
                 )
-                .await
-                .log_err();
+                .await;
         }
     })
 }
@@ -1583,22 +1615,46 @@ async fn join_project(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let guest_user_id = session.user_id;
 
     tracing::info!(%project_id, "join project");
 
     let (project, replica_id) = &mut *session
         .db()
         .await
-        .join_project(project_id, session.connection_id)
+        .join_project_in_room(project_id, session.connection_id)
         .await?;
 
+    join_project_internal(response, session, project, replica_id)
+}
+
+trait JoinProjectInternalResponse {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
+}
+impl JoinProjectInternalResponse for Response<proto::JoinProject> {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
+        Response::<proto::JoinProject>::send(self, result)
+    }
+}
+impl JoinProjectInternalResponse for Response<proto::JoinHostedProject> {
+    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
+        Response::<proto::JoinHostedProject>::send(self, result)
+    }
+}
+
+fn join_project_internal(
+    response: impl JoinProjectInternalResponse,
+    session: Session,
+    project: &mut Project,
+    replica_id: &ReplicaId,
+) -> Result<()> {
     let collaborators = project
         .collaborators
         .iter()
         .filter(|collaborator| collaborator.connection_id != session.connection_id)
         .map(|collaborator| collaborator.to_proto())
         .collect::<Vec<_>>();
+    let project_id = project.id;
+    let guest_user_id = session.user_id;
 
     let worktrees = project
         .worktrees
@@ -1630,10 +1686,12 @@ async fn join_project(
 
     // First, we send the metadata associated with each worktree.
     response.send(proto::JoinProjectResponse {
+        project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
+        role: project.role.into(), // todo
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -1706,15 +1764,17 @@ async fn join_project(
 async fn leave_project(request: proto::LeaveProject, session: Session) -> Result<()> {
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
+    let db = session.db().await;
+    if db.is_hosted_project(project_id).await? {
+        let project = db.leave_hosted_project(project_id, sender_id).await?;
+        project_left(&project, &session);
+        return Ok(());
+    }
 
-    let (room, project) = &*session
-        .db()
-        .await
-        .leave_project(project_id, sender_id)
-        .await?;
+    let (room, project) = &*db.leave_project(project_id, sender_id).await?;
     tracing::info!(
         %project_id,
-        host_user_id = %project.host_user_id,
+        host_user_id = ?project.host_user_id,
         host_connection_id = ?project.host_connection_id,
         "leave project"
     );
@@ -1723,6 +1783,24 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     room_updated(&room, &session.peer);
 
     Ok(())
+}
+
+async fn join_hosted_project(
+    request: proto::JoinHostedProject,
+    response: Response<proto::JoinHostedProject>,
+    session: Session,
+) -> Result<()> {
+    let (mut project, replica_id) = session
+        .db()
+        .await
+        .join_hosted_project(
+            ProjectId(request.project_id as i32),
+            session.user_id,
+            session.connection_id,
+        )
+        .await?;
+
+    join_project_internal(response, session, &mut project, &replica_id)
 }
 
 /// Updates other participants with changes to the project
@@ -2225,7 +2303,7 @@ async fn request_contact(
         session.peer.send(connection_id, update.clone())?;
     }
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2282,7 +2360,7 @@ async fn respond_to_contact_request(
             session.peer.send(connection_id, update.clone())?;
         }
 
-        send_notifications(&*pool, &session.peer, notifications);
+        send_notifications(&pool, &session.peer, notifications);
     }
 
     response.send(proto::Ack {})?;
@@ -2450,7 +2528,7 @@ async fn invite_channel_member(
         session.peer.send(connection_id, update.clone())?;
     }
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
     Ok(())
@@ -2712,7 +2790,7 @@ async fn respond_to_channel_invite(
         }
     };
 
-    send_notifications(&*connection_pool, &session.peer, notifications);
+    send_notifications(&connection_pool, &session.peer, notifications);
 
     response.send(proto::Ack {})?;
 
@@ -2882,7 +2960,7 @@ async fn update_channel_buffer(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             session.peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     latest_channel_buffer_versions: vec![proto::ChannelBufferVersion {
                         channel_id: channel_id.to_proto(),
@@ -2967,8 +3045,8 @@ fn channel_buffer_updated<T: EnvelopedMessage>(
     message: &T,
     peer: &Peer,
 ) {
-    broadcast(Some(sender_id), collaborators.into_iter(), |peer_id| {
-        peer.send(peer_id.into(), message.clone())
+    broadcast(Some(sender_id), collaborators, |peer_id| {
+        peer.send(peer_id, message.clone())
     });
 }
 
@@ -3073,7 +3151,7 @@ async fn send_channel_message(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             session.peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     latest_channel_message_ids: vec![proto::ChannelMessageId {
                         channel_id: channel_id.to_proto(),
@@ -3369,7 +3447,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
             .collect(),
         observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
         observed_channel_message_id: channels.observed_channel_messages.clone(),
-        ..Default::default()
     }
 }
 
@@ -3446,7 +3523,7 @@ fn room_updated(room: &proto::Room, peer: &Peer) {
             .filter_map(|participant| Some(participant.peer_id?.into())),
         |peer_id| {
             peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::RoomUpdated {
                     room: Some(room.clone()),
                 },
@@ -3475,7 +3552,7 @@ fn channel_updated(
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
             peer.send(
-                peer_id.into(),
+                peer_id,
                 proto::UpdateChannels {
                     channel_participants: vec![proto::ChannelParticipants {
                         channel_id: channel_id.to_proto(),
@@ -3624,7 +3701,7 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
 
 fn project_left(project: &db::LeftProject, session: &Session) {
     for connection_id in &project.connection_ids {
-        if project.host_user_id == session.user_id {
+        if project.host_user_id == Some(session.user_id) {
             session
                 .peer
                 .send(

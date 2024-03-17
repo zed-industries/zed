@@ -701,7 +701,7 @@ impl PickerDelegate for FileFinderDelegate {
         raw_query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(" ", "");
+        let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
         if raw_query.is_empty() {
             let project = self.project.read(cx);
@@ -880,6 +880,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     h_flex()
                         .gap_2()
+                        .py_px()
                         .child(HighlightedLabel::new(file_name, file_name_positions))
                         .child(
                             HighlightedLabel::new(full_path, full_path_positions)

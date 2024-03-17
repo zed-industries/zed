@@ -2,12 +2,15 @@ use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
+use gpui::AsyncAppContext;
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
+use project::project_settings::ProjectSettings;
 use regex::Regex;
+use settings::Settings;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -17,10 +20,41 @@ use util::{
 
 pub struct RustLspAdapter;
 
-#[async_trait]
+impl RustLspAdapter {
+    const SERVER_NAME: &'static str = "rust-analyzer";
+}
+
+#[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("rust-analyzer".into())
+        LanguageServerName(Self::SERVER_NAME.into())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let binary = cx
+            .update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .lsp
+                    .get(Self::SERVER_NAME)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()??;
+
+        let path = binary.path?;
+        Some(LanguageServerBinary {
+            path: path.into(),
+            arguments: binary
+                .arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(

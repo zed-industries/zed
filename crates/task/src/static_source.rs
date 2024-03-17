@@ -1,10 +1,6 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use collections::HashMap;
 use futures::StreamExt;
@@ -13,7 +9,7 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::{SpawnInTerminal, Task, TaskId, TaskSource};
+use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// A single config file entry with the deserialized task definition.
@@ -24,7 +20,16 @@ struct StaticTask {
 }
 
 impl Task for StaticTask {
-    fn exec(&self, cwd: Option<PathBuf>) -> Option<SpawnInTerminal> {
+    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+        let TaskContext { cwd, env } = cx;
+        let cwd = self
+            .definition
+            .cwd
+            .clone()
+            .and_then(|path| subst::substitute(&path, &env).map(Into::into).ok())
+            .or(cwd);
+        let mut definition_env = self.definition.env.clone();
+        definition_env.extend(env);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
@@ -33,8 +38,8 @@ impl Task for StaticTask {
             label: self.definition.label.clone(),
             command: self.definition.command.clone(),
             args: self.definition.args.clone(),
-            env: self.definition.env.clone(),
-            separate_shell: false,
+            reveal: self.definition.reveal,
+            env: definition_env,
         })
     }
 
@@ -46,7 +51,7 @@ impl Task for StaticTask {
         &self.id
     }
 
-    fn cwd(&self) -> Option<&Path> {
+    fn cwd(&self) -> Option<&str> {
         self.definition.cwd.as_deref()
     }
 }
@@ -60,6 +65,7 @@ pub struct StaticSource {
 
 /// Static task definition from the tasks config file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct Definition {
     /// Human readable name of the task to display in the UI.
     pub label: String,
@@ -73,13 +79,29 @@ pub(crate) struct Definition {
     pub env: HashMap<String, String>,
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
+    /// What to do with the terminal pane and tab, after the command was started:
+    /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
+    /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
+    #[serde(default)]
+    pub reveal: RevealStrategy,
+}
+
+/// What to do with the terminal pane and tab, after the command was started.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RevealStrategy {
+    /// Always show the terminal pane, add and focus the corresponding task's tab in it.
+    #[default]
+    Always,
+    /// Do not change terminal pane focus, but still add/reuse the task's tab there.
+    Never,
 }
 
 /// A group of Tasks defined in a JSON file.

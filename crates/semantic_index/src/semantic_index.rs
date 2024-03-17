@@ -173,13 +173,16 @@ impl WorktreeState {
             let Some(entry) = worktree.entry_for_id(*entry_id) else {
                 continue;
             };
+            let Some(mtime) = entry.mtime else {
+                continue;
+            };
             if entry.is_ignored || entry.is_symlink || entry.is_external || entry.is_dir() {
                 continue;
             }
             changed_paths.insert(
                 path.clone(),
                 ChangedPathInfo {
-                    mtime: entry.mtime,
+                    mtime,
                     is_deleted: *change == PathChange::Removed,
                 },
             );
@@ -329,7 +332,7 @@ impl SemanticIndex {
                 SemanticIndexStatus::Indexed
             } else {
                 SemanticIndexStatus::Indexing {
-                    remaining_files: project_state.pending_file_count_rx.borrow().clone(),
+                    remaining_files: *project_state.pending_file_count_rx.borrow(),
                     rate_limit_expiry: self.embedding_provider.rate_limit_expiration(),
                 }
             }
@@ -497,7 +500,7 @@ impl SemanticIndex {
         changes: Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>,
         cx: &mut ModelContext<Self>,
     ) {
-        let Some(worktree) = project.read(cx).worktree_for_id(worktree_id.clone(), cx) else {
+        let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) else {
             return;
         };
         let project = project.downgrade();
@@ -580,7 +583,7 @@ impl SemanticIndex {
                                 }
 
                                 if let Ok(language) = language_registry
-                                    .language_for_file(&absolute_path, None)
+                                    .language_for_file_path(&absolute_path)
                                     .await
                                 {
                                     // Test if file is valid parseable file
@@ -594,18 +597,18 @@ impl SemanticIndex {
                                     {
                                         continue;
                                     }
+                                    let Some(new_mtime) = file.mtime else {
+                                        continue;
+                                    };
 
                                     let stored_mtime = file_mtimes.remove(&file.path.to_path_buf());
-                                    let already_stored = stored_mtime
-                                        .map_or(false, |existing_mtime| {
-                                            existing_mtime == file.mtime
-                                        });
+                                    let already_stored = stored_mtime == Some(new_mtime);
 
                                     if !already_stored {
                                         changed_paths.insert(
                                             file.path.clone(),
                                             ChangedPathInfo {
-                                                mtime: file.mtime,
+                                                mtime: new_mtime,
                                                 is_deleted: false,
                                             },
                                         );
@@ -657,9 +660,9 @@ impl SemanticIndex {
                 if register.await.log_err().is_none() {
                     // Stop tracking this worktree if the registration failed.
                     this.update(&mut cx, |this, _| {
-                        this.projects.get_mut(&project).map(|project_state| {
+                        if let Some(project_state) = this.projects.get_mut(&project) {
                             project_state.worktrees.remove(&worktree_id);
-                        });
+                        }
                     })
                     .ok();
                 }
@@ -840,7 +843,6 @@ impl SemanticIndex {
             let mut batch_results = Vec::new();
             for batch in file_ids.chunks(batch_size) {
                 let batch = batch.into_iter().map(|v| *v).collect::<Vec<i64>>();
-                let limit = limit.clone();
                 let fs = fs.clone();
                 let db_path = db_path.clone();
                 let query = query.clone();
@@ -1142,7 +1144,7 @@ impl SemanticIndex {
 
                     for mut pending_file in pending_files {
                         if let Ok(language) = language_registry
-                            .language_for_file(&pending_file.relative_path, None)
+                            .language_for_file_path(&pending_file.relative_path)
                             .await
                         {
                             if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())

@@ -23,7 +23,7 @@ use gpui::{
 use menu::Confirm;
 use project::{
     search::{SearchInputs, SearchQuery},
-    Entry, Project,
+    Project,
 };
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 
@@ -34,7 +34,7 @@ use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
@@ -219,7 +219,7 @@ impl ProjectSearch {
             active_query: self.active_query.clone(),
             search_id: self.search_id,
             search_history: self.search_history.clone(),
-            no_results: self.no_results.clone(),
+            no_results: self.no_results,
         })
     }
 
@@ -493,7 +493,7 @@ impl Item for ProjectSearchView {
             });
         let tab_name = last_query
             .filter(|query| !query.is_empty())
-            .unwrap_or_else(|| "Project search".into());
+            .unwrap_or_else(|| "Project Search".into());
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
@@ -539,11 +539,12 @@ impl Item for ProjectSearchView {
 
     fn save(
         &mut self,
+        format: bool,
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(project, cx))
+            .update(cx, |editor, cx| editor.save(format, project, cx))
     }
 
     fn save_as(
@@ -989,13 +990,10 @@ impl ProjectSearchView {
 
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
-        dir_entry: &Entry,
+        dir_path: &Path,
         cx: &mut ViewContext<Workspace>,
     ) {
-        if !dir_entry.is_dir() {
-            return;
-        }
-        let Some(filter_str) = dir_entry.path.to_str() else {
+        let Some(filter_str) = dir_path.to_str() else {
             return;
         };
 
@@ -1230,6 +1228,9 @@ impl ProjectSearchView {
         if !self.panels_with_errors.is_empty() {
             return None;
         }
+        if query.as_ref().is_some_and(|query| query.is_empty()) {
+            return None;
+        }
         query
     }
 
@@ -1279,7 +1280,7 @@ impl ProjectSearchView {
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor.clone()..cursor]));
+            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor..cursor]));
         });
         self.query_editor_was_focused = false;
         let results_handle = self.results_editor.focus_handle(cx);
@@ -1299,7 +1300,6 @@ impl ProjectSearchView {
                 if is_new_search {
                     let range_to_select = match_ranges
                         .first()
-                        .clone()
                         .map(|range| editor.range_for_match(range));
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_ranges(range_to_select)
@@ -1632,7 +1632,7 @@ impl ProjectSearchBar {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -2245,7 +2245,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.clone();
+        let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
@@ -2475,7 +2475,7 @@ pub mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.clone();
+        let workspace = window;
         let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
@@ -2803,33 +2803,6 @@ pub mod tests {
             })
             .unwrap();
 
-        let one_file_entry = cx.update(|cx| {
-            workspace
-                .read(cx)
-                .project()
-                .read(cx)
-                .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
-                .expect("no entry for /a/one.rs file")
-        });
-        assert!(one_file_entry.is_file());
-        window
-            .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
-            })
-            .unwrap();
-        let active_search_entry = cx.read(|cx| {
-            workspace
-                .read(cx)
-                .active_pane()
-                .read(cx)
-                .active_item()
-                .and_then(|item| item.downcast::<ProjectSearchView>())
-        });
-        assert!(
-            active_search_entry.is_none(),
-            "Expected no search panel to be active for file entry"
-        );
-
         let a_dir_entry = cx.update(|cx| {
             workspace
                 .read(cx)
@@ -2841,7 +2814,7 @@ pub mod tests {
         assert!(a_dir_entry.is_dir());
         window
             .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
+                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.path, cx)
             })
             .unwrap();
 
@@ -3410,7 +3383,7 @@ pub mod tests {
         let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
 
         // First search
-        perform_search(search_view.clone(), "A", cx);
+        perform_search(search_view, "A", cx);
         search_view
             .update(cx, |search_view, cx| {
                 search_view.results_editor.update(cx, |results_editor, cx| {
@@ -3428,7 +3401,7 @@ pub mod tests {
             .expect("unable to update search view");
 
         // Second search
-        perform_search(search_view.clone(), "B", cx);
+        perform_search(search_view, "B", cx);
         search_view
             .update(cx, |search_view, cx| {
                 search_view.results_editor.update(cx, |results_editor, cx| {

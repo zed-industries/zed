@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
@@ -13,6 +16,7 @@ gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json_lenient.workspace = true
+subst = "0.3.0"
 util.workspace = true
 
 [dev-dependencies]

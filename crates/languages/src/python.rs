@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
@@ -28,7 +27,7 @@ impl PythonLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
@@ -43,16 +42,22 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<String>().unwrap();
+        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
+        let package_name = "pyright";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .await;
+
+        if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[("pyright", version.as_str())])
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
                 .await?;
         }
 
@@ -83,7 +88,7 @@ impl LspAdapter for PythonLspAdapter {
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
         // and `name` is the symbol name itself.
         //
-        // Because the the symbol name is included, there generally are not ties when
+        // Because the symbol name is included, there generally are not ties when
         // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
         // into account. Here, we remove the symbol name from the sortText in order
         // to allow our own fuzzy score to be used to break ties.

@@ -11,7 +11,7 @@ mod tests;
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};
-use db::Database;
+use db::{ChannelId, Database};
 use executor::Executor;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
@@ -43,8 +43,8 @@ impl From<axum::Error> for Error {
     }
 }
 
-impl From<hyper::Error> for Error {
-    fn from(error: hyper::Error) -> Self {
+impl From<axum::http::Error> for Error {
+    fn from(error: axum::http::Error) -> Self {
         Self::Internal(error.into())
     }
 }
@@ -128,6 +128,7 @@ pub struct Config {
     pub zed_environment: Arc<str>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
+    pub auto_join_channel_id: Option<ChannelId>,
 }
 
 impl Config {

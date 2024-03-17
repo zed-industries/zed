@@ -8,17 +8,31 @@ use serde::{Deserialize, Serialize};
 
 lazy_static::lazy_static! {
     pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
-    pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
+    pub static ref CONFIG_DIR: PathBuf = if cfg!(target_os = "windows") {
+        dirs::config_dir()
+            .expect("failed to determine RoamingAppData directory")
+            .join("Zed")
+    } else {
+        HOME.join(".config").join("zed")
+    };
     pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
     pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
     pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
     pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/Zed")
+    } else if cfg!(target_os = "windows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Zed/logs")
     } else {
         CONFIG_DIR.join("logs")
     };
     pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Application Support/Zed")
+    } else if cfg!(target_os = "windows") {
+        dirs::config_dir()
+            .expect("failed to determine RoamingAppData directory")
+            .join("Zed")
     } else {
         CONFIG_DIR.clone()
     };
@@ -29,6 +43,10 @@ lazy_static::lazy_static! {
     pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
     pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/DiagnosticReports")
+    } else if cfg!(target_os = "windows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Zed/crashes")
     } else {
         CONFIG_DIR.join("crashes")
     };
@@ -45,7 +63,13 @@ lazy_static::lazy_static! {
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
     pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
-    pub static ref TEMP_DIR: PathBuf = HOME.join(".cache").join("zed");
+    pub static ref TEMP_DIR: PathBuf = if cfg!(target_os = "widows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Temp/Zed")
+    } else {
+        HOME.join(".cache").join("zed")
+    };
 }
 
 pub trait PathExt {
@@ -459,7 +483,7 @@ mod tests {
         let path = Path::new("/work/node_modules");
         let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
         assert!(
-            path_matcher.is_match(&path),
+            path_matcher.is_match(path),
             "Path matcher {path_matcher} should match {path:?}"
         );
     }
@@ -469,7 +493,7 @@ mod tests {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
         assert!(
-            path_matcher.is_match(&path),
+            path_matcher.is_match(path),
             "Path matcher {path_matcher} should match {path:?}"
         );
     }

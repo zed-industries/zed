@@ -2,7 +2,6 @@ use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
 use system_specs::SystemSpecs;
 use workspace::Workspace;
 
-pub mod deploy_feedback_button;
 pub mod feedback_modal;
 
 actions!(feedback, [GiveFeedback, SubmitFeedback]);

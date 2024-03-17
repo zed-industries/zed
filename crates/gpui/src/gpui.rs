@@ -35,7 +35,7 @@
 //!
 //! - Low level, imperative UI with Elements. Elements are the building blocks of UI in GPUI, and they
 //!   provide a nice wrapper around an imperative API that provides as much flexibility and control as
-//!   you need. Elements have total control over how they and their child elements are rendered and and
+//!   you need. Elements have total control over how they and their child elements are rendered and
 //!   can be used for making efficient views into large lists, implement custom layouting for a code editor,
 //!   and anything else you can think of. See the [`element`] module for more information.
 //!
@@ -70,6 +70,7 @@ mod app;
 
 mod arena;
 mod assets;
+mod bounds_tree;
 mod color;
 mod element;
 mod elements;

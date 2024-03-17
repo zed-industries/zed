@@ -62,7 +62,6 @@ pub fn expand_macro_recursively(
             project
                 .read(cx)
                 .language_servers_for_buffer(buffer.read(cx), cx)
-                .into_iter()
                 .find_map(|(adapter, server)| {
                     if adapter.name.0.as_ref() == "rust-analyzer" {
                         Some((

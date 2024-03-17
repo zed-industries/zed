@@ -1,5 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -8,41 +8,9 @@ pub struct KeyBinding {
     ///
     /// This should always contain at least one element.
     key_binding: gpui::KeyBinding,
-}
 
-impl RenderOnce for KeyBinding {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .flex_none()
-            .gap_2()
-            .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = Self::icon_for_key(keystroke);
-
-                h_flex()
-                    .flex_none()
-                    .gap_0p5()
-                    .p_0p5()
-                    .rounded_sm()
-                    .text_color(cx.theme().colors().text_muted)
-                    .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                    .when(keystroke.modifiers.control, |el| {
-                        el.child(KeyIcon::new(IconName::Control))
-                    })
-                    .when(keystroke.modifiers.alt, |el| {
-                        el.child(KeyIcon::new(IconName::Option))
-                    })
-                    .when(keystroke.modifiers.command, |el| {
-                        el.child(KeyIcon::new(IconName::Command))
-                    })
-                    .when(keystroke.modifiers.shift, |el| {
-                        el.child(KeyIcon::new(IconName::Shift))
-                    })
-                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
-                    .when(key_icon.is_none(), |el| {
-                        el.child(Key::new(keystroke.key.to_uppercase().clone()))
-                    })
-            }))
-    }
+    /// The [`PlatformStyle`] to use when displaying this keybinding.
+    platform_style: PlatformStyle,
 }
 
 impl KeyBinding {
@@ -82,7 +50,80 @@ impl KeyBinding {
     }
 
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
-        Self { key_binding }
+        Self {
+            key_binding,
+            platform_style: PlatformStyle::platform(),
+        }
+    }
+
+    /// Sets the [`PlatformStyle`] for this [`KeyBinding`].
+    pub fn platform_style(mut self, platform_style: PlatformStyle) -> Self {
+        self.platform_style = platform_style;
+        self
+    }
+}
+
+impl RenderOnce for KeyBinding {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .flex_none()
+            .gap_2()
+            .children(self.key_binding.keystrokes().iter().map(|keystroke| {
+                let key_icon = Self::icon_for_key(keystroke);
+
+                h_flex()
+                    .flex_none()
+                    .map(|el| match self.platform_style {
+                        PlatformStyle::Mac => el.gap_0p5(),
+                        PlatformStyle::Linux | PlatformStyle::Windows => el,
+                    })
+                    .p_0p5()
+                    .rounded_sm()
+                    .text_color(cx.theme().colors().text_muted)
+                    .when(keystroke.modifiers.function, |el| {
+                        match self.platform_style {
+                            PlatformStyle::Mac => el.child(Key::new("fn")),
+                            PlatformStyle::Linux | PlatformStyle::Windows => {
+                                el.child(Key::new("Fn")).child(Key::new("+"))
+                            }
+                        }
+                    })
+                    .when(keystroke.modifiers.control, |el| {
+                        match self.platform_style {
+                            PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Control)),
+                            PlatformStyle::Linux | PlatformStyle::Windows => {
+                                el.child(Key::new("Ctrl")).child(Key::new("+"))
+                            }
+                        }
+                    })
+                    .when(keystroke.modifiers.alt, |el| match self.platform_style {
+                        PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Option)),
+                        PlatformStyle::Linux | PlatformStyle::Windows => {
+                            el.child(Key::new("Alt")).child(Key::new("+"))
+                        }
+                    })
+                    .when(keystroke.modifiers.command, |el| {
+                        match self.platform_style {
+                            PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Command)),
+                            PlatformStyle::Linux => {
+                                el.child(Key::new("Super")).child(Key::new("+"))
+                            }
+                            PlatformStyle::Windows => {
+                                el.child(Key::new("Win")).child(Key::new("+"))
+                            }
+                        }
+                    })
+                    .when(keystroke.modifiers.shift, |el| match self.platform_style {
+                        PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Shift)),
+                        PlatformStyle::Linux | PlatformStyle::Windows => {
+                            el.child(Key::new("Shift")).child(Key::new("+"))
+                        }
+                    })
+                    .map(|el| match key_icon {
+                        Some(icon) => el.child(KeyIcon::new(icon)),
+                        None => el.child(Key::new(keystroke.key.to_uppercase())),
+                    })
+            }))
     }
 }
 
@@ -99,12 +140,15 @@ impl RenderOnce for Key {
             .py_0()
             .map(|this| {
                 if single_char {
-                    this.w(rems(14. / 16.)).flex().flex_none().justify_center()
+                    this.w(rems_from_px(14.))
+                        .flex()
+                        .flex_none()
+                        .justify_center()
                 } else {
                     this.px_0p5()
                 }
             })
-            .h(rems(14. / 16.))
+            .h(rems_from_px(14.))
             .text_ui()
             .line_height(relative(1.))
             .text_color(cx.theme().colors().text_muted)
@@ -125,7 +169,7 @@ pub struct KeyIcon {
 
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div().w(rems(14. / 16.)).child(
+        div().w(rems_from_px(14.)).child(
             Icon::new(self.icon)
                 .size(IconSize::Small)
                 .color(Color::Muted),

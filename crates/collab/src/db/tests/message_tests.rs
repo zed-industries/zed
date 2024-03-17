@@ -297,7 +297,7 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
     // Check that observer has new messages
     let latest_messages = db
         .transaction(|tx| async move {
-            db.latest_channel_messages(&[channel_1, channel_2], &*tx)
+            db.latest_channel_messages(&[channel_1, channel_2], &tx)
                 .await
         })
         .await

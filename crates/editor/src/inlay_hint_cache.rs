@@ -460,14 +460,15 @@ impl InlayHintCache {
                                     if !old_kinds.contains(&cached_hint.kind)
                                         && new_kinds.contains(&cached_hint.kind)
                                     {
-                                        to_insert.push(Inlay::hint(
-                                            cached_hint_id.id(),
-                                            multi_buffer_snapshot.anchor_in_excerpt(
-                                                *excerpt_id,
-                                                cached_hint.position,
-                                            ),
-                                            &cached_hint,
-                                        ));
+                                        if let Some(anchor) = multi_buffer_snapshot
+                                            .anchor_in_excerpt(*excerpt_id, cached_hint.position)
+                                        {
+                                            to_insert.push(Inlay::hint(
+                                                cached_hint_id.id(),
+                                                anchor,
+                                                &cached_hint,
+                                            ));
+                                        }
                                     }
                                     excerpt_cache.next();
                                 }
@@ -483,12 +484,15 @@ impl InlayHintCache {
                 let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
                 if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                    to_insert.push(Inlay::hint(
-                        cached_hint_id.id(),
-                        multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position),
-                        &maybe_missed_cached_hint,
-                    ));
+                    if let Some(anchor) = multi_buffer_snapshot
+                        .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
+                    {
+                        to_insert.push(Inlay::hint(
+                            cached_hint_id.id(),
+                            anchor,
+                            &maybe_missed_cached_hint,
+                        ));
+                    }
                 }
             }
         }
@@ -1200,11 +1204,13 @@ fn apply_hint_update(
                 .allowed_hint_kinds
                 .contains(&new_hint.kind)
             {
-                let new_hint_position =
-                    multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position);
-                splice
-                    .to_insert
-                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
+                if let Some(new_hint_position) =
+                    multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
+                {
+                    splice
+                        .to_insert
+                        .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
+                }
             }
             let new_id = InlayId::Hint(new_inlay_id);
             cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
@@ -1249,7 +1255,7 @@ fn apply_hint_update(
         editor.inlay_hint_cache.version += 1;
     }
     if displayed_inlays_changed {
-        editor.splice_inlay_hints(to_remove, to_insert, cx)
+        editor.splice_inlays(to_remove, to_insert, cx)
     }
 }
 
@@ -2197,7 +2203,7 @@ pub mod tests {
             "another change #3",
         ] {
             expected_changes.push(async_later_change);
-            let task_editor = editor.clone();
+            let task_editor = editor;
             edits.push(cx.spawn(|mut cx| async move {
                 task_editor
                     .update(&mut cx, |editor, cx| {
@@ -2658,6 +2664,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         let editor =
             cx.add_window(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), cx));
+
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
@@ -3380,17 +3387,7 @@ pub mod tests {
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        )));
+        language_registry.add(crate::editor_tests::rust_lang());
         let mut fake_servers = language_registry.register_fake_lsp_adapter(
             "Rust",
             FakeLspAdapter {

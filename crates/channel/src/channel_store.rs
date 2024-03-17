@@ -3,7 +3,7 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
-use client::{ChannelId, Client, Subscription, User, UserId, UserStore};
+use client::{ChannelId, Client, ClientSettings, ProjectId, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
@@ -11,11 +11,11 @@ use gpui::{
     Task, WeakModel,
 };
 use language::Capability;
-use release_channel::RELEASE_CHANNEL;
 use rpc::{
     proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
+use settings::Settings;
 use std::{mem, sync::Arc, time::Duration};
 use util::{async_maybe, maybe, ResultExt};
 
@@ -27,10 +27,7 @@ pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppCont
     cx.set_global(GlobalChannelStore(channel_store));
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct HostedProjectId(pub u64);
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct NotesVersion {
     epoch: u64,
     version: clock::Global,
@@ -38,7 +35,7 @@ struct NotesVersion {
 
 #[derive(Debug, Clone)]
 pub struct HostedProject {
-    id: HostedProjectId,
+    project_id: ProjectId,
     channel_id: ChannelId,
     name: SharedString,
     _visibility: proto::ChannelVisibility,
@@ -47,7 +44,7 @@ pub struct HostedProject {
 impl From<proto::HostedProject> for HostedProject {
     fn from(project: proto::HostedProject) -> Self {
         Self {
-            id: HostedProjectId(project.id),
+            project_id: ProjectId(project.project_id),
             channel_id: ChannelId(project.channel_id),
             _visibility: project.visibility(),
             name: project.name.into(),
@@ -60,7 +57,7 @@ pub struct ChannelStore {
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channel_states: HashMap<ChannelId, ChannelState>,
-    hosted_projects: HashMap<HostedProjectId, HostedProject>,
+    hosted_projects: HashMap<ProjectId, HostedProject>,
 
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
@@ -82,27 +79,28 @@ pub struct Channel {
     pub parent_path: Vec<ChannelId>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ChannelState {
     latest_chat_message: Option<u64>,
-    latest_notes_versions: Option<NotesVersion>,
+    latest_notes_version: NotesVersion,
+    observed_notes_version: NotesVersion,
     observed_chat_message: Option<u64>,
-    observed_notes_versions: Option<NotesVersion>,
     role: Option<ChannelRole>,
-    projects: HashSet<HostedProjectId>,
+    projects: HashSet<ProjectId>,
 }
 
 impl Channel {
-    pub fn link(&self) -> String {
-        RELEASE_CHANNEL.link_prefix().to_owned()
-            + "channel/"
-            + &Self::slug(&self.name)
-            + "-"
-            + &self.id.to_string()
+    pub fn link(&self, cx: &AppContext) -> String {
+        format!(
+            "{}/channel/{}-{}",
+            ClientSettings::get_global(cx).server_url,
+            Self::slug(&self.name),
+            self.id
+        )
     }
 
-    pub fn notes_link(&self, heading: Option<String>) -> String {
-        self.link()
+    pub fn notes_link(&self, heading: Option<String>, cx: &AppContext) -> String {
+        self.link(cx)
             + "/notes"
             + &heading
                 .map(|h| format!("#{}", Self::slug(&h)))
@@ -305,8 +303,8 @@ impl ChannelStore {
         self.channel_index.by_id().get(&channel_id)
     }
 
-    pub fn projects_for_id(&self, channel_id: ChannelId) -> Vec<(SharedString, HostedProjectId)> {
-        let mut projects: Vec<(SharedString, HostedProjectId)> = self
+    pub fn projects_for_id(&self, channel_id: ChannelId) -> Vec<(SharedString, ProjectId)> {
+        let mut projects: Vec<(SharedString, ProjectId)> = self
             .channel_states
             .get(&channel_id)
             .map(|state| state.projects.clone())
@@ -592,7 +590,7 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ChannelId>> {
         let client = self.client.clone();
-        let name = name.trim_start_matches("#").to_owned();
+        let name = name.trim_start_matches('#').to_owned();
         cx.spawn(move |this, mut cx| async move {
             let response = client
                 .request(proto::CreateChannel {
@@ -839,12 +837,10 @@ impl ChannelStore {
             Ok(users
                 .into_iter()
                 .zip(response.members)
-                .filter_map(|(user, member)| {
-                    Some(ChannelMembership {
-                        user,
-                        role: member.role(),
-                        kind: member.kind(),
-                    })
+                .map(|(user, member)| ChannelMembership {
+                    user,
+                    role: member.role(),
+                    kind: member.kind(),
                 })
                 .collect())
         })
@@ -1161,27 +1157,27 @@ impl ChannelStore {
                 let hosted_project: HostedProject = hosted_project.into();
                 if let Some(old_project) = self
                     .hosted_projects
-                    .insert(hosted_project.id, hosted_project.clone())
+                    .insert(hosted_project.project_id, hosted_project.clone())
                 {
                     self.channel_states
                         .entry(old_project.channel_id)
                         .or_default()
-                        .remove_hosted_project(old_project.id);
+                        .remove_hosted_project(old_project.project_id);
                 }
                 self.channel_states
                     .entry(hosted_project.channel_id)
                     .or_default()
-                    .add_hosted_project(hosted_project.id);
+                    .add_hosted_project(hosted_project.project_id);
             }
 
             for hosted_project_id in payload.deleted_hosted_projects {
-                let hosted_project_id = HostedProjectId(hosted_project_id);
+                let hosted_project_id = ProjectId(hosted_project_id);
 
                 if let Some(old_project) = self.hosted_projects.remove(&hosted_project_id) {
                     self.channel_states
                         .entry(old_project.channel_id)
                         .or_default()
-                        .remove_hosted_project(old_project.id);
+                        .remove_hosted_project(old_project.project_id);
                 }
             }
         }
@@ -1238,19 +1234,12 @@ impl ChannelState {
     }
 
     fn has_channel_buffer_changed(&self) -> bool {
-        if let Some(latest_version) = &self.latest_notes_versions {
-            if let Some(observed_version) = &self.observed_notes_versions {
-                latest_version.epoch > observed_version.epoch
-                    || (latest_version.epoch == observed_version.epoch
-                        && latest_version
-                            .version
-                            .changed_since(&observed_version.version))
-            } else {
-                true
-            }
-        } else {
-            false
-        }
+        self.latest_notes_version.epoch > self.observed_notes_version.epoch
+            || (self.latest_notes_version.epoch == self.observed_notes_version.epoch
+                && self
+                    .latest_notes_version
+                    .version
+                    .changed_since(&self.observed_notes_version.version))
     }
 
     fn has_new_messages(&self) -> bool {
@@ -1277,36 +1266,32 @@ impl ChannelState {
     }
 
     fn acknowledge_notes_version(&mut self, epoch: u64, version: &clock::Global) {
-        if let Some(existing) = &mut self.observed_notes_versions {
-            if existing.epoch == epoch {
-                existing.version.join(version);
-                return;
-            }
+        if self.observed_notes_version.epoch == epoch {
+            self.observed_notes_version.version.join(version);
+        } else {
+            self.observed_notes_version = NotesVersion {
+                epoch,
+                version: version.clone(),
+            };
         }
-        self.observed_notes_versions = Some(NotesVersion {
-            epoch,
-            version: version.clone(),
-        });
     }
 
     fn update_latest_notes_version(&mut self, epoch: u64, version: &clock::Global) {
-        if let Some(existing) = &mut self.latest_notes_versions {
-            if existing.epoch == epoch {
-                existing.version.join(version);
-                return;
-            }
+        if self.latest_notes_version.epoch == epoch {
+            self.latest_notes_version.version.join(version);
+        } else {
+            self.latest_notes_version = NotesVersion {
+                epoch,
+                version: version.clone(),
+            };
         }
-        self.latest_notes_versions = Some(NotesVersion {
-            epoch,
-            version: version.clone(),
-        });
     }
 
-    fn add_hosted_project(&mut self, project_id: HostedProjectId) {
+    fn add_hosted_project(&mut self, project_id: ProjectId) {
         self.projects.insert(project_id);
     }
 
-    fn remove_hosted_project(&mut self, project_id: HostedProjectId) {
+    fn remove_hosted_project(&mut self, project_id: ProjectId) {
         self.projects.remove(&project_id);
     }
 }

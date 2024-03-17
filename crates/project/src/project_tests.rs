@@ -14,6 +14,7 @@ use serde_json::json;
 use std::{os, task::Poll};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
+use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -2475,8 +2476,21 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(typescript_lang());
-    let mut fake_language_servers =
-        language_registry.register_fake_lsp_adapter("TypeScript", Default::default());
+    let mut fake_language_servers = language_registry.register_fake_lsp_adapter(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Options(
+                    lsp::CodeActionOptions {
+                        resolve_provider: Some(true),
+                        ..lsp::CodeActionOptions::default()
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
 
     let buffer = project
         .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
@@ -2492,16 +2506,14 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "The code action".into(),
-                    command: Some(lsp::Command {
-                        title: "The command".into(),
-                        command: "_the/command".into(),
-                        arguments: Some(vec![json!("the-argument")]),
-                    }),
-                    ..Default::default()
+                    data: Some(serde_json::json!({
+                        "command": "_the/command",
+                    })),
+                    ..lsp::CodeAction::default()
                 }),
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "two".into(),
-                    ..Default::default()
+                    ..lsp::CodeAction::default()
                 }),
             ]))
         })
@@ -2516,7 +2528,16 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
     fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
-        |action, _| async move { Ok(action) },
+        |mut action, _| async move {
+            if action.data.is_some() {
+                action.command = Some(lsp::Command {
+                    title: "The command".into(),
+                    command: "_the/command".into(),
+                    arguments: Some(vec![json!("the-argument")]),
+                });
+            }
+            Ok(action)
+        },
     );
 
     // While executing the command, the language server sends the editor
@@ -3737,8 +3758,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("two.rs".to_string(), vec![6..9]),
-            ("three.rs".to_string(), vec![37..40])
+            ("dir/two.rs".to_string(), vec![6..9]),
+            ("dir/three.rs".to_string(), vec![37..40])
         ])
     );
 
@@ -3762,9 +3783,9 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("two.rs".to_string(), vec![6..9]),
-            ("three.rs".to_string(), vec![37..40]),
-            ("four.rs".to_string(), vec![25..28, 36..39])
+            ("dir/two.rs".to_string(), vec![6..9]),
+            ("dir/three.rs".to_string(), vec![37..40]),
+            ("dir/four.rs".to_string(), vec![25..28, 36..39])
         ])
     );
 }
@@ -3825,8 +3846,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.rs".to_string(), vec![8..12]),
-            ("two.rs".to_string(), vec![8..12]),
+            ("dir/one.rs".to_string(), vec![8..12]),
+            ("dir/two.rs".to_string(), vec![8..12]),
         ]),
         "Rust only search should give only Rust files"
     );
@@ -3850,8 +3871,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.ts".to_string(), vec![14..18]),
-            ("two.ts".to_string(), vec![14..18]),
+            ("dir/one.ts".to_string(), vec![14..18]),
+            ("dir/two.ts".to_string(), vec![14..18]),
         ]),
         "TypeScript only search should give only TypeScript files, even if other inclusions don't match anything"
     );
@@ -3876,10 +3897,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.rs".to_string(), vec![8..12]),
-            ("one.ts".to_string(), vec![14..18]),
-            ("two.rs".to_string(), vec![8..12]),
-            ("two.ts".to_string(), vec![14..18]),
+            ("dir/one.rs".to_string(), vec![8..12]),
+            ("dir/one.ts".to_string(), vec![14..18]),
+            ("dir/two.rs".to_string(), vec![8..12]),
+            ("dir/two.ts".to_string(), vec![14..18]),
         ]),
         "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
     );
@@ -3921,10 +3942,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.rs".to_string(), vec![8..12]),
-            ("one.ts".to_string(), vec![14..18]),
-            ("two.rs".to_string(), vec![8..12]),
-            ("two.ts".to_string(), vec![14..18]),
+            ("dir/one.rs".to_string(), vec![8..12]),
+            ("dir/one.ts".to_string(), vec![14..18]),
+            ("dir/two.rs".to_string(), vec![8..12]),
+            ("dir/two.ts".to_string(), vec![14..18]),
         ]),
         "If no exclusions match, all files should be returned"
     );
@@ -3946,8 +3967,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.ts".to_string(), vec![14..18]),
-            ("two.ts".to_string(), vec![14..18]),
+            ("dir/one.ts".to_string(), vec![14..18]),
+            ("dir/two.ts".to_string(), vec![14..18]),
         ]),
         "Rust exclusion search should give only TypeScript files"
     );
@@ -3971,8 +3992,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.rs".to_string(), vec![8..12]),
-            ("two.rs".to_string(), vec![8..12]),
+            ("dir/one.rs".to_string(), vec![8..12]),
+            ("dir/two.rs".to_string(), vec![8..12]),
         ]),
         "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
     );
@@ -4107,10 +4128,102 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("one.ts".to_string(), vec![14..18]),
-            ("two.ts".to_string(), vec![14..18]),
+            ("dir/one.ts".to_string(), vec![14..18]),
+            ("dir/two.ts".to_string(), vec![14..18]),
         ]),
         "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
+    );
+}
+
+#[gpui::test]
+async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/worktree-a",
+        json!({
+            "haystack.rs": r#"// NEEDLE"#,
+            "haystack.ts": r#"// NEEDLE"#,
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktree-b",
+        json!({
+            "haystack.rs": r#"// NEEDLE"#,
+            "haystack.ts": r#"// NEEDLE"#,
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/worktree-a".as_ref(), "/worktree-b".as_ref()],
+        cx,
+    )
+    .await;
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "NEEDLE",
+                false,
+                true,
+                false,
+                vec![PathMatcher::new("worktree-a/*.rs").unwrap()],
+                Vec::new()
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([("worktree-a/haystack.rs".to_string(), vec![3..9])]),
+        "should only return results from included worktree"
+    );
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "NEEDLE",
+                false,
+                true,
+                false,
+                vec![PathMatcher::new("worktree-b/*.rs").unwrap()],
+                Vec::new()
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([("worktree-b/haystack.rs".to_string(), vec![3..9])]),
+        "should only return results from included worktree"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "NEEDLE",
+                false,
+                true,
+                false,
+                vec![PathMatcher::new("*.ts").unwrap()],
+                Vec::new()
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("worktree-a/haystack.ts".to_string(), vec![3..9]),
+            ("worktree-b/haystack.ts".to_string(), vec![3..9])
+        ]),
+        "should return results from both worktrees"
     );
 }
 
@@ -4152,7 +4265,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         )
         .await
         .unwrap(),
-        HashMap::from_iter([("package.json".to_string(), vec![8..11])]),
+        HashMap::from_iter([("dir/package.json".to_string(), vec![8..11])]),
         "Only one non-ignored file should have the query"
     );
 
@@ -4165,15 +4278,21 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("package.json".to_string(), vec![8..11]),
-            ("target/index.txt".to_string(), vec![6..9]),
+            ("dir/package.json".to_string(), vec![8..11]),
+            ("dir/target/index.txt".to_string(), vec![6..9]),
             (
-                "node_modules/prettier/package.json".to_string(),
+                "dir/node_modules/prettier/package.json".to_string(),
                 vec![9..12]
             ),
-            ("node_modules/prettier/index.ts".to_string(), vec![15..18]),
-            ("node_modules/eslint/index.ts".to_string(), vec![13..16]),
-            ("node_modules/eslint/package.json".to_string(), vec![8..11]),
+            (
+                "dir/node_modules/prettier/index.ts".to_string(),
+                vec![15..18]
+            ),
+            ("dir/node_modules/eslint/index.ts".to_string(), vec![13..16]),
+            (
+                "dir/node_modules/eslint/package.json".to_string(),
+                vec![8..11]
+            ),
         ]),
         "Unrestricted search with ignored directories should find every file with the query"
     );
@@ -4195,7 +4314,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([(
-            "node_modules/prettier/package.json".to_string(),
+            "dir/node_modules/prettier/package.json".to_string(),
             vec![9..12]
         )]),
         "With search including ignored prettier directory and excluding TS files, only one file should be found"
@@ -4292,8 +4411,13 @@ async fn search(
     Ok(result
         .into_iter()
         .map(|(buffer, ranges)| {
-            buffer.update(cx, |buffer, _| {
-                let path = buffer.file().unwrap().path().to_string_lossy().to_string();
+            buffer.update(cx, |buffer, cx| {
+                let path = buffer
+                    .file()
+                    .unwrap()
+                    .full_path(cx)
+                    .to_string_lossy()
+                    .to_string();
                 let ranges = ranges
                     .into_iter()
                     .map(|range| range.to_offset(buffer))

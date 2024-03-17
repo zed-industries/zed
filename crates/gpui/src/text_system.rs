@@ -9,11 +9,11 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 
 use crate::{
-    px, Bounds, DevicePixels, EntityId, Hsla, Pixels, PlatformTextSystem, Point, Result,
-    SharedString, Size, StrikethroughStyle, UnderlineStyle,
+    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
+    StrikethroughStyle, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::{BTreeSet, FxHashMap, FxHashSet};
+use collections::{BTreeSet, FxHashMap};
 use core::fmt;
 use derive_more::Deref;
 use itertools::Itertools;
@@ -24,7 +24,7 @@ use std::{
     cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
 
@@ -63,7 +63,10 @@ impl TextSystem {
                 // TODO: This is currently Zed-specific.
                 // We should allow GPUI users to provide their own fallback font stack.
                 font("Zed Mono"),
-                font("Helvetica")
+                font("Helvetica"),
+                font("Cantarell"), // Gnome
+                font("Ubuntu"),    // Gnome (Ubuntu)
+                font("Noto Sans"), // KDE
             ],
         }
     }
@@ -276,7 +279,7 @@ impl TextSystem {
 /// The GPUI text layout subsystem.
 #[derive(Deref)]
 pub struct WindowTextSystem {
-    line_layout_cache: Arc<LineLayoutCache>,
+    line_layout_cache: LineLayoutCache,
     #[deref]
     text_system: Arc<TextSystem>,
 }
@@ -284,15 +287,17 @@ pub struct WindowTextSystem {
 impl WindowTextSystem {
     pub(crate) fn new(text_system: Arc<TextSystem>) -> Self {
         Self {
-            line_layout_cache: Arc::new(LineLayoutCache::new(
-                text_system.platform_text_system.clone(),
-            )),
+            line_layout_cache: LineLayoutCache::new(text_system.platform_text_system.clone()),
             text_system,
         }
     }
 
-    pub(crate) fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
-        self.line_layout_cache.with_view(view_id, f)
+    pub(crate) fn layout_index(&self) -> LineLayoutIndex {
+        self.line_layout_cache.layout_index()
+    }
+
+    pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
+        self.line_layout_cache.reuse_layouts(index)
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.
@@ -452,8 +457,8 @@ impl WindowTextSystem {
         Ok(lines)
     }
 
-    pub(crate) fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
-        self.line_layout_cache.finish_frame(reused_views)
+    pub(crate) fn finish_frame(&self) {
+        self.line_layout_cache.finish_frame()
     }
 
     /// Layout the given line of text, at the given font_size.

@@ -16,7 +16,7 @@ impl SearchHistory {
         }
 
         if let Some(previously_searched) = self.history.last_mut() {
-            if search_string.find(previously_searched.as_str()).is_some() {
+            if search_string.contains(previously_searched.as_str()) {
                 *previously_searched = search_string;
                 self.selected = Some(self.history.len() - 1);
                 return;

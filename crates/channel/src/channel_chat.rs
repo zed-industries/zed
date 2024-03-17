@@ -681,7 +681,7 @@ pub fn mentions_to_proto(mentions: &[(Range<usize>, UserId)]) -> Vec<proto::Chat
                 start: range.start as u64,
                 end: range.end as u64,
             }),
-            user_id: *user_id as u64,
+            user_id: *user_id,
         })
         .collect()
 }

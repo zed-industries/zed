@@ -196,6 +196,8 @@ message Envelope {
 
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
+
+        JoinHostedProject join_hosted_project = 164;
     }
 
     reserved 158 to 161;
@@ -230,6 +232,7 @@ enum ErrorCode {
     CircularNesting = 10;
     WrongMoveTarget = 11;
     UnsharedItem = 12;
+    NoSuchProject = 13;
     reserved 6;
 }
 
@@ -404,11 +407,17 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
+message JoinHostedProject {
+    uint64 project_id = 1;
+}
+
 message JoinProjectResponse {
+    uint64 project_id = 5;
     uint32 replica_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
+    ChannelRole role = 6;
 }
 
 message LeaveProject {
@@ -1058,7 +1067,7 @@ message ChannelParticipants {
 }
 
 message HostedProject {
-    uint64 id = 1;
+    uint64 project_id = 1;
     uint64 channel_id = 2;
     string name = 3;
     ChannelVisibility visibility = 4;

@@ -91,7 +91,13 @@ impl ThemeStyleContent {
                         color: style
                             .color
                             .as_ref()
-                            .and_then(|color| try_parse_color(&color).ok()),
+                            .and_then(|color| try_parse_color(color).ok()),
+                        font_style: style
+                            .font_style
+                            .map(|font_style| FontStyle::from(font_style)),
+                        font_weight: style
+                            .font_weight
+                            .map(|font_weight| FontWeight::from(font_weight)),
                         ..Default::default()
                     },
                 )
@@ -489,351 +495,351 @@ impl ThemeColorsContent {
             border: self
                 .border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             border_variant: self
                 .border_variant
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             border_focused: self
                 .border_focused
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             border_selected: self
                 .border_selected
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             border_transparent: self
                 .border_transparent
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             border_disabled: self
                 .border_disabled
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             elevated_surface_background: self
                 .elevated_surface_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             surface_background: self
                 .surface_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             background: self
                 .background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             element_background: self
                 .element_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             element_hover: self
                 .element_hover
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             element_active: self
                 .element_active
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             element_selected: self
                 .element_selected
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             element_disabled: self
                 .element_disabled
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             drop_target_background: self
                 .drop_target_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ghost_element_background: self
                 .ghost_element_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ghost_element_hover: self
                 .ghost_element_hover
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ghost_element_active: self
                 .ghost_element_active
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ghost_element_selected: self
                 .ghost_element_selected
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ghost_element_disabled: self
                 .ghost_element_disabled
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             text: self
                 .text
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             text_muted: self
                 .text_muted
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             text_placeholder: self
                 .text_placeholder
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             text_disabled: self
                 .text_disabled
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             text_accent: self
                 .text_accent
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             icon: self
                 .icon
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             icon_muted: self
                 .icon_muted
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             icon_disabled: self
                 .icon_disabled
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             icon_placeholder: self
                 .icon_placeholder
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             icon_accent: self
                 .icon_accent
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             status_bar_background: self
                 .status_bar_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             title_bar_background: self
                 .title_bar_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             toolbar_background: self
                 .toolbar_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             tab_bar_background: self
                 .tab_bar_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             tab_inactive_background: self
                 .tab_inactive_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             tab_active_background: self
                 .tab_active_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             search_match_background: self
                 .search_match_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             panel_background: self
                 .panel_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             panel_focused_border: self
                 .panel_focused_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             pane_focused_border: self
                 .pane_focused_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             scrollbar_thumb_background: self
                 .scrollbar_thumb_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             scrollbar_thumb_hover_background: self
                 .scrollbar_thumb_hover_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             scrollbar_thumb_border: self
                 .scrollbar_thumb_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             scrollbar_track_background: self
                 .scrollbar_track_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             scrollbar_track_border: self
                 .scrollbar_track_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_foreground: self
                 .editor_foreground
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_background: self
                 .editor_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_gutter_background: self
                 .editor_gutter_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_subheader_background: self
                 .editor_subheader_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_active_line_background: self
                 .editor_active_line_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_highlighted_line_background: self
                 .editor_highlighted_line_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_line_number: self
                 .editor_line_number
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_active_line_number: self
                 .editor_active_line_number
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_invisible: self
                 .editor_invisible
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_wrap_guide: self
                 .editor_wrap_guide
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_active_wrap_guide: self
                 .editor_active_wrap_guide
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_document_highlight_read_background: self
                 .editor_document_highlight_read_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             editor_document_highlight_write_background: self
                 .editor_document_highlight_write_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_background: self
                 .terminal_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_foreground: self
                 .terminal_foreground
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_bright_foreground: self
                 .terminal_bright_foreground
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_dim_foreground: self
                 .terminal_dim_foreground
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_black: self
                 .terminal_ansi_black
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_black: self
                 .terminal_ansi_bright_black
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_black: self
                 .terminal_ansi_dim_black
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_red: self
                 .terminal_ansi_red
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_red: self
                 .terminal_ansi_bright_red
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_red: self
                 .terminal_ansi_dim_red
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_green: self
                 .terminal_ansi_green
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_green: self
                 .terminal_ansi_bright_green
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_green: self
                 .terminal_ansi_dim_green
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_yellow: self
                 .terminal_ansi_yellow
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_yellow: self
                 .terminal_ansi_bright_yellow
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_yellow: self
                 .terminal_ansi_dim_yellow
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_blue: self
                 .terminal_ansi_blue
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_blue: self
                 .terminal_ansi_bright_blue
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_blue: self
                 .terminal_ansi_dim_blue
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_magenta: self
                 .terminal_ansi_magenta
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_magenta: self
                 .terminal_ansi_bright_magenta
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_magenta: self
                 .terminal_ansi_dim_magenta
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_cyan: self
                 .terminal_ansi_cyan
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_cyan: self
                 .terminal_ansi_bright_cyan
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_cyan: self
                 .terminal_ansi_dim_cyan
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_white: self
                 .terminal_ansi_white
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_bright_white: self
                 .terminal_ansi_bright_white
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             terminal_ansi_dim_white: self
                 .terminal_ansi_dim_white
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             link_text_hover: self
                 .link_text_hover
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
         }
     }
 }
@@ -990,171 +996,171 @@ impl StatusColorsContent {
             conflict: self
                 .conflict
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             conflict_background: self
                 .conflict_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             conflict_border: self
                 .conflict_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             created: self
                 .created
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             created_background: self
                 .created_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             created_border: self
                 .created_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             deleted: self
                 .deleted
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             deleted_background: self
                 .deleted_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             deleted_border: self
                 .deleted_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             error: self
                 .error
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             error_background: self
                 .error_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             error_border: self
                 .error_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             hidden: self
                 .hidden
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             hidden_background: self
                 .hidden_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             hidden_border: self
                 .hidden_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             hint: self
                 .hint
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             hint_background: self
                 .hint_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             hint_border: self
                 .hint_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ignored: self
                 .ignored
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ignored_background: self
                 .ignored_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             ignored_border: self
                 .ignored_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             info: self
                 .info
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             info_background: self
                 .info_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             info_border: self
                 .info_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             modified: self
                 .modified
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             modified_background: self
                 .modified_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             modified_border: self
                 .modified_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             predictive: self
                 .predictive
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             predictive_background: self
                 .predictive_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             predictive_border: self
                 .predictive_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             renamed: self
                 .renamed
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             renamed_background: self
                 .renamed_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             renamed_border: self
                 .renamed_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             success: self
                 .success
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             success_background: self
                 .success_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             success_border: self
                 .success_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             unreachable: self
                 .unreachable
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             unreachable_background: self
                 .unreachable_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             unreachable_border: self
                 .unreachable_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             warning: self
                 .warning
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             warning_background: self
                 .warning_background
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
             warning_border: self
                 .warning_border
                 .as_ref()
-                .and_then(|color| try_parse_color(&color).ok()),
+                .and_then(|color| try_parse_color(color).ok()),
         }
     }
 }
@@ -1208,19 +1214,21 @@ impl JsonSchema for FontWeightContent {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        let mut schema_object = SchemaObject::default();
-        schema_object.enum_values = Some(vec![
-            100.into(),
-            200.into(),
-            300.into(),
-            400.into(),
-            500.into(),
-            600.into(),
-            700.into(),
-            800.into(),
-            900.into(),
-        ]);
-        schema_object.into()
+        SchemaObject {
+            enum_values: Some(vec![
+                100.into(),
+                200.into(),
+                300.into(),
+                400.into(),
+                500.into(),
+                600.into(),
+                700.into(),
+                800.into(),
+                900.into(),
+            ]),
+            ..Default::default()
+        }
+        .into()
     }
 }
 

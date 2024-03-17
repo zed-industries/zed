@@ -45,7 +45,7 @@ impl IpsFile {
     pub fn description(&self, panic: Option<&str>) -> String {
         let mut desc = if self.body.termination.indicator == "Abort trap: 6" {
             match panic {
-                Some(panic_message) => format!("Panic `{}`", panic_message).into(),
+                Some(panic_message) => format!("Panic `{}`", panic_message),
                 None => "Crash `Abort trap: 6` (possible panic)".into(),
             }
         } else if let Some(msg) = &self.body.exception.message {

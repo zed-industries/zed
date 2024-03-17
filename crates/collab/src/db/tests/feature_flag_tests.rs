@@ -13,10 +13,10 @@ test_both_dbs!(
 async fn test_get_user_flags(db: &Arc<Database>) {
     let user_1 = db
         .create_user(
-            &format!("user1@example.com"),
+            "user1@example.com",
             false,
             NewUserParams {
-                github_login: format!("user1"),
+                github_login: "user1".to_string(),
                 github_user_id: 1,
             },
         )
@@ -26,10 +26,10 @@ async fn test_get_user_flags(db: &Arc<Database>) {
 
     let user_2 = db
         .create_user(
-            &format!("user2@example.com"),
+            "user2@example.com",
             false,
             NewUserParams {
-                github_login: format!("user2"),
+                github_login: "user2".to_string(),
                 github_user_id: 2,
             },
         )

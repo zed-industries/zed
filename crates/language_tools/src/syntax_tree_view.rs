@@ -1,9 +1,9 @@
 use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
-    EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Render, Styled,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, Div, EventEmitter,
+    FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement, Render, Styled, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -148,7 +148,7 @@ impl SyntaxTreeView {
         if did_reparse {
             prev_layer = buffer_state.active_layer.take();
         }
-        if buffer_state.buffer != buffer || buffer_state.excerpt_id != buffer_state.excerpt_id {
+        if buffer_state.buffer != buffer || buffer_state.excerpt_id != excerpt_id {
             buffer_state.buffer = buffer.clone();
             buffer_state.excerpt_id = excerpt_id;
             buffer_state.active_layer = None;
@@ -227,8 +227,12 @@ impl SyntaxTreeView {
         let multibuffer = editor_state.editor.read(cx).buffer();
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         let excerpt_id = buffer_state.excerpt_id;
-        let range = multibuffer.anchor_in_excerpt(excerpt_id, range.start)
-            ..multibuffer.anchor_in_excerpt(excerpt_id, range.end);
+        let range = multibuffer
+            .anchor_in_excerpt(excerpt_id, range.start)
+            .unwrap()
+            ..multibuffer
+                .anchor_in_excerpt(excerpt_id, range.end)
+                .unwrap();
 
         // Update the editor with the anchor range.
         editor_state.editor.update(cx, |editor, cx| {
@@ -277,14 +281,14 @@ impl Render for SyntaxTreeView {
             .and_then(|buffer| buffer.active_layer.as_ref())
         {
             let layer = layer.clone();
-            let list = uniform_list(
+            let mut list = uniform_list(
                 cx.view().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
                 move |this, range, cx| {
                     let mut items = Vec::new();
                     let mut cursor = layer.node().walk();
-                    let mut descendant_ix = range.start as usize;
+                    let mut descendant_ix = range.start;
                     cursor.goto_descendant(descendant_ix);
                     let mut depth = cursor.depth();
                     let mut visited_children = false;
@@ -356,16 +360,16 @@ impl Render for SyntaxTreeView {
             )
             .size_full()
             .track_scroll(self.list_scroll_handle.clone())
-            .text_bg(cx.theme().colors().background);
+            .text_bg(cx.theme().colors().background).into_any_element();
 
             rendered = rendered.child(
-                canvas(move |bounds, cx| {
-                    list.into_any_element().draw(
-                        bounds.origin,
-                        bounds.size.map(AvailableSpace::Definite),
-                        cx,
-                    )
-                })
+                canvas(
+                    move |bounds, cx| {
+                        list.layout(bounds.origin, bounds.size.into(), cx);
+                        list
+                    },
+                    |_, mut list, cx| list.paint(cx),
+                )
                 .size_full(),
             );
         }

@@ -47,11 +47,7 @@ impl TaffyLayoutEngine {
         self.styles.clear();
     }
 
-    pub fn requested_style(&self, layout_id: LayoutId) -> Option<&Style> {
-        self.styles.get(&layout_id)
-    }
-
-    pub fn request_layout(
+    pub fn before_layout(
         &mut self,
         style: &Style,
         rem_size: Pixels,
@@ -445,6 +441,27 @@ pub enum AvailableSpace {
     MinContent,
     /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
     MaxContent,
+}
+
+impl AvailableSpace {
+    /// Returns a `Size` with both width and height set to `AvailableSpace::MinContent`.
+    ///
+    /// This function is useful when you want to create a `Size` with the minimum content constraints
+    /// for both dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let min_content_size = AvailableSpace::min_size();
+    /// assert_eq!(min_content_size.width, AvailableSpace::MinContent);
+    /// assert_eq!(min_content_size.height, AvailableSpace::MinContent);
+    /// ```
+    pub const fn min_size() -> Size<Self> {
+        Size {
+            width: Self::MinContent,
+            height: Self::MinContent,
+        }
+    }
 }
 
 impl From<AvailableSpace> for TaffyAvailableSpace {

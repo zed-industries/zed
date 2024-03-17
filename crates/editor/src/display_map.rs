@@ -46,7 +46,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::fold_map::{Fold, FoldPoint};
+pub use self::fold_map::{Fold, FoldId, FoldPoint};
 pub use self::inlay_map::{InlayOffset, InlayPoint};
 pub(crate) use inlay_map::Inlay;
 
@@ -326,7 +326,7 @@ impl DisplayMap {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).language());
-        language_settings(language.as_deref(), None, cx).tab_size
+        language_settings(language, None, cx).tab_size
     }
 
     #[cfg(test)]
@@ -339,8 +339,13 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
-    pub inlay_highlight_style: Option<HighlightStyle>,
-    pub suggestion_highlight_style: Option<HighlightStyle>,
+    pub styles: HighlightStyles,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct HighlightStyles {
+    pub inlay_hint: Option<HighlightStyle>,
+    pub suggestion: Option<HighlightStyle>,
 }
 
 pub struct HighlightedChunk<'a> {
@@ -502,7 +507,7 @@ impl DisplaySnapshot {
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     pub fn reverse_text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
-        (0..=display_row).into_iter().rev().flat_map(|row| {
+        (0..=display_row).rev().flat_map(|row| {
             self.block_snapshot
                 .chunks(row..row + 1, false, Highlights::default())
                 .map(|h| h.text)
@@ -512,21 +517,19 @@ impl DisplaySnapshot {
         })
     }
 
-    pub fn chunks<'a>(
-        &'a self,
+    pub fn chunks(
+        &self,
         display_rows: Range<u32>,
         language_aware: bool,
-        inlay_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
-    ) -> DisplayChunks<'a> {
+        highlight_styles: HighlightStyles,
+    ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
-                inlay_highlight_style,
-                suggestion_highlight_style,
+                styles: highlight_styles,
             },
         )
     }
@@ -540,8 +543,10 @@ impl DisplaySnapshot {
         self.chunks(
             display_rows,
             language_aware,
-            Some(editor_style.inlays_style),
-            Some(editor_style.suggestions_style),
+            HighlightStyles {
+                inlay_hint: Some(editor_style.inlay_hints_style),
+                suggestion: Some(editor_style.suggestions_style),
+            },
         )
         .map(|chunk| {
             let mut highlight_style = chunk
@@ -847,7 +852,7 @@ impl DisplaySnapshot {
         self.block_snapshot.longest_row()
     }
 
-    pub fn fold_for_line(self: &Self, buffer_row: u32) -> Option<FoldStatus> {
+    pub fn fold_for_line(&self, buffer_row: u32) -> Option<FoldStatus> {
         if self.is_line_folded(buffer_row) {
             Some(FoldStatus::Folded)
         } else if self.is_foldable(buffer_row) {
@@ -857,7 +862,7 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn is_foldable(self: &Self, buffer_row: u32) -> bool {
+    pub fn is_foldable(&self, buffer_row: u32) -> bool {
         let max_row = self.buffer_snapshot.max_buffer_row();
         if buffer_row >= max_row {
             return false;
@@ -880,7 +885,7 @@ impl DisplaySnapshot {
         false
     }
 
-    pub fn foldable_range(self: &Self, buffer_row: u32) -> Option<Range<Point>> {
+    pub fn foldable_range(&self, buffer_row: u32) -> Option<Range<Point>> {
         let start = Point::new(buffer_row, self.buffer_snapshot.line_len(buffer_row));
         if self.is_foldable(start.row) && !self.is_line_folded(start.row) {
             let (start_indent, _) = self.line_indent_for_buffer_row(buffer_row);
@@ -1291,7 +1296,7 @@ pub mod tests {
 
         let mut cx = EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
-        let window = cx.window.clone();
+        let window = cx.window;
 
         _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
@@ -1455,10 +1460,8 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("mod.body", Hsla::red().into()),
-            ("fn.name", Hsla::blue().into()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("mod.body", Hsla::red()), ("fn.name", Hsla::blue())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1545,10 +1548,8 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("mod.body", Hsla::red().into()),
-            ("fn.name", Hsla::blue().into()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("mod.body", Hsla::red()), ("fn.name", Hsla::blue())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1616,10 +1617,8 @@ pub mod tests {
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let theme = SyntaxTheme::new_test(vec![
-            ("operator", Hsla::red().into()),
-            ("string", Hsla::green().into()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test(vec![("operator", Hsla::red()), ("string", Hsla::green())]);
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1832,10 +1831,10 @@ pub mod tests {
         )
     }
 
-    fn syntax_chunks<'a>(
+    fn syntax_chunks(
         rows: Range<u32>,
         map: &Model<DisplayMap>,
-        theme: &'a SyntaxTheme,
+        theme: &SyntaxTheme,
         cx: &mut AppContext,
     ) -> Vec<(String, Option<Hsla>)> {
         chunks(rows, map, theme, cx)
@@ -1844,15 +1843,15 @@ pub mod tests {
             .collect()
     }
 
-    fn chunks<'a>(
+    fn chunks(
         rows: Range<u32>,
         map: &Model<DisplayMap>,
-        theme: &'a SyntaxTheme,
+        theme: &SyntaxTheme,
         cx: &mut AppContext,
     ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Hsla>, Option<Hsla>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, None, None) {
+        for chunk in snapshot.chunks(rows, true, HighlightStyles::default()) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);

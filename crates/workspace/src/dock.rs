@@ -2,10 +2,10 @@ use crate::persistence::model::DockData;
 use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, ParentElement,
-    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -221,7 +221,7 @@ impl Dock {
                     return;
                 };
                 if panel.is_zoomed(cx) {
-                    workspace.zoomed = Some(panel.to_any().downgrade().into());
+                    workspace.zoomed = Some(panel.to_any().downgrade());
                     workspace.zoomed_position = Some(position);
                 } else {
                     workspace.zoomed = None;
@@ -551,7 +551,7 @@ impl Render for Dock {
             let size = entry.panel.size(cx);
 
             let position = self.position;
-            let mut handle = div()
+            let handle = div()
                 .id("resize-handle")
                 .on_drag(DraggedDock(position), |dock, cx| {
                     cx.stop_propagation();
@@ -563,38 +563,36 @@ impl Render for Dock {
                         cx.stop_propagation();
                     }
                 }))
-                .z_index(1)
-                .block_mouse();
-
-            match self.position() {
-                DockPosition::Left => {
-                    handle = handle
+                .occlude();
+            let handle = match self.position() {
+                DockPosition::Left => deferred(
+                    handle
                         .absolute()
-                        .right(px(0.))
+                        .right(-RESIZE_HANDLE_SIZE / 2.)
                         .top(px(0.))
                         .h_full()
                         .w(RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize();
-                }
-                DockPosition::Bottom => {
-                    handle = handle
+                        .cursor_col_resize(),
+                ),
+                DockPosition::Bottom => deferred(
+                    handle
                         .absolute()
-                        .top(px(0.))
+                        .top(-RESIZE_HANDLE_SIZE / 2.)
                         .left(px(0.))
                         .w_full()
                         .h(RESIZE_HANDLE_SIZE)
-                        .cursor_row_resize();
-                }
-                DockPosition::Right => {
-                    handle = handle
+                        .cursor_row_resize(),
+                ),
+                DockPosition::Right => deferred(
+                    handle
                         .absolute()
                         .top(px(0.))
-                        .left(px(0.))
+                        .left(-RESIZE_HANDLE_SIZE / 2.)
                         .h_full()
                         .w(RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize();
-                }
-            }
+                        .cursor_col_resize(),
+                ),
+            };
 
             div()
                 .key_context(dispatch_context)
@@ -618,7 +616,12 @@ impl Render for Dock {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
-                        .child(entry.panel.to_any().cached()),
+                        .child(
+                            entry
+                                .panel
+                                .to_any()
+                                .cached(StyleRefinement::default().v_flex().size_full()),
+                        ),
                 )
                 .child(handle)
         } else {

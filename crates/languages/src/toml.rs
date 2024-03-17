@@ -12,7 +12,7 @@ use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct TaploLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TaploLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("taplo-ls".into())

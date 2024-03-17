@@ -12,8 +12,8 @@ impl Database {
         user_id: UserId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_participant(&channel, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?;
             channel_chat_participant::ActiveModel {
                 id: ActiveValue::NotSet,
@@ -87,8 +87,8 @@ impl Database {
         before_message_id: Option<MessageId>,
     ) -> Result<Vec<proto::ChannelMessage>> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_participant(&channel, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?;
 
             let mut condition =
@@ -105,7 +105,7 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.load_channel_messages(rows, &*tx).await
+            self.load_channel_messages(rows, &tx).await
         })
         .await
     }
@@ -127,16 +127,16 @@ impl Database {
             for row in &rows {
                 channels.insert(
                     row.channel_id,
-                    self.get_channel_internal(row.channel_id, &*tx).await?,
+                    self.get_channel_internal(row.channel_id, &tx).await?,
                 );
             }
 
             for (_, channel) in channels {
-                self.check_user_is_channel_participant(&channel, user_id, &*tx)
+                self.check_user_is_channel_participant(&channel, user_id, &tx)
                     .await?;
             }
 
-            let messages = self.load_channel_messages(rows, &*tx).await?;
+            let messages = self.load_channel_messages(rows, &tx).await?;
             Ok(messages)
         })
         .await
@@ -171,7 +171,7 @@ impl Database {
             .filter(channel_message_mention::Column::MessageId.is_in(messages.iter().map(|m| m.id)))
             .order_by_asc(channel_message_mention::Column::MessageId)
             .order_by_asc(channel_message_mention::Column::StartOffset)
-            .stream(&*tx)
+            .stream(tx)
             .await?;
 
         let mut message_ix = 0;
@@ -200,6 +200,7 @@ impl Database {
     }
 
     /// Creates a new channel message.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_channel_message(
         &self,
         channel_id: ChannelId,
@@ -211,8 +212,8 @@ impl Database {
         reply_to_message_id: Option<MessageId>,
     ) -> Result<CreatedChannelMessage> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_participant(&channel, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?;
 
             let mut rows = channel_chat_participant::Entity::find()
@@ -302,13 +303,13 @@ impl Database {
                                     channel_id: channel_id.to_proto(),
                                 },
                                 false,
-                                &*tx,
+                                &tx,
                             )
                             .await?,
                         );
                     }
 
-                    self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
+                    self.observe_channel_message_internal(channel_id, user_id, message_id, &tx)
                         .await?;
                 }
                 _ => {
@@ -321,7 +322,7 @@ impl Database {
                 }
             }
 
-            let mut channel_members = self.get_channel_participants(&channel, &*tx).await?;
+            let mut channel_members = self.get_channel_participants(&channel, &tx).await?;
             channel_members.retain(|member| !participant_user_ids.contains(member));
 
             Ok(CreatedChannelMessage {
@@ -341,7 +342,7 @@ impl Database {
         message_id: MessageId,
     ) -> Result<NotificationBatch> {
         self.transaction(|tx| async move {
-            self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
+            self.observe_channel_message_internal(channel_id, user_id, message_id, &tx)
                 .await?;
             let mut batch = NotificationBatch::default();
             batch.extend(
@@ -352,7 +353,7 @@ impl Database {
                         sender_id: Default::default(),
                         channel_id: Default::default(),
                     },
-                    &*tx,
+                    &tx,
                 )
                 .await?,
             );
@@ -383,7 +384,7 @@ impl Database {
             .to_owned(),
         )
         // TODO: Try to upgrade SeaORM so we don't have to do this hack around their bug
-        .exec_without_returning(&*tx)
+        .exec_without_returning(tx)
         .await?;
         Ok(())
     }
@@ -400,7 +401,7 @@ impl Database {
                 observed_channel_messages::Column::ChannelId
                     .is_in(channel_ids.iter().map(|id| id.0)),
             )
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         Ok(rows
@@ -451,7 +452,7 @@ impl Database {
 
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
         let mut last_messages = channel_message::Model::find_by_statement(stmt)
-            .stream(&*tx)
+            .stream(tx)
             .await?;
 
         let mut results = Vec::new();
@@ -500,9 +501,9 @@ impl Database {
                 .await?;
 
             if result.rows_affected == 0 {
-                let channel = self.get_channel_internal(channel_id, &*tx).await?;
+                let channel = self.get_channel_internal(channel_id, &tx).await?;
                 if self
-                    .check_user_is_channel_admin(&channel, user_id, &*tx)
+                    .check_user_is_channel_admin(&channel, user_id, &tx)
                     .await
                     .is_ok()
                 {

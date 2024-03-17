@@ -40,7 +40,7 @@ use smol::future::FutureExt as _;
 use std::{
     any::Any,
     cell::RefCell,
-    ffi::OsString,
+    ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -118,6 +118,46 @@ pub struct LanguageServerName(pub Arc<str>);
 pub struct Location {
     pub buffer: Model<Buffer>,
     pub range: Range<Anchor>,
+}
+
+pub struct LanguageContext {
+    pub package: Option<String>,
+    pub symbol: Option<String>,
+}
+
+pub trait LanguageContextProvider: Send + Sync {
+    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
+}
+
+/// A context provider that fills out LanguageContext without inspecting the contents.
+pub struct DefaultContextProvider;
+
+impl LanguageContextProvider for DefaultContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut AppContext,
+    ) -> gpui::Result<LanguageContext> {
+        let symbols = location
+            .buffer
+            .read(cx)
+            .snapshot()
+            .symbols_containing(location.range.start, None);
+        let symbol = symbols.and_then(|symbols| {
+            symbols.last().map(|symbol| {
+                let range = symbol
+                    .name_ranges
+                    .last()
+                    .cloned()
+                    .unwrap_or(0..symbol.text.len());
+                symbol.text[range].to_string()
+            })
+        });
+        Ok(LanguageContext {
+            package: None,
+            symbol,
+        })
+    }
 }
 
 /// Represents a Language Server, with certain cached sync properties.
@@ -237,11 +277,12 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
-    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)>;
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
 
@@ -265,7 +306,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if let Some(binary) = self.check_if_user_installed(delegate.as_ref()).await {
+            if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
                 log::info!(
                     "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                     language.name(),
@@ -295,12 +336,12 @@ pub trait LspAdapter: 'static + Send + Sync {
                 name.clone(),
                 LanguageServerBinaryStatus::CheckingForUpdate,
             );
-            let version_info = self.fetch_latest_server_version(delegate.as_ref()).await?;
+            let latest_version = self.fetch_latest_server_version(delegate.as_ref()).await?;
 
             log::info!("downloading language server {:?}", name.0);
             delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
             let mut binary = self
-                .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate.as_ref())
+                .fetch_server_binary(latest_version, container_dir.to_path_buf(), delegate.as_ref())
                 .await;
 
             delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
@@ -339,6 +380,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -366,7 +408,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary>;
@@ -727,6 +769,7 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
+    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -810,11 +853,7 @@ struct BracketConfig {
 
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
-        Self::new_with_id(
-            LanguageId(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst)),
-            config,
-            ts_language,
-        )
+        Self::new_with_id(LanguageId::new(), config, ts_language)
     }
 
     fn new_with_id(
@@ -841,7 +880,16 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
+            context_provider: None,
         }
+    }
+
+    pub fn with_context_provider(
+        mut self,
+        provider: Option<Arc<dyn LanguageContextProvider>>,
+    ) -> Self {
+        self.context_provider = provider;
+        self
     }
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
@@ -1139,6 +1187,10 @@ impl Language {
         self.config.name.clone()
     }
 
+    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+        self.context_provider.clone()
+    }
+
     pub fn highlight_text<'a>(
         self: &'a Arc<Self>,
         text: &'a Rope,
@@ -1406,7 +1458,7 @@ impl Default for FakeLspAdapter {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for FakeLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
@@ -1515,43 +1567,8 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 10)]
-    async fn test_first_line_pattern(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-
-        languages.set_executor(cx.executor());
-        let languages = Arc::new(languages);
-        languages.register_test_language(LanguageConfig {
-            name: "JavaScript".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".into()],
-                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
-            },
-            ..Default::default()
-        });
-
-        languages
-            .language_for_file("the/script".as_ref(), None)
-            .await
-            .unwrap_err();
-        languages
-            .language_for_file("the/script".as_ref(), Some(&"nothing".into()))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            languages
-                .language_for_file("the/script".as_ref(), Some(&"#!/bin/env node".into()))
-                .await
-                .unwrap()
-                .name()
-                .as_ref(),
-            "JavaScript"
-        );
-    }
-
-    #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor());
+        let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         languages.register_native_grammars([
             ("json", tree_sitter_json::language()),

@@ -62,7 +62,7 @@ impl Editor {
         line_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        let visible_lines = f32::from(viewport_height / line_height);
+        let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
@@ -81,8 +81,8 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(highlighted_rows) = &self.highlighted_rows {
-            target_top = highlighted_rows.start as f32;
+        if let Some(first_highlighted_row) = &self.highlighted_display_rows(cx).first_entry() {
+            target_top = *first_highlighted_row.key() as f32;
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
@@ -205,10 +205,7 @@ impl Editor {
         let mut target_left;
         let mut target_right;
 
-        if self.highlighted_rows.is_some() {
-            target_left = px(0.);
-            target_right = px(0.);
-        } else {
+        if self.highlighted_rows.is_empty() {
             target_left = px(f32::INFINITY);
             target_right = px(0.);
             for selection in selections {
@@ -229,6 +226,9 @@ impl Editor {
                     );
                 }
             }
+        } else {
+            target_left = px(0.);
+            target_right = px(0.);
         }
 
         target_right = target_right.min(scroll_width);
@@ -241,11 +241,10 @@ impl Editor {
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = (target_left / max_glyph_width).into();
+            self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x =
-                ((target_right - viewport_width) / max_glyph_width).into();
+            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
             true
         } else {
             false

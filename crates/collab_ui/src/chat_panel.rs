@@ -8,9 +8,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
-    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle,
-    FontWeight, HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, Render, StyledText,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    ListOffset, ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -64,6 +64,7 @@ pub struct ChatPanel {
     open_context_menu: Option<(u64, Subscription)>,
     highlighted_message: Option<(u64, Task<()>)>,
     last_acknowledged_message_id: Option<u64>,
+    selected_message_to_reply_id: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,6 +129,7 @@ impl ChatPanel {
                 open_context_menu: None,
                 highlighted_message: None,
                 last_acknowledged_message_id: None,
+                selected_message_to_reply_id: None,
             };
 
             if let Some(channel_id) = ActiveCall::global(cx)
@@ -300,14 +302,33 @@ impl ChatPanel {
     fn render_replied_to_message(
         &mut self,
         message_id: Option<ChannelMessageId>,
-        reply_to_message: &ChannelMessage,
+        reply_to_message: &Option<ChannelMessage>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let body_element_id: ElementId = match message_id {
-            Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message", id).into(),
-            Some(ChannelMessageId::Pending(id)) => ("reply-to-pending-message", id).into(), // This should never happen
-            None => ("composing-reply").into(),
+        let reply_to_message = match reply_to_message {
+            None => {
+                return div().child(
+                    h_flex()
+                        .text_ui_xs()
+                        .my_0p5()
+                        .px_0p5()
+                        .gap_x_1()
+                        .rounded_md()
+                        .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
+                        .when(reply_to_message.is_none(), |el| {
+                            el.child(
+                                Label::new("Message has been deleted...")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
+            }
+            Some(val) => val,
         };
+
+        let user_being_replied_to = reply_to_message.sender.clone();
+        let message_being_replied_to = reply_to_message.clone();
 
         let message_element_id: ElementId = match message_id {
             Some(ChannelMessageId::Saved(id)) => ("reply-to-saved-message-container", id).into(),
@@ -320,63 +341,30 @@ impl ChatPanel {
         let current_channel_id = self.channel_id(cx);
         let reply_to_message_id = reply_to_message.id;
 
-        let reply_to_message_body = self
-            .markdown_data
-            .entry(reply_to_message.id)
-            .or_insert_with(|| {
-                Self::render_markdown_with_mentions(
-                    &self.languages,
-                    self.client.id(),
-                    reply_to_message,
-                )
-            });
-
-        const REPLY_TO_PREFIX: &str = "Reply to @";
-
-        div().flex_grow().child(
-            v_flex()
+        div().child(
+            h_flex()
                 .id(message_element_id)
                 .text_ui_xs()
+                .my_0p5()
+                .px_0p5()
+                .gap_x_1()
+                .rounded_md()
+                .hover(|style| style.bg(cx.theme().colors().element_background))
+                .child(Icon::new(IconName::ReplyArrowRight).color(Color::Muted))
+                .child(Avatar::new(user_being_replied_to.avatar_uri.clone()).size(rems(0.7)))
                 .child(
-                    h_flex()
-                        .gap_x_1()
-                        .items_center()
-                        .justify_start()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .child(
-                            StyledText::new(format!(
-                                "{}{}",
-                                REPLY_TO_PREFIX,
-                                reply_to_message.sender.github_login.clone()
-                            ))
-                            .with_highlights(
-                                &cx.text_style(),
-                                vec![(
-                                    (REPLY_TO_PREFIX.len() - 1)
-                                        ..(reply_to_message.sender.github_login.len()
-                                            + REPLY_TO_PREFIX.len()),
-                                    HighlightStyle {
-                                        font_weight: Some(FontWeight::BOLD),
-                                        ..Default::default()
-                                    },
-                                )],
-                            ),
-                        ),
+                    div().font_weight(FontWeight::SEMIBOLD).child(
+                        Label::new(format!("@{}", user_being_replied_to.github_login))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    ),
                 )
                 .child(
-                    div()
-                        .border_l_2()
-                        .border_color(cx.theme().colors().border)
-                        .px_1()
-                        .py_0p5()
-                        .mb_1()
-                        .child(
-                            div()
-                                .overflow_hidden()
-                                .max_h_12()
-                                .child(reply_to_message_body.element(body_element_id, cx)),
-                        ),
+                    div().overflow_y_hidden().child(
+                        Label::new(message_being_replied_to.body.replace('\n', " "))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    ),
                 )
                 .cursor(CursorStyle::PointingHand)
                 .tooltip(|cx| Tooltip::text("Go to message", cx))
@@ -430,7 +418,6 @@ impl ChatPanel {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
-        let this = cx.view().clone();
 
         let mentioning_you = message
             .mentions
@@ -444,8 +431,7 @@ impl ChatPanel {
 
         let reply_to_message = message
             .reply_to_message_id
-            .map(|id| active_chat.read(cx).find_loaded_message(id))
-            .flatten()
+            .and_then(|id| active_chat.read(cx).find_loaded_message(id))
             .cloned();
 
         let replied_to_you =
@@ -466,72 +452,69 @@ impl ChatPanel {
         v_flex()
             .w_full()
             .relative()
+            .group("")
+            .when(!is_continuation_from_previous, |this| this.pt_2())
             .child(
                 div()
+                    .group("")
                     .bg(background)
                     .rounded_md()
                     .overflow_hidden()
-                    .px_1()
+                    .px_1p5()
                     .py_0p5()
-                    .when(!is_continuation_from_previous, |this| {
-                        this.mt_2().child(
-                            h_flex()
-                                .text_ui_sm()
-                                .child(div().absolute().child(
-                                    Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
-                                ))
-                                .child(
-                                    div()
-                                        .pl(cx.rem_size() + px(6.0))
-                                        .pr(px(8.0))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(Label::new(message.sender.github_login.clone())),
-                                )
-                                .child(
-                                    Label::new(time_format::format_localized_timestamp(
-                                        OffsetDateTime::now_utc(),
-                                        message.timestamp,
-                                        self.local_timezone,
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                ),
-                        )
+                    .when_some(self.selected_message_to_reply_id, |el, reply_id| {
+                        el.when_some(message_id, |el, message_id| {
+                            el.when(reply_id == message_id, |el| {
+                                el.bg(cx.theme().colors().element_selected)
+                            })
+                        })
                     })
-                    .when(
-                        message.reply_to_message_id.is_some() && reply_to_message.is_none(),
-                        |this| {
-                            const MESSAGE_DELETED: &str = "Message has been deleted";
-
-                            let body_text = StyledText::new(MESSAGE_DELETED).with_highlights(
-                                &cx.text_style(),
-                                vec![(
-                                    0..MESSAGE_DELETED.len(),
-                                    HighlightStyle {
-                                        font_style: Some(FontStyle::Italic),
-                                        ..Default::default()
-                                    },
-                                )],
-                            );
-
-                            this.child(
-                                div()
-                                    .border_l_2()
-                                    .text_ui_xs()
-                                    .border_color(cx.theme().colors().border)
-                                    .px_1()
-                                    .py_0p5()
-                                    .child(body_text),
-                            )
-                        },
-                    )
-                    .when_some(reply_to_message, |el, reply_to_message| {
+                    .when(!self.has_open_menu(message_id), |this| {
+                        this.hover(|style| style.bg(cx.theme().colors().element_hover))
+                    })
+                    .when(message.reply_to_message_id.is_some(), |el| {
                         el.child(self.render_replied_to_message(
                             Some(message.id),
                             &reply_to_message,
                             cx,
                         ))
+                        .when(is_continuation_from_previous, |this| this.mt_2())
                     })
+                    .when(
+                        !is_continuation_from_previous || message.reply_to_message_id.is_some(),
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .text_ui_sm()
+                                    .child(
+                                        div().absolute().child(
+                                            Avatar::new(message.sender.avatar_uri.clone())
+                                                .size(rems(1.)),
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .pl(cx.rem_size() + px(6.0))
+                                            .pr(px(8.0))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(
+                                                Label::new(message.sender.github_login.clone())
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    )
+                                    .child(
+                                        Label::new(time_format::format_localized_timestamp(
+                                            message.timestamp,
+                                            OffsetDateTime::now_utc(),
+                                            self.local_timezone,
+                                            time_format::TimestampFormat::EnhancedAbsolute,
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    ),
+                            )
+                        },
+                    )
                     .when(mentioning_you || replied_to_you, |this| this.my_0p5())
                     .map(|el| {
                         let text = self.markdown_data.entry(message.id).or_insert_with(|| {
@@ -546,37 +529,11 @@ impl ChatPanel {
                                 .w_full()
                                 .text_ui_sm()
                                 .id(element_id)
-                                .group("")
-                                .child(text.element("body".into(), cx))
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .z_index(1)
-                                        .right_0()
-                                        .w_6()
-                                        .bg(background)
-                                        .when(!self.has_open_menu(message_id), |el| {
-                                            el.visible_on_hover("")
-                                        })
-                                        .when_some(message_id, |el, message_id| {
-                                            el.child(
-                                                popover_menu(("menu", message_id))
-                                                    .trigger(IconButton::new(
-                                                        ("trigger", message_id),
-                                                        IconName::Ellipsis,
-                                                    ))
-                                                    .menu(move |cx| {
-                                                        Some(Self::render_message_menu(
-                                                            &this,
-                                                            message_id,
-                                                            can_delete_message,
-                                                            cx,
-                                                        ))
-                                                    }),
-                                            )
-                                        }),
-                                ),
+                                .child(text.element("body".into(), cx)),
                         )
+                        .when(self.has_open_menu(message_id), |el| {
+                            el.bg(cx.theme().colors().element_selected)
+                        })
                     }),
             )
             .when(
@@ -601,6 +558,10 @@ impl ChatPanel {
                     )
                 },
             )
+            .child(
+                self.render_popover_buttons(&cx, message_id, can_delete_message)
+                    .neg_mt_2p5(),
+            )
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -608,6 +569,96 @@ impl ChatPanel {
             Some((id, _)) => Some(*id) == message_id,
             None => false,
         }
+    }
+
+    fn render_popover_buttons(
+        &self,
+        cx: &ViewContext<Self>,
+        message_id: Option<u64>,
+        can_delete_message: bool,
+    ) -> Div {
+        div()
+            .absolute()
+            .child(
+                div()
+                    .absolute()
+                    .right_8()
+                    .w_6()
+                    .rounded_tl_md()
+                    .rounded_bl_md()
+                    .border_l_1()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().element_selected)
+                    .bg(cx.theme().colors().element_background)
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .when(!self.has_open_menu(message_id), |el| {
+                        el.visible_on_hover("")
+                    })
+                    .when_some(message_id, |el, message_id| {
+                        el.child(
+                            div()
+                                .id("reply")
+                                .child(
+                                    IconButton::new(
+                                        ("reply", message_id),
+                                        IconName::ReplyArrowLeft,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, cx| {
+                                            this.selected_message_to_reply_id = Some(message_id);
+                                            this.message_editor.update(cx, |editor, cx| {
+                                                editor.set_reply_to_message_id(message_id);
+                                                editor.focus_handle(cx).focus(cx);
+                                            })
+                                        },
+                                    )),
+                                )
+                                .tooltip(|cx| Tooltip::text("Reply", cx)),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .right_2()
+                    .w_6()
+                    .rounded_tr_md()
+                    .rounded_br_md()
+                    .border_r_1()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().element_selected)
+                    .bg(cx.theme().colors().element_background)
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .when(!self.has_open_menu(message_id), |el| {
+                        el.visible_on_hover("")
+                    })
+                    .when_some(message_id, |el, message_id| {
+                        let this = cx.view().clone();
+
+                        el.child(
+                            div()
+                                .id("more")
+                                .child(
+                                    popover_menu(("menu", message_id))
+                                        .trigger(IconButton::new(
+                                            ("trigger", message_id),
+                                            IconName::Ellipsis,
+                                        ))
+                                        .menu(move |cx| {
+                                            Some(Self::render_message_menu(
+                                                &this,
+                                                message_id,
+                                                can_delete_message,
+                                                cx,
+                                            ))
+                                        }),
+                                )
+                                .tooltip(|cx| Tooltip::text("More", cx)),
+                        )
+                    }),
+            )
     }
 
     fn render_message_menu(
@@ -622,6 +673,8 @@ impl ChatPanel {
                     "Reply to message",
                     None,
                     cx.handler_for(&this, move |this, cx| {
+                        this.selected_message_to_reply_id = Some(message_id);
+
                         this.message_editor.update(cx, |editor, cx| {
                             editor.set_reply_to_message_id(message_id);
                             editor.focus_handle(cx).focus(cx);
@@ -632,14 +685,12 @@ impl ChatPanel {
                     "Copy message text",
                     None,
                     cx.handler_for(&this, move |this, cx| {
-                        this.active_chat().map(|active_chat| {
-                            if let Some(message) =
-                                active_chat.read(cx).find_loaded_message(message_id)
-                            {
-                                let text = message.body.clone();
-                                cx.write_to_clipboard(ClipboardItem::new(text))
-                            }
-                        });
+                        if let Some(message) = this.active_chat().and_then(|active_chat| {
+                            active_chat.read(cx).find_loaded_message(message_id)
+                        }) {
+                            let text = message.body.clone();
+                            cx.write_to_clipboard(ClipboardItem::new(text))
+                        }
                     }),
                 )
                 .when(can_delete_message, move |menu| {
@@ -678,6 +729,8 @@ impl ChatPanel {
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        self.selected_message_to_reply_id = None;
+
         if let Some((chat, _)) = self.active_chat.as_ref() {
             let message = self
                 .message_editor
@@ -773,6 +826,7 @@ impl ChatPanel {
     }
 
     fn close_reply_preview(&mut self, _: &CloseReplyPreview, cx: &mut ViewContext<Self>) {
+        self.selected_message_to_reply_id = None;
         self.message_editor
             .update(cx, |editor, _| editor.clear_reply_to_message_id());
     }
@@ -788,7 +842,7 @@ impl Render for ChatPanel {
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_flex().z_index(1).child(
+                h_flex().child(
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()
@@ -839,19 +893,16 @@ impl Render for ChatPanel {
             .when_some(reply_to_message_id, |el, reply_to_message_id| {
                 let reply_message = self
                     .active_chat()
-                    .map(|active_chat| {
-                        active_chat.read(cx).messages().iter().find_map(|m| {
-                            if m.id == ChannelMessageId::Saved(reply_to_message_id) {
-                                Some(m)
-                            } else {
-                                None
-                            }
+                    .and_then(|active_chat| {
+                        active_chat.read(cx).messages().iter().find(|message| {
+                            message.id == ChannelMessageId::Saved(reply_to_message_id)
                         })
                     })
-                    .flatten()
                     .cloned();
 
                 el.when_some(reply_message, |el, reply_message| {
+                    let user_being_replied_to = reply_message.sender.clone();
+
                     el.child(
                         h_flex()
                             .when(!self.is_scrolled_to_bottom, |el| {
@@ -865,20 +916,28 @@ impl Render for ChatPanel {
                             .bg(cx.theme().colors().background)
                             .child(
                                 div().flex_shrink().overflow_hidden().child(
-                                    self.render_replied_to_message(None, &reply_message, cx),
+                                    h_flex()
+                                        .child(Label::new("Replying to ").size(LabelSize::Small))
+                                        .child(
+                                            div().font_weight(FontWeight::BOLD).child(
+                                                Label::new(format!(
+                                                    "@{}",
+                                                    user_being_replied_to.github_login.clone()
+                                                ))
+                                                .size(LabelSize::Small),
+                                            ),
+                                        ),
                                 ),
                             )
                             .child(
                                 IconButton::new("close-reply-preview", IconName::Close)
                                     .shape(ui::IconButtonShape::Square)
                                     .tooltip(|cx| {
-                                        Tooltip::for_action(
-                                            "Close reply preview",
-                                            &CloseReplyPreview,
-                                            cx,
-                                        )
+                                        Tooltip::for_action("Close reply", &CloseReplyPreview, cx)
                                     })
-                                    .on_click(cx.listener(move |_, _, cx| {
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.selected_message_to_reply_id = None;
+
                                         cx.dispatch_action(CloseReplyPreview.boxed_clone())
                                     })),
                             ),
@@ -982,8 +1041,8 @@ mod tests {
     use util::test::marked_text_ranges;
 
     #[gpui::test]
-    fn test_render_markdown_with_mentions() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_mentions(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
@@ -1030,8 +1089,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_auto_detect_links(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body: "Here is a link https://zed.dev to zeds website".to_string(),
@@ -1070,8 +1129,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links_and_additional_formatting() {
-        let language_registry = Arc::new(LanguageRegistry::test());
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting(cx: &mut AppContext) {
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body: "**Here is a link https://zed.dev to zeds website**".to_string(),

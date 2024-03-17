@@ -6,7 +6,7 @@ use crate::{
     DisplayPoint, Editor, EditorMode, MultiBuffer,
 };
 
-use gpui::{Context, Model, Pixels, ViewContext};
+use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext};
 
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
@@ -26,7 +26,12 @@ pub fn marked_display_snapshot(
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
     let (unmarked_text, markers) = marked_text_offsets(text);
 
-    let font = cx.text_style().font();
+    let font = Font {
+        family: "Courier".into(),
+        features: FontFeatures::default(),
+        weight: FontWeight::default(),
+        style: FontStyle::default(),
+    };
     let font_size: Pixels = 14usize.into();
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);

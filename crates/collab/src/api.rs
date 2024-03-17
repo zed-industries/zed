@@ -11,7 +11,7 @@ use crate::{
 use anyhow::anyhow;
 use axum::{
     body::Body,
-    extract::{Path, Query},
+    extract::{self, Path, Query},
     http::{self, Request, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
@@ -26,7 +26,7 @@ use tower::ServiceBuilder;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
 
-pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: Option<Arc<rpc::Server>>, state: Arc<AppState>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -89,12 +89,15 @@ async fn get_authenticated_user(
     Query(params): Query<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<AuthenticatedUserResponse>> {
+    let initial_channel_id = app.config.auto_join_channel_id;
+
     let user = app
         .db
         .get_or_create_user_by_github_account(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            initial_channel_id,
         )
         .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
@@ -176,17 +179,18 @@ async fn check_is_contributor(
 }
 
 async fn add_contributor(
-    Json(params): Json<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
+    extract::Json(params): extract::Json<AuthenticatedUserParams>,
 ) -> Result<()> {
-    Ok(app
-        .db
+    let initial_channel_id = app.config.auto_join_channel_id;
+    app.db
         .add_contributor(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            initial_channel_id,
         )
-        .await?)
+        .await
 }
 
 #[derive(Deserialize)]
