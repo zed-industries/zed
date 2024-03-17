@@ -29,7 +29,7 @@ pub fn windows_caption_button_width(cx: &WindowContext) -> Pixels {
 
 /// Windows title bar top offset emulation used for testing
 #[cfg(not(target_os = "windows"))]
-pub fn windows_title_bar_top_offset(cx: &WindowContext) -> Pixels {
+pub fn windows_title_bar_top_offset(_cx: &WindowContext) -> Pixels {
     crate::px(0.)
 }
 
