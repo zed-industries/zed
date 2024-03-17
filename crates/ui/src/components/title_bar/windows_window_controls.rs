@@ -1,4 +1,4 @@
-use gpui::{prelude::*, Rgba, WindowAppearance};
+use gpui::{prelude::*, windows_caption_button_width, Rgba, WindowAppearance};
 
 use crate::prelude::*;
 
@@ -97,10 +97,8 @@ impl WindowsCaptionButton {
 }
 
 impl RenderOnce for WindowsCaptionButton {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        // todo(windows): get padding from win32 api, need HWND from window context somehow
-        // should be GetSystemMetricsForDpi(SM_CXSIZE, dpi)
-        let width = px(36.0);
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let width = windows_caption_button_width(cx);
 
         h_flex()
             .id(self.id)
