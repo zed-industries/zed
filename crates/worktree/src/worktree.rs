@@ -4267,7 +4267,7 @@ impl BackgroundScanner {
                         if let Some(mtime) = &entry.mtime {
                             let repo_path = RepoPath(entry.path.to_path_buf());
                             let repo = repo.repo_ptr.lock();
-                            entry.git_status = repo.status(&repo_path, mtime.clone());
+                            entry.git_status = repo.status(&repo_path, *mtime);
                         }
                     }
                 }
