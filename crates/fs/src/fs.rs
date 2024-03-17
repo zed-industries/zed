@@ -115,7 +115,13 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
-pub struct RealFs;
+#[derive(Default)]
+pub struct RealFs {
+    #[cfg(target_os = "windows")]
+    pipe: AtomicIsize,
+    #[cfg(target_os = "windows")]
+    event: AtomicIsize,
+}
 
 #[cfg(target_os = "windows")]
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,8 +130,67 @@ struct SymlinkData {
     path: PathBuf,
 }
 
-#[cfg(target_os = "windows")]
-static PIPE_HANDLE: AtomicIsize = AtomicIsize::new(0);
+impl RealFs {
+    /// Creating symbolic links on Windows requires elevation, and a running program
+    /// cannot elevate permissions; elevation can only occur at startup of a process.
+    ///
+    /// Therefore, here we use `ShellExecuteExW` to create a child process. This child
+    /// process elevates permissions during startup, prompting the user with a UAC popup
+    /// for authorization.
+    ///
+    /// Once the child process has the necessary permissions, it creates the symbolic link
+    /// and then waits for events.
+    #[cfg(target_os = "windows")]
+    pub async fn create_symlink(&self, target: PathBuf, path: &Path) -> Result<()> {
+        use std::sync::atomic::Ordering;
+
+        use windows::Win32::{
+            Foundation::{HANDLE, WAIT_FAILED, WAIT_TIMEOUT},
+            Storage::FileSystem::WriteFile,
+            System::Threading::WaitForSingleObject,
+        };
+
+        if self.pipe.load(Ordering::SeqCst) == 0 {
+            let (pipe, event) = init_pipe_and_event().await?;
+            self.pipe.store(pipe, Ordering::SeqCst);
+            self.event.store(event, Ordering::SeqCst);
+        }
+        let pipe_handle = HANDLE(self.pipe.load(Ordering::SeqCst));
+        let event = HANDLE(self.event.load(Ordering::SeqCst));
+        let (target_full_path, path_full_path) = generate_full_path(target, path).await?;
+
+        smol::unblock(move || {
+            let symlink = SymlinkData {
+                target: target_full_path,
+                path: path_full_path,
+            };
+            let raw_data = serde_json::to_vec(&symlink).unwrap();
+            let mut bytes_read = 0u32;
+            unsafe {
+                WriteFile(
+                    pipe_handle,
+                    Some(&raw_data),
+                    Some(&mut bytes_read as _),
+                    None,
+                )
+            }
+            .inspect_err(|_| log::error!("error call pipe: {}", std::io::Error::last_os_error()))?;
+            if bytes_read != raw_data.len() as u32 {
+                log::error!("not all bytes sent: {}/{}", bytes_read, raw_data.len());
+                return Err(anyhow!("unable to sent bytes, pipe full?"));
+            }
+            match unsafe { WaitForSingleObject(event, 1000) } {
+                WAIT_TIMEOUT => Err(anyhow!("wait timeout, child process terminated?")),
+                WAIT_FAILED => {
+                    log::error!("wait error: {}", std::io::Error::last_os_error());
+                    Err(anyhow!("wait timeout, child process terminated?"))
+                }
+                _ => Ok(()),
+            }
+        })
+        .await
+    }
+}
 
 impl Drop for RealFs {
     fn drop(&mut self) {
@@ -133,13 +198,21 @@ impl Drop for RealFs {
         {
             use std::sync::atomic::Ordering;
 
-            use windows::Win32::{Foundation::HANDLE, System::Pipes::DisconnectNamedPipe};
+            use windows::Win32::{
+                Foundation::{CloseHandle, HANDLE},
+                System::Pipes::DisconnectNamedPipe,
+            };
 
-            let pipe_handle = PIPE_HANDLE.load(Ordering::SeqCst);
-            PIPE_HANDLE.store(0, Ordering::SeqCst);
+            let pipe_handle = self.pipe.load(Ordering::SeqCst);
             unsafe {
                 if DisconnectNamedPipe(HANDLE(pipe_handle)).is_err() {
                     log::error!("Disconnect pipe error: {}", std::io::Error::last_os_error());
+                }
+            }
+            let event = self.event.load(Ordering::SeqCst);
+            unsafe {
+                if CloseHandle(HANDLE(event)).is_err() {
+                    log::error!("Close event error: {}", std::io::Error::last_os_error());
                 }
             }
         }
@@ -157,7 +230,7 @@ impl Fs for RealFs {
         smol::fs::unix::symlink(target, path).await?;
 
         #[cfg(target_family = "windows")]
-        windows_create_symlink(target, path).await?;
+        self.create_symlink(target, path).await?;
 
         Ok(())
     }
@@ -1553,48 +1626,6 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 }
 
 #[cfg(target_os = "windows")]
-pub async fn windows_create_symlink(target: PathBuf, path: &Path) -> Result<()> {
-    use std::sync::atomic::Ordering;
-
-    use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::WriteFile};
-
-    load_pipe().await?;
-    let (target_full_path, path_full_path) = generate_full_path(target, path).await?;
-    smol::unblock(move || {
-        let symlink = SymlinkData {
-            target: target_full_path,
-            path: path_full_path,
-        };
-        let raw_data = serde_json::to_vec(&symlink).unwrap();
-        let mut bytes_read = 0u32;
-        println!("Sent: {} bytes", raw_data.len());
-        unsafe {
-            WriteFile(
-                HANDLE(PIPE_HANDLE.load(Ordering::SeqCst)),
-                Some(&raw_data),
-                Some(&mut bytes_read as _),
-                None,
-            )
-        }
-        .inspect_err(|_| log::error!("error call pipe: {}", std::io::Error::last_os_error()))?;
-        if bytes_read != raw_data.len() as u32 {
-            log::error!("not all bytes read: {}/{}", bytes_read, raw_data.len());
-        }
-        Ok(())
-    })
-    .await
-}
-
-// Creating symbolic links on Windows requires elevation, and a running program
-// cannot elevate permissions; elevation can only occur at startup of a process.
-//
-// Therefore, here we use `ShellExecuteExW` to create a child process. This child
-// process elevates permissions during startup, prompting the user with a UAC popup
-// for authorization.
-//
-// Once the child process has the necessary permissions, it creates the symbolic link
-// and then exits.
-#[cfg(target_os = "windows")]
 async fn generate_full_path(target: PathBuf, path: &Path) -> Result<(PathBuf, PathBuf)> {
     let target_full_path = smol::fs::canonicalize(target).await?;
     let path_full_path;
@@ -1621,14 +1652,17 @@ async fn generate_full_path(target: PathBuf, path: &Path) -> Result<(PathBuf, Pa
 }
 
 #[cfg(target_os = "windows")]
-async fn load_pipe() -> Result<()> {
+async fn init_pipe_and_event() -> Result<(isize, isize)> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows::{
         core::PCWSTR,
         Win32::{
             Storage::FileSystem::PIPE_ACCESS_DUPLEX,
-            System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_MESSAGE},
+            System::{
+                Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_MESSAGE},
+                Threading::CreateEventW,
+            },
             UI::{
                 Shell::{ShellExecuteExW, SHELLEXECUTEINFOW},
                 WindowsAndMessaging::SW_SHOWNORMAL,
@@ -1637,57 +1671,56 @@ async fn load_pipe() -> Result<()> {
     };
 
     const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
+    const EVNET_NAME: PCWSTR = windows::core::w!("zed-global-symlink-finish");
     const MAX_INSTANCES: u32 = 4;
     const BUFFER_SIZE: u32 = 512;
 
-    if PIPE_HANDLE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-        smol::unblock(|| {
-            let handle = unsafe {
-                CreateNamedPipeW(
-                    PIPE_NAME,
-                    PIPE_ACCESS_DUPLEX,
-                    PIPE_TYPE_MESSAGE,
-                    MAX_INSTANCES,
-                    BUFFER_SIZE,
-                    BUFFER_SIZE,
-                    0,
-                    None,
-                )
-            };
-            if handle.is_invalid() {
-                log::error!("error create pipes: {}", std::io::Error::last_os_error());
-                return Err(anyhow!("unable to create pipes"));
-            }
+    smol::unblock(|| {
+        let handle = unsafe {
+            CreateNamedPipeW(
+                PIPE_NAME,
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_MESSAGE,
+                MAX_INSTANCES,
+                BUFFER_SIZE,
+                BUFFER_SIZE,
+                0,
+                None,
+            )
+        };
+        if handle.is_invalid() {
+            log::error!("error create pipes: {}", std::io::Error::last_os_error());
+            return Err(anyhow!("unable to create pipes"));
+        }
+        let event = unsafe { CreateEventW(None, false, false, EVNET_NAME) }.inspect_err(|_| {
+            log::error!("error create event: {}", std::io::Error::last_os_error())
+        })?;
 
-            let exe_path = get_exe_path()?;
-            let exe_str: Vec<u16> = exe_path.as_os_str().encode_wide().chain(Some(0)).collect();
-            let mut info = SHELLEXECUTEINFOW::default();
-            info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-            info.lpVerb = windows::core::w!("runas");
-            info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
-            // info.nShow = SW_HIDE.0;
-            info.nShow = SW_SHOWNORMAL.0;
-            unsafe { ShellExecuteExW(&mut info) }.inspect_err(|_| {
+        let exe_path = get_exe_path()?;
+        let exe_str: Vec<u16> = exe_path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut info = SHELLEXECUTEINFOW::default();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.lpVerb = windows::core::w!("runas");
+        info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
+        // info.nShow = SW_HIDE.0;
+        info.nShow = SW_SHOWNORMAL.0;
+        unsafe { ShellExecuteExW(&mut info) }.inspect_err(|_| {
+            log::error!(
+                "unable to launch child process: {}",
+                std::io::Error::last_os_error()
+            );
+        })?;
+        unsafe {
+            ConnectNamedPipe(handle, None).inspect_err(|_| {
                 log::error!(
-                    "unable to launch child process: {}",
+                    "unable to connect named pipe: {}",
                     std::io::Error::last_os_error()
                 );
             })?;
-            PIPE_HANDLE.store(handle.0, std::sync::atomic::Ordering::SeqCst);
-            unsafe {
-                ConnectNamedPipe(handle, None).inspect_err(|_| {
-                    log::error!(
-                        "unable to connect named pipe: {}",
-                        std::io::Error::last_os_error()
-                    );
-                })?;
-            }
-            Ok(())
-        })
-        .await
-    } else {
-        Ok(())
-    }
+        }
+        Ok((handle.0, event.0))
+    })
+    .await
 }
 
 #[cfg(target_os = "windows")]

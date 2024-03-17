@@ -13,6 +13,7 @@ use windows::{
         Storage::FileSystem::{
             CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
         },
+        System::Threading::{OpenEventW, SetEvent},
     },
 };
 
@@ -23,6 +24,7 @@ struct SymlinkData {
 }
 
 const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
+const EVNET_NAME: PCWSTR = windows::core::w!("zed-global-symlink-finish");
 
 fn main() {
     let Ok(pipe_handle) = (unsafe {
@@ -39,11 +41,15 @@ fn main() {
         println!("error call pipe: {}", std::io::Error::last_os_error());
         return;
     };
+    let Ok(event) = (unsafe { OpenEventW(EVENT_MODIFY_STATE, false, EVNET_NAME) }) else {
+        println!("unable to open event: {}", std::io::Error::last_os_error());
+        return;
+    };
 
     let mut target_buffer;
     let mut bytes_read;
     loop {
-        target_buffer = vec![0u8; 512];
+        target_buffer = vec![0u8; 1024];
         bytes_read = 0u32;
         let Ok(_) = (unsafe {
             ReadFile(
@@ -59,9 +65,9 @@ fn main() {
         println!("{} bytes read", bytes_read);
         let Ok(symlink) =
             serde_json::from_slice::<'_, SymlinkData>(&target_buffer[..(bytes_read as usize)])
-                .inspect_err(|e| println!("Deserd err: {:?}", e))
+                .inspect_err(|e| println!("unable to parse data: {:?}", e))
         else {
-            continue;
+            break;
         };
 
         if symlink.target.is_file() {
@@ -72,6 +78,11 @@ fn main() {
             if let Err(e) = symlink_dir(symlink.target, symlink.path) {
                 println!("error create symlink dir: {:?}", e);
             }
+        }
+        unsafe {
+            SetEvent(event).inspect_err(|_| {
+                log::error!("error setting event: {}", std::io::Error::last_os_error())
+            });
         }
     }
 }
