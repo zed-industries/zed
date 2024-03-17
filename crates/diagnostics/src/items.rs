@@ -75,7 +75,7 @@ impl Render for DiagnosticIndicator {
                                 "arrow-circle",
                                 Animation::new(Duration::from_secs(2)).repeat(),
                                 |icon, delta| {
-                                    icon.transformation(Transformation::rotate(delta * 2.0 * PI))
+                                    icon.transform(Transformation::rotate(delta * 2.0 * PI))
                                 },
                             ),
                     )

@@ -11,7 +11,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = ["macos-blade"]
+default = []
 test-support = [
     "backtrace",
     "collections/test-support",

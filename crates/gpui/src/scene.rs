@@ -508,7 +508,8 @@ impl From<Shadow> for Primitive {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct TransformationMatrix {
-    /// 2x2 matrix containing rotation and scale
+    /// 2x2 matrix containing rotation and scale,
+    /// stored row-major
     pub rotation_scale: [[f32; 2]; 2],
     /// translation vector
     pub translation: [f32; 2],

@@ -251,7 +251,7 @@ impl Icon {
         self
     }
 
-    pub fn transformation(mut self, transformation: Transformation) -> Self {
+    pub fn transform(mut self, transformation: Transformation) -> Self {
         self.transformation = transformation;
         self
     }
