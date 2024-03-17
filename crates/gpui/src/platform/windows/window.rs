@@ -844,7 +844,7 @@ impl WindowsWindowInner {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         unsafe {
-            SetWindowPos(
+            let _ = SetWindowPos(
                 self.hwnd,
                 None,
                 rect.left,
@@ -858,8 +858,9 @@ impl WindowsWindowInner {
                     "unable to set window position after dpi has changed: {}",
                     std::io::Error::last_os_error()
                 )
-            })
-        };
+            });
+        }
+        self.invalidate_client_area();
         LRESULT(0)
     }
 
