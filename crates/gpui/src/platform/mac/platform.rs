@@ -548,6 +548,11 @@ impl Platform for MacPlatform {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             let scheme: id = ns_string(scheme);
             let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+            if app == nil {
+                return Task::ready(Err(anyhow!(
+                    "Cannot register URL scheme until app is installed"
+                )));
+            }
             let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |error: id| {
                 let result = if error == nil {
