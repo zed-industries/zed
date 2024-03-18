@@ -939,13 +939,17 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -973,7 +977,9 @@ impl Language {
     }
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1004,7 +1010,9 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
@@ -1026,7 +1034,9 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
@@ -1054,7 +1064,9 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut content_capture_ix = None;
@@ -1094,7 +1106,13 @@ impl Language {
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = Query::new(&self.grammar_mut().ts_language, source)?;
+        let query = {
+            let grammar = self
+                .grammar
+                .as_ref()
+                .ok_or_else(|| anyhow!("no grammar for language"))?;
+            Query::new(&grammar.ts_language, source)?
+        };
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
@@ -1158,7 +1176,11 @@ impl Language {
         }
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
-        self.grammar_mut().override_config = Some(OverrideConfig {
+
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
         });
@@ -1166,7 +1188,10 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+
         let query = Query::new(&grammar.ts_language, source)?;
         let mut redaction_capture_ix = None;
         get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
@@ -1181,8 +1206,8 @@ impl Language {
         Ok(self)
     }
 
-    fn grammar_mut(&mut self) -> &mut Grammar {
-        Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
+    fn grammar_mut(&mut self) -> Option<&mut Grammar> {
+        Arc::get_mut(self.grammar.as_mut()?)
     }
 
     pub fn name(&self) -> Arc<str> {

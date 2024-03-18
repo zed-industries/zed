@@ -431,15 +431,16 @@ impl LanguageRegistry {
                                 let language = async {
                                     let (config, queries) = (language.load)()?;
 
-                                    let grammar = if let Some(grammar) = config.grammar.clone() {
-                                        Some(this.get_or_load_grammar(grammar).await?)
+                                    if let Some(grammar) = config.grammar.clone() {
+                                        let grammar =
+                                            Some(this.get_or_load_grammar(grammar).await?);
+                                        Language::new_with_id(id, config, grammar)
+                                            .with_context_provider(provider)
+                                            .with_queries(queries)
                                     } else {
-                                        None
-                                    };
-
-                                    Language::new_with_id(id, config, grammar)
-                                        .with_context_provider(provider)
-                                        .with_queries(queries)
+                                        Ok(Language::new_with_id(id, config, None)
+                                            .with_context_provider(provider))
+                                    }
                                 }
                                 .await;
 
