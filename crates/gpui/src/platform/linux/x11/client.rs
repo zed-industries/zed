@@ -23,7 +23,7 @@ use crate::{
     ScrollDelta, Size, TouchPhase, WindowParams,
 };
 
-use super::{X11Display, X11Window, X11WindowState, XcbAtoms};
+use super::{super::SCROLL_LINES, X11Display, X11Window, X11WindowState, XcbAtoms};
 use calloop::{
     generic::{FdWrapper, Generic},
     RegistrationToken,
@@ -221,12 +221,13 @@ impl X11Client {
                     }));
                 } else if event.detail >= 4 && event.detail <= 5 {
                     // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
-                    let delta_x = if event.detail == 4 { 1.0 } else { -1.0 };
+                    let scroll_direction = if event.detail == 4 { 1.0 } else { -1.0 };
+                    let scroll_y = SCROLL_LINES * scroll_direction;
                     window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
                         position,
-                        delta: ScrollDelta::Lines(Point::new(0.0, delta_x)),
+                        delta: ScrollDelta::Lines(Point::new(0.0, scroll_y as f32)),
                         modifiers,
-                        touch_phase: TouchPhase::default(),
+                        touch_phase: TouchPhase::Moved,
                     }));
                 } else {
                     log::warn!("Unknown button press: {event:?}");
