@@ -397,8 +397,9 @@ mod tests {
         AssistantSettings::register(cx);
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
-            AssistantProvider::ZedDotDev {
-                default_model: ZedDotDevModel::GptFourTurbo
+            AssistantProvider::OpenAi {
+                default_model: OpenAiModel::FourTurbo,
+                api_url: open_ai_url()
             }
         );
 
