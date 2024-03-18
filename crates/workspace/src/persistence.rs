@@ -753,7 +753,7 @@ mod tests {
         .unwrap();
 
         let mut workspace_1 = SerializedWorkspace {
-            id: 1,
+            id: WorkspaceId(1),
             location: (["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -763,7 +763,7 @@ mod tests {
         };
 
         let workspace_2 = SerializedWorkspace {
-            id: 2,
+            id: WorkspaceId(2),
             location: (["/tmp"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -862,7 +862,7 @@ mod tests {
         );
 
         let workspace = SerializedWorkspace {
-            id: 5,
+            id: WorkspaceId(5),
             location: (["/tmp", "/tmp2"]).into(),
             center_group,
             bounds: Default::default(),
@@ -891,7 +891,7 @@ mod tests {
         let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
 
         let workspace_1 = SerializedWorkspace {
-            id: 1,
+            id: WorkspaceId(1),
             location: (["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -901,7 +901,7 @@ mod tests {
         };
 
         let mut workspace_2 = SerializedWorkspace {
-            id: 2,
+            id: WorkspaceId(2),
             location: (["/tmp"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -938,7 +938,7 @@ mod tests {
 
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
-            id: 3,
+            id: WorkspaceId(3),
             location: (&["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -972,7 +972,7 @@ mod tests {
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
-            id: 4,
+            id: WorkspaceId(4),
             location: workspace_id.into(),
             center_group: center_group.clone(),
             bounds: Default::default(),
