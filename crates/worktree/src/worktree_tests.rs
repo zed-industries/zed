@@ -858,14 +858,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         &Path::new("/root/tree/.git"),
-        &[
-            (Path::new("tracked-dir/tracked-file2"), GitFileStatus::Added),
-            (
-                Path::new("tracked-dir/ancestor-ignored-file2"),
-                GitFileStatus::Added,
-            ),
-            (Path::new("ignored-dir/ignored-file2"), GitFileStatus::Added),
-        ],
+        &[(Path::new("tracked-dir/tracked-file2"), GitFileStatus::Added)],
     );
 
     fs.create_file(
