@@ -7,6 +7,8 @@ use settings::Settings;
 use std::{str, sync::Arc};
 use util::asset_str;
 
+use crate::rust::RustContextProvider;
+
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod astro;
@@ -150,7 +152,7 @@ pub fn init(
             let config = load_config($name);
             // typeck helper
             let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
-            for adapter in $adapters {
+            for adapter in adapters {
                 languages.register_lsp_adapter(config.name.clone(), adapter);
             }
             languages.register_language(
@@ -240,7 +242,11 @@ pub fn init(
             node_runtime.clone(),
         ))]
     );
-    language!("rust", vec![Arc::new(rust::RustLspAdapter)]);
+    language!(
+        "rust",
+        vec![Arc::new(rust::RustLspAdapter)],
+        RustContextProvider
+    );
     language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
