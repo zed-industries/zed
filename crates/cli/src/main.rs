@@ -13,7 +13,7 @@ use std::{
 use util::paths::PathLikeWithPosition;
 
 #[derive(Parser, Debug)]
-#[command(name = "zed")]
+#[command(name = "zed", disable_version_flag = true)]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
     #[arg(short, long)]
