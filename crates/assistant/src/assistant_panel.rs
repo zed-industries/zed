@@ -1086,9 +1086,10 @@ impl AssistantPanel {
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         match CompletionProvider::global(cx) {
-            CompletionProvider::OpenAi(_) => v_flex().gap_6().p_4().child(Label::new(
-                "Please assign an OPENAI_API_KEY environment variable, then restart Zed.",
-            )),
+            CompletionProvider::OpenAi(_) => v_flex().gap_6().p_4().child(Label::new(concat!(
+                "To use the assistant with OpenAI, please assign an OPENAI_API_KEY ",
+                "environment variable, then restart Zed.",
+            ))),
             CompletionProvider::ZedDotDev(_) => {
                 const LABEL: &str = "Generate and analyze code with language models. You can dialog with the assistant in this panel or transform code inline.";
 
