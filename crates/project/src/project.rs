@@ -7796,10 +7796,13 @@ impl Project {
                     }
 
                     let buffer_id = BufferId::new(state.id)?;
-                    let buffer = cx.new_model(|_| {
-                        Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
-                            .unwrap()
-                    });
+                    let buffer = Buffer::from_proto(
+                        this.replica_id(),
+                        this.capability(),
+                        state,
+                        buffer_file,
+                    )?;
+                    let buffer = cx.new_model(|_| buffer);
                     this.incomplete_remote_buffers
                         .insert(buffer_id, Some(buffer));
                 }
