@@ -51,6 +51,10 @@ use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -237,8 +241,22 @@ pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
 
-pub type WorkspaceId = i64;
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkspaceId(i64);
 
+impl StaticColumnCount for WorkspaceId {}
+impl Bind for WorkspaceId {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.0.bind(statement, start_index)
+    }
+}
+impl Column for WorkspaceId {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        i64::column(statement, start_index)
+            .map(|(i, next_index)| (Self(i), next_index))
+            .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
+    }
+}
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
@@ -867,7 +885,7 @@ impl Workspace {
             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
                 serialized_workspace.id
             } else {
-                DB.next_id().await.unwrap_or(0)
+                DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
             let window = if let Some(window) = requesting_window {
@@ -3682,7 +3700,7 @@ impl Workspace {
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
-        let workspace = Self::new(0, project, app_state, cx);
+        let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
         workspace
     }
@@ -4643,7 +4661,9 @@ pub fn join_hosted_project(
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
-                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
                 })
             })?
         };
@@ -4702,7 +4722,9 @@ pub fn join_in_room_project(
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
-                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
                 })
             })?
         };
