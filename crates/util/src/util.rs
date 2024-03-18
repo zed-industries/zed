@@ -10,7 +10,7 @@ pub mod test;
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
-pub use semantic_version::SemanticVersion;
+pub use semantic_version::*;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},

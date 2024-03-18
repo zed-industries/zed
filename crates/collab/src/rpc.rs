@@ -909,7 +909,7 @@ pub async fn handle_websocket_request(
             .into_response();
     };
 
-    if !version.is_supported() {
+    if !version.can_collaborate() {
         return (
             StatusCode::UPGRADE_REQUIRED,
             "client must be upgraded".to_string(),
@@ -1346,19 +1346,6 @@ async fn set_room_participant_role(
 ) -> Result<()> {
     let user_id = UserId::from_proto(request.user_id);
     let role = ChannelRole::from(request.role());
-
-    if role == ChannelRole::Talker {
-        let pool = session.connection_pool().await;
-
-        for connection in pool.user_connections(user_id) {
-            if !connection.zed_version.supports_talker_role() {
-                Err(anyhow!(
-                    "This user is on zed {} which does not support unmute",
-                    connection.zed_version
-                ))?;
-            }
-        }
-    }
 
     let (live_kit_room, can_publish) = {
         let room = session
