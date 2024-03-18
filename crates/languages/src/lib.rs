@@ -150,7 +150,8 @@ pub fn init(
         ($name:literal, $adapters:expr, $context_provider:expr) => {
             let config = load_config($name);
             // typeck helper
-            for adapter in $adapters {
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in adapters {
                 languages.register_lsp_adapter(config.name.clone(), adapter);
             }
             languages.register_language(
