@@ -45,11 +45,7 @@ impl Database {
         name: &str,
         parent_channel_id: Option<ChannelId>,
         admin_id: UserId,
-    ) -> Result<(
-        Channel,
-        Option<channel_member::Model>,
-        Vec<channel_member::Model>,
-    )> {
+    ) -> Result<(channel::Model, Option<channel_member::Model>)> {
         let name = Self::sanitize_channel_name(name)?;
         self.transaction(move |tx| async move {
             let mut parent = None;
@@ -90,12 +86,7 @@ impl Database {
                 );
             }
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .all(&*tx)
-                .await?;
-
-            Ok((Channel::from_model(channel), membership, channel_members))
+            Ok((channel, membership))
         })
         .await
     }
@@ -181,7 +172,7 @@ impl Database {
         channel_id: ChannelId,
         visibility: ChannelVisibility,
         admin_id: UserId,
-    ) -> Result<(Channel, Vec<channel_member::Model>)> {
+    ) -> Result<channel::Model> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_admin(&channel, admin_id, &tx)
@@ -214,12 +205,7 @@ impl Database {
             model.visibility = ActiveValue::Set(visibility);
             let channel = model.update(&*tx).await?;
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .all(&*tx)
-                .await?;
-
-            Ok((Channel::from_model(channel), channel_members))
+            Ok(channel)
         })
         .await
     }
@@ -245,19 +231,10 @@ impl Database {
         &self,
         channel_id: ChannelId,
         user_id: UserId,
-    ) -> Result<(Vec<ChannelId>, Vec<UserId>)> {
+    ) -> Result<(ChannelId, Vec<ChannelId>)> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_admin(&channel, user_id, &tx)
-                .await?;
-
-            let members_to_notify: Vec<UserId> = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .select_only()
-                .column(channel_member::Column::UserId)
-                .distinct()
-                .into_values::<_, QueryUserIds>()
-                .all(&*tx)
                 .await?;
 
             let channels_to_remove = self
@@ -273,7 +250,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            Ok((channels_to_remove, members_to_notify))
+            Ok((channel.root_id(), channels_to_remove))
         })
         .await
     }
@@ -343,7 +320,7 @@ impl Database {
         channel_id: ChannelId,
         admin_id: UserId,
         new_name: &str,
-    ) -> Result<(Channel, Vec<channel_member::Model>)> {
+    ) -> Result<channel::Model> {
         self.transaction(move |tx| async move {
             let new_name = Self::sanitize_channel_name(new_name)?.to_string();
 
@@ -355,12 +332,7 @@ impl Database {
             model.name = ActiveValue::Set(new_name.clone());
             let channel = model.update(&*tx).await?;
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .all(&*tx)
-                .await?;
-
-            Ok((Channel::from_model(channel), channel_members))
+            Ok(channel)
         })
         .await
     }
@@ -984,7 +956,7 @@ impl Database {
         channel_id: ChannelId,
         new_parent_id: ChannelId,
         admin_id: UserId,
-    ) -> Result<(Vec<Channel>, Vec<channel_member::Model>)> {
+    ) -> Result<(ChannelId, Vec<Channel>)> {
         self.transaction(|tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_admin(&channel, admin_id, &tx)
@@ -1039,12 +1011,7 @@ impl Database {
                 .map(|c| Channel::from_model(c))
                 .collect::<Vec<_>>();
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(root_id))
-                .all(&*tx)
-                .await?;
-
-            Ok((channels, channel_members))
+            Ok((root_id, channels))
         })
         .await
     }
