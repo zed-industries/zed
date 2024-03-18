@@ -4,6 +4,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_uint, c_void, OsString},
+    iter::once,
     mem::transmute,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -28,7 +29,8 @@ use windows::{
         Foundation::*,
         Graphics::Gdi::*,
         Media::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, Threading::*, Time::*},
+        Security::Credentials::*,
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
 };
@@ -606,19 +608,74 @@ impl Platform for WindowsPlatform {
         })
     }
 
-    // todo(windows)
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        Task::Ready(Some(Err(anyhow!("not implemented yet."))))
+        let mut password = password.to_vec();
+        let mut username = username.encode_utf16().chain(once(0)).collect_vec();
+        let mut target_name = windows_credentials_target_name(url)
+            .encode_utf16()
+            .chain(once(0))
+            .collect_vec();
+        self.foreground_executor().spawn(async move {
+            let credentials = CREDENTIALW {
+                LastWritten: unsafe { GetSystemTimeAsFileTime() },
+                Flags: CRED_FLAGS(0),
+                Type: CRED_TYPE_GENERIC,
+                TargetName: PWSTR::from_raw(target_name.as_mut_ptr()),
+                CredentialBlobSize: password.len() as u32,
+                CredentialBlob: password.as_ptr() as *mut _,
+                Persist: CRED_PERSIST_LOCAL_MACHINE,
+                UserName: PWSTR::from_raw(username.as_mut_ptr()),
+                ..CREDENTIALW::default()
+            };
+            unsafe { CredWriteW(&credentials, 0) }?;
+            Ok(())
+        })
     }
 
-    // todo(windows)
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        Task::Ready(Some(Err(anyhow!("not implemented yet."))))
+        let mut target_name = windows_credentials_target_name(url)
+            .encode_utf16()
+            .chain(once(0))
+            .collect_vec();
+        self.foreground_executor().spawn(async move {
+            let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
+            unsafe {
+                CredReadW(
+                    PCWSTR::from_raw(target_name.as_ptr()),
+                    CRED_TYPE_GENERIC,
+                    0,
+                    &mut credentials,
+                )?
+            };
+
+            if credentials.is_null() {
+                Ok(None)
+            } else {
+                let username: String = unsafe { (*credentials).UserName.to_string()? };
+                let credential_blob = unsafe {
+                    std::slice::from_raw_parts(
+                        (*credentials).CredentialBlob,
+                        (*credentials).CredentialBlobSize as usize,
+                    )
+                };
+                let mut password: Vec<u8> = Vec::with_capacity(credential_blob.len());
+                password.resize(password.capacity(), 0);
+                password.clone_from_slice(&credential_blob);
+                unsafe { CredFree(credentials as *const c_void) };
+                Ok(Some((username, password)))
+            }
+        })
     }
 
-    // todo(windows)
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        Task::Ready(Some(Err(anyhow!("not implemented yet."))))
+        let mut target_name = windows_credentials_target_name(url)
+            .encode_utf16()
+            .chain(once(0))
+            .collect_vec();
+        self.foreground_executor().spawn(async move {
+            unsafe { CredDeleteW(PCWSTR::from_raw(target_name.as_ptr()), CRED_TYPE_GENERIC, 0)? };
+            Ok(())
+        })
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
