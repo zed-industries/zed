@@ -1,32 +1,44 @@
-#![cfg(target_os = "windows")]
-
-use std::{
-    os::windows::fs::{symlink_dir, symlink_file},
-    path::PathBuf,
-};
-
-use serde::{Deserialize, Serialize};
-use windows::{
-    core::PCWSTR,
-    Win32::{
-        Foundation::{CloseHandle, GENERIC_READ, HANDLE},
-        Storage::FileSystem::{
-            CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES,
-            OPEN_EXISTING,
-        },
-        System::Pipes::{SetNamedPipeHandleState, PIPE_READMODE_MESSAGE},
-    },
-};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct SymlinkData {
-    target: PathBuf,
-    path: PathBuf,
-}
-
-const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
-
+#[cfg(target_os = "windows")]
 fn main() {
+    use std::{
+        os::windows::fs::{symlink_dir, symlink_file},
+        path::PathBuf,
+    };
+
+    use serde::{Deserialize, Serialize};
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Foundation::{CloseHandle, GENERIC_READ, HANDLE},
+            Storage::FileSystem::{
+                CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
+                FILE_WRITE_ATTRIBUTES, OPEN_EXISTING,
+            },
+            System::Pipes::{SetNamedPipeHandleState, PIPE_READMODE_MESSAGE},
+        },
+    };
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct SymlinkData {
+        target: PathBuf,
+        path: PathBuf,
+    }
+
+    const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
+
+    #[inline]
+    fn destroy(handle: HANDLE) {
+        unsafe {
+            let _ = CloseHandle(handle).inspect_err(|_| {
+                println!(
+                    "unable to close handle: {}",
+                    std::io::Error::last_os_error()
+                )
+            });
+        }
+    }
+
+    // actual code goes here
     let Ok(pipe_handle) = (unsafe {
         CreateFileW(
             PIPE_NAME,
@@ -103,14 +115,5 @@ fn main() {
     }
 }
 
-#[inline]
-fn destroy(handle: HANDLE) {
-    unsafe {
-        let _ = CloseHandle(handle).inspect_err(|_| {
-            println!(
-                "unable to close handle: {}",
-                std::io::Error::last_os_error()
-            )
-        });
-    }
-}
+#[cfg(not(target_os = "windows"))]
+fn main() {}
