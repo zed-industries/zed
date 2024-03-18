@@ -26,7 +26,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
-    SettingsStore, DEFAULT_KEYMAP_PATH,
+    SettingsStore,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::{oneshot_source::OneshotSource, static_source::StaticSource};
