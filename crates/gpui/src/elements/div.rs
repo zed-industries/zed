@@ -1307,6 +1307,7 @@ impl Interactivity {
                             || self.has_hover_styles()
                             || self.has_mouse_listeners()
                             || self.scroll_offset.is_some()
+                            || self.tracked_focus_handle.is_some()
                         {
                             Some(cx.insert_hitbox(bounds, self.occlude_mouse))
                         } else {
