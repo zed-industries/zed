@@ -18,8 +18,5 @@ windows.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true
-
 [package.metadata.docs.rs]
 targets = ["x86_64-pc-windows-msvc"]

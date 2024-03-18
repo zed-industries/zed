@@ -3941,7 +3941,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tempfile",
  "windows 0.53.0",
 ]
 
