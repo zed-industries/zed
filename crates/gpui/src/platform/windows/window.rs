@@ -49,6 +49,7 @@ pub(crate) struct WindowsWindowInner {
     platform_inner: Rc<WindowsPlatformInner>,
     pub(crate) handle: AnyWindowHandle,
     scale_factor: f32,
+    hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
 }
 
@@ -58,6 +59,7 @@ impl WindowsWindowInner {
         cs: &CREATESTRUCTW,
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
+        hide_title_bar: bool,
         display: Rc<WindowsDisplay>,
     ) -> Self {
         let origin = Cell::new(Point::new((cs.x as f64).into(), (cs.y as f64).into()));
@@ -115,6 +117,7 @@ impl WindowsWindowInner {
             platform_inner,
             handle,
             scale_factor: 1.0,
+            hide_title_bar,
             display,
         }
     }
@@ -775,6 +778,10 @@ impl WindowsWindowInner {
 
     /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
     fn handle_calc_client_size(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if !self.hide_title_bar {
+            return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        }
+
         if wparam.0 == 0 {
             return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
         }
@@ -797,8 +804,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_activate_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
-            unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
+        if self.hide_title_bar {
+            if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
+                unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
+            }
         }
         return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
     }
@@ -814,20 +823,23 @@ impl WindowsWindowInner {
             height: GlobalPixels::from(height as f64),
         });
 
-        // Inform the application of the frame change to force redrawing with the new
-        // client area that is extended into the title bar
-        unsafe {
-            SetWindowPos(
-                self.hwnd,
-                HWND::default(),
-                size_rect.left,
-                size_rect.top,
-                width,
-                height,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-            )
-            .log_err()
-        };
+        if self.hide_title_bar {
+            // Inform the application of the frame change to force redrawing with the new
+            // client area that is extended into the title bar
+            unsafe {
+                SetWindowPos(
+                    self.hwnd,
+                    HWND::default(),
+                    size_rect.left,
+                    size_rect.top,
+                    width,
+                    height,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+                )
+                .log_err()
+            };
+        }
+
         LRESULT(0)
     }
 
@@ -836,6 +848,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_hit_test_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if !self.hide_title_bar {
+            return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        }
+
         // default handler for resize areas
         let hit = unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
         if matches!(
@@ -886,6 +902,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_nc_mouse_move_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if !self.hide_title_bar {
+            return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        }
+
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
@@ -916,6 +936,10 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        if !self.hide_title_bar {
+            return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        }
+
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let mut cursor_point = POINT {
@@ -951,6 +975,10 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        if !self.hide_title_bar {
+            return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+        }
+
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let mut cursor_point = POINT {
@@ -1043,6 +1071,7 @@ struct WindowCreateContext {
     inner: Option<Rc<WindowsWindowInner>>,
     platform_inner: Rc<WindowsPlatformInner>,
     handle: AnyWindowHandle,
+    hide_title_bar: bool,
     display: Rc<WindowsDisplay>,
 }
 
@@ -1053,6 +1082,11 @@ impl WindowsWindow {
         options: WindowParams,
     ) -> Self {
         let classname = register_wnd_class();
+        let hide_title_bar = options
+            .titlebar
+            .as_ref()
+            .map(|titlebar| titlebar.appears_transparent)
+            .unwrap_or(false);
         let windowname = HSTRING::from(
             options
                 .titlebar
@@ -1073,6 +1107,7 @@ impl WindowsWindow {
             inner: None,
             platform_inner: platform_inner.clone(),
             handle,
+            hide_title_bar,
             // todo(windows) move window to target monitor
             // options.display_id
             display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
@@ -1526,6 +1561,7 @@ unsafe extern "system" fn wnd_proc(
             cs,
             ctx.platform_inner.clone(),
             ctx.handle,
+            ctx.hide_title_bar,
             ctx.display.clone(),
         ));
         let weak = Box::new(Rc::downgrade(&inner));
