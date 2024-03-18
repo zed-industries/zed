@@ -284,6 +284,7 @@ pub mod simple_message_notification {
     pub struct MessageNotification {
         message: SharedString,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
+        on_dismiss: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
@@ -299,9 +300,10 @@ pub mod simple_message_notification {
             Self {
                 message: message.into(),
                 on_click: None,
+                on_dismiss: None,
                 click_message: None,
                 secondary_on_click: None,
-                secondary_click_message: None
+                secondary_click_message: None,
             }
         }
 
@@ -321,7 +323,6 @@ pub mod simple_message_notification {
             self
         }
 
-
         pub fn with_secondary_click_message<S>(mut self, message: S) -> Self
         where
             S: Into<SharedString>,
@@ -339,6 +340,9 @@ pub mod simple_message_notification {
         }
 
         pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+            if self.on_dismiss {
+                (self.on_dismiss)(cx);
+            }
             cx.emit(DismissEvent);
         }
     }
@@ -376,15 +380,13 @@ pub mod simple_message_notification {
                         .children(self.secondary_click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
                                 .style(ButtonStyle::Filled)
-                                .on_click(cx.listener(
-                                    |this, _, cx| {
-                                        if let Some(on_click) = this.secondary_on_click.as_ref() {
-                                            (on_click)(cx)
-                                        };
-                                        this.dismiss(cx)
-                                    },
-                                ))
-                        }))
+                                .on_click(cx.listener(|this, _, cx| {
+                                    if let Some(on_click) = this.secondary_on_click.as_ref() {
+                                        (on_click)(cx)
+                                    };
+                                    this.dismiss(cx)
+                                }))
+                        })),
                 )
         }
     }

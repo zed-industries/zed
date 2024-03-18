@@ -1,0 +1,35 @@
+ id  |          name           |       external_id       
+-----+-------------------------+-------------------------
+  18 | Assembly Syntax         | assembly      --          
+   5 | Beancount               | beancount     Y         
+  13 | Brainfuck               | brainfuck     --         
+  26 | Dockerfile              | dockerfile      X        
+  70 | Elisp                   | elisp         Y         
+ 110 | Fish                    | fish            X        
+  84 | GDScript                | gdscript                
+  
+128 | Git Firefly             | git-firefly            https://github.com/d1y/git_firefly/tree/8bb3a5f6769ad6de95ec0bfe430a17ecfd4128c1/languages 
+
+  56 | GraphQL                 | graphql         --        
+  44 | Horizon                 | horizon          X       
+  25 | Java                    | java             X       
+  88 | Kotlin                  | kotlin           --       
+ 104 | LaTeX                   | latex            --       
+  34 | LOG                     | log                     
+  91 | Make                    | make             X       
+ 122 | MATLAB                  | matlab           --       
+  17 | Mellow                  | mellow                  
+  67 | Muted                   | muted                   
+  30 | Navi                    | navi                    
+ 107 | Nix                     | nix              --       
+   7 | Nu                      | nu                --      
+  97 | PactLang                | pact                    
+   3 | Pkl                     | pkl                     
+  54 | R                       | r                   --    
+  63 | Smithy                  | smithy              --    
+  98 | Solidity                | solidity           --     
+  55 | SQL                     | sql                X     
+  47 | Swift                   | swift              --     
+  92 | Templ                   | templ              --     
+  27 | Wgsl                    | wgsl               --     
+(68 rows)
