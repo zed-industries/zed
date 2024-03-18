@@ -528,6 +528,9 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
+    ///Whether the window should respond to first mouse click
+    pub accepts_first_mouse: bool,
+
     /// The display to create the window on
     pub display_id: Option<DisplayId>,
 }
@@ -546,6 +549,9 @@ pub(crate) struct WindowParams {
 
     /// Whether the window should be movable by the user
     pub is_movable: bool,
+
+    ///Whether the window should respond to first mouse click
+    pub accepts_first_mouse: bool,
 
     pub focus: bool,
 
@@ -568,6 +574,7 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
+            accepts_first_mouse: true,
             display_id: None,
             fullscreen: false,
         }

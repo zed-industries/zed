@@ -394,6 +394,7 @@ impl Window {
             show,
             kind,
             is_movable,
+            accepts_first_mouse,
             display_id,
             fullscreen,
         } = options;
@@ -406,6 +407,7 @@ impl Window {
                 titlebar,
                 kind,
                 is_movable,
+                accepts_first_mouse,
                 focus,
                 show,
                 display_id,

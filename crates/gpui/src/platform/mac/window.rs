@@ -9,7 +9,7 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSEvent, NSEventModifierFlags, NSEventType,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -52,6 +52,7 @@ use std::{
 use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
+const FIRST_MOUSE_IVAR: &str = "firstMouse";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
@@ -90,6 +91,7 @@ unsafe fn build_classes() {
     VIEW_CLASS = {
         let mut decl = ClassDecl::new("GPUIView", class!(NSView)).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+        decl.add_ivar::<BOOL>(FIRST_MOUSE_IVAR);
 
         decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(&Object, Sel));
 
@@ -479,6 +481,7 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
+            accepts_first_mouse,
             display_id,
             focus,
             show,
@@ -605,6 +608,7 @@ impl MacWindow {
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
+            (*native_view).set_ivar(FIRST_MOUSE_IVAR, accepts_first_mouse);
 
             if let Some(title) = titlebar
                 .as_ref()
@@ -1726,11 +1730,12 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     }
 }
 
-extern "C" fn accepts_first_mouse(this: &Object, _: Sel, event: id) -> BOOL {
+extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     unsafe {
         let state = get_window_state(this);
         let lock = state.as_ref().lock();
-        if lock.kind == WindowKind::PopUp || event.eventType() == NSEventType::NSLeftMouseDown {
+        let accepts_first_mouse: BOOL = *this.get_ivar::<BOOL>(FIRST_MOUSE_IVAR);
+        if lock.kind == WindowKind::PopUp || accepts_first_mouse {
             YES
         } else {
             NO
