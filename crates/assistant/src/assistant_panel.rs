@@ -22,7 +22,7 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
+    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
     AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
     FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
@@ -86,6 +86,7 @@ pub struct AssistantPanel {
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
     model: LanguageModel,
+    authentication_prompt: Option<AnyView>,
 }
 
 struct ActiveConversationEditor {
@@ -167,6 +168,7 @@ impl AssistantPanel {
                         inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
                         model,
+                        authentication_prompt: None,
                     }
                 })
             })
@@ -192,12 +194,19 @@ impl AssistantPanel {
 
     fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
         if self.is_authenticated(cx) {
+            self.authentication_prompt = None;
+
             let model = CompletionProvider::global(cx).default_model();
             self.set_model(model, cx);
 
             if self.active_conversation_editor().is_none() {
                 self.new_conversation(cx);
             }
+        } else {
+            self.authentication_prompt =
+                Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
+                    provider.authentication_prompt(cx)
+                }));
         }
         cx.notify()
     }
@@ -1079,43 +1088,6 @@ impl AssistantPanel {
             ))
     }
 
-    fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        match CompletionProvider::global(cx) {
-            CompletionProvider::OpenAi(_) => v_flex().gap_6().p_4().child(Label::new(concat!(
-                "To use the assistant with OpenAI, please assign an OPENAI_API_KEY ",
-                "environment variable, then restart Zed.",
-            ))),
-            CompletionProvider::ZedDotDev(_) => {
-                const LABEL: &str = "Generate and analyze code with language models. You can dialog with the assistant in this panel or transform code inline.";
-
-                v_flex().gap_6().p_4().child(Label::new(LABEL)).child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("sign_in", "Sign in")
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .style(ButtonStyle::Filled)
-                                .full_width()
-                                .on_click(cx.listener(|this, _, cx| {
-                                    this.authenticate(cx).detach_and_log_err(cx)
-                                })),
-                        )
-                        .child(
-                            div().flex().w_full().items_center().child(
-                                Label::new("Sign in to enable collaboration.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                        ),
-                )
-            }
-            #[cfg(test)]
-            CompletionProvider::Fake(_) => panic!(),
-        }
-    }
-
     fn render_model(
         &self,
         conversation: &Model<Conversation>,
@@ -1146,10 +1118,10 @@ impl AssistantPanel {
 
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        if CompletionProvider::global(cx).is_authenticated() {
-            self.render_signed_in(cx).into_any_element()
+        if let Some(authentication_prompt) = self.authentication_prompt.as_ref() {
+            authentication_prompt.clone().into_any()
         } else {
-            self.render_signed_out(cx).into_any_element()
+            self.render_signed_in(cx).into_any_element()
         }
     }
 }

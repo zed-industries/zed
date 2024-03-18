@@ -1,9 +1,11 @@
 use crate::{assistant_settings::OpenAiModel, LanguageModel, LanguageModelRequest, Role};
 use anyhow::{anyhow, Result};
+use editor::Editor;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AppContext, Task};
+use gpui::{AnyView, AppContext, Task, View};
 use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use std::{env, sync::Arc};
+use ui::prelude::*;
 use util::{http::HttpClient, ResultExt};
 
 pub struct OpenAiCompletionProvider {
@@ -37,8 +39,6 @@ impl OpenAiCompletionProvider {
     }
 
     pub fn authenticate(&self, _cx: &AppContext) -> Task<Result<()>> {
-        // todo!("validate api key")
-
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
@@ -46,6 +46,10 @@ impl OpenAiCompletionProvider {
                 "OPENAI_API_KEY environment variable not found"
             )))
         }
+    }
+
+    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|cx| AuthenticationPrompt::new(cx)).into()
     }
 
     pub fn default_model(&self) -> OpenAiModel {
@@ -142,5 +146,37 @@ impl From<Role> for open_ai::Role {
             Role::Assistant => OpenAiRole::Assistant,
             Role::System => OpenAiRole::System,
         }
+    }
+}
+
+struct AuthenticationPrompt {
+    api_key: View<Editor>,
+}
+
+impl AuthenticationPrompt {
+    fn new(cx: &mut WindowContext) -> Self {
+        Self {
+            api_key: cx.new_view(|cx| {
+                let mut editor = Editor::single_line(cx);
+                editor.set_placeholder_text(
+                    "sk-000000000000000000000000000000000000000000000000",
+                    cx,
+                );
+                editor
+            }),
+        }
+    }
+}
+
+impl Render for AuthenticationPrompt {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_6()
+            .p_4()
+            .child(Label::new(concat!(
+                "To use the assistant with OpenAI, please assign an OPENAI_API_KEY ",
+                "environment variable, then restart Zed.",
+            )))
+            .into_any()
     }
 }

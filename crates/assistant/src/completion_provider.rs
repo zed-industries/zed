@@ -15,7 +15,7 @@ use crate::{
 use anyhow::Result;
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AppContext, Task};
+use gpui::{AnyView, AppContext, Task, WindowContext};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 
@@ -110,6 +110,15 @@ impl CompletionProvider {
             CompletionProvider::ZedDotDev(provider) => provider.authenticate(cx),
             #[cfg(test)]
             CompletionProvider::Fake(_) => Task::ready(Ok(())),
+        }
+    }
+
+    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+        match self {
+            CompletionProvider::OpenAi(provider) => provider.authentication_prompt(cx),
+            CompletionProvider::ZedDotDev(provider) => provider.authentication_prompt(cx),
+            #[cfg(test)]
+            CompletionProvider::Fake(_) => unimplemented!(),
         }
     }
 
