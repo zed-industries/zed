@@ -135,32 +135,98 @@ fn locate_bundle() -> Result<PathBuf> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::path::Path;
-
-    use cli::{CliRequest, CliResponse};
+    use crate::locate_bundle;
+    use anyhow::{anyhow, Context, Ok, Result};
+    use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
     use ipc_channel::ipc::{IpcReceiver, IpcSender};
+    use std::{
+        path::Path,
+        process::{Command, Stdio},
+    };
 
     use crate::{Bundle, InfoPlist};
 
     impl Bundle {
-        pub fn detect(_args_bundle_path: Option<&Path>) -> anyhow::Result<Self> {
-            unimplemented!()
+        pub fn detect(_args_bundle_path: Option<&Path>) -> Result<Self> {
+            let bundle_path = locate_bundle().context("Bundle autodiscovery")?;
+            let plist_path = bundle_path.join("Info.plist");
+            let plist = plist::from_file::<_, InfoPlist>(&plist_path)
+                .with_context(|| format!("Reading bundle plist file at {plist_path:?}"))?;
+            Ok(Self::LocalPath {
+                executable: bundle_path,
+                plist,
+            })
         }
 
         pub fn plist(&self) -> &InfoPlist {
-            unimplemented!()
+            match self {
+                Self::App { plist, .. } => plist,
+                Self::LocalPath { plist, .. } => plist,
+            }
         }
 
         pub fn path(&self) -> &Path {
-            unimplemented!()
+            match self {
+                Self::App { app_bundle, .. } => app_bundle,
+                Self::LocalPath { executable, .. } => executable,
+            }
+        }
+
+        fn launch_linux_app(bundle_path: &Path, url: &str) -> Result<()> {
+            let output = Command::new(bundle_path)
+                .arg(url)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .with_context(|| format!("Failed to launch {}", bundle_path.display()))?
+                .wait_with_output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!(
+                    "Failed to launch {}: {}",
+                    bundle_path.display(),
+                    stderr
+                ));
+            }
+
+            Ok(())
         }
 
         pub fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
-            unimplemented!()
+            let (server, server_name) =
+                IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
+            let url = format!("zed-cli://{server_name}");
+
+            match self {
+                Bundle::App { app_bundle, .. } => Err(anyhow!(app_bundle.display().to_string())),
+
+                Bundle::LocalPath { executable, .. } => {
+                    let bundle_path = executable.to_path_buf();
+                    Bundle::launch_linux_app(&bundle_path, &url)?;
+
+                    let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+                    Ok((handshake.requests, handshake.responses))
+                }
+            }
         }
 
         pub fn zed_version_string(&self) -> String {
-            unimplemented!()
+            match self {
+                Bundle::App { plist, .. } => {
+                    format!(
+                        "Zed {} - {}",
+                        plist.bundle_short_version_string, "App Bundle Path"
+                    )
+                }
+                Bundle::LocalPath { plist, executable } => {
+                    format!(
+                        "Zed {} - {}",
+                        plist.bundle_short_version_string,
+                        executable.display()
+                    )
+                }
+            }
         }
     }
 }
