@@ -9,7 +9,7 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSEvent, NSEventModifierFlags, NSEventType,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -1726,11 +1726,11 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     }
 }
 
-extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
+extern "C" fn accepts_first_mouse(this: &Object, _: Sel, event: id) -> BOOL {
     unsafe {
         let state = get_window_state(this);
         let lock = state.as_ref().lock();
-        if lock.kind == WindowKind::PopUp {
+        if lock.kind == WindowKind::PopUp || event.eventType() == NSEventType::NSLeftMouseDown {
             YES
         } else {
             NO
