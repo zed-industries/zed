@@ -644,6 +644,14 @@ impl Server {
             tracing::Span::current().record("connection_id", format!("{}", connection_id));
             tracing::info!("connection opened");
 
+            let http_client = match IsahcHttpClient::new() {
+                Ok(http_client) => http_client,
+                Err(error) => {
+                    tracing::error!(?error, "failed to create HTTP client");
+                    return;
+                }
+            };
+
             let session = Session {
                 user_id,
                 connection_id,
@@ -651,7 +659,7 @@ impl Server {
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
-                http_client: IsahcHttpClient::new().map_err(|error| anyhow!(error))?,
+                http_client,
                 rate_limiter: this.app_state.rate_limiter.clone(),
                 _executor: executor.clone(),
             };
