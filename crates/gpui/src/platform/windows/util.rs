@@ -96,3 +96,7 @@ pub(crate) fn create_event() -> windows::core::Result<OwnedHandle> {
         CreateEventW(None, false, false, None)?
     }))
 }
+
+pub(crate) fn windows_credentials_target_name(url: &str) -> String {
+    format!("zed:url={}", url)
+}

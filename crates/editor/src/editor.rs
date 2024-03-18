@@ -125,7 +125,9 @@ use ui::{
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
-use workspace::{searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace};
+use workspace::{
+    searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
+};
 
 use crate::hover_links::find_url;
 
@@ -407,7 +409,7 @@ pub struct Editor {
     cursor_shape: CursorShape,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakView<Workspace>, i64)>,
+    workspace: Option<(WeakView<Workspace>, WorkspaceId)>,
     keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
     use_modal_editing: bool,

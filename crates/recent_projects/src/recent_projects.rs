@@ -554,7 +554,10 @@ mod tests {
                         positions: Vec::new(),
                         string: "fake candidate".to_string(),
                     }];
-                    delegate.workspaces = vec![(0, WorkspaceLocation::new(vec!["/test/path/"]))];
+                    delegate.workspaces = vec![(
+                        WorkspaceId::default(),
+                        WorkspaceLocation::new(vec!["/test/path/"]),
+                    )];
                 });
             })
             .unwrap();

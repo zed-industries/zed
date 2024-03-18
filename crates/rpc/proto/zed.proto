@@ -947,6 +947,7 @@ message SearchProject {
 
 message SearchProjectResponse {
     repeated Location locations = 1;
+    bool limit_reached = 2;
 }
 
 message CodeAction {

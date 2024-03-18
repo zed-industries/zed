@@ -13,7 +13,7 @@ use language::{
 };
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
-use project::{search::SearchQuery, Project, ProjectPath};
+use project::{search::SearchQuery, Project, ProjectPath, SearchResult};
 use rand::{
     distributions::{Alphanumeric, DistString},
     prelude::*,
@@ -879,8 +879,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                 drop(project);
                 let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
-                    while let Some((buffer, ranges)) = search.next().await {
-                        results.entry(buffer).or_insert(ranges);
+                    while let Some(result) = search.next().await {
+                        if let SearchResult::Buffer { buffer, ranges } = result {
+                            results.entry(buffer).or_insert(ranges);
+                        }
                     }
                     results
                 });
