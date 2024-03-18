@@ -5,8 +5,8 @@ use ui::{prelude::*, ViewContext};
 
 /// The head of a [`Picker`].
 pub(crate) enum Head {
-    /// Picker has an editor that allows the user to query list elements.
-    QueryLine(View<Editor>),
+    /// Picker has an editor that allows the user to filter the list.
+    Editor(View<Editor>),
 
     /// Picker has no head, it's just a list of items.
     Empty(View<EmptyHead>),
@@ -24,7 +24,7 @@ impl Head {
             editor
         });
         cx.subscribe(&editor, edit_handler).detach();
-        Head::QueryLine(editor)
+        Self::Editor(editor)
     }
 
     pub fn empty(cx: &mut WindowContext) -> Self {

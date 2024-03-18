@@ -87,7 +87,7 @@ pub trait PickerDelegate: Sized + 'static {
 impl<D: PickerDelegate> FocusableView for Picker<D> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match &self.head {
-            Head::QueryLine(editor) => editor.focus_handle(cx),
+            Head::Editor(editor) => editor.focus_handle(cx),
             Head::Empty(head) => head.focus_handle(cx),
         }
     }
@@ -282,7 +282,7 @@ impl<D: PickerDelegate> Picker<D> {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let Head::QueryLine(ref editor) = &self.head else {
+        let Head::Editor(ref editor) = &self.head else {
             panic!("unexpected call");
         };
         match event {
@@ -347,13 +347,13 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn query(&self, cx: &AppContext) -> String {
         match &self.head {
-            Head::QueryLine(editor) => editor.read(cx).text(cx),
+            Head::Editor(editor) => editor.read(cx).text(cx),
             Head::Empty(_) => "".to_string(),
         }
     }
 
     pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
-        if let Head::QueryLine(ref editor) = &self.head {
+        if let Head::Editor(ref editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
@@ -440,7 +440,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::use_selected_query))
             .child(match &self.head {
-                Head::QueryLine(editor) => v_flex()
+                Head::Editor(editor) => v_flex()
                     .child(
                         h_flex()
                             .overflow_hidden()
