@@ -58,13 +58,7 @@ fn main() {
             manifest.canonicalize().unwrap().display()
         );
 
-        let mut res = winresource::WindowsResource::new();
-        res.set(
-            "LegalCopyright",
-            // todo(windows)
-            // is this copyright string correct?
-            "Copyright (C) 2024 Zed Industries. All rights reserved",
-        );
+        let res = winresource::WindowsResource::new();
         if let Err(e) = res.compile() {
             eprintln!("{}", e);
             std::process::exit(1);
