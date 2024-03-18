@@ -455,8 +455,14 @@ impl WindowsWindowInner {
         if first_char.is_control() {
             None
         } else {
+            let mut modifiers = self.current_modifiers();
+            // for characters that use 'shift' to type it is expected that the
+            // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
+            if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
+                modifiers.shift = false;
+            }
             Some(Keystroke {
-                modifiers: self.current_modifiers(),
+                modifiers,
                 key: first_char.to_lowercase().to_string(),
                 ime_key: Some(first_char.to_string()),
             })
