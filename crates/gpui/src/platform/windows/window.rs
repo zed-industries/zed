@@ -1560,12 +1560,26 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
         }),
         // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
         _ => {
-            if let Some(key) = oemkey_vkcode_to_string(code) {
-                Some(Keystroke {
-                    modifiers,
-                    key,
-                    ime_key: None,
-                })
+            if let Some(key) = oemkey_vkcode_to_string(code, modifiers.shift) {
+                if modifiers.shift {
+                    Some(Keystroke {
+                        modifiers: Modifiers {
+                            control: modifiers.control,
+                            alt: modifiers.alt,
+                            shift: false,
+                            command: modifiers.command,
+                            function: modifiers.function,
+                        },
+                        key,
+                        ime_key: None,
+                    })
+                } else {
+                    Some(Keystroke {
+                        modifiers,
+                        key,
+                        ime_key: None,
+                    })
+                }
             } else {
                 None
             }
@@ -1573,21 +1587,39 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
     }
 }
 
-fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
-    match code {
-        186 => Some(";".to_string()), // VK_OEM_1
-        187 => Some("=".to_string()), // VK_OEM_PLUS
-        188 => Some(",".to_string()), // VK_OEM_COMMA
-        189 => Some("-".to_string()), // VK_OEM_MINUS
-        190 => Some(".".to_string()), // VK_OEM_PERIOD
-        // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
-        191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
-        192 => Some("`".to_string()),       // VK_OEM_3
-        219 => Some("[".to_string()),       // VK_OEM_4
-        220 => Some("\\".to_string()),      // VK_OEM_5
-        221 => Some("]".to_string()),       // VK_OEM_6
-        222 => Some("'".to_string()),       // VK_OEM_7
-        _ => None,
+fn oemkey_vkcode_to_string(code: u16, shift: bool) -> Option<String> {
+    if shift {
+        match code {
+            186 => Some(":".to_string()), // VK_OEM_1
+            187 => Some("+".to_string()), // VK_OEM_PLUS
+            188 => Some("<".to_string()), // VK_OEM_COMMA
+            189 => Some("_".to_string()), // VK_OEM_MINUS
+            190 => Some(">".to_string()), // VK_OEM_PERIOD
+            // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
+            191 | 193 => Some("?".to_string()), // VK_OEM_2 VK_ABNT_C1
+            192 => Some("~".to_string()),       // VK_OEM_3
+            219 => Some("{".to_string()),       // VK_OEM_4
+            220 => Some("|".to_string()),       // VK_OEM_5
+            221 => Some("}".to_string()),       // VK_OEM_6
+            222 => Some("\"".to_string()),      // VK_OEM_7
+            _ => None,
+        }
+    } else {
+        match code {
+            186 => Some(";".to_string()), // VK_OEM_1
+            187 => Some("=".to_string()), // VK_OEM_PLUS
+            188 => Some(",".to_string()), // VK_OEM_COMMA
+            189 => Some("-".to_string()), // VK_OEM_MINUS
+            190 => Some(".".to_string()), // VK_OEM_PERIOD
+            // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
+            191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
+            192 => Some("`".to_string()),       // VK_OEM_3
+            219 => Some("[".to_string()),       // VK_OEM_4
+            220 => Some("\\".to_string()),      // VK_OEM_5
+            221 => Some("]".to_string()),       // VK_OEM_6
+            222 => Some("'".to_string()),       // VK_OEM_7
+            _ => None,
+        }
     }
 }
 
