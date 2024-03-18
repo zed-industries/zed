@@ -16,8 +16,8 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        cx: &mut ViewContext<V>,
         edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent, &mut ViewContext<'_, V>) + 'static,
+        cx: &mut ViewContext<V>,
     ) -> Self {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
