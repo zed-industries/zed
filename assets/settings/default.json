@@ -249,7 +249,7 @@
     "default_height": 320,
     // AI provider.
     "provider": {
-      "name": "zed.dev",
+      "name": "openai",
       // The default model to use when starting new conversations. This
       // setting can take three values:
       //
