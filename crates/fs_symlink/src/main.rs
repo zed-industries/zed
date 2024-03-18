@@ -9,11 +9,12 @@ use serde::{Deserialize, Serialize};
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{GENERIC_READ, GENERIC_WRITE},
+        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE},
         Storage::FileSystem::{
-            CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
+            CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES,
+            OPEN_EXISTING,
         },
-        System::Threading::{OpenEventW, SetEvent},
+        System::Pipes::{SetNamedPipeHandleState, PIPE_READMODE_MESSAGE},
     },
 };
 
@@ -24,13 +25,12 @@ struct SymlinkData {
 }
 
 const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
-const EVNET_NAME: PCWSTR = windows::core::w!("zed-global-symlink-finish");
 
 fn main() {
     let Ok(pipe_handle) = (unsafe {
         CreateFileW(
             PIPE_NAME,
-            GENERIC_READ.0 | GENERIC_WRITE.0,
+            GENERIC_READ.0 | FILE_WRITE_ATTRIBUTES.0,
             FILE_SHARE_READ,
             None,
             OPEN_EXISTING,
@@ -41,15 +41,22 @@ fn main() {
         println!("error open pipe: {}", std::io::Error::last_os_error());
         return;
     };
-    let Ok(event) = (unsafe { OpenEventW(EVENT_MODIFY_STATE, false, EVNET_NAME) }) else {
-        println!("unable to open event: {}", std::io::Error::last_os_error());
-        return;
-    };
+    let mode = PIPE_READMODE_MESSAGE;
+    unsafe {
+        if SetNamedPipeHandleState(pipe_handle, Some(&mode as _), None, None).is_err() {
+            println!(
+                "unable to configure pipe: {}",
+                std::io::Error::last_os_error()
+            );
+            destroy(pipe_handle);
+            return;
+        }
+    }
 
     let mut target_buffer;
     let mut bytes_read;
     loop {
-        target_buffer = vec![0u8; 1024];
+        target_buffer = vec![0u8; 2048];
         bytes_read = 0u32;
         let Ok(_) = (unsafe {
             ReadFile(
@@ -79,10 +86,18 @@ fn main() {
                 println!("error create symlink dir: {:?}", e);
             }
         }
-        unsafe {
-            SetEvent(event).inspect_err(|_| {
-                log::error!("error setting event: {}", std::io::Error::last_os_error())
-            });
-        }
+    }
+    destroy(pipe_handle);
+}
+
+#[inline]
+fn destroy(handle: HANDLE) {
+    unsafe {
+        let _ = CloseHandle(handle).inspect_err(|_| {
+            println!(
+                "unable to close handle: {}",
+                std::io::Error::last_os_error()
+            )
+        });
     }
 }

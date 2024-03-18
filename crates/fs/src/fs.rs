@@ -119,8 +119,6 @@ pub struct Metadata {
 pub struct RealFs {
     #[cfg(target_os = "windows")]
     pipe: AtomicIsize,
-    #[cfg(target_os = "windows")]
-    event: AtomicIsize,
 }
 
 #[cfg(target_os = "windows")]
@@ -144,20 +142,14 @@ impl RealFs {
     pub async fn create_symlink(&self, target: PathBuf, path: &Path) -> Result<()> {
         use std::sync::atomic::Ordering;
 
-        use windows::Win32::{
-            Foundation::{HANDLE, WAIT_FAILED, WAIT_TIMEOUT},
-            Storage::FileSystem::WriteFile,
-            System::Threading::WaitForSingleObject,
-        };
+        use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::WriteFile};
 
         if self.pipe.load(Ordering::SeqCst) == 0 {
-            let (pipe, event) = init_pipe_and_event().await?;
+            let pipe = init_pipe().await?;
             self.pipe.store(pipe, Ordering::SeqCst);
-            self.event.store(event, Ordering::SeqCst);
         }
-        let pipe_handle = HANDLE(self.pipe.load(Ordering::SeqCst));
-        let event = HANDLE(self.event.load(Ordering::SeqCst));
         let (target_full_path, path_full_path) = generate_full_path(target, path).await?;
+        let pipe_handle = HANDLE(self.pipe.load(Ordering::SeqCst));
 
         smol::unblock(move || {
             let symlink = SymlinkData {
@@ -179,14 +171,7 @@ impl RealFs {
                 log::error!("not all bytes sent: {}/{}", bytes_read, raw_data.len());
                 return Err(anyhow!("unable to sent bytes, pipe full?"));
             }
-            match unsafe { WaitForSingleObject(event, 1000) } {
-                WAIT_TIMEOUT => Err(anyhow!("wait timeout, child process terminated?")),
-                WAIT_FAILED => {
-                    log::error!("wait error: {}", std::io::Error::last_os_error());
-                    Err(anyhow!("wait timeout, child process terminated?"))
-                }
-                _ => Ok(()),
-            }
+            Ok(())
         })
         .await
     }
@@ -198,21 +183,12 @@ impl Drop for RealFs {
         {
             use std::sync::atomic::Ordering;
 
-            use windows::Win32::{
-                Foundation::{CloseHandle, HANDLE},
-                System::Pipes::DisconnectNamedPipe,
-            };
+            use windows::Win32::{Foundation::HANDLE, System::Pipes::DisconnectNamedPipe};
 
             let pipe_handle = self.pipe.load(Ordering::SeqCst);
             unsafe {
                 if DisconnectNamedPipe(HANDLE(pipe_handle)).is_err() {
                     log::error!("Disconnect pipe error: {}", std::io::Error::last_os_error());
-                }
-            }
-            let event = self.event.load(Ordering::SeqCst);
-            unsafe {
-                if CloseHandle(HANDLE(event)).is_err() {
-                    log::error!("Close event error: {}", std::io::Error::last_os_error());
                 }
             }
         }
@@ -1652,39 +1628,37 @@ async fn generate_full_path(target: PathBuf, path: &Path) -> Result<(PathBuf, Pa
 }
 
 #[cfg(target_os = "windows")]
-async fn init_pipe_and_event() -> Result<(isize, isize)> {
+async fn init_pipe() -> Result<isize> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows::{
         core::PCWSTR,
         Win32::{
-            Storage::FileSystem::PIPE_ACCESS_DUPLEX,
-            System::{
-                Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_MESSAGE},
-                Threading::CreateEventW,
+            Storage::FileSystem::PIPE_ACCESS_OUTBOUND,
+            System::Pipes::{
+                ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
             },
             UI::{
                 Shell::{ShellExecuteExW, SHELLEXECUTEINFOW},
-                WindowsAndMessaging::SW_SHOWNORMAL,
+                WindowsAndMessaging::SW_HIDE,
             },
         },
     };
 
     const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
-    const EVNET_NAME: PCWSTR = windows::core::w!("zed-global-symlink-finish");
     const MAX_INSTANCES: u32 = 4;
-    const BUFFER_SIZE: u32 = 512;
+    const BUFFER_SIZE: u32 = 2048;
 
     smol::unblock(|| {
         let handle = unsafe {
             CreateNamedPipeW(
                 PIPE_NAME,
-                PIPE_ACCESS_DUPLEX,
-                PIPE_TYPE_MESSAGE,
+                PIPE_ACCESS_OUTBOUND,
+                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
                 MAX_INSTANCES,
                 BUFFER_SIZE,
                 BUFFER_SIZE,
-                0,
+                5000,
                 None,
             )
         };
@@ -1692,9 +1666,6 @@ async fn init_pipe_and_event() -> Result<(isize, isize)> {
             log::error!("error create pipes: {}", std::io::Error::last_os_error());
             return Err(anyhow!("unable to create pipes"));
         }
-        let event = unsafe { CreateEventW(None, false, false, EVNET_NAME) }.inspect_err(|_| {
-            log::error!("error create event: {}", std::io::Error::last_os_error())
-        })?;
 
         let exe_path = get_exe_path()?;
         let exe_str: Vec<u16> = exe_path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -1702,8 +1673,7 @@ async fn init_pipe_and_event() -> Result<(isize, isize)> {
         info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
         info.lpVerb = windows::core::w!("runas");
         info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
-        // info.nShow = SW_HIDE.0;
-        info.nShow = SW_SHOWNORMAL.0;
+        info.nShow = SW_HIDE.0;
         unsafe { ShellExecuteExW(&mut info) }.inspect_err(|_| {
             log::error!(
                 "unable to launch child process: {}",
@@ -1718,7 +1688,7 @@ async fn init_pipe_and_event() -> Result<(isize, isize)> {
                 );
             })?;
         }
-        Ok((handle.0, event.0))
+        Ok(handle.0)
     })
     .await
 }

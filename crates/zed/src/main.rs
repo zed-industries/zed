@@ -82,7 +82,7 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
