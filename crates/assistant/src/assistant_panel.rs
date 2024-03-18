@@ -30,12 +30,11 @@ use gpui::{
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
+use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
-use std::{
-    cell::Cell, cmp, fmt::Write, iter, ops::Range, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
-};
+use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::AssistantKind;
 use theme::ThemeSettings;
 use ui::{
@@ -135,7 +134,7 @@ impl AssistantPanel {
                     let toolbar = cx.new_view(|cx| {
                         let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
-                        toolbar.add_item(cx.new_view(|cx| BufferSearchBar::new(cx)), cx);
+                        toolbar.add_item(cx.new_view(BufferSearchBar::new), cx);
                         toolbar
                     });
 
@@ -286,7 +285,7 @@ impl AssistantPanel {
         let codegen =
             cx.new_model(|cx| Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, cx));
 
-        let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
+        let measurements = Arc::new(Mutex::new(BlockMeasurements::default()));
         let inline_assistant = cx.new_view(|cx| {
             InlineAssistant::new(
                 inline_assist_id,
@@ -310,10 +309,10 @@ impl AssistantPanel {
                     render: Arc::new({
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
-                            measurements.set(BlockMeasurements {
+                            *measurements.lock() = BlockMeasurements {
                                 anchor_x: cx.anchor_x,
                                 gutter_width: cx.gutter_dimensions.width,
-                            });
+                            };
                             inline_assistant.clone().into_any_element()
                         }
                     }),
@@ -2488,7 +2487,7 @@ struct InlineAssistant {
     workspace: WeakView<Workspace>,
     confirmed: bool,
     include_conversation: bool,
-    measurements: Rc<Cell<BlockMeasurements>>,
+    measurements: Arc<Mutex<BlockMeasurements>>,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
@@ -2500,7 +2499,7 @@ impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
 impl Render for InlineAssistant {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        let measurements = self.measurements.get();
+        let measurements = *self.measurements.lock();
         h_flex()
             .w_full()
             .py_2()
@@ -2559,7 +2558,7 @@ impl FocusableView for InlineAssistant {
 impl InlineAssistant {
     fn new(
         id: usize,
-        measurements: Rc<Cell<BlockMeasurements>>,
+        measurements: Arc<Mutex<BlockMeasurements>>,
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,

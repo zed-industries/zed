@@ -7,7 +7,6 @@ use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Rope, TransactionId};
-use multi_buffer;
 use std::{cmp, future, ops::Range};
 
 pub enum Event {
