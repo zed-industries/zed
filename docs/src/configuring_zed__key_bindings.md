@@ -378,6 +378,7 @@ But, it was impossible to take into account the `{` and `}` when he was typing s
 | Copy relative path      | Project Panel | `Alt` + `⌘` + `Shift` + `C` |
 | Cut                     | Project Panel | `⌘` + `X`                   |
 | Delete                  | Project Panel | `Backspace`                 |
+| Delete (no prompt)      | Project Panel | `⌘` + `Backspace`           |
 | Expand selected entry   | Project Panel | `Right`                     |
 | New directory           | Project Panel | `Alt` + `⌘` + `N`           |
 | New file                | Project Panel | `Command + N`               |
