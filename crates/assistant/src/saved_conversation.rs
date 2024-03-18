@@ -34,7 +34,7 @@ impl SavedConversation {
     pub const VERSION: &'static str = "0.2.0";
 
     pub async fn load(path: &Path, fs: &dyn Fs) -> Result<Self> {
-        let saved_conversation = fs.load(&path).await?;
+        let saved_conversation = fs.load(path).await?;
         let saved_conversation_json =
             serde_json::from_str::<serde_json::Value>(&saved_conversation)?;
         match saved_conversation_json

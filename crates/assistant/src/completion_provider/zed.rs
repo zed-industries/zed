@@ -19,7 +19,7 @@ pub struct ZedDotDevCompletionProvider {
 impl ZedDotDevCompletionProvider {
     pub fn new(default_model: ZedDotDevModel, client: Arc<Client>, cx: &mut AppContext) -> Self {
         let mut status_rx = client.status();
-        let status = status_rx.borrow().clone();
+        let status = *status_rx.borrow();
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 let _ = cx.update_global::<CompletionProvider, _>(|provider, _cx| {

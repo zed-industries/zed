@@ -91,7 +91,7 @@ pub enum CompletionProvider {
 impl gpui::Global for CompletionProvider {}
 
 impl CompletionProvider {
-    pub fn global<'a>(cx: &'a AppContext) -> &'a Self {
+    pub fn global(cx: &AppContext) -> &Self {
         cx.global::<Self>()
     }
 

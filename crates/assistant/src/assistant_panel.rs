@@ -16,7 +16,7 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset,
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
     ToPoint,
 };
 use fs::Fs;
@@ -400,7 +400,7 @@ impl AssistantPanel {
             .entry(editor.downgrade())
             .or_default()
             .push(inline_assist_id);
-        self.update_highlights_for_editor(&editor, cx);
+        self.update_highlights_for_editor(editor, cx);
     }
 
     fn handle_inline_assistant_event(
@@ -532,17 +532,13 @@ impl AssistantPanel {
 
         let project = pending_assist.project.clone();
 
-        let project_name = if let Some(project) = project.upgrade() {
-            Some(
-                project
-                    .read(cx)
-                    .worktree_root_names(cx)
-                    .collect::<Vec<&str>>()
-                    .join("/"),
-            )
-        } else {
-            None
-        };
+        let project_name = project.upgrade().map(|project| {
+            project
+                .read(cx)
+                .worktree_root_names(cx)
+                .collect::<Vec<&str>>()
+                .join("/")
+        });
 
         self.inline_prompt_history
             .retain(|prompt| prompt != user_prompt);
@@ -585,7 +581,7 @@ impl AssistantPanel {
         // If Markdown or No Language is Known, increase the randomness for more creative output
         // If Code, decrease temperature to get more deterministic outputs
         let temperature = if let Some(language) = language_name.clone() {
-            if language.to_string() != "Markdown".to_string() {
+            if language.as_ref() != "Markdown" {
                 0.5
             } else {
                 1.0
@@ -1190,9 +1186,9 @@ impl Panel for AssistantPanel {
         let settings = AssistantSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or_else(|| settings.default_width)
+                self.width.unwrap_or(settings.default_width)
             }
-            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
@@ -1431,12 +1427,9 @@ impl Conversation {
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
-            language::Event::Edited => {
-                self.count_remaining_tokens(cx);
-                cx.emit(ConversationEvent::MessagesEdited);
-            }
-            _ => {}
+        if *event == language::Event::Edited {
+            self.count_remaining_tokens(cx);
+            cx.emit(ConversationEvent::MessagesEdited);
         }
     }
 
@@ -1602,10 +1595,7 @@ impl Conversation {
         user_messages
     }
 
-    fn to_completion_request(
-        &mut self,
-        cx: &mut ModelContext<Conversation>,
-    ) -> LanguageModelRequest {
+    fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
         let request = LanguageModelRequest {
             model: self.model.clone(),
             messages: self
@@ -2365,7 +2355,7 @@ impl ConversationEditor {
                         spanned_messages += 1;
                         write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
                         for chunk in conversation.buffer.read(cx).text_for_range(range) {
-                            copied_text.push_str(&chunk);
+                            copied_text.push_str(chunk);
                         }
                         copied_text.push('\n');
                     }
@@ -2384,7 +2374,7 @@ impl ConversationEditor {
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
         self.conversation.update(cx, |conversation, cx| {
             let selections = self.editor.read(cx).selections.disjoint_anchors();
-            for selection in selections.into_iter() {
+            for selection in selections.as_ref() {
                 let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
                 let range = selection
                     .map(|endpoint| endpoint.to_offset(&buffer))
@@ -2708,7 +2698,7 @@ impl InlineAssistant {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.3).into(),
+            line_height: relative(1.3),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -2761,6 +2751,30 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
             ix += 1;
         }
     }
+}
+
+fn report_assistant_event(
+    workspace: WeakView<Workspace>,
+    conversation: Option<&Conversation>,
+    assistant_kind: AssistantKind,
+    cx: &mut AppContext,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+
+    let client = workspace.read(cx).project().read(cx).client();
+    let telemetry = client.telemetry();
+
+    let conversation_id = conversation.and_then(|conversation| conversation.id.clone());
+    let model_id = conversation
+        .map(|c| c.model.telemetry_id())
+        .unwrap_or_else(|| {
+            CompletionProvider::global(cx)
+                .default_model()
+                .telemetry_id()
+        });
+    telemetry.report_assistant_event(conversation_id, assistant_kind, model_id)
 }
 
 #[cfg(test)]
@@ -3164,28 +3178,4 @@ mod tests {
             .map(|message| (message.id, message.role, message.offset_range))
             .collect()
     }
-}
-
-fn report_assistant_event(
-    workspace: WeakView<Workspace>,
-    conversation: Option<&Conversation>,
-    assistant_kind: AssistantKind,
-    cx: &mut AppContext,
-) {
-    let Some(workspace) = workspace.upgrade() else {
-        return;
-    };
-
-    let client = workspace.read(cx).project().read(cx).client();
-    let telemetry = client.telemetry();
-
-    let conversation_id = conversation.and_then(|conversation| conversation.id.clone());
-    let model_id = conversation
-        .map(|c| c.model.telemetry_id())
-        .unwrap_or_else(|| {
-            CompletionProvider::global(cx)
-                .default_model()
-                .telemetry_id()
-        });
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model_id)
 }

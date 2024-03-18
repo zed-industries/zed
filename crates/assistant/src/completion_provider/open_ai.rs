@@ -118,17 +118,15 @@ pub fn count_open_ai_tokens(
             let messages = request
                 .messages
                 .into_iter()
-                .filter_map(|message| {
-                    Some(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(message.content),
-                        name: None,
-                        function_call: None,
-                    })
+                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
+                    },
+                    content: Some(message.content),
+                    name: None,
+                    function_call: None,
                 })
                 .collect::<Vec<_>>();
 
@@ -137,9 +135,9 @@ pub fn count_open_ai_tokens(
         .boxed()
 }
 
-impl Into<open_ai::Role> for Role {
-    fn into(self) -> open_ai::Role {
-        match self {
+impl From<Role> for open_ai::Role {
+    fn from(val: Role) -> Self {
+        match val {
             Role::User => OpenAiRole::User,
             Role::Assistant => OpenAiRole::Assistant,
             Role::System => OpenAiRole::System,
