@@ -38,7 +38,8 @@ fn main() {
         }
     }
 
-    // actual code goes here
+    // todo(windows)
+    // log errors into a file
     let Ok(pipe_handle) = (unsafe {
         CreateFileW(
             PIPE_NAME,
@@ -81,7 +82,6 @@ fn main() {
             println!("Error read from pipe: {}", std::io::Error::last_os_error());
             break;
         };
-        println!("{} bytes read", bytes_read);
         let Ok(symlink) =
             serde_json::from_slice::<'_, SymlinkData>(&target_buffer[..(bytes_read as usize)])
                 .inspect_err(|e| println!("unable to parse data: {:?}", e))
