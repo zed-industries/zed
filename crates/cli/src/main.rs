@@ -13,28 +13,28 @@ use std::{
 use util::paths::PathLikeWithPosition;
 
 #[derive(Parser, Debug)]
-#[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
+#[command(name = "zed", disable_version_flag = true)]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
-    #[clap(short, long)]
+    #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[clap(short, long, overrides_with = "new")]
+    #[arg(short, long, overrides_with = "new")]
     add: bool,
     /// Create a new workspace
-    #[clap(short, long, overrides_with = "add")]
+    #[arg(short, long, overrides_with = "add")]
     new: bool,
     /// A sequence of space-separated paths that you want to open.
     ///
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
-    #[clap(value_parser = parse_path_with_position)]
+    #[arg(value_parser = parse_path_with_position)]
     paths_with_position: Vec<PathLikeWithPosition<PathBuf>>,
     /// Print Zed's version and the app path.
-    #[clap(short, long)]
+    #[arg(short, long)]
     version: bool,
     /// Custom Zed.app path
-    #[clap(short, long)]
+    #[arg(short, long)]
     bundle_path: Option<PathBuf>,
 }
 
