@@ -603,7 +603,11 @@ impl Server {
                 match (handler)(envelope.payload, response, session).await {
                     Ok(()) => Ok(()),
                     Err(error) => {
-                        peer.respond_with_error(receipt, error.to_proto())?;
+                        let proto_err = match &error {
+                            Error::Internal(err) => err.to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
+                        };
+                        peer.respond_with_error(receipt, proto_err)?;
                         Err(error)
                     }
                 }

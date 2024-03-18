@@ -80,7 +80,7 @@ pub trait ErrorExt {
     fn error_tag(&self, k: &str) -> Option<&str>;
     /// to_proto() converts the error into a proto::Error
     fn to_proto(&self) -> proto::Error;
-    ///
+    /// Clones the error and turns into an [anyhow::Error].
     fn cloned(&self) -> anyhow::Error;
 }
 
