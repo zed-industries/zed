@@ -43,13 +43,13 @@ impl Render for AnimationExample {
                             .text_color(black())
                             .with_animation(
                                 "image_circle",
-                                Animation::new(Duration::from_secs(5))
+                                Animation::new(Duration::from_secs(2))
                                     .repeat()
                                     .with_easing(bounce(ease_in_out)),
                                 |svg, delta| {
-                                    svg.with_transformation(Transformation::rotate(
-                                        delta * 2.0 * std::f64::consts::PI as f32,
-                                    ))
+                                    svg.with_transformation(Transformation::rotate(percentage(
+                                        delta,
+                                    )))
                                 },
                             ),
                     ),

@@ -1,7 +1,7 @@
 use crate::{
     geometry::Invert as _, point, px, size, Bounds, Element, ElementContext, Hitbox,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, SharedString, Size,
-    StyleRefinement, Styled, TransformationMatrix,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radian, SharedString,
+    Size, StyleRefinement, Styled, TransformationMatrix,
 };
 use util::ResultExt;
 
@@ -109,7 +109,7 @@ impl InteractiveElement for Svg {
 pub struct Transformation {
     scale: Size<f32>,
     translate: Point<Pixels>,
-    rotate: f32,
+    rotate: Radian,
 }
 
 impl Default for Transformation {
@@ -117,7 +117,7 @@ impl Default for Transformation {
         Self {
             scale: size(1.0, 1.0),
             translate: point(px(0.0), px(0.0)),
-            rotate: 0.0,
+            rotate: Radian(0.0),
         }
     }
 }
@@ -128,7 +128,7 @@ impl Transformation {
         Self {
             scale,
             translate: point(px(0.0), px(0.0)),
-            rotate: 0.0,
+            rotate: Radian(0.0),
         }
     }
 
@@ -137,12 +137,13 @@ impl Transformation {
         Self {
             scale: size(1.0, 1.0),
             translate,
-            rotate: 0.0,
+            rotate: Radian(0.0),
         }
     }
 
     /// Create a new Transformation with the specified rotation in radians.
-    pub fn rotate(rotate: f32) -> Self {
+    pub fn rotate(rotate: impl Into<Radian>) -> Self {
+        let rotate = rotate.into();
         Self {
             scale: size(1.0, 1.0),
             translate: point(px(0.0), px(0.0)),
@@ -163,7 +164,7 @@ impl Transformation {
     }
 
     /// Update the rotation angle of this transformation.
-    pub fn with_rotation(mut self, rotate: f32) -> Self {
+    pub fn with_rotation(mut self, rotate: Radian) -> Self {
         self.rotate = rotate;
         self
     }

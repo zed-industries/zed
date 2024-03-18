@@ -431,7 +431,7 @@ impl<T> Size<T>
 where
     T: Clone + Default + Debug + Half,
 {
-    /// Compute the center point of the size.
+    /// Compute the center point of the size.g
     pub fn center(&self) -> Point<T> {
         Point {
             x: self.width.half(),
@@ -1987,6 +1987,31 @@ impl From<Pixels> for Corners<Pixels> {
             bottom_left: val,
         }
     }
+}
+
+/// Represents an angle in Radians
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Neg,
+    Div,
+    DivAssign,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Debug,
+)]
+#[repr(transparent)]
+pub struct Radian(pub f32);
+
+/// Generate a `Radian` from a percentage of a full circle.
+pub fn percentage(value: f32) -> Radian {
+    Radian(value * 2.0 * std::f32::consts::PI)
 }
 
 /// Represents a length in pixels, the base unit of measurement in the UI framework.

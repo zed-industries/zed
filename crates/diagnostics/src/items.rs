@@ -1,10 +1,10 @@
-use std::{f32::consts::PI, time::Duration};
+use std::time::Duration;
 
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
-    rems, Animation, AnimationExt, EventEmitter, IntoElement, ParentElement, Render, Styled,
-    Subscription, Transformation, View, ViewContext, WeakView,
+    percentage, rems, Animation, AnimationExt, EventEmitter, IntoElement, ParentElement, Render,
+    Styled, Subscription, Transformation, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
@@ -75,7 +75,7 @@ impl Render for DiagnosticIndicator {
                                 "arrow-circle",
                                 Animation::new(Duration::from_secs(2)).repeat(),
                                 |icon, delta| {
-                                    icon.transform(Transformation::rotate(delta * 2.0 * PI))
+                                    icon.transform(Transformation::rotate(percentage(delta)))
                                 },
                             ),
                     )
