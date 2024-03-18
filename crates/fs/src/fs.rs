@@ -37,6 +37,9 @@ use std::ffi::OsStr;
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()>;
+    async fn create_dir_link(&self, path: &Path, target: PathBuf) -> Result<()> {
+        self.create_symlink(path, target).await
+    }
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
     async fn create_file_with(
         &self,
@@ -52,6 +55,9 @@ pub trait Fs: Send + Sync {
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn remove_dir_link(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_file(path, options).await
+    }
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
@@ -119,13 +125,28 @@ impl Fs for RealFs {
         Ok(smol::fs::create_dir_all(path).await?)
     }
 
+    #[cfg(unix)]
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
-        #[cfg(target_family = "unix")]
         smol::fs::unix::symlink(target, path).await?;
+        Ok(())
+    }
 
-        #[cfg(target_family = "windows")]
-        Err(anyhow!("not supported yet on windows"))?;
+    #[cfg(windows)]
+    async fn create_symlink(&self, _path: &Path, _target: PathBuf) -> Result<()> {
+        unimplemented!()
+    }
 
+    #[cfg(windows)]
+    async fn create_dir_link(&self, path: &Path, target: PathBuf) -> Result<()> {
+        use windows::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD;
+        smol::fs::windows::symlink_dir(&target, path)
+            .await
+            .or_else(|e| {
+                if e.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD.0 as i32) {
+                    return junction::create(target, path);
+                }
+                Err(e)
+            })?;
         Ok(())
     }
 
@@ -209,6 +230,16 @@ impl Fs for RealFs {
             }
             Err(err) => Err(err)?,
         }
+    }
+
+    #[cfg(windows)]
+    async fn remove_dir_link(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        if junction::exists(path).unwrap_or_default() {
+            junction::delete(path)?;
+        } else {
+            self.remove_file(path, options).await?;
+        }
+        Ok(())
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {

@@ -44,6 +44,7 @@ notify = "6.1.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+junction = "1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

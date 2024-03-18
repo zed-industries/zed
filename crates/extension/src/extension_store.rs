@@ -555,7 +555,7 @@ impl ExtensionStore {
             let output_path = &extensions_dir.join(extension_id.as_ref());
             if let Some(metadata) = fs.metadata(&output_path).await? {
                 if metadata.is_symlink {
-                    fs.remove_file(
+                    fs.remove_dir_link(
                         &output_path,
                         RemoveOptions {
                             recursive: false,
@@ -568,7 +568,7 @@ impl ExtensionStore {
                 }
             }
 
-            fs.create_symlink(output_path, extension_source_path)
+            fs.create_dir_link(output_path, extension_source_path)
                 .await?;
 
             this.update(&mut cx, |this, cx| this.reload(None, cx))?

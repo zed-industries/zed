@@ -3906,6 +3906,7 @@ dependencies = [
  "futures 0.3.28",
  "git2",
  "gpui",
+ "junction",
  "lazy_static",
  "libc",
  "log",
@@ -5094,6 +5095,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5f195fe497f702db0f318b07fdd68edb16955aed830df8363d837542f8f935a"
 dependencies = [
  "wasm-bindgen",
+]
+
+[[package]]
+name = "junction"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca39ef0d69b18e6a2fd14c2f0a1d593200f4a4ed949b240b5917ab51fac754cb"
+dependencies = [
+ "scopeguard",
+ "winapi 0.3.9",
 ]
 
 [[package]]
