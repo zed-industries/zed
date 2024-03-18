@@ -11,6 +11,7 @@ use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
 
 #[derive(Debug)]
 pub(crate) struct WindowsDisplay {
+    pub handle: HMONITOR,
     pub display_id: DisplayId,
     bounds: Bounds<GlobalPixels>,
     uuid: Uuid,
@@ -28,6 +29,7 @@ impl WindowsDisplay {
         let uuid = generate_uuid(&info.szDevice);
 
         Some(WindowsDisplay {
+            handle: screen,
             display_id,
             bounds: Bounds {
                 origin: Point {
@@ -43,12 +45,39 @@ impl WindowsDisplay {
         })
     }
 
+    pub fn new_with_handle(monitor: HMONITOR) -> Self {
+        let info = get_monitor_info(monitor).expect("unable to get monitor info");
+        let size = info.monitorInfo.rcMonitor;
+        let uuid = generate_uuid(&info.szDevice);
+        let display_id = available_monitors()
+            .iter()
+            .position(|handle| handle.0 == monitor.0)
+            .unwrap();
+
+        WindowsDisplay {
+            handle: monitor,
+            display_id: DisplayId(display_id as _),
+            bounds: Bounds {
+                origin: Point {
+                    x: GlobalPixels(size.left as f32),
+                    y: GlobalPixels(size.top as f32),
+                },
+                size: Size {
+                    width: GlobalPixels((size.right - size.left) as f32),
+                    height: GlobalPixels((size.bottom - size.top) as f32),
+                },
+            },
+            uuid,
+        }
+    }
+
     fn new_with_handle_and_id(handle: HMONITOR, display_id: DisplayId) -> Self {
         let info = get_monitor_info(handle).expect("unable to get monitor info");
         let size = info.monitorInfo.rcMonitor;
         let uuid = generate_uuid(&info.szDevice);
 
         WindowsDisplay {
+            handle,
             display_id,
             bounds: Bounds {
                 origin: Point {
@@ -75,17 +104,7 @@ impl WindowsDisplay {
             );
             return None;
         }
-        let Some(display_id) = available_monitors()
-            .iter()
-            .position(|handle| handle.0 == monitor.0)
-        else {
-            return None;
-        };
-
-        Some(WindowsDisplay::new_with_handle_and_id(
-            monitor,
-            DisplayId(display_id as _),
-        ))
+        Some(WindowsDisplay::new_with_handle(monitor))
     }
 
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
