@@ -122,17 +122,17 @@ pub struct BlameEntry {
     pub final_line_number: u32,
     pub line_count: u32,
 
-    pub author: String,
-    pub author_mail: String,
-    pub author_time: i64,
-    pub author_tz: String,
+    pub author: Option<String>,
+    pub author_mail: Option<String>,
+    pub author_time: Option<i64>,
+    pub author_tz: Option<String>,
 
-    pub committer: String,
-    pub committer_mail: String,
-    pub committer_time: i64,
-    pub committer_tz: String,
+    pub committer: Option<String>,
+    pub committer_mail: Option<String>,
+    pub committer_time: Option<i64>,
+    pub committer_tz: Option<String>,
 
-    pub summary: String,
+    pub summary: Option<String>,
 
     pub previous: Option<String>,
     pub filename: String,
@@ -174,25 +174,27 @@ impl BlameEntry {
         })
     }
 
-    pub fn committer_datetime(&self) -> Result<DateTime<FixedOffset>> {
-        let naive_datetime = NaiveDateTime::from_timestamp_opt(self.committer_time, 0)
+    pub fn committer_datetime(&self) -> Result<Option<DateTime<FixedOffset>>> {
+        let (Some(committer_time), Some(committer_tz)) = (self.committer_time, &self.committer_tz)
+        else {
+            return Ok(None);
+        };
+
+        let naive_datetime = NaiveDateTime::from_timestamp_opt(committer_time, 0)
             .expect("failed to parse timestamp");
-        let timezone_offset_in_seconds = self
-            .committer_tz
+        let timezone_offset_in_seconds = committer_tz
             .parse::<i32>()
             .map_err(|e| anyhow!("Failed to parse timezone offset: {}", e))?
             / 100
             * 36;
         let timezone = FixedOffset::east_opt(timezone_offset_in_seconds)
-            .ok_or_else(|| anyhow!("Invalid timezone offset: {}", self.committer_tz))?;
-        Ok(DateTime::<FixedOffset>::from_naive_utc_and_offset(
+            .ok_or_else(|| anyhow!("Invalid timezone offset: {}", committer_tz))?;
+        Ok(Some(DateTime::<FixedOffset>::from_naive_utc_and_offset(
             naive_datetime,
             timezone,
-        ))
+        )))
     }
 }
-
-const NOT_COMMITTED_NAME: &'static str = "Not commited";
 
 // parse_git_blame parses the output of `git blame --incremental`, which returns
 // all the blame-entries for a given path incrementally, as it finds them.
@@ -264,35 +266,28 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                 let Some((key, value)) = line.split_once(' ') else {
                     continue;
                 };
+                let is_committed = !entry.sha.is_zero();
                 match key {
                     "filename" => {
                         entry.filename = value.into();
                         done = true;
                     }
-                    "summary" => entry.summary = value.into(),
                     "previous" => entry.previous = Some(value.into()),
 
-                    "author" => {
-                        entry.author = if entry.sha.is_zero() {
-                            NOT_COMMITTED_NAME.to_string()
-                        } else {
-                            value.into()
-                        }
+                    "summary" if is_committed => entry.summary = Some(value.into()),
+                    "author" if is_committed => entry.author = Some(value.into()),
+                    "author-mail" if is_committed => entry.author_mail = Some(value.into()),
+                    "author-time" if is_committed => {
+                        entry.author_time = Some(value.parse::<i64>()?)
                     }
-                    "author-mail" => entry.author_mail = value.into(),
-                    "author-time" => entry.author_time = value.parse::<i64>()?,
-                    "author-tz" => entry.author_tz = value.into(),
+                    "author-tz" if is_committed => entry.author_tz = Some(value.into()),
 
-                    "committer" => {
-                        entry.committer = if entry.sha.is_zero() {
-                            NOT_COMMITTED_NAME.to_string()
-                        } else {
-                            value.into()
-                        }
+                    "committer" if is_committed => entry.committer = Some(value.into()),
+                    "committer-mail" if is_committed => entry.committer_mail = Some(value.into()),
+                    "committer-time" if is_committed => {
+                        entry.committer_time = Some(value.parse::<i64>()?)
                     }
-                    "committer-mail" => entry.committer_mail = value.into(),
-                    "committer-time" => entry.committer_time = value.parse::<i64>()?,
-                    "committer-tz" => entry.committer_tz = value.into(),
+                    "committer-tz" if is_committed => entry.committer_tz = Some(value.into()),
                     _ => {}
                 }
             }
@@ -402,13 +397,15 @@ impl BufferBlame {
             let end = Point::new(start_line + entry.line_count, 0);
 
             let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
+            // TODO: Fix the unwrap
+            let time = entry.committer_datetime()?.unwrap();
 
             let hunk = BlameHunk {
                 buffer_range,
                 oid: entry.sha,
-                name: Some(entry.committer.clone()),
-                email: Some(entry.committer_mail.clone()),
-                time: entry.committer_datetime()?,
+                name: entry.committer.clone(),
+                email: entry.committer_mail.clone(),
+                time,
             };
             tree.push(hunk, buffer);
         }
