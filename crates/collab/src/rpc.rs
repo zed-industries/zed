@@ -3323,6 +3323,7 @@ async fn complete_with_language_model(
     open_ai_api_key: Option<Arc<str>>,
     google_ai_api_key: Option<Arc<str>>,
 ) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
     session
         .rate_limiter
         .check::<CompleteWithLanguageModelRateLimit>(session.user_id)
@@ -3335,7 +3336,6 @@ async fn complete_with_language_model(
     } else if request.model.starts_with("gemini") {
         let api_key = google_ai_api_key
             .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
-
         complete_with_google_ai(request, response, session, api_key).await?;
     }
 
@@ -3390,8 +3390,6 @@ async fn complete_with_google_ai(
     session: Session,
     api_key: Arc<str>,
 ) -> Result<()> {
-    authorize_access_to_google_ai(&session).await?;
-
     let mut stream = google_ai::stream_generate_content(
         &session.http_client,
         google_ai::API_URL,
@@ -3461,6 +3459,8 @@ async fn count_tokens_with_language_model(
     session: Session,
     google_ai_api_key: Option<Arc<str>>,
 ) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
+
     if !request.model.starts_with("gemini") {
         return Err(anyhow!(
             "counting tokens for model: {:?} is not supported",
@@ -3472,8 +3472,6 @@ async fn count_tokens_with_language_model(
         .rate_limiter
         .check::<CountTokensWithLanguageModelRateLimit>(session.user_id)
         .await?;
-
-    authorize_access_to_google_ai(&session).await?;
 
     let api_key = google_ai_api_key
         .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
@@ -3490,12 +3488,14 @@ async fn count_tokens_with_language_model(
     Ok(())
 }
 
-async fn authorize_access_to_google_ai(session: &Session) -> Result<(), Error> {
+async fn authorize_access_to_language_models(session: &Session) -> Result<(), Error> {
     let db = session.db().await;
     let flags = db.get_user_flags(session.user_id).await?;
-    Ok(if !flags.iter().any(|flag| flag == "google-ai") {
-        return Err(anyhow!("permission denied"))?;
-    })
+    if flags.iter().any(|flag| flag == "language-models") {
+        Ok(())
+    } else {
+        Err(anyhow!("permission denied"))?
+    }
 }
 
 /// Start receiving chat updates for a channel
