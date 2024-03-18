@@ -572,7 +572,9 @@ impl WindowsWindowInner {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         };
-        if func(PlatformInput::KeyDown(event)).default_prevented {
+
+        let dispatch_event_result = func(PlatformInput::KeyDown(event));
+        if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
             self.invalidate_client_area();
             return LRESULT(0);
         }
