@@ -1144,7 +1144,7 @@ impl AppContext {
         }
     }
 
-    pub(crate) fn dispatch_global_action(&mut self, action: &dyn Action) {
+    fn dispatch_global_action(&mut self, action: &dyn Action) {
         self.propagate_event = true;
 
         if let Some(mut global_listeners) = self
