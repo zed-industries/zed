@@ -14,7 +14,7 @@ pub(crate) enum Head {
 }
 
 impl Head {
-    pub fn query_line<V: 'static>(
+    pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
         cx: &mut ViewContext<V>,
         edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent, &mut ViewContext<'_, V>) + 'static,

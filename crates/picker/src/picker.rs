@@ -116,7 +116,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool, is_queryable: bool) -> Self {
         let head = if is_queryable {
-            Head::query_line(
+            Head::editor(
                 delegate.placeholder_text(cx),
                 cx,
                 Self::on_input_editor_event,
