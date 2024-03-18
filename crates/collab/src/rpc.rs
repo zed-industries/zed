@@ -3,10 +3,10 @@ mod connection_pool;
 use crate::{
     auth::{self, Impersonator},
     db::{
-        self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
-        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project, ProjectId,
-        RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId, User,
-        UserId,
+        self, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage,
+        Database, InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project,
+        ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
+        User, UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -351,14 +351,8 @@ impl Server {
                                 "refreshed room"
                             );
                             room_updated(&refreshed_room.room, &peer);
-                            if let Some(channel_id) = refreshed_room.channel_id {
-                                channel_updated(
-                                    channel_id,
-                                    &refreshed_room.room,
-                                    &refreshed_room.channel_members,
-                                    &peer,
-                                    &pool.lock(),
-                                );
+                            if let Some(channel) = refreshed_room.channel.as_ref() {
+                                channel_updated(channel, &refreshed_room.room, &peer, &pool.lock());
                             }
                             contacts_to_update
                                 .extend(refreshed_room.stale_participant_user_ids.iter().copied());
@@ -699,6 +693,9 @@ impl Server {
         {
             let mut pool = self.connection_pool.lock();
             pool.add_connection(connection_id, user.id, user.admin, zed_version);
+            for membership in &channels_for_user.channel_memberships {
+                pool.subscribe_to_channel(user.id, membership.channel_id, membership.role)
+            }
             self.peer.send(
                 connection_id,
                 build_initial_contacts_update(contacts, &pool),
@@ -1148,8 +1145,7 @@ async fn rejoin_room(
     session: Session,
 ) -> Result<()> {
     let room;
-    let channel_id;
-    let channel_members;
+    let channel;
     {
         let mut rejoined_room = session
             .db()
@@ -1315,15 +1311,13 @@ async fn rejoin_room(
         let rejoined_room = rejoined_room.into_inner();
 
         room = rejoined_room.room;
-        channel_id = rejoined_room.channel_id;
-        channel_members = rejoined_room.channel_members;
+        channel = rejoined_room.channel;
     }
 
-    if let Some(channel_id) = channel_id {
+    if let Some(channel) = channel {
         channel_updated(
-            channel_id,
+            &channel,
             &room,
-            &channel_members,
             &session.peer,
             &*session.connection_pool().await,
         );
@@ -2427,31 +2421,39 @@ async fn create_channel(
     let db = session.db().await;
 
     let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
-    let (channel, owner, channel_members) = db
+    let (channel, membership) = db
         .create_channel(&request.name, parent_id, session.user_id)
         .await?;
+
+    let root_id = channel.root_id();
+    let channel = Channel::from_model(channel);
 
     response.send(proto::CreateChannelResponse {
         channel: Some(channel.to_proto()),
         parent_id: request.parent_id,
     })?;
 
-    let connection_pool = session.connection_pool().await;
-    if let Some(owner) = owner {
+    let mut connection_pool = session.connection_pool().await;
+    if let Some(membership) = membership {
+        connection_pool.subscribe_to_channel(
+            membership.user_id,
+            membership.channel_id,
+            membership.role,
+        );
         let update = proto::UpdateUserChannels {
             channel_memberships: vec![proto::ChannelMembership {
-                channel_id: owner.channel_id.to_proto(),
-                role: owner.role.into(),
+                channel_id: membership.channel_id.to_proto(),
+                role: membership.role.into(),
             }],
             ..Default::default()
         };
-        for connection_id in connection_pool.user_connection_ids(owner.user_id) {
+        for connection_id in connection_pool.user_connection_ids(membership.user_id) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
 
-    for channel_member in channel_members {
-        if !channel_member.role.can_see_channel(channel.visibility) {
+    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+        if !role.can_see_channel(channel.visibility) {
             continue;
         }
 
@@ -2459,9 +2461,7 @@ async fn create_channel(
             channels: vec![channel.to_proto()],
             ..Default::default()
         };
-        for connection_id in connection_pool.user_connection_ids(channel_member.user_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
+        session.peer.send(connection_id, update.clone())?;
     }
 
     Ok(())
@@ -2476,7 +2476,7 @@ async fn delete_channel(
     let db = session.db().await;
 
     let channel_id = request.channel_id;
-    let (removed_channels, member_ids) = db
+    let (root_channel, removed_channels) = db
         .delete_channel(ChannelId::from_proto(channel_id), session.user_id)
         .await?;
     response.send(proto::Ack {})?;
@@ -2488,10 +2488,8 @@ async fn delete_channel(
         .extend(removed_channels.into_iter().map(|id| id.to_proto()));
 
     let connection_pool = session.connection_pool().await;
-    for member_id in member_ids {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
+    for (connection_id, _) in connection_pool.channel_connection_ids(root_channel) {
+        session.peer.send(connection_id, update.clone())?;
     }
 
     Ok(())
@@ -2551,9 +2549,9 @@ async fn remove_channel_member(
         .remove_channel_member(channel_id, member_id, session.user_id)
         .await?;
 
-    let connection_pool = &session.connection_pool().await;
+    let mut connection_pool = session.connection_pool().await;
     notify_membership_updated(
-        &connection_pool,
+        &mut connection_pool,
         membership_update,
         member_id,
         &session.peer,
@@ -2588,25 +2586,33 @@ async fn set_channel_visibility(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let visibility = request.visibility().into();
 
-    let (channel, channel_members) = db
+    let channel_model = db
         .set_channel_visibility(channel_id, visibility, session.user_id)
         .await?;
+    let root_id = channel_model.root_id();
+    let channel = Channel::from_model(channel_model);
 
-    let connection_pool = session.connection_pool().await;
-    for member in channel_members {
-        let update = if member.role.can_see_channel(channel.visibility) {
+    let mut connection_pool = session.connection_pool().await;
+    for (user_id, role) in connection_pool
+        .channel_user_ids(root_id)
+        .collect::<Vec<_>>()
+        .into_iter()
+    {
+        let update = if role.can_see_channel(channel.visibility) {
+            connection_pool.subscribe_to_channel(user_id, channel_id, role);
             proto::UpdateChannels {
                 channels: vec![channel.to_proto()],
                 ..Default::default()
             }
         } else {
+            connection_pool.unsubscribe_from_channel(&user_id, &channel_id);
             proto::UpdateChannels {
                 delete_channels: vec![channel.id.to_proto()],
                 ..Default::default()
             }
         };
 
-        for connection_id in connection_pool.user_connection_ids(member.user_id) {
+        for connection_id in connection_pool.user_connection_ids(user_id) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2635,9 +2641,9 @@ async fn set_channel_member_role(
 
     match result {
         db::SetMemberRoleResult::MembershipUpdated(membership_update) => {
-            let connection_pool = session.connection_pool().await;
+            let mut connection_pool = session.connection_pool().await;
             notify_membership_updated(
-                &connection_pool,
+                &mut connection_pool,
                 membership_update,
                 member_id,
                 &session.peer,
@@ -2671,24 +2677,23 @@ async fn rename_channel(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let (channel, channel_members) = db
+    let channel_model = db
         .rename_channel(channel_id, session.user_id, &request.name)
         .await?;
+    let root_id = channel_model.root_id();
+    let channel = Channel::from_model(channel_model);
 
     response.send(proto::RenameChannelResponse {
         channel: Some(channel.to_proto()),
     })?;
 
     let connection_pool = session.connection_pool().await;
-    for channel_member in channel_members {
-        if !channel_member.role.can_see_channel(channel.visibility) {
-            continue;
-        }
-        let update = proto::UpdateChannels {
-            channels: vec![channel.to_proto()],
-            ..Default::default()
-        };
-        for connection_id in connection_pool.user_connection_ids(channel_member.user_id) {
+    let update = proto::UpdateChannels {
+        channels: vec![channel.to_proto()],
+        ..Default::default()
+    };
+    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+        if role.can_see_channel(channel.visibility) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2705,18 +2710,18 @@ async fn move_channel(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let to = ChannelId::from_proto(request.to);
 
-    let (channels, channel_members) = session
+    let (root_id, channels) = session
         .db()
         .await
         .move_channel(channel_id, to, session.user_id)
         .await?;
 
     let connection_pool = session.connection_pool().await;
-    for member in channel_members {
+    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
         let channels = channels
             .iter()
             .filter_map(|channel| {
-                if member.role.can_see_channel(channel.visibility) {
+                if role.can_see_channel(channel.visibility) {
                     Some(channel.to_proto())
                 } else {
                     None
@@ -2732,9 +2737,7 @@ async fn move_channel(
             ..Default::default()
         };
 
-        for connection_id in connection_pool.user_connection_ids(member.user_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
+        session.peer.send(connection_id, update.clone())?;
     }
 
     response.send(Ack {})?;
@@ -2771,10 +2774,10 @@ async fn respond_to_channel_invite(
         .respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
 
-    let connection_pool = session.connection_pool().await;
+    let mut connection_pool = session.connection_pool().await;
     if let Some(membership_update) = membership_update {
         notify_membership_updated(
-            &connection_pool,
+            &mut connection_pool,
             membership_update,
             session.user_id,
             &session.peer,
@@ -2866,14 +2869,17 @@ async fn join_channel_internal(
 
         response.send(proto::JoinRoomResponse {
             room: Some(joined_room.room.clone()),
-            channel_id: joined_room.channel_id.map(|id| id.to_proto()),
+            channel_id: joined_room
+                .channel
+                .as_ref()
+                .map(|channel| channel.id.to_proto()),
             live_kit_connection_info,
         })?;
 
-        let connection_pool = session.connection_pool().await;
+        let mut connection_pool = session.connection_pool().await;
         if let Some(membership_updated) = membership_updated {
             notify_membership_updated(
-                &connection_pool,
+                &mut connection_pool,
                 membership_updated,
                 session.user_id,
                 &session.peer,
@@ -2886,9 +2892,10 @@ async fn join_channel_internal(
     };
 
     channel_updated(
-        channel_id,
+        &joined_room
+            .channel
+            .ok_or_else(|| anyhow!("channel not returned"))?,
         &joined_room.room,
-        &joined_room.channel_members,
         &session.peer,
         &*session.connection_pool().await,
     );
@@ -3403,11 +3410,18 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
 }
 
 fn notify_membership_updated(
-    connection_pool: &ConnectionPool,
+    connection_pool: &mut ConnectionPool,
     result: MembershipUpdated,
     user_id: UserId,
     peer: &Peer,
 ) {
+    for membership in &result.new_channels.channel_memberships {
+        connection_pool.subscribe_to_channel(user_id, membership.channel_id, membership.role)
+    }
+    for channel_id in &result.removed_channels {
+        connection_pool.unsubscribe_from_channel(&user_id, channel_id)
+    }
+
     let user_channels_update = proto::UpdateUserChannels {
         channel_memberships: result
             .new_channels
@@ -3420,6 +3434,7 @@ fn notify_membership_updated(
             .collect(),
         ..Default::default()
     };
+
     let mut update = build_channels_update(result.new_channels, vec![]);
     update.delete_channels = result
         .removed_channels
@@ -3533,9 +3548,8 @@ fn room_updated(room: &proto::Room, peer: &Peer) {
 }
 
 fn channel_updated(
-    channel_id: ChannelId,
+    channel: &db::channel::Model,
     room: &proto::Room,
-    channel_members: &[UserId],
     peer: &Peer,
     pool: &ConnectionPool,
 ) {
@@ -3547,15 +3561,16 @@ fn channel_updated(
 
     broadcast(
         None,
-        channel_members
-            .iter()
-            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        pool.channel_connection_ids(channel.root_id())
+            .filter_map(|(channel_id, role)| {
+                role.can_see_channel(channel.visibility).then(|| channel_id)
+            }),
         |peer_id| {
             peer.send(
                 peer_id,
                 proto::UpdateChannels {
                     channel_participants: vec![proto::ChannelParticipants {
-                        channel_id: channel_id.to_proto(),
+                        channel_id: channel.id.to_proto(),
                         participant_user_ids: participants.clone(),
                     }],
                     ..Default::default()
@@ -3608,8 +3623,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let live_kit_room;
     let delete_live_kit_room;
     let room;
-    let channel_members;
-    let channel_id;
+    let channel;
 
     if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
         contacts_to_update.insert(session.user_id);
@@ -3623,19 +3637,17 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.deleted;
         room = mem::take(&mut left_room.room);
-        channel_members = mem::take(&mut left_room.channel_members);
-        channel_id = left_room.channel_id;
+        channel = mem::take(&mut left_room.channel);
 
         room_updated(&room, &session.peer);
     } else {
         return Ok(());
     }
 
-    if let Some(channel_id) = channel_id {
+    if let Some(channel) = channel {
         channel_updated(
-            channel_id,
+            &channel,
             &room,
-            &channel_members,
             &session.peer,
             &*session.connection_pool().await,
         );

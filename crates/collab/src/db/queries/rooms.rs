@@ -52,12 +52,7 @@ impl Database {
             );
 
             let (channel, room) = self.get_channel_room(room_id, &tx).await?;
-            let channel_members;
-            if let Some(channel) = &channel {
-                channel_members = self.get_channel_participants(channel, &tx).await?;
-            } else {
-                channel_members = Vec::new();
-
+            if channel.is_none() {
                 // Delete the room if it becomes empty.
                 if room.participants.is_empty() {
                     project::Entity::delete_many()
@@ -70,8 +65,7 @@ impl Database {
 
             Ok(RefreshedRoom {
                 room,
-                channel_id: channel.map(|channel| channel.id),
-                channel_members,
+                channel,
                 stale_participant_user_ids,
                 canceled_calls_to_user_ids,
             })
@@ -349,8 +343,7 @@ impl Database {
             let room = self.get_room(room_id, &tx).await?;
             Ok(JoinRoom {
                 room,
-                channel_id: None,
-                channel_members: vec![],
+                channel: None,
             })
         })
         .await
@@ -446,11 +439,9 @@ impl Database {
 
         let (channel, room) = self.get_channel_room(room_id, &tx).await?;
         let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;
-        let channel_members = self.get_channel_participants(&channel, tx).await?;
         Ok(JoinRoom {
             room,
-            channel_id: Some(channel.id),
-            channel_members,
+            channel: Some(channel),
         })
     }
 
@@ -736,16 +727,10 @@ impl Database {
             }
 
             let (channel, room) = self.get_channel_room(room_id, &tx).await?;
-            let channel_members = if let Some(channel) = &channel {
-                self.get_channel_participants(&channel, &tx).await?
-            } else {
-                Vec::new()
-            };
 
             Ok(RejoinedRoom {
                 room,
-                channel_id: channel.map(|channel| channel.id),
-                channel_members,
+                channel,
                 rejoined_projects,
                 reshared_projects,
             })
@@ -902,15 +887,9 @@ impl Database {
                     false
                 };
 
-                let channel_members = if let Some(channel) = &channel {
-                    self.get_channel_participants(channel, &tx).await?
-                } else {
-                    Vec::new()
-                };
                 let left_room = LeftRoom {
                     room,
-                    channel_id: channel.map(|channel| channel.id),
-                    channel_members,
+                    channel,
                     left_projects,
                     canceled_calls_to_user_ids,
                     deleted,
