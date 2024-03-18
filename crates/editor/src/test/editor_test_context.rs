@@ -9,7 +9,7 @@ use gpui::{
 };
 use indoc::indoc;
 use itertools::Itertools;
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, LanguageRegistry};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -117,6 +117,18 @@ impl EditorTestContext {
         self.multibuffer(|multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap().read(cx);
             read(buffer, cx)
+        })
+    }
+
+    pub fn language_registry(&mut self) -> Arc<LanguageRegistry> {
+        self.editor(|editor, cx| {
+            editor
+                .project
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .languages()
+                .clone()
         })
     }
 
@@ -274,7 +286,7 @@ impl EditorTestContext {
         let buffer_text = self.buffer_text();
 
         if buffer_text != unmarked_text {
-            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}Raw unmarked text\n{unmarked_text}");
+            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}\nRaw unmarked text\n{unmarked_text}");
         }
 
         self.assert_selections(expected_selections, marked_text.to_string())

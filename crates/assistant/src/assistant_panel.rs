@@ -25,7 +25,7 @@ use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
     AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
     FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
+    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
@@ -1039,25 +1039,29 @@ impl AssistantPanel {
                     let view = cx.view().clone();
                     let scroll_handle = self.saved_conversations_scroll_handle.clone();
                     let conversation_count = self.saved_conversations.len();
-                    canvas(move |bounds, cx| {
-                        uniform_list(
-                            view,
-                            "saved_conversations",
-                            conversation_count,
-                            |this, range, cx| {
-                                range
-                                    .map(|ix| this.render_saved_conversation(ix, cx))
-                                    .collect()
-                            },
-                        )
-                        .track_scroll(scroll_handle)
-                        .into_any_element()
-                        .draw(
-                            bounds.origin,
-                            bounds.size.map(AvailableSpace::Definite),
-                            cx,
-                        );
-                    })
+                    canvas(
+                        move |bounds, cx| {
+                            let mut saved_conversations = uniform_list(
+                                view,
+                                "saved_conversations",
+                                conversation_count,
+                                |this, range, cx| {
+                                    range
+                                        .map(|ix| this.render_saved_conversation(ix, cx))
+                                        .collect()
+                                },
+                            )
+                            .track_scroll(scroll_handle)
+                            .into_any_element();
+                            saved_conversations.layout(
+                                bounds.origin,
+                                bounds.size.map(AvailableSpace::Definite),
+                                cx,
+                            );
+                            saved_conversations
+                        },
+                        |_bounds, mut saved_conversations, cx| saved_conversations.paint(cx),
+                    )
                     .size_full()
                     .into_any_element()
                 } else {
@@ -1882,7 +1886,7 @@ impl Conversation {
         let buffer = self.buffer.read(cx);
         let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
         iter::from_fn(move || {
-            while let Some((start_ix, message_anchor)) = message_anchors.next() {
+            if let Some((start_ix, message_anchor)) = message_anchors.next() {
                 let metadata = self.messages_metadata.get(&message_anchor.id)?;
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
@@ -2772,7 +2776,7 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let conversation =
             cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
@@ -2904,7 +2908,7 @@ mod tests {
         cx.set_global(settings_store);
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
         let conversation =
             cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
@@ -3004,9 +3008,8 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.set_global(settings_store);
         init(cx);
-        let registry = Arc::new(LanguageRegistry::test());
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3089,7 +3092,7 @@ mod tests {
         cx.set_global(settings_store);
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
-        let registry = Arc::new(LanguageRegistry::test());
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let conversation =
             cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());

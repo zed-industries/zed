@@ -3,7 +3,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu,
     MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowOptions,
+    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
@@ -137,6 +137,7 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+
         decl.register()
     }
 }
@@ -477,6 +478,10 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(MacDisplay::primary()))
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
@@ -494,7 +499,7 @@ impl Platform for MacPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         // Clippy thinks that this evaluates to `()`, for some reason.
         #[allow(clippy::unit_arg, clippy::clone_on_copy)]
@@ -548,6 +553,11 @@ impl Platform for MacPlatform {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             let scheme: id = ns_string(scheme);
             let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+            if app == nil {
+                return Task::ready(Err(anyhow!(
+                    "Cannot register URL scheme until app is installed"
+                )));
+            }
             let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |error: id| {
                 let result = if error == nil {
@@ -759,6 +769,29 @@ impl Platform for MacPlatform {
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
             app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
+        }
+    }
+
+    fn add_recent_documents(&self, paths: &[PathBuf]) {
+        for path in paths {
+            let Some(path_str) = path.to_str() else {
+                log::error!("Not adding to recent documents a non-unicode path: {path:?}");
+                continue;
+            };
+            unsafe {
+                let document_controller: id =
+                    msg_send![class!(NSDocumentController), sharedDocumentController];
+                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path_str));
+                let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
+            }
+        }
+    }
+
+    fn clear_recent_documents(&self) {
+        unsafe {
+            let document_controller: id =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
+            let _: () = msg_send![document_controller, clearRecentDocuments:nil];
         }
     }
 
@@ -1058,7 +1091,6 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
-
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {

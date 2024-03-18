@@ -3,11 +3,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
 use std::env::consts::{ARCH, OS};
-use std::ffi::OsString;
 use std::{any::Any, path::PathBuf};
 use util::async_maybe;
 use util::github::latest_github_release;
@@ -15,7 +15,7 @@ use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct ZlsAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for ZlsAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("zls".into())
@@ -44,8 +44,10 @@ impl LspAdapter for ZlsAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let (path, env) = delegate.which_command(OsString::from("zls")).await?;
+        let env = delegate.shell_env().await;
+        let path = delegate.which("zls".as_ref()).await?;
         Some(LanguageServerBinary {
             path,
             arguments: vec![],
@@ -73,7 +75,7 @@ impl LspAdapter for ZlsAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo(windows)
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(

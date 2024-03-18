@@ -105,7 +105,11 @@ impl Rope {
             &(),
         );
 
+        if text.len() > 2048 {
+            return self.push_large(text);
+        }
         let mut new_chunks = SmallVec::<[_; 16]>::new();
+
         while !text.is_empty() {
             let mut split_ix = cmp::min(2 * CHUNK_BASE, text.len());
             while !text.is_char_boundary(split_ix) {
@@ -130,6 +134,47 @@ impl Rope {
         self.check_invariants();
     }
 
+    /// A copy of `push` specialized for working with large quantities of text.
+    fn push_large(&mut self, mut text: &str) {
+        // To avoid frequent reallocs when loading large swaths of file contents,
+        // we estimate worst-case `new_chunks` capacity;
+        // Chunk is a fixed-capacity buffer. If a character falls on
+        // chunk boundary, we push it off to the following chunk (thus leaving a small bit of capacity unfilled in current chunk).
+        // Worst-case chunk count when loading a file is then a case where every chunk ends up with that unused capacity.
+        // Since we're working with UTF-8, each character is at most 4 bytes wide. It follows then that the worst case is where
+        // a chunk ends with 3 bytes of a 4-byte character. These 3 bytes end up being stored in the following chunk, thus wasting
+        // 3 bytes of storage in current chunk.
+        // For example, a 1024-byte string can occupy between 32 (full ASCII, 1024/32) and 36 (full 4-byte UTF-8, 1024 / 29 rounded up) chunks.
+        const MIN_CHUNK_SIZE: usize = 2 * CHUNK_BASE - 3;
+
+        // We also round up the capacity up by one, for a good measure; we *really* don't want to realloc here, as we assume that the # of characters
+        // we're working with there is large.
+        let capacity = (text.len() + MIN_CHUNK_SIZE - 1) / MIN_CHUNK_SIZE;
+        let mut new_chunks = Vec::with_capacity(capacity);
+
+        while !text.is_empty() {
+            let mut split_ix = cmp::min(2 * CHUNK_BASE, text.len());
+            while !text.is_char_boundary(split_ix) {
+                split_ix -= 1;
+            }
+            let (chunk, remainder) = text.split_at(split_ix);
+            new_chunks.push(Chunk(ArrayString::from(chunk).unwrap()));
+            text = remainder;
+        }
+
+        #[cfg(test)]
+        const PARALLEL_THRESHOLD: usize = 4;
+        #[cfg(not(test))]
+        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
+
+        if new_chunks.len() >= PARALLEL_THRESHOLD {
+            self.chunks.par_extend(new_chunks, &());
+        } else {
+            self.chunks.extend(new_chunks, &());
+        }
+
+        self.check_invariants();
+    }
     pub fn push_front(&mut self, text: &str) {
         let suffix = mem::replace(self, Rope::from(text));
         self.append(suffix);

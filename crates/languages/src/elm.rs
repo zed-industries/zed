@@ -34,7 +34,7 @@ impl ElmLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for ElmLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(SERVER_NAME.into())
@@ -53,19 +53,22 @@ impl LspAdapter for ElmLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<String>().unwrap();
+        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
+        let package_name = "@elm-tooling/elm-language-server";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .await;
+
+        if should_install_language_server {
             self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[("@elm-tooling/elm-language-server", version.as_str())],
-                )
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
                 .await?;
         }
 

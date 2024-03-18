@@ -25,7 +25,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
     Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, Task, WindowOptions,
+    SemanticVersion, Task, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -156,6 +156,10 @@ impl Platform for LinuxPlatform {
     // todo(linux)
     fn unhide_other_apps(&self) {}
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.client.primary_display()
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.client.displays()
     }
@@ -172,7 +176,7 @@ impl Platform for LinuxPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         self.client.open_window(handle, options)
     }
@@ -324,7 +328,7 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //todo!(linux)
+    //todo(linux)
     fn app_path(&self) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::app_path is not implemented yet",
@@ -338,7 +342,7 @@ impl Platform for LinuxPlatform {
         UtcOffset::UTC
     }
 
-    //todo!(linux)
+    //todo(linux)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
@@ -390,8 +394,7 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //todo!(linux): add trait methods for accessing the primary selection
-
+    //todo(linux): add trait methods for accessing the primary selection
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {

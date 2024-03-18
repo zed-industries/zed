@@ -39,7 +39,6 @@ mod tailwind;
 mod terraform;
 mod toml;
 mod typescript;
-mod uiua;
 mod vue;
 mod yaml;
 mod zig;
@@ -82,7 +81,6 @@ pub fn init(
             tree_sitter_embedded_template::language(),
         ),
         ("erlang", tree_sitter_erlang::language()),
-        ("git_commit", tree_sitter_gitcommit::language()),
         ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
@@ -92,6 +90,7 @@ pub fn init(
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
+        ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
         ("markdown", tree_sitter_markdown::language()),
@@ -115,7 +114,6 @@ pub fn init(
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
-        ("uiua", tree_sitter_uiua::language()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
         ("zig", tree_sitter_zig::language()),
@@ -214,7 +212,6 @@ pub fn init(
             );
         }
     }
-    language!("gitcommit");
     language!("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
 
     language!("gleam", vec![Arc::new(gleam::GleamLspAdapter)]);
@@ -262,6 +259,7 @@ pub fn init(
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
+            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new())]);
         }
         false => {
             language!(
@@ -286,6 +284,12 @@ pub fn init(
                     Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
+            );
+            language!(
+                "jsdoc",
+                vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+                    node_runtime.clone(),
+                ))]
             );
         }
     }
@@ -346,7 +350,6 @@ pub fn init(
         "vue",
         vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]
     );
-    language!("uiua", vec![Arc::new(uiua::UiuaLanguageServer {})]);
     language!("proto");
     language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
     language!(

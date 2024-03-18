@@ -14,7 +14,7 @@ use ::rpc::{proto, ErrorExt};
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};
-use db::Database;
+use db::{ChannelId, Database};
 use executor::Executor;
 pub use rate_limiter::*;
 use serde::Deserialize;
@@ -165,6 +165,7 @@ pub struct Config {
     pub google_ai_api_key: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
+    pub auto_join_channel_id: Option<ChannelId>,
 }
 
 impl Config {

@@ -39,11 +39,12 @@ use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::WindowParams;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, WindowOptions,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -207,10 +208,14 @@ impl Client for WaylandClient {
         unimplemented!()
     }
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        None
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.state.client_state_inner.borrow_mut();
 
@@ -268,26 +273,30 @@ impl Client for WaylandClient {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
+        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
+        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
+        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
         let cursor_icon_name = match style {
-            CursorStyle::Arrow => "arrow".to_string(),
-            CursorStyle::IBeam => "text".to_string(),
-            CursorStyle::Crosshair => "crosshair".to_string(),
-            CursorStyle::ClosedHand => "grabbing".to_string(),
-            CursorStyle::OpenHand => "openhand".to_string(),
-            CursorStyle::PointingHand => "hand".to_string(),
-            CursorStyle::ResizeLeft => "w-resize".to_string(),
-            CursorStyle::ResizeRight => "e-resize".to_string(),
-            CursorStyle::ResizeLeftRight => "ew-resize".to_string(),
-            CursorStyle::ResizeUp => "n-resize".to_string(),
-            CursorStyle::ResizeDown => "s-resize".to_string(),
-            CursorStyle::ResizeUpDown => "ns-resize".to_string(),
-            CursorStyle::DisappearingItem => "grabbing".to_string(), // todo!(linux) - couldn't find equivalent icon in linux
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".to_string(),
-            CursorStyle::OperationNotAllowed => "not-allowed".to_string(),
-            CursorStyle::DragLink => "dnd-link".to_string(),
-            CursorStyle::DragCopy => "dnd-copy".to_string(),
-            CursorStyle::ContextualMenu => "context-menu".to_string(),
-        };
+            CursorStyle::Arrow => "arrow",
+            CursorStyle::IBeam => "text",
+            CursorStyle::Crosshair => "crosshair",
+            CursorStyle::ClosedHand => "grabbing",
+            CursorStyle::OpenHand => "grab",
+            CursorStyle::PointingHand => "pointer",
+            CursorStyle::ResizeLeft => "w-resize",
+            CursorStyle::ResizeRight => "e-resize",
+            CursorStyle::ResizeLeftRight => "ew-resize",
+            CursorStyle::ResizeUp => "n-resize",
+            CursorStyle::ResizeDown => "s-resize",
+            CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
+            CursorStyle::OperationNotAllowed => "not-allowed",
+            CursorStyle::DragLink => "alias",
+            CursorStyle::DragCopy => "copy",
+            CursorStyle::ContextualMenu => "context-menu",
+        }
+        .to_string();
 
         let mut cursor_state = self.state.cursor_state.borrow_mut();
         cursor_state.cursor_icon_name = cursor_icon_name;
@@ -413,7 +422,6 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
-                window.surface.commit();
             }
             wl_surface::Event::Leave { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -431,12 +439,10 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
                 }
                 window.rescale(scale as f32);
                 window.surface.set_buffer_scale(scale as i32);
-                window.surface.commit();
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
                 window.rescale(factor as f32);
                 surface.set_buffer_scale(factor);
-                window.surface.commit();
             }
             _ => {}
         }
@@ -520,15 +526,16 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
         if let xdg_toplevel::Event::Configure {
             width,
             height,
-            states: _states,
+            states,
         } = event
         {
-            if width == 0 || height == 0 {
-                return;
-            }
+            let width = NonZeroU32::new(width as u32);
+            let height = NonZeroU32::new(height as u32);
+            let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
             for window in &state.windows {
                 if window.1.toplevel.id() == xdg_toplevel.id() {
                     window.1.resize(width, height);
+                    window.1.set_fullscreen(fullscreen);
                     window.1.surface.commit();
                     return;
                 }
@@ -681,6 +688,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let Some(focused_window) = focused_window else {
                     return;
                 };
+                let focused_window = focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
@@ -688,12 +696,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed => {
-                        let input = PlatformInput::KeyDown(KeyDownEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                            is_held: false, // todo(linux)
-                        });
-
-                        focused_window.handle_input(input.clone());
+                        let input = if keysym.is_modifier_key() {
+                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                                modifiers: state.modifiers,
+                            })
+                        } else {
+                            PlatformInput::KeyDown(KeyDownEvent {
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
+                                is_held: false, // todo(linux)
+                            })
+                        };
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_id += 1;
@@ -706,6 +722,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                             let timer = Timer::from_duration(delay);
                             let state_ = Rc::clone(&this.client_state_inner);
+                            let input_ = input.clone();
                             state
                                 .loop_handle
                                 .insert_source(timer, move |event, _metadata, shared_data| {
@@ -723,21 +740,39 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
 
                                     drop(state_);
 
-                                    focused_window.handle_input(input.clone());
+                                    focused_window.handle_input(input_.clone());
 
                                     TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                                 })
                                 .unwrap();
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     wl_keyboard::KeyState::Released => {
-                        focused_window.handle_input(PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
-                        }));
+                        let input = if keysym.is_modifier_key() {
+                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                                modifiers: state.modifiers,
+                            })
+                        } else {
+                            PlatformInput::KeyUp(KeyUpEvent {
+                                keystroke: Keystroke::from_xkb(
+                                    keymap_state,
+                                    state.modifiers,
+                                    keycode,
+                                ),
+                            })
+                        };
 
                         if !keysym.is_modifier_key() {
                             state.repeat.current_keysym = None;
                         }
+
+                        drop(state);
+
+                        focused_window.handle_input(input);
                     }
                     _ => {}
                 }

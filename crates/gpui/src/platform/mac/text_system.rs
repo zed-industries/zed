@@ -51,13 +51,19 @@ const kCGImageAlphaOnly: u32 = 7;
 
 pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct FontKey {
+    font_family: SharedString,
+    font_features: FontFeatures,
+}
+
 struct MacTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
-    font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
+    font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
@@ -69,7 +75,7 @@ impl MacTextSystem {
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
-            font_ids_by_family_name: HashMap::default(),
+            font_ids_by_font_key: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
         }))
     }
@@ -115,14 +121,16 @@ impl PlatformTextSystem for MacTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
-            {
+            let font_key = FontKey {
+                font_family: font.family.clone(),
+                font_features: font.features,
+            };
+            let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
                 let font_ids = lock.load_family(&font.family, font.features)?;
-                lock.font_ids_by_family_name
-                    .insert(font.family.clone(), font_ids);
-                lock.font_ids_by_family_name[&font.family].as_ref()
+                lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
+                lock.font_ids_by_font_key[&font_key].as_ref()
             };
 
             let candidate_properties = candidates
@@ -225,9 +233,34 @@ impl MacTextSystemState {
             let mut font = font.load()?;
 
             open_type::apply_features(&mut font, features);
-            let Some(_) = font.glyph_for_char('m') else {
-                continue;
-            };
+
+            // This block contains a precautionary fix to guard against loading fonts
+            // that might cause panics due to `.unwrap()`s up the chain.
+            {
+                // We use the 'm' character for text measurements in various spots
+                // (e.g., the editor). However, at time of writing some of those usages
+                // will panic if the font has no 'm' glyph.
+                //
+                // Therefore, we check up front that the font has the necessary glyph.
+                let has_m_glyph = font.glyph_for_char('m').is_some();
+
+                // HACK: The 'Segoe Fluent Icons' font does not have an 'm' glyph,
+                // but we need to be able to load it for rendering Windows icons in
+                // the Storybook (on macOS).
+                let is_segoe_fluent_icons = font.full_name() == "Segoe Fluent Icons";
+
+                if !has_m_glyph && !is_segoe_fluent_icons {
+                    // I spent far too long trying to track down why a font missing the 'm'
+                    // character wasn't loading. This log statement will hopefully save
+                    // someone else from suffering the same fate.
+                    log::warn!(
+                        "font '{}' has no 'm' character and was not loaded",
+                        font.full_name()
+                    );
+                    continue;
+                }
+            }
+
             // We've seen a number of panics in production caused by calling font.properties()
             // which unwraps a downcast to CFNumber. This is an attempt to avoid the panic,
             // and to try and identify the incalcitrant font.
