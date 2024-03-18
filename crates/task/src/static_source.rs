@@ -58,7 +58,7 @@ impl Task for StaticTask {
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: Vec<StaticTask>,
+    tasks: Vec<Arc<StaticTask>>,
     _definitions: Model<TrackedFile<DefinitionProvider>>,
     _subscription: Subscription,
 }
@@ -182,9 +182,14 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| StaticTask {
-                                id: TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
-                                definition,
+                            .map(|(i, definition)| {
+                                Arc::new(StaticTask {
+                                    id: TaskId(format!(
+                                        "static_{id_base}_{i}_{}",
+                                        definition.label
+                                    )),
+                                    definition,
+                                })
                             })
                             .collect();
                         cx.notify();
@@ -207,9 +212,8 @@ impl TaskSource for StaticSource {
         _: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks
-            .clone()
-            .into_iter()
-            .map(|task| Arc::new(task) as Arc<dyn Task>)
+            .iter()
+            .map(|task| task.clone() as Arc<dyn Task>)
             .collect()
     }
 
