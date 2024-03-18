@@ -4,7 +4,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
 use serde::Serialize;
 use tracing::instrument;
-use util::SemanticVersion;
+use util::{semver, SemanticVersion};
 
 #[derive(Default, Serialize)]
 pub struct ConnectionPool {
@@ -29,11 +29,8 @@ impl fmt::Display for ZedVersion {
 }
 
 impl ZedVersion {
-    pub fn is_supported(&self) -> bool {
-        self.0 != SemanticVersion::new(0, 123, 0)
-    }
-    pub fn supports_talker_role(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 125, 0)
+    pub fn can_collaborate(&self) -> bool {
+        self.0 >= semver(0, 127, 3) || (self.0 >= semver(0, 126, 3) && self.0 < semver(0, 127, 0))
     }
 }
 
