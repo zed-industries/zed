@@ -93,42 +93,52 @@ impl<D: PickerDelegate> FocusableView for Picker<D> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum ContainerKind {
+    List,
+    UniformList,
+}
+
 impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        Self::new(delegate, cx, true, true)
+        let head = Head::editor(
+            delegate.placeholder_text(cx),
+            Self::on_input_editor_event,
+            cx,
+        );
+
+        Self::new(delegate, ContainerKind::UniformList, head, cx)
     }
 
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn nonsearchable_uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        Self::new(delegate, cx, true, false)
+        let head = Head::empty(cx);
+
+        Self::new(delegate, ContainerKind::UniformList, head, cx)
     }
 
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        Self::new(delegate, cx, false, true)
+        let head = Head::editor(
+            delegate.placeholder_text(cx),
+            Self::on_input_editor_event,
+            cx,
+        );
+
+        Self::new(delegate, ContainerKind::List, head, cx)
     }
 
-    fn new(delegate: D, cx: &mut ViewContext<Self>, is_uniform: bool, is_queryable: bool) -> Self {
-        let head = if is_queryable {
-            Head::editor(
-                delegate.placeholder_text(cx),
-                cx,
-                Self::on_input_editor_event,
-            )
-        } else {
-            Head::empty(cx)
-        };
-
+    fn new(delegate: D, container: ContainerKind, head: Head, cx: &mut ViewContext<Self>) -> Self {
         let mut this = Self {
             delegate,
             head,
-            element_container: Self::create_element_container(is_uniform, cx),
+            element_container: Self::create_element_container(container, cx),
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
@@ -142,25 +152,31 @@ impl<D: PickerDelegate> Picker<D> {
         this
     }
 
-    fn create_element_container(is_uniform: bool, cx: &mut ViewContext<Self>) -> ElementContainer {
-        if is_uniform {
-            ElementContainer::UniformList(UniformListScrollHandle::new())
-        } else {
-            let view = cx.view().downgrade();
-            ElementContainer::List(ListState::new(
-                0,
-                gpui::ListAlignment::Top,
-                px(1000.),
-                move |ix, cx| {
-                    view.upgrade()
-                        .map(|view| {
-                            view.update(cx, |this, cx| {
-                                this.render_element(cx, ix).into_any_element()
+    fn create_element_container(
+        container: ContainerKind,
+        cx: &mut ViewContext<Self>,
+    ) -> ElementContainer {
+        match container {
+            ContainerKind::UniformList => {
+                ElementContainer::UniformList(UniformListScrollHandle::new())
+            }
+            ContainerKind::List => {
+                let view = cx.view().downgrade();
+                ElementContainer::List(ListState::new(
+                    0,
+                    gpui::ListAlignment::Top,
+                    px(1000.),
+                    move |ix, cx| {
+                        view.upgrade()
+                            .map(|view| {
+                                view.update(cx, |this, cx| {
+                                    this.render_element(cx, ix).into_any_element()
+                                })
                             })
-                        })
-                        .unwrap_or_else(|| div().into_any_element())
-                },
-            ))
+                            .unwrap_or_else(|| div().into_any_element())
+                    },
+                ))
+            }
         }
     }
 
