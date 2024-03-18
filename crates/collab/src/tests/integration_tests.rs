@@ -4773,19 +4773,16 @@ async fn test_project_search(
             cx,
         )
     });
-    let mut limit_reached = false;
     while let Some(result) = search_rx.next().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
             SearchResult::LimitReached => {
-                limit_reached = true;
+                panic!("Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call.")
             }
         };
     }
-
-    assert!(!limit_reached);
 
     let mut ranges_by_path = results
         .into_iter()
