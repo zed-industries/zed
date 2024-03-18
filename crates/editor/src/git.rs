@@ -4,7 +4,7 @@ use core::fmt;
 use std::ops::Range;
 
 use git::{
-    blame::BlameHunk,
+    blame::BlameEntry,
     diff::{DiffHunk, DiffHunkStatus},
 };
 use language::Point;
@@ -95,28 +95,32 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DisplayBlameHunk {
+pub enum DisplayBlameEntry {
     Folded {
         display_row: u32,
     },
 
     Unfolded {
         display_row_range: Range<u32>,
-        blame_hunk: BlameHunk<u32>,
+        entry: BlameEntry,
     },
 }
 
-impl fmt::Display for DisplayBlameHunk {
+impl fmt::Display for DisplayBlameEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DisplayBlameHunk::Folded { .. } => Ok(()),
-            DisplayBlameHunk::Unfolded { blame_hunk, .. } => {
-                let datetime = blame_hunk.time.format("%Y-%m-%d %H:%M").to_string();
+            DisplayBlameEntry::Folded { .. } => Ok(()),
+            DisplayBlameEntry::Unfolded { entry, .. } => {
+                let datetime = entry
+                    .committer_datetime()
+                    .map_err(|_| std::fmt::Error)?
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string();
 
-                let pretty_commit_id = format!("{}", blame_hunk.oid);
+                let pretty_commit_id = format!("{}", entry.sha);
                 let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
 
-                let name = blame_hunk.name.as_deref().unwrap_or("<no name>");
+                let name = entry.committer.as_deref().unwrap_or("<no name>");
                 let name = if name.len() > 20 {
                     format!("{}...", &name[..16])
                 } else {
@@ -129,18 +133,18 @@ impl fmt::Display for DisplayBlameHunk {
     }
 }
 
-pub fn blame_hunk_to_display(hunk: BlameHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayBlameHunk {
+pub fn blame_entry_to_display(entry: &BlameEntry, snapshot: &DisplaySnapshot) -> DisplayBlameEntry {
     // TODO: This is all wrong, I bet
-    let hunk_start_point = Point::new(hunk.buffer_range.start, 0);
+    let hunk_start_point = Point::new(entry.range.start, 0);
 
     let start = hunk_start_point.to_display_point(snapshot).row();
-    let hunk_end_row = hunk.buffer_range.end.max(hunk.buffer_range.start);
+    let hunk_end_row = entry.range.end.max(entry.range.start);
     let hunk_end_point = Point::new(hunk_end_row, 0);
     let end = hunk_end_point.to_display_point(snapshot).row();
 
-    DisplayBlameHunk::Unfolded {
+    DisplayBlameEntry::Unfolded {
         display_row_range: start..end,
-        blame_hunk: hunk,
+        entry: entry.clone(),
     }
 }
 

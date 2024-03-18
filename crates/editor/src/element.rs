@@ -4,7 +4,7 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{blame_hunk_to_display, diff_hunk_to_display, DisplayBlameHunk, DisplayDiffHunk},
+    git::{blame_entry_to_display, diff_hunk_to_display, DisplayBlameEntry, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -1087,7 +1087,7 @@ impl EditorElement {
         blame: &BufferBlame,
         display_rows: Range<u32>,
         snapshot: &EditorSnapshot,
-    ) -> Vec<DisplayBlameHunk> {
+    ) -> Vec<DisplayBlameEntry> {
         // TODO: Doesn't work in multibuffer then?
         if let Some((_, _, buffer_snapshot)) = &snapshot.buffer_snapshot.as_singleton() {
             let buffer_start_row = DisplayPoint::new(display_rows.start, 0)
@@ -1098,8 +1098,8 @@ impl EditorElement {
                 .row;
 
             blame
-                .hunks_in_row_range(buffer_start_row..buffer_end_row, buffer_snapshot)
-                .map(|hunk| blame_hunk_to_display(hunk, snapshot))
+                .entries_in_row_range(buffer_start_row..buffer_end_row, buffer_snapshot)
+                .map(|hunk| blame_entry_to_display(hunk, snapshot))
                 .collect()
         } else {
             Vec::default()
@@ -1111,6 +1111,7 @@ impl EditorElement {
         line_height: Pixels,
         newest_selection_head: DisplayPoint,
         scroll_pixel_position: gpui::Point<Pixels>,
+        blame_width: Option<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         cx: &mut ElementContext,
@@ -1132,27 +1133,15 @@ impl EditorElement {
         );
         let indicator_size = button.measure(available_space, cx);
 
-        // let mut x = if layout.display_blame_hunks.is_some() {
-        //     GIT_BLAME_GUTTER_WIDTH_CHARS * layout.position_map.em_width
-        // } else {
-        //     Pixels::ZERO
-        // };
-        // let mut available_width = layout.gutter_dimensions.margin
-        //     + layout.gutter_dimensions.left_padding
-        //     - indicator_size.width;
-        // if layout.display_blame_hunks.is_some() {
-        //     available_width -= GIT_BLAME_GUTTER_WIDTH_CHARS * layout.position_map.em_width;
-        // }
-        // let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
-        // Center indicator.
-        // x += available_width / 2.;
+        let mut x = blame_width.unwrap_or(Pixels::ZERO);
+        let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
+            - indicator_size.width
+            - blame_width.unwrap_or(Pixels::ZERO);
+        x += available_width / 2.;
 
-        let mut x = Pixels::ZERO;
         let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
-        // Center indicator.
-        x +=
-            (gutter_dimensions.margin + gutter_dimensions.left_padding - indicator_size.width) / 2.;
         y += (line_height - indicator_size.height) / 2.;
+
         button.layout(gutter_hitbox.origin + point(x, y), available_space, cx);
         Some(button)
     }
@@ -2025,8 +2014,8 @@ impl EditorElement {
             Self::paint_diff_hunks(layout, cx);
         }
 
-        if layout.display_blame_hunks.is_some() {
-            self.paint_blame_hunks(layout, cx);
+        if layout.display_blame_entries.is_some() {
+            self.paint_blame_entries(layout, cx);
         }
 
         for (ix, line) in layout.line_numbers.iter().enumerate() {
@@ -2162,11 +2151,11 @@ impl EditorElement {
         })
     }
 
-    fn paint_blame_hunks(&self, layout: &EditorLayout, cx: &mut ElementContext) {
-        let Some(display_blame_hunks) = layout.display_blame_hunks.as_ref() else {
+    fn paint_blame_entries(&self, layout: &EditorLayout, cx: &mut ElementContext) {
+        let Some(display_blame_entries) = layout.display_blame_entries.as_ref() else {
             return;
         };
-        if display_blame_hunks.is_empty() {
+        if display_blame_entries.is_empty() {
             return;
         }
 
@@ -2176,21 +2165,21 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for hunk in display_blame_hunks {
-                let (blame_hunk, display_row_range) = match hunk {
-                    &DisplayBlameHunk::Folded { .. } => {
+            for entry in display_blame_entries {
+                let (blame_entry, display_row_range) = match entry {
+                    &DisplayBlameEntry::Folded { .. } => {
                         // TODO: what?
                         continue;
                     }
-                    DisplayBlameHunk::Unfolded {
+                    DisplayBlameEntry::Unfolded {
                         display_row_range,
-                        blame_hunk,
+                        entry: blame_hunk,
                     } => (blame_hunk, display_row_range),
                 };
 
-                let blame_line = format!("{}", hunk);
+                let blame_line = format!("{}", entry);
 
-                let sha_number: u32 = blame_hunk.oid.into();
+                let sha_number: u32 = blame_entry.sha.into();
                 let sha_color = cx.theme().players().color_for_participant(sha_number);
 
                 let commit_sha_run = TextRun {
@@ -3284,9 +3273,20 @@ impl Element for EditorElement {
                 );
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
-                let display_blame_hunks = self.editor.read(cx).blame.as_ref().map(|blame_state| {
-                    self.layout_git_blame_gutters(&blame_state.blame, start_row..end_row, &snapshot)
-                });
+
+                let (display_blame_entries, blame_width) =
+                    if let Some(blame_state) = self.editor.read(cx).blame.as_ref() {
+                        let display_entries = self.layout_git_blame_gutters(
+                            &blame_state.blame,
+                            start_row..end_row,
+                            &snapshot,
+                        );
+                        let width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+
+                        (Some(display_entries), Some(width))
+                    } else {
+                        (None, None)
+                    };
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3415,6 +3415,7 @@ impl Element for EditorElement {
                                 line_height,
                                 newest_selection_head,
                                 scroll_pixel_position,
+                                blame_width,
                                 &gutter_dimensions,
                                 &gutter_hitbox,
                                 cx,
@@ -3515,7 +3516,7 @@ impl Element for EditorElement {
                     redacted_ranges,
                     line_numbers,
                     display_hunks,
-                    display_blame_hunks,
+                    display_blame_entries,
                     folds,
                     blocks,
                     cursors,
@@ -3602,7 +3603,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    display_blame_hunks: Option<Vec<DisplayBlameHunk>>,
+    display_blame_entries: Option<Vec<DisplayBlameEntry>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

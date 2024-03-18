@@ -1,9 +1,11 @@
 [
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 5,
+      "end": 8
+    },
     "original_line_number": 6,
-    "final_line_number": 6,
-    "line_count": 3,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -18,9 +20,11 @@
   },
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 11,
+      "end": 13
+    },
     "original_line_number": 12,
-    "final_line_number": 12,
-    "line_count": 2,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -35,9 +39,11 @@
   },
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 17,
+      "end": 18
+    },
     "original_line_number": 18,
-    "final_line_number": 18,
-    "line_count": 1,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -52,9 +58,11 @@
   },
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 20,
+      "end": 27
+    },
     "original_line_number": 21,
-    "final_line_number": 21,
-    "line_count": 7,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -69,9 +77,11 @@
   },
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 30,
+      "end": 31
+    },
     "original_line_number": 31,
-    "final_line_number": 31,
-    "line_count": 1,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -86,9 +96,11 @@
   },
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 33,
+      "end": 34
+    },
     "original_line_number": 34,
-    "final_line_number": 34,
-    "line_count": 1,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -103,9 +115,11 @@
   },
   {
     "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 85,
+      "end": 101
+    },
     "original_line_number": 86,
-    "final_line_number": 86,
-    "line_count": 16,
     "author": "Mahdy M. Karam",
     "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
     "author_time": 1708621949,
@@ -120,9 +134,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 0,
+      "end": 2
+    },
     "original_line_number": 1,
-    "final_line_number": 1,
-    "line_count": 2,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -137,9 +153,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 3,
+      "end": 4
+    },
     "original_line_number": 4,
-    "final_line_number": 4,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -154,9 +172,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 9,
+      "end": 11
+    },
     "original_line_number": 7,
-    "final_line_number": 10,
-    "line_count": 2,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -171,9 +191,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 13,
+      "end": 17
+    },
     "original_line_number": 10,
-    "final_line_number": 14,
-    "line_count": 4,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -188,9 +210,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 18,
+      "end": 20
+    },
     "original_line_number": 15,
-    "final_line_number": 19,
-    "line_count": 2,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -205,9 +229,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 27,
+      "end": 30
+    },
     "original_line_number": 19,
-    "final_line_number": 28,
-    "line_count": 3,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -222,9 +248,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 31,
+      "end": 33
+    },
     "original_line_number": 22,
-    "final_line_number": 32,
-    "line_count": 2,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -239,9 +267,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 34,
+      "end": 36
+    },
     "original_line_number": 25,
-    "final_line_number": 35,
-    "line_count": 2,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -256,9 +286,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 40,
+      "end": 41
+    },
     "original_line_number": 31,
-    "final_line_number": 41,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -273,9 +305,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 66,
+      "end": 71
+    },
     "original_line_number": 57,
-    "final_line_number": 67,
-    "line_count": 5,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -290,9 +324,11 @@
   },
   {
     "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 101,
+      "end": 119
+    },
     "original_line_number": 78,
-    "final_line_number": 102,
-    "line_count": 18,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1707520689,
@@ -307,9 +343,11 @@
   },
   {
     "sha": "b65cf6d2d9576171edb407f5bbaa231c33af1f71",
+    "range": {
+      "start": 4,
+      "end": 5
+    },
     "original_line_number": 3,
-    "final_line_number": 5,
-    "line_count": 1,
     "author": "Max Brunsfeld",
     "author_mail": "<maxbrunsfeld@gmail.com>",
     "author_time": 1705619094,
@@ -324,9 +362,11 @@
   },
   {
     "sha": "b65cf6d2d9576171edb407f5bbaa231c33af1f71",
+    "range": {
+      "start": 120,
+      "end": 128
+    },
     "original_line_number": 51,
-    "final_line_number": 121,
-    "line_count": 8,
     "author": "Max Brunsfeld",
     "author_mail": "<maxbrunsfeld@gmail.com>",
     "author_time": 1705619094,
@@ -341,9 +381,11 @@
   },
   {
     "sha": "b02bd9bce1db3a68dcd606718fa02709020860af",
+    "range": {
+      "start": 60,
+      "end": 61
+    },
     "original_line_number": 29,
-    "final_line_number": 61,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1694798044,
@@ -358,9 +400,11 @@
   },
   {
     "sha": "b02bd9bce1db3a68dcd606718fa02709020860af",
+    "range": {
+      "start": 64,
+      "end": 65
+    },
     "original_line_number": 33,
-    "final_line_number": 65,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1694798044,
@@ -375,9 +419,11 @@
   },
   {
     "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 44,
+      "end": 45
+    },
     "original_line_number": 13,
-    "final_line_number": 45,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692855942,
@@ -392,9 +438,11 @@
   },
   {
     "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 52,
+      "end": 60
+    },
     "original_line_number": 21,
-    "final_line_number": 53,
-    "line_count": 8,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692855942,
@@ -409,9 +457,11 @@
   },
   {
     "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 61,
+      "end": 64
+    },
     "original_line_number": 29,
-    "final_line_number": 62,
-    "line_count": 3,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692855942,
@@ -426,9 +476,11 @@
   },
   {
     "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 65,
+      "end": 66
+    },
     "original_line_number": 33,
-    "final_line_number": 66,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692855942,
@@ -443,9 +495,11 @@
   },
   {
     "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 74,
+      "end": 77
+    },
     "original_line_number": 37,
-    "final_line_number": 75,
-    "line_count": 3,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692855942,
@@ -460,9 +514,11 @@
   },
   {
     "sha": "33d7fe02ee560f6ed57d1425c43e60aef3b66e64",
+    "range": {
+      "start": 42,
+      "end": 43
+    },
     "original_line_number": 10,
-    "final_line_number": 43,
-    "line_count": 1,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692644159,
@@ -477,9 +533,11 @@
   },
   {
     "sha": "33d7fe02ee560f6ed57d1425c43e60aef3b66e64",
+    "range": {
+      "start": 46,
+      "end": 52
+    },
     "original_line_number": 14,
-    "final_line_number": 47,
-    "line_count": 6,
     "author": "Conrad Irwin",
     "author_mail": "<conrad@zed.dev>",
     "author_time": 1692644159,
@@ -494,9 +552,11 @@
   },
   {
     "sha": "868c46062008bb0bcab2d41a38b4295996b9b958",
+    "range": {
+      "start": 80,
+      "end": 81
+    },
     "original_line_number": 20,
-    "final_line_number": 81,
-    "line_count": 1,
     "author": "Max Brunsfeld",
     "author_mail": "<maxbrunsfeld@gmail.com>",
     "author_time": 1659072896,
@@ -511,9 +571,11 @@
   },
   {
     "sha": "e93c49f4f02b3edaddae6a6a4cc0ac433f242357",
+    "range": {
+      "start": 36,
+      "end": 37
+    },
     "original_line_number": 5,
-    "final_line_number": 37,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653424557,
@@ -528,9 +590,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 2,
+      "end": 3
+    },
     "original_line_number": 1,
-    "final_line_number": 3,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -545,9 +609,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 8,
+      "end": 9
+    },
     "original_line_number": 4,
-    "final_line_number": 9,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -562,9 +628,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 37,
+      "end": 40
+    },
     "original_line_number": 7,
-    "final_line_number": 38,
-    "line_count": 3,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -579,9 +647,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 41,
+      "end": 42
+    },
     "original_line_number": 10,
-    "final_line_number": 42,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -596,9 +666,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 43,
+      "end": 44
+    },
     "original_line_number": 11,
-    "final_line_number": 44,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -613,9 +685,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 45,
+      "end": 46
+    },
     "original_line_number": 14,
-    "final_line_number": 46,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -630,9 +704,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 71,
+      "end": 74
+    },
     "original_line_number": 15,
-    "final_line_number": 72,
-    "line_count": 3,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -647,9 +723,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 77,
+      "end": 80
+    },
     "original_line_number": 18,
-    "final_line_number": 78,
-    "line_count": 3,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -664,9 +742,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 81,
+      "end": 85
+    },
     "original_line_number": 21,
-    "final_line_number": 82,
-    "line_count": 4,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,
@@ -681,9 +761,11 @@
   },
   {
     "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 119,
+      "end": 120
+    },
     "original_line_number": 26,
-    "final_line_number": 120,
-    "line_count": 1,
     "author": "Kaylee Simmons",
     "author_mail": "<kay@the-simmons.net>",
     "author_time": 1653007350,

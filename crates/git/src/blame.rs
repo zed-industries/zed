@@ -4,12 +4,10 @@ use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
-use std::iter;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::{fmt, ops::Range, path::Path, sync::Arc};
 use sum_tree::SumTree;
-use text::{Anchor, Point};
 
 pub use git2 as libgit;
 
@@ -115,12 +113,13 @@ impl From<Oid> for u32 {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,
+
+    pub range: Range<u32>,
+
     pub original_line_number: u32,
-    pub final_line_number: u32,
-    pub line_count: u32,
 
     pub author: Option<String>,
     pub author_mail: Option<String>,
@@ -165,34 +164,40 @@ impl BlameEntry {
             .and_then(|line| line.parse::<u32>().ok())
             .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
 
+        let start_line = final_line_number.saturating_sub(1);
+        let end_line = start_line + line_count;
+        let range = start_line..end_line;
+
         Ok(Self {
             sha,
+            range,
             original_line_number,
-            final_line_number,
-            line_count,
             ..Default::default()
         })
     }
 
-    pub fn committer_datetime(&self) -> Result<Option<DateTime<FixedOffset>>> {
-        let (Some(committer_time), Some(committer_tz)) = (self.committer_time, &self.committer_tz)
-        else {
-            return Ok(None);
-        };
+    pub fn committer_datetime(&self) -> Result<DateTime<chrono::Utc>> {
+        if let (Some(committer_time), Some(committer_tz)) =
+            (self.committer_time, &self.committer_tz)
+        {
+            let naive_datetime = NaiveDateTime::from_timestamp_opt(committer_time, 0)
+                .ok_or_else(|| anyhow!("Failed to parse timestamp"))?;
+            let timezone_offset_in_seconds = committer_tz
+                .parse::<i32>()
+                .map_err(|e| anyhow!("Failed to parse timezone offset: {}", e))?
+                / 100
+                * 36;
+            let timezone = FixedOffset::east_opt(timezone_offset_in_seconds)
+                .ok_or_else(|| anyhow!("Invalid timezone offset: {}", committer_tz))?;
 
-        let naive_datetime = NaiveDateTime::from_timestamp_opt(committer_time, 0)
-            .expect("failed to parse timestamp");
-        let timezone_offset_in_seconds = committer_tz
-            .parse::<i32>()
-            .map_err(|e| anyhow!("Failed to parse timezone offset: {}", e))?
-            / 100
-            * 36;
-        let timezone = FixedOffset::east_opt(timezone_offset_in_seconds)
-            .ok_or_else(|| anyhow!("Invalid timezone offset: {}", committer_tz))?;
-        Ok(Some(DateTime::<FixedOffset>::from_naive_utc_and_offset(
-            naive_datetime,
-            timezone,
-        )))
+            // Convert to DateTime<FixedOffset>, then to DateTime<Utc>
+            let datetime_with_timezone =
+                DateTime::<FixedOffset>::from_naive_utc_and_offset(naive_datetime, timezone);
+            Ok(datetime_with_timezone.with_timezone(&chrono::Utc))
+        } else {
+            // Directly return current time in UTC if there's no committer time or timezone
+            Ok(chrono::Utc::now())
+        }
     }
 }
 
@@ -304,66 +309,57 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     Ok(entries)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlameHunk<T> {
-    pub buffer_range: Range<T>,
-
-    pub oid: Oid,
-    pub name: Option<String>,
-    pub email: Option<String>,
-    pub time: DateTime<FixedOffset>,
-}
-
-impl BlameHunk<u32> {}
-
-impl sum_tree::Item for BlameHunk<Anchor> {
-    type Summary = BlameHunkSummary;
+impl sum_tree::Item for BlameEntry {
+    type Summary = BlameEntrySummary;
 
     fn summary(&self) -> Self::Summary {
-        BlameHunkSummary {
-            buffer_range: self.buffer_range.clone(),
+        BlameEntrySummary {
+            buffer_range: self.range.clone(),
         }
     }
 }
 
-impl<T> fmt::Display for BlameHunk<T> {
+impl fmt::Display for BlameEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), std::fmt::Error> {
-        let datetime = self.time.format("%Y-%m-%d %H:%M").to_string();
+        if self.sha.is_zero() {
+            write!(f, "Not committed")
+        } else {
+            let datetime = self.committer_datetime().map_err(|_| std::fmt::Error)?;
 
-        let pretty_commit_id = format!("{}", self.oid);
-        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+            let datetime = datetime.format("%Y-%m-%d %H:%M").to_string();
 
-        write!(
-            f,
-            "{} - {} <{}> - ({})",
-            short_commit_id,
-            self.name.as_deref().unwrap_or("<no name>"),
-            self.email.as_deref().unwrap_or("no email"),
-            datetime
-        )
+            let pretty_commit_id = format!("{}", self.sha);
+            let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+
+            write!(
+                f,
+                "{} - {} <{}> - ({})",
+                short_commit_id,
+                self.committer.as_deref().unwrap_or("<no name>"),
+                self.committer_mail.as_deref().unwrap_or("no email"),
+                datetime
+            )
+        }
     }
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct BlameHunkSummary {
-    buffer_range: Range<Anchor>,
+pub struct BlameEntrySummary {
+    buffer_range: Range<u32>,
 }
 
-impl sum_tree::Summary for BlameHunkSummary {
+impl sum_tree::Summary for BlameEntrySummary {
     type Context = text::BufferSnapshot;
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
-        self.buffer_range.start = self
-            .buffer_range
-            .start
-            .min(&other.buffer_range.start, buffer);
-        self.buffer_range.end = self.buffer_range.end.max(&other.buffer_range.end, buffer);
+    fn add_summary(&mut self, other: &Self, _: &Self::Context) {
+        self.buffer_range.start = self.buffer_range.start.min(other.buffer_range.start);
+        self.buffer_range.end = self.buffer_range.end.max(other.buffer_range.end);
     }
 }
 
 #[derive(Clone)]
 pub struct BufferBlame {
-    tree: SumTree<BlameHunk<Anchor>>,
+    tree: SumTree<BlameEntry>,
 }
 
 impl BufferBlame {
@@ -373,104 +369,40 @@ impl BufferBlame {
         buffer: &text::BufferSnapshot,
     ) -> Result<BufferBlame> {
         let buffer_text = buffer.as_rope().to_string();
-        let now = std::time::Instant::now();
+
         let output = run_git_blame(working_directory, path, &buffer_text)
             .context("failed to run 'git blame'")?;
-        println!("running git blame took: {:?}", now.elapsed());
 
-        let now = std::time::Instant::now();
-        let mut entries = parse_git_blame(&output)?;
-        entries.sort_by(|a, b| a.final_line_number.cmp(&b.final_line_number));
+        let entries = parse_git_blame(&output)?;
 
-        println!(
-            "parsing git blame output took: {:?}. entries: {}",
-            now.elapsed(),
-            entries.len()
-        );
-
-        let mut tree = SumTree::new();
-
-        let now = std::time::Instant::now();
-        for entry in entries {
-            let start_line = entry.final_line_number - 1;
-            let start = Point::new(start_line, 0);
-            let end = Point::new(start_line + entry.line_count, 0);
-
-            let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
-            // TODO: Fix the unwrap
-            let time = entry.committer_datetime()?.unwrap();
-
-            let hunk = BlameHunk {
-                buffer_range,
-                oid: entry.sha,
-                name: entry.committer.clone(),
-                email: entry.committer_mail.clone(),
-                time,
-            };
-            tree.push(hunk, buffer);
-        }
-        println!(
-            "git blame incremental. pushing to tree took: {:?}",
-            now.elapsed()
-        );
-
-        Ok(BufferBlame { tree })
+        Ok(Self::new_with_entries(entries, buffer))
     }
 
-    pub fn hunks_in_row_range<'a>(
+    pub fn new_with_entries(mut entries: Vec<BlameEntry>, buffer: &text::BufferSnapshot) -> Self {
+        entries.sort_by(|a, b| a.range.start.cmp(&b.range.start));
+
+        let mut tree = SumTree::new();
+        for entry in entries {
+            tree.push(entry, buffer);
+        }
+
+        Self { tree }
+    }
+
+    pub fn entries_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
         buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = BlameHunk<u32>> {
-        let start = buffer.anchor_before(Point::new(range.start, 0));
-        let end = buffer.anchor_after(Point::new(range.end, 0));
-
-        self.hunks_intersecting_range(start..end, buffer)
-    }
-
-    pub fn hunks_intersecting_range<'a>(
-        &'a self,
-        range: Range<Anchor>,
-        buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = BlameHunk<u32>> {
-        // TODO: This is just straight-up copy&pasted from git::diff::Diff.
-        let mut cursor = self.tree.filter::<_, BlameHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+    ) -> impl 'a + Iterator<Item = &BlameEntry> {
+        let mut cursor = self.tree.filter::<_, BlameEntrySummary>(move |summary| {
+            let before_start = summary.buffer_range.end.cmp(&range.start).is_lt();
+            let after_end = summary.buffer_range.start.cmp(&range.end).is_gt();
             !before_start && !after_end
         });
 
-        let anchor_iter = std::iter::from_fn(move || {
+        std::iter::from_fn(move || {
             cursor.next(buffer);
             cursor.item()
-        })
-        .flat_map(move |hunk| {
-            [
-                (&hunk.buffer_range.start, hunk),
-                (&hunk.buffer_range.end, hunk),
-            ]
-            .into_iter()
-        });
-
-        let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
-        iter::from_fn(move || {
-            let (start_point, hunk) = summaries.next()?;
-            let (end_point, _) = summaries.next()?;
-
-            let end_row = if end_point.column > 0 {
-                end_point.row + 1
-            } else {
-                end_point.row
-            };
-
-            // TODO: Why do we have to clone here?
-            Some(BlameHunk {
-                buffer_range: start_point.row..end_row,
-                oid: hunk.oid,
-                name: hunk.name.clone(),
-                email: hunk.email.clone(),
-                time: hunk.time,
-            })
         })
     }
 }

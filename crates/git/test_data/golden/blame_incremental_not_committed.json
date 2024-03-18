@@ -1,9 +1,11 @@
 [
   {
     "sha": "0000000000000000000000000000000000000000",
+    "range": {
+      "start": 3,
+      "end": 6
+    },
     "original_line_number": 4,
-    "final_line_number": 4,
-    "line_count": 3,
     "author": null,
     "author_mail": null,
     "author_time": null,
@@ -18,9 +20,11 @@
   },
   {
     "sha": "0000000000000000000000000000000000000000",
+    "range": {
+      "start": 9,
+      "end": 10
+    },
     "original_line_number": 10,
-    "final_line_number": 10,
-    "line_count": 1,
     "author": null,
     "author_mail": null,
     "author_time": null,
@@ -35,9 +39,11 @@
   },
   {
     "sha": "0000000000000000000000000000000000000000",
+    "range": {
+      "start": 14,
+      "end": 16
+    },
     "original_line_number": 15,
-    "final_line_number": 15,
-    "line_count": 2,
     "author": null,
     "author_mail": null,
     "author_time": null,
@@ -52,9 +58,11 @@
   },
   {
     "sha": "4aaba34cb86b12f3a749dd6ddbf185de88de6527",
+    "range": {
+      "start": 6,
+      "end": 8
+    },
     "original_line_number": 4,
-    "final_line_number": 7,
-    "line_count": 2,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1710764113,
@@ -69,9 +77,11 @@
   },
   {
     "sha": "4aaba34cb86b12f3a749dd6ddbf185de88de6527",
+    "range": {
+      "start": 16,
+      "end": 18
+    },
     "original_line_number": 11,
-    "final_line_number": 17,
-    "line_count": 2,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1710764113,
@@ -86,9 +96,11 @@
   },
   {
     "sha": "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913",
+    "range": {
+      "start": 8,
+      "end": 9
+    },
     "original_line_number": 6,
-    "final_line_number": 9,
-    "line_count": 1,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1710764087,
@@ -103,9 +115,11 @@
   },
   {
     "sha": "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913",
+    "range": {
+      "start": 10,
+      "end": 12
+    },
     "original_line_number": 7,
-    "final_line_number": 11,
-    "line_count": 2,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1710764087,
@@ -120,9 +134,11 @@
   },
   {
     "sha": "e6d34e8fb494fe2b576d16037c61ba9d10722ba3",
+    "range": {
+      "start": 0,
+      "end": 3
+    },
     "original_line_number": 1,
-    "final_line_number": 1,
-    "line_count": 3,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1709299737,
@@ -137,9 +153,11 @@
   },
   {
     "sha": "e6d34e8fb494fe2b576d16037c61ba9d10722ba3",
+    "range": {
+      "start": 12,
+      "end": 14
+    },
     "original_line_number": 9,
-    "final_line_number": 13,
-    "line_count": 2,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1709299737,
@@ -154,9 +172,11 @@
   },
   {
     "sha": "e6d34e8fb494fe2b576d16037c61ba9d10722ba3",
+    "range": {
+      "start": 18,
+      "end": 19
+    },
     "original_line_number": 13,
-    "final_line_number": 19,
-    "line_count": 1,
     "author": "Thorsten Ball",
     "author_mail": "<mrnugget@gmail.com>",
     "author_time": 1709299737,

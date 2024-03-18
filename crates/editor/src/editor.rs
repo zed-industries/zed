@@ -459,7 +459,7 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
-pub(crate) const GIT_BLAME_GUTTER_WIDTH_CHARS: Pixels = Pixels(55.0);
+pub(crate) const GIT_BLAME_GUTTER_WIDTH_CHARS: Pixels = Pixels(56.0);
 
 pub struct GutterDimensions {
     pub left_padding: Pixels,
