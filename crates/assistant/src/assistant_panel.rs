@@ -25,7 +25,7 @@ use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
     AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
     FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
@@ -3009,7 +3009,8 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation =
+            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
