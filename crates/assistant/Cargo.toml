@@ -19,7 +19,6 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-isahc.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true

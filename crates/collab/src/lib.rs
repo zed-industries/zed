@@ -10,7 +10,6 @@ pub mod rpc;
 #[cfg(test)]
 mod tests;
 
-use ::rpc::{proto, ErrorExt};
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};

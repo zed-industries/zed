@@ -324,7 +324,6 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "indoc",
- "isahc",
  "language",
  "log",
  "menu",
@@ -2222,8 +2221,6 @@ dependencies = [
  "hyper",
  "indoc",
  "language",
- "lazy_static",
- "lipsum",
  "live_kit_client",
  "live_kit_server",
  "log",
@@ -5474,16 +5471,6 @@ name = "linux-raw-sys"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4cd1a83af159aa67994778be9070f0ae1bd732942279cabb14f86f986a21456"
-
-[[package]]
-name = "lipsum"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8451846f1f337e44486666989fbce40be804da139d5a4477d6b88ece5dc69f4"
-dependencies = [
- "rand 0.8.5",
- "rand_chacha 0.3.1",
-]
 
 [[package]]
 name = "live_kit_client"
