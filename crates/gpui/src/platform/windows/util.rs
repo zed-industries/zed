@@ -3,7 +3,7 @@ use util::ResultExt;
 
 use windows::Win32::{Foundation::*, System::Threading::*, UI::WindowsAndMessaging::*};
 
-use crate::{GlobalPixels, Pixels, Point, Size};
+use crate::{px, GlobalPixels, Pixels, Point, Size};
 
 type PhysicalPoint = Point<GlobalPixels>;
 pub(crate) type LogicalPoint = Point<Pixels>;
@@ -88,8 +88,8 @@ impl LogicalPoint {
     /// the same monitor
     pub fn new_logical(x: i32, y: i32, scale_factor: f32) -> Self {
         Point {
-            x: Pixels(x as f32 / scale_factor),
-            y: Pixels(y as f32 / scale_factor),
+            x: px(x as f32 / scale_factor),
+            y: px(y as f32 / scale_factor),
         }
     }
 }
@@ -122,8 +122,8 @@ impl LogicalSize {
     /// the same monitor
     pub fn new_logical(width: u32, height: u32, scale_factor: f32) -> Self {
         Size {
-            width: Pixels(width as f32 / scale_factor),
-            height: Pixels(height as f32 / scale_factor),
+            width: px(width as f32 / scale_factor),
+            height: px(height as f32 / scale_factor),
         }
     }
 }
