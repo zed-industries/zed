@@ -13,6 +13,7 @@ use std::{
 };
 
 use ::util::ResultExt;
+use anyhow::Context;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -844,7 +845,7 @@ impl WindowsWindowInner {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         unsafe {
-            let _ = SetWindowPos(
+            SetWindowPos(
                 self.hwnd,
                 None,
                 rect.left,
@@ -853,12 +854,8 @@ impl WindowsWindowInner {
                 height,
                 SWP_NOZORDER | SWP_NOACTIVATE,
             )
-            .inspect_err(|_| {
-                log::error!(
-                    "unable to set window position after dpi has changed: {}",
-                    std::io::Error::last_os_error()
-                )
-            });
+            .context("unable to set window position after dpi has changed")
+            .log_err();
         }
         self.invalidate_client_area();
         LRESULT(0)
