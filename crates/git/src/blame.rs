@@ -6,23 +6,17 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::iter;
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use std::{fmt, ops::Range, path::Path, sync::Arc};
 use sum_tree::SumTree;
 use text::{Anchor, Point};
 
 pub use git2 as libgit;
 
-const UNCOMMITTED_SHA: [u8; 20] = [0; 20];
-
-pub fn git_blame_incremental(
-    working_directory: &Path,
-    path: &Path,
-    contents: &String,
-) -> Result<String> {
+fn run_git_blame(working_directory: &Path, path: &Path, contents: &String) -> Result<String> {
     let mut child = Command::new("git")
         .current_dir(working_directory)
         .arg("blame")
-        // TODO: turn off all the git configurations
         .arg("--incremental")
         .arg("--contents")
         .arg("-")
@@ -50,9 +44,80 @@ pub fn git_blame_incremental(
     Ok(String::from_utf8(output.stdout)?)
 }
 
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct Oid(libgit::Oid);
+
+impl Oid {
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+}
+
+impl FromStr for Oid {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        libgit::Oid::from_str(s)
+            .map_err(|error| anyhow!("failed to parse git oid: {}", error))
+            .map(|oid| Self(oid))
+    }
+}
+
+impl fmt::Debug for Oid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl fmt::Display for Oid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Serialize for Oid {
+    fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Oid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<Oid>().map_err(serde::de::Error::custom)
+    }
+}
+
+impl Default for Oid {
+    fn default() -> Self {
+        Self(libgit::Oid::zero())
+    }
+}
+
+impl From<Oid> for u32 {
+    fn from(oid: Oid) -> Self {
+        let bytes = oid.0.as_bytes();
+        debug_assert!(bytes.len() > 4);
+
+        let mut u32_bytes: [u8; 4] = [0; 4];
+
+        for i in 0..4 {
+            u32_bytes[i] = bytes[i];
+        }
+
+        u32::from_ne_bytes(u32_bytes)
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct BlameEntry {
-    pub sha: [u8; 20],
+    pub sha: Oid,
     pub original_line_number: u32,
     pub final_line_number: u32,
     pub line_count: u32,
@@ -74,6 +139,41 @@ pub struct BlameEntry {
 }
 
 impl BlameEntry {
+    // Returns a BlameEntry by parsing the first line of a `git blame --incremental`
+    // entry. The line MUST have this format:
+    //
+    //     <40-byte-hex-sha1> <sourceline> <resultline> <num-lines>
+    fn new_from_blame_line(line: &str) -> Result<BlameEntry> {
+        let mut parts = line.split_whitespace();
+
+        let sha = parts
+            .next()
+            .and_then(|line| line.parse::<Oid>().ok())
+            .ok_or_else(|| anyhow!("failed to parse sha"))?;
+
+        let original_line_number = parts
+            .next()
+            .and_then(|line| line.parse::<u32>().ok())
+            .ok_or_else(|| anyhow!("Failed to parse original line number"))?;
+        let final_line_number = parts
+            .next()
+            .and_then(|line| line.parse::<u32>().ok())
+            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+
+        let line_count = parts
+            .next()
+            .and_then(|line| line.parse::<u32>().ok())
+            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+
+        Ok(Self {
+            sha,
+            original_line_number,
+            final_line_number,
+            line_count,
+            ..Default::default()
+        })
+    }
+
     pub fn committer_datetime(&self) -> Result<DateTime<FixedOffset>> {
         let naive_datetime = NaiveDateTime::from_timestamp_opt(self.committer_time, 0)
             .expect("failed to parse timestamp");
@@ -91,6 +191,8 @@ impl BlameEntry {
         ))
     }
 }
+
+const NOT_COMMITTED_NAME: &'static str = "Not commited";
 
 // parse_git_blame parses the output of `git blame --incremental`, which returns
 // all the blame-entries for a given path incrementally, as it finds them.
@@ -130,42 +232,17 @@ impl BlameEntry {
 // More about `--incremental` output: https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-blame.html
 pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     let mut entries: Vec<BlameEntry> = Vec::new();
-    let mut index: HashMap<[u8; 20], usize> = HashMap::new();
+    let mut index: HashMap<Oid, usize> = HashMap::new();
 
     let mut current_entry: Option<BlameEntry> = None;
 
     for line in output.lines() {
-        let mut parts = line.split_whitespace();
         let mut done = false;
+
         match &mut current_entry {
             None => {
-                let sha = parts
-                    .next()
-                    .map(parse_commit_sha)
-                    .ok_or_else(|| anyhow!("failed to parse sha"))??;
+                let mut new_entry = BlameEntry::new_from_blame_line(line)?;
 
-                let original_line_number =
-                    parts
-                        .next()
-                        .and_then(|line| line.parse::<u32>().ok())
-                        .ok_or_else(|| anyhow!("Failed to parse original line number"))?;
-                let final_line_number = parts
-                    .next()
-                    .and_then(|line| line.parse::<u32>().ok())
-                    .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
-
-                let line_count = parts
-                    .next()
-                    .and_then(|line| line.parse::<u32>().ok())
-                    .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
-
-                let mut new_entry = BlameEntry {
-                    sha,
-                    original_line_number,
-                    final_line_number,
-                    line_count,
-                    ..Default::default()
-                };
                 if let Some(existing_entry) = index
                     .get(&new_entry.sha)
                     .and_then(|slot| entries.get(*slot))
@@ -184,39 +261,38 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                 current_entry.replace(new_entry);
             }
             Some(entry) => {
-                let Some(key) = parts.next() else {
+                let Some((key, value)) = line.split_once(' ') else {
                     continue;
                 };
-                let value = parts.collect::<String>();
                 match key {
                     "filename" => {
-                        entry.filename = value;
+                        entry.filename = value.into();
                         done = true;
                     }
-                    "summary" => entry.summary = value,
-                    "previous" => entry.previous = Some(value),
+                    "summary" => entry.summary = value.into(),
+                    "previous" => entry.previous = Some(value.into()),
 
                     "author" => {
-                        entry.author = if entry.sha == UNCOMMITTED_SHA {
-                            "Not committed".to_string()
+                        entry.author = if entry.sha.is_zero() {
+                            NOT_COMMITTED_NAME.to_string()
                         } else {
-                            value
+                            value.into()
                         }
                     }
-                    "author-mail" => entry.author_mail = value,
+                    "author-mail" => entry.author_mail = value.into(),
                     "author-time" => entry.author_time = value.parse::<i64>()?,
-                    "author-tz" => entry.author_tz = value,
+                    "author-tz" => entry.author_tz = value.into(),
 
                     "committer" => {
-                        entry.committer = if entry.sha == UNCOMMITTED_SHA {
-                            "Not committed".to_string()
+                        entry.committer = if entry.sha.is_zero() {
+                            NOT_COMMITTED_NAME.to_string()
                         } else {
-                            value
+                            value.into()
                         }
                     }
-                    "committer-mail" => entry.committer_mail = value,
+                    "committer-mail" => entry.committer_mail = value.into(),
                     "committer-time" => entry.committer_time = value.parse::<i64>()?,
-                    "committer-tz" => entry.committer_tz = value,
+                    "committer-tz" => entry.committer_tz = value.into(),
                     _ => {}
                 }
             }
@@ -233,19 +309,11 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     Ok(entries)
 }
 
-fn parse_commit_sha(hex: &str) -> Result<[u8; 20]> {
-    let mut bytes = [0u8; 20];
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        bytes[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)?;
-    }
-    Ok(bytes)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlameHunk<T> {
     pub buffer_range: Range<T>,
 
-    pub oid: libgit::Oid,
+    pub oid: Oid,
     pub name: Option<String>,
     pub email: Option<String>,
     pub time: DateTime<FixedOffset>,
@@ -311,7 +379,7 @@ impl BufferBlame {
     ) -> Result<BufferBlame> {
         let buffer_text = buffer.as_rope().to_string();
         let now = std::time::Instant::now();
-        let output = git_blame_incremental(working_directory, path, &buffer_text)
+        let output = run_git_blame(working_directory, path, &buffer_text)
             .context("failed to run 'git blame'")?;
         println!("running git blame took: {:?}", now.elapsed());
 
@@ -334,11 +402,10 @@ impl BufferBlame {
             let end = Point::new(start_line + entry.line_count, 0);
 
             let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
-            let oid = libgit::Oid::from_bytes(&entry.sha)?;
 
             let hunk = BlameHunk {
                 buffer_range,
-                oid,
+                oid: entry.sha,
                 name: Some(entry.committer.clone()),
                 email: Some(entry.committer_mail.clone()),
                 time: entry.committer_datetime()?,
@@ -452,6 +519,13 @@ mod tests {
 
             pretty_assertions::assert_eq!(have_json, want_json, "wrong blame entries");
         }
+    }
+
+    #[test]
+    fn test_parse_git_blame_not_committed() {
+        let output = read_test_data("blame_incremental_not_committed");
+        let entries = parse_git_blame(&output).unwrap();
+        assert_eq_golden(&entries, "blame_incremental_not_committed");
     }
 
     #[test]

@@ -2190,10 +2190,7 @@ impl EditorElement {
 
                 let blame_line = format!("{}", hunk);
 
-                let sha_bytes = blame_hunk.oid.as_bytes();
-                debug_assert!(sha_bytes.len() > 4);
-
-                let sha_number = u32::from_ne_bytes(sha_bytes[..4].try_into().unwrap());
+                let sha_number: u32 = blame_hunk.oid.into();
                 let sha_color = cx.theme().players().color_for_participant(sha_number);
 
                 let commit_sha_run = TextRun {
