@@ -97,7 +97,6 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
-        accepts_first_mouse: true,
         display_id: display.map(|display| display.id()),
         fullscreen: false,
     }

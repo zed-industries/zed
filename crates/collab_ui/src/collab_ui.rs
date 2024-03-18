@@ -119,7 +119,6 @@ fn notification_window_options(
         show: true,
         kind: WindowKind::PopUp,
         is_movable: false,
-        accepts_first_mouse: true,
         display_id: Some(screen.id()),
         fullscreen: false,
     }
