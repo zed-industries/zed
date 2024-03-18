@@ -50,6 +50,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     scale_factor: f32,
     hide_title_bar: bool,
+    display: RefCell<Rc<WindowsDisplay>>,
 }
 
 impl WindowsWindowInner {
@@ -59,6 +60,7 @@ impl WindowsWindowInner {
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
         hide_title_bar: bool,
+        display: Rc<WindowsDisplay>,
     ) -> Self {
         let origin = Cell::new(Point::new((cs.x as f64).into(), (cs.y as f64).into()));
         let size = Cell::new(Size {
@@ -103,6 +105,7 @@ impl WindowsWindowInner {
         };
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
+        let display = RefCell::new(display);
         Self {
             hwnd,
             origin,
@@ -115,6 +118,7 @@ impl WindowsWindowInner {
             handle,
             scale_factor: 1.0,
             hide_title_bar,
+            display,
         }
     }
 
@@ -254,6 +258,22 @@ impl WindowsWindowInner {
         let x = lparam.signed_loword() as f64;
         let y = lparam.signed_hiword() as f64;
         self.origin.set(Point::new(x.into(), y.into()));
+        let size = self.size.get();
+        let center_x = x as f32 + size.width.0 / 2.0;
+        let center_y = y as f32 + size.height.0 / 2.0;
+        let monitor_bounds = self.display.borrow().bounds();
+        if center_x < monitor_bounds.left().0
+            || center_x > monitor_bounds.right().0
+            || center_y < monitor_bounds.top().0
+            || center_y > monitor_bounds.bottom().0
+        {
+            // center of the window may have moved to another monitor
+            let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
+            if !monitor.is_invalid() && self.display.borrow().handle != monitor {
+                // we will get the same monitor if we only have one
+                (*self.display.borrow_mut()) = Rc::new(WindowsDisplay::new_with_handle(monitor));
+            }
+        }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.moved.as_mut() {
             callback()
@@ -458,8 +478,14 @@ impl WindowsWindowInner {
         if first_char.is_control() {
             None
         } else {
+            let mut modifiers = self.current_modifiers();
+            // for characters that use 'shift' to type it is expected that the
+            // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
+            if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
+                modifiers.shift = false;
+            }
             Some(Keystroke {
-                modifiers: self.current_modifiers(),
+                modifiers,
                 key: first_char.to_lowercase().to_string(),
                 ime_key: Some(first_char.to_string()),
             })
@@ -922,7 +948,7 @@ impl WindowsWindowInner {
             let x = Pixels::from(cursor_point.x as f32);
             let y = Pixels::from(cursor_point.y as f32);
             let event = MouseDownEvent {
-                button: button.clone(),
+                button,
                 position: Point { x, y },
                 modifiers: self.current_modifiers(),
                 click_count: 1,
@@ -1006,19 +1032,16 @@ impl WindowsWindowInner {
             .platform_inner
             .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
         {
-            lost_focus_window
-                .callbacks
-                .borrow_mut()
-                .active_status_change
-                .as_mut()
-                .map(|mut cb| cb(false));
+            let mut callbacks = lost_focus_window.callbacks.borrow_mut();
+            if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+                cb(false);
+            }
         }
 
-        self.callbacks
-            .borrow_mut()
-            .active_status_change
-            .as_mut()
-            .map(|mut cb| cb(true));
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+            cb(true);
+        }
 
         LRESULT(0)
     }
@@ -1040,7 +1063,6 @@ struct Callbacks {
 pub(crate) struct WindowsWindow {
     inner: Rc<WindowsWindowInner>,
     drag_drop_handler: IDropTarget,
-    display: Rc<WindowsDisplay>,
 }
 
 struct WindowCreateContext {
@@ -1048,6 +1070,7 @@ struct WindowCreateContext {
     platform_inner: Rc<WindowsPlatformInner>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
+    display: Rc<WindowsDisplay>,
 }
 
 impl WindowsWindow {
@@ -1083,6 +1106,9 @@ impl WindowsWindow {
             platform_inner: platform_inner.clone(),
             handle,
             hide_title_bar,
+            // todo(windows) move window to target monitor
+            // options.display_id
+            display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1111,12 +1137,9 @@ impl WindowsWindow {
             };
             drag_drop_handler
         };
-        // todo(windows) move window to target monitor
-        // options.display_id
         let wnd = Self {
             inner: context.inner.unwrap(),
             drag_drop_handler,
-            display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
         };
         platform_inner
             .raw_window_handles
@@ -1193,7 +1216,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        self.display.clone()
+        self.inner.display.borrow().clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1537,6 +1560,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.platform_inner.clone(),
             ctx.handle,
             ctx.hide_title_bar,
+            ctx.display.clone(),
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };

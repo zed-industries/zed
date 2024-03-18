@@ -143,6 +143,7 @@ struct ProjectSearch {
     search_id: usize,
     search_history: SearchHistory,
     no_results: Option<bool>,
+    limit_reached: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -205,6 +206,7 @@ impl ProjectSearch {
             search_id: 0,
             search_history: SearchHistory::default(),
             no_results: None,
+            limit_reached: false,
         }
     }
 
@@ -220,6 +222,7 @@ impl ProjectSearch {
             search_id: self.search_id,
             search_history: self.search_history.clone(),
             no_results: self.no_results,
+            limit_reached: self.limit_reached,
         })
     }
 
@@ -238,27 +241,38 @@ impl ProjectSearch {
                 this.match_ranges.clear();
                 this.excerpts.update(cx, |this, cx| this.clear(cx));
                 this.no_results = Some(true);
+                this.limit_reached = false;
             })
             .ok()?;
 
-            while let Some((buffer, anchors)) = matches.next().await {
-                let mut ranges = this
-                    .update(&mut cx, |this, cx| {
-                        this.no_results = Some(false);
-                        this.excerpts.update(cx, |excerpts, cx| {
-                            excerpts.stream_excerpts_with_context_lines(buffer, anchors, 1, cx)
-                        })
-                    })
-                    .ok()?;
+            let mut limit_reached = false;
+            while let Some(result) = matches.next().await {
+                match result {
+                    project::SearchResult::Buffer { buffer, ranges } => {
+                        let mut match_ranges = this
+                            .update(&mut cx, |this, cx| {
+                                this.no_results = Some(false);
+                                this.excerpts.update(cx, |excerpts, cx| {
+                                    excerpts
+                                        .stream_excerpts_with_context_lines(buffer, ranges, 1, cx)
+                                })
+                            })
+                            .ok()?;
 
-                while let Some(range) = ranges.next().await {
-                    this.update(&mut cx, |this, _| this.match_ranges.push(range))
-                        .ok()?;
+                        while let Some(range) = match_ranges.next().await {
+                            this.update(&mut cx, |this, _| this.match_ranges.push(range))
+                                .ok()?;
+                        }
+                        this.update(&mut cx, |_, cx| cx.notify()).ok()?;
+                    }
+                    project::SearchResult::LimitReached => {
+                        limit_reached = true;
+                    }
                 }
-                this.update(&mut cx, |_, cx| cx.notify()).ok()?;
             }
 
             this.update(&mut cx, |this, cx| {
+                this.limit_reached = limit_reached;
                 this.pending_search.take();
                 cx.notify();
             })
@@ -718,6 +732,7 @@ impl ProjectSearchView {
         self.model.update(cx, |model, cx| {
             model.pending_search = None;
             model.no_results = None;
+            model.limit_reached = false;
             model.match_ranges.clear();
 
             model.excerpts.update(cx, |excerpts, cx| {
@@ -1811,6 +1826,8 @@ impl Render for ProjectSearchBar {
             })
             .unwrap_or_else(|| "No matches".to_string());
 
+        let limit_reached = search.model.read(cx).limit_reached;
+
         let matches_column = h_flex()
             .child(div().min_w(rems(6.)).child(Label::new(match_text)))
             .child(
@@ -1838,7 +1855,14 @@ impl Render for ProjectSearchBar {
                         }
                     }))
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
-            );
+            )
+            .when(limit_reached, |this| {
+                this.child(
+                    div()
+                        .child(Label::new("Search limit reached").color(Color::Warning))
+                        .ml_2(),
+                )
+            });
 
         let search_line = h_flex()
             .gap_2()

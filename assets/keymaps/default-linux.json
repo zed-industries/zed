@@ -82,7 +82,6 @@
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-=end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
-      "ctrl-shift-p": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
       "ctrl-shift-n": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",

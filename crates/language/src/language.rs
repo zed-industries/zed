@@ -326,43 +326,25 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .context("failed to create container directory")?;
             }
 
-            if let Some(task) = self.will_fetch_server(&delegate, cx) {
-                task.await?;
-            }
-
-            let name = self.name();
-            log::info!("fetching latest version of language server {:?}", name.0);
-            delegate.update_status(
-                name.clone(),
-                LanguageServerBinaryStatus::CheckingForUpdate,
-            );
-            let latest_version = self.fetch_latest_server_version(delegate.as_ref()).await?;
-
-            log::info!("downloading language server {:?}", name.0);
-            delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
-            let mut binary = self
-                .fetch_server_binary(latest_version, container_dir.to_path_buf(), delegate.as_ref())
-                .await;
-
-            delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+            let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
 
             if let Err(error) = binary.as_ref() {
                 if let Some(prev_downloaded_binary) = self
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Cached);
+                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
-                        name.clone(),
-                        prev_downloaded_binary.path.display()
+                        self.name(),
+                        prev_downloaded_binary.path
                     );
                     binary = Ok(prev_downloaded_binary);
                 } else {
                     delegate.update_status(
-                        name.clone(),
+                        self.name(),
                         LanguageServerBinaryStatus::Failed {
-                            error: format!("{:?}", error),
+                            error: format!("{error:?}"),
                         },
                     );
                 }
@@ -498,6 +480,33 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn as_fake(&self) -> Option<&FakeLspAdapter> {
         None
     }
+}
+
+async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
+    adapter: &L,
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    container_dir: PathBuf,
+    cx: &mut AsyncAppContext,
+) -> Result<LanguageServerBinary> {
+    if let Some(task) = adapter.will_fetch_server(delegate, cx) {
+        task.await?;
+    }
+
+    let name = adapter.name();
+    log::info!("fetching latest version of language server {:?}", name.0);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    let latest_version = adapter
+        .fetch_latest_server_version(delegate.as_ref())
+        .await?;
+
+    log::info!("downloading language server {:?}", name.0);
+    delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+    let binary = adapter
+        .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+        .await;
+
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    binary
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

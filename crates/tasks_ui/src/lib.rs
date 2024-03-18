@@ -171,6 +171,9 @@ fn task_context(
                     if let Some(symbol) = language_context.symbol {
                         env.insert("ZED_SYMBOL".into(), symbol);
                     }
+                    if let Some(symbol) = language_context.package {
+                        env.insert("ZED_PACKAGE".into(), symbol);
+                    }
                 }
 
                 Some(TaskContext {

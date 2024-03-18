@@ -68,3 +68,7 @@ pub(crate) unsafe fn set_window_long(
         SetWindowLongW(hwnd, nindex, dwnewlong as i32) as isize
     }
 }
+
+pub(crate) fn windows_credentials_target_name(url: &str) -> String {
+    format!("zed:url={}", url)
+}
