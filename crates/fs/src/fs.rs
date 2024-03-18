@@ -234,12 +234,13 @@ impl Fs for RealFs {
 
     #[cfg(windows)]
     async fn remove_dir_link(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        if junction::exists(path).unwrap_or_default() {
-            junction::delete(path)?;
-        } else {
-            self.remove_file(path, options).await?;
+        match smol::fs::remove_dir(path).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
+                Ok(())
+            }
+            Err(err) => Err(err)?,
         }
-        Ok(())
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
