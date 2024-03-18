@@ -6,9 +6,8 @@ use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
 use serde::Deserialize;
-use std::mem;
 use std::{
-    env, fs,
+    env, fs, mem,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
@@ -72,22 +71,27 @@ impl ExtensionBuilder {
     pub async fn compile_extension(
         &self,
         extension_dir: &Path,
+        extension_manifest: &ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
+        if extension_dir.is_relative() {
+            bail!(
+                "extension dir {} is not an absolute path",
+                extension_dir.display()
+            );
+        }
+
         fs::create_dir_all(&self.cache_dir)?;
-        let extension_toml_path = extension_dir.join("extension.toml");
-        let extension_toml_content = fs::read_to_string(&extension_toml_path)?;
-        let extension_toml: ExtensionManifest = toml::from_str(&extension_toml_content)?;
 
         let cargo_toml_path = extension_dir.join("Cargo.toml");
-        if extension_toml.lib.kind == Some(ExtensionLibraryKind::Rust)
+        if extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust)
             || fs::metadata(&cargo_toml_path)?.is_file()
         {
             self.compile_rust_extension(extension_dir, options).await?;
         }
 
-        for (grammar_name, grammar_metadata) in extension_toml.grammars {
-            self.compile_grammar(extension_dir, grammar_name, grammar_metadata)
+        for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
+            self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
                 .await?;
         }
 
@@ -157,13 +161,13 @@ impl ExtensionBuilder {
     async fn compile_grammar(
         &self,
         extension_dir: &Path,
-        grammar_name: Arc<str>,
-        grammar_metadata: GrammarManifestEntry,
+        grammar_name: &str,
+        grammar_metadata: &GrammarManifestEntry,
     ) -> Result<()> {
         let clang_path = self.install_wasi_sdk_if_needed().await?;
 
         let mut grammar_repo_dir = extension_dir.to_path_buf();
-        grammar_repo_dir.extend(["grammars", grammar_name.as_ref()]);
+        grammar_repo_dir.extend(["grammars", grammar_name]);
 
         let mut grammar_wasm_path = grammar_repo_dir.clone();
         grammar_wasm_path.set_extension("wasm");
@@ -277,9 +281,10 @@ impl ExtensionBuilder {
                 );
             }
             bail!(
-                "failed to checkout revision {} in directory '{}'",
+                "failed to checkout revision {} in directory '{}': {}",
                 rev,
-                directory.display()
+                directory.display(),
+                String::from_utf8_lossy(&checkout_output.stderr)
             );
         }
 
