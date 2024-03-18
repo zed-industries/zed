@@ -31,7 +31,7 @@ struct Args {
     #[arg(value_parser = parse_path_with_position)]
     paths_with_position: Vec<PathLikeWithPosition<PathBuf>>,
     /// Print Zed's version and the app path.
-    #[arg(short = 'V', long)]
+    #[arg(short, long)]
     version: bool,
     /// Custom Zed.app path
     #[arg(short, long)]
