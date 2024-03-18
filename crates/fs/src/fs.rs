@@ -1638,16 +1638,17 @@ async fn init_pipe() -> Result<isize> {
             System::Pipes::{
                 ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
             },
-            UI::{
-                Shell::{ShellExecuteExW, SHELLEXECUTEINFOW},
-                WindowsAndMessaging::SW_HIDE,
-            },
+            UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW},
         },
     };
 
     const PIPE_NAME: PCWSTR = windows::core::w!("\\\\.\\pipe\\zedsymlink");
     const MAX_INSTANCES: u32 = 4;
     const BUFFER_SIZE: u32 = 2048;
+    #[cfg(debug_assertions)]
+    const SHOW_CONSOLE: i32 = windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0;
+    #[cfg(not(debug_assertions))]
+    const SHOW_CONSOLE: i32 = windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0;
 
     smol::unblock(|| {
         let handle = unsafe {
@@ -1673,7 +1674,7 @@ async fn init_pipe() -> Result<isize> {
         info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
         info.lpVerb = windows::core::w!("runas");
         info.lpFile = PCWSTR::from_raw(exe_str.as_ptr());
-        info.nShow = SW_HIDE.0;
+        info.nShow = SHOW_CONSOLE;
         unsafe { ShellExecuteExW(&mut info) }.inspect_err(|_| {
             log::error!(
                 "unable to launch child process: {}",

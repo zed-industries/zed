@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use windows::{
     core::PCWSTR,
     Win32::{
-        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE},
+        Foundation::{CloseHandle, GENERIC_READ, HANDLE},
         Storage::FileSystem::{
             CreateFileW, ReadFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES,
             OPEN_EXISTING,
@@ -76,6 +76,8 @@ fn main() {
         else {
             break;
         };
+        #[cfg(debug_assertions)]
+        println!("linking: {:#?}", symlink);
 
         if symlink.target.is_file() {
             if let Err(e) = symlink_file(symlink.target, symlink.path) {
@@ -88,6 +90,17 @@ fn main() {
         }
     }
     destroy(pipe_handle);
+
+    #[cfg(debug_assertions)]
+    {
+        use std::io::Read;
+
+        println!("Press any key to exit...");
+        let mut buffer = [0; 1];
+        std::io::stdin()
+            .read_exact(&mut buffer)
+            .expect("unable to read input");
+    }
 }
 
 #[inline]
