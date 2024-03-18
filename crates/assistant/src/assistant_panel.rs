@@ -29,9 +29,11 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
+use html2text::from_read;
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
 use project::Project;
+use reqwest::blocking::Client;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
@@ -620,6 +622,7 @@ impl AssistantPanel {
         });
 
         let mut messages = Vec::new();
+
         if let Some(conversation) = conversation {
             let conversation = conversation.read(cx);
             let buffer = conversation.buffer.read(cx);
@@ -785,7 +788,12 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ConversationEditorEvent::TabContentChanged => cx.notify(),
+            ConversationEditorEvent::TabContentChanged => {
+                println!("TabContentChanged");
+                // println!("{:#?}", event);
+                // println!("{:*<30}", "");
+                cx.notify()
+            }
         }
     }
 
@@ -1237,6 +1245,7 @@ impl FocusableView for AssistantPanel {
     }
 }
 
+#[derive(Debug)]
 enum ConversationEvent {
     MessagesEdited,
     SummaryChanged,
@@ -1265,6 +1274,25 @@ struct Conversation {
     pending_save: Task<Result<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
+}
+
+fn find_urls(buffer_text: &str) -> Vec<&str> {
+    let url_regex = regex::Regex::new(
+        r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
+    )
+    .unwrap();
+
+    url_regex
+        .find_iter(buffer_text)
+        .map(|mat| mat.as_str())
+        .collect()
+}
+
+fn read_url_content(url: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let response = client.get(url).send()?;
+    let text = from_read(response, 80);
+    Ok(text)
 }
 
 impl EventEmitter<ConversationEvent> for Conversation {}
@@ -1413,9 +1441,15 @@ impl Conversation {
         })
     }
 
+    fn read_url_content(url: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let client = Client::new();
+        let response = client.get(url).send()?;
+        let text = from_read(response, 80);
+        Ok(text)
+    }
     fn handle_buffer_event(
         &mut self,
-        _: Model<Buffer>,
+        buffer: Model<Buffer>,
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1475,6 +1509,9 @@ impl Conversation {
             return Default::default();
         };
 
+        println!("{:?}", selected_messages);
+        println!("{}", "-".repeat(30));
+
         let mut should_assist = false;
         for selected_message_id in selected_messages {
             let selected_message_role =
@@ -1503,6 +1540,43 @@ impl Conversation {
                 log::info!("completion provider has no credentials");
                 return Default::default();
             }
+            // Make change here
+
+            let original_messages: Vec<_> = self
+                .messages(cx)
+                .filter(|message| matches!(message.status, MessageStatus::Done))
+                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+                .collect();
+            let url_contents: Vec<RequestMessage> = original_messages
+                .iter()
+                .flat_map(|message| find_urls(&message.content))
+                .filter(|url| !url.is_empty())
+                .filter_map(|url| match read_url_content(url) {
+                    Ok(content) => Some(RequestMessage {
+                        role: Role::User,
+                        content,
+                    }),
+                    Err(e) => {
+                        log::error!("Failed to read URL content: {}", e);
+                        None
+                    }
+                })
+                .collect();
+
+            println!("{:.40}", format!("{:?}", url_contents));
+            println!("{}", "-".repeat(30));
+
+            let messages: Vec<_> = url_contents
+                .into_iter()
+                .chain(
+                    self.messages(cx)
+                        .into_iter()
+                        .filter(|message| matches!(message.status, MessageStatus::Done))
+                        .map(|message| message.to_open_ai_message(self.buffer.read(cx))),
+                )
+                .collect();
+            println!("{:?}", messages);
+            println!("{}", "-".repeat(30));
 
             let request = self.to_completion_request(cx);
             let stream = CompletionProvider::global(cx).complete(request);
@@ -1962,6 +2036,7 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+#[derive(Debug)]
 enum ConversationEditorEvent {
     TabContentChanged,
 }
@@ -2113,6 +2188,7 @@ impl ConversationEditor {
             }
             ConversationEvent::SummaryChanged => {
                 cx.emit(ConversationEditorEvent::TabContentChanged);
+                println!("ConversationEvent::SummaryChanged");
                 self.conversation.update(cx, |conversation, cx| {
                     conversation.save(None, self.fs.clone(), cx);
                 });

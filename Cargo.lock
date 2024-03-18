@@ -323,6 +323,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "html2text",
  "indoc",
  "language",
  "log",
@@ -334,6 +335,7 @@ dependencies = [
  "project",
  "rand 0.8.5",
  "regex",
+ "reqwest",
  "schemars",
  "search",
  "serde",
@@ -3274,7 +3276,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ee61eb945bff65ee7d19d157d39c67c33290ff0742907413fd5eefd29edc979"
 dependencies = [
- "phf",
+ "phf 0.11.2",
 ]
 
 [[package]]
@@ -4564,6 +4566,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d13cdbd5dbb29f9c88095bbdc2590c9cba0d0a1269b983fef6b2cdd7e9f4db1"
 
 [[package]]
+name = "html2text"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8177c65914761eea31e755aadea4db42d516e425046824564979e2158eec7fcb"
+dependencies = [
+ "html5ever",
+ "markup5ever",
+ "tendril",
+ "unicode-width",
+ "xml5ever",
+]
+
+[[package]]
+name = "html5ever"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bea68cab48b8459f17cf1c944c67ddc572d272d9f2b274140f223ecb1da4a3b7"
+dependencies = [
+ "log",
+ "mac",
+ "markup5ever",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "http"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5613,6 +5642,20 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
+]
+
+[[package]]
+name = "markup5ever"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a2629bb1404f3d34c2e921f21fd34ba00b206124c81f65c50b43b6aaefeb016"
+dependencies = [
+ "log",
+ "phf 0.10.1",
+ "phf_codegen",
+ "string_cache",
+ "string_cache_codegen",
+ "tendril",
 ]
 
 [[package]]
@@ -6694,11 +6737,49 @@ dependencies = [
 
 [[package]]
 name = "phf"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fabbf1ead8a5bcbc20f5f8b939ee3f5b0f6f281b6ad3468b84656b658b455259"
+dependencies = [
+ "phf_shared 0.10.0",
+]
+
+[[package]]
+name = "phf"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ade2d8b8f33c7333b51bcf0428d37e217e9f32192ae4772156f65063b8ce03dc"
 dependencies = [
- "phf_shared",
+ "phf_shared 0.11.2",
+]
+
+[[package]]
+name = "phf_codegen"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fb1c3a8bc4dd4e5cfce29b44ffc14bedd2ee294559a294e2a4d4c9e9a6a13cd"
+dependencies = [
+ "phf_generator",
+ "phf_shared 0.10.0",
+]
+
+[[package]]
+name = "phf_generator"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d5285893bb5eb82e6aaf5d59ee909a06a16737a8970984dd7746ba9283498d6"
+dependencies = [
+ "phf_shared 0.10.0",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
+dependencies = [
+ "siphasher 0.3.11",
 ]
 
 [[package]]
@@ -6895,6 +6976,12 @@ name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
+
+[[package]]
+name = "precomputed-hash"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "prettier"
@@ -9111,6 +9198,32 @@ dependencies = [
  "strum",
  "theme",
  "ui",
+]
+
+[[package]]
+name = "string_cache"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f91138e76242f575eb1d3b38b4f1362f10d3a43f47d182a5b359af488a02293b"
+dependencies = [
+ "new_debug_unreachable",
+ "once_cell",
+ "parking_lot",
+ "phf_shared 0.10.0",
+ "precomputed-hash",
+ "serde",
+]
+
+[[package]]
+name = "string_cache_codegen"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb30289b722be4ff74a408c3cc27edeaad656e06cb1fe8fa9231fa59c728988"
+dependencies = [
+ "phf_generator",
+ "phf_shared 0.10.0",
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -12347,6 +12460,17 @@ name = "xkeysym"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "054a8e68b76250b253f671d1268cb7f1ae089ec35e195b2efb2a4e9a836d0621"
+
+[[package]]
+name = "xml5ever"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4034e1d05af98b51ad7214527730626f019682d797ba38b51689212118d8e650"
+dependencies = [
+ "log",
+ "mac",
+ "markup5ever",
+]
 
 [[package]]
 name = "xmlparser"
