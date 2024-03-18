@@ -7,7 +7,7 @@ use gpui::{
 };
 use head::Head;
 use std::{sync::Arc, time::Duration};
-use ui::{prelude::*, v_flex, Color, Label, ListItem, ListItemSpacing};
+use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
 mod head;
@@ -86,7 +86,10 @@ pub trait PickerDelegate: Sized + 'static {
 
 impl<D: PickerDelegate> FocusableView for Picker<D> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.head.focus_handle(cx)
+        match &self.head {
+            Head::QueryLine(editor) => editor.focus_handle(cx),
+            Head::Empty(head) => head.focus_handle(cx),
+        }
     }
 }
 
@@ -436,7 +439,19 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::use_selected_query))
-            .child(self.head.draw())
+            .child(match &self.head {
+                Head::QueryLine(editor) => v_flex()
+                    .child(
+                        h_flex()
+                            .overflow_hidden()
+                            .flex_none()
+                            .h_9()
+                            .px_4()
+                            .child(editor.clone()),
+                    )
+                    .child(Divider::horizontal()),
+                Head::Empty(empty_head) => div().child(empty_head.clone()),
+            })
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_flex()
