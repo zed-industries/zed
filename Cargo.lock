@@ -5328,6 +5328,7 @@ dependencies = [
  "tree-sitter-purescript",
  "tree-sitter-python",
  "tree-sitter-racket",
+ "tree-sitter-regex",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
@@ -10660,6 +10661,16 @@ dependencies = [
 name = "tree-sitter-racket"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-racket?rev=eb010cf2c674c6fd9a6316a84e28ef90190fe51a#eb010cf2c674c6fd9a6316a84e28ef90190fe51a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-regex"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efb5a53e9c990757895476216796b170fd81e4d173d08f8b082279c4e6ff8c5c"
 dependencies = [
  "cc",
  "tree-sitter",
