@@ -1216,7 +1216,6 @@ impl PlatformWindow for WindowsWindow {
         self.inner.window_metrics.get_logical_size()
     }
 
-    // todo(windows)
     fn scale_factor(&self) -> f32 {
         self.inner.window_metrics.get_scale_factor()
     }
