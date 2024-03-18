@@ -25,9 +25,9 @@ impl TryFrom<String> for Role {
     }
 }
 
-impl Into<String> for Role {
-    fn into(self) -> String {
-        match self {
+impl From<Role> for String {
+    fn from(val: Role) -> Self {
+        match val {
             Role::User => "user".to_owned(),
             Role::Assistant => "assistant".to_owned(),
             Role::System => "system".to_owned(),
