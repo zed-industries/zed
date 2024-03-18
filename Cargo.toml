@@ -354,7 +354,7 @@ features = [
 ]
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "4294e59279205f503eb14348dd5128bd5910c8fb" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fcda0d5259d0acf902aee6de7d2501f2bd6629" }
 
