@@ -247,6 +247,9 @@ impl Platform for WindowsPlatform {
                             DispatchMessageW(&msg);
                         }
                     }
+
+                    // foreground tasks may have been queued in the message handlers
+                    self.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
