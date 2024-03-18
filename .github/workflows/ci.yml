@@ -213,7 +213,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         run: |
           mv target/aarch64-apple-darwin/release/Zed.dmg target/aarch64-apple-darwin/release/Zed-aarch64.dmg
-          mv target/aarch64-apple-darwin/release/Zed.dmg target/aarch64-apple-darwin/release/Zed-x86_64.dmg
+          mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (universal) to workflow run if main branch or specific label
         uses: actions/upload-artifact@v4
