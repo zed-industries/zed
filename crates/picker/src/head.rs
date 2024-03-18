@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use editor::{Editor, EditorEvent};
 use gpui::{prelude::*, AppContext, FocusHandle, FocusableView, View};
-use std::sync::Arc;
-use ui::{prelude::*, ViewContext};
+use ui::prelude::*;
 
-/// The head of a [`Picker`].
+/// The head of a [`Picker`](crate::Picker).
 pub(crate) enum Head {
     /// Picker has an editor that allows the user to filter the list.
     Editor(View<Editor>),
