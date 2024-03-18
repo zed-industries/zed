@@ -203,8 +203,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "43721bf42d298b7cbee2195ee66f73a5f1c7b2fc" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 cap-std = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
@@ -373,11 +373,6 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "3041
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
-
-# todo(linux) - Remove this
-[profile.dev.package.blade-graphics]
-split-debuginfo = "off"
-debug = "full"
 
 [profile.dev.package]
 taffy = { opt-level = 3 }
