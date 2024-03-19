@@ -284,7 +284,6 @@ pub mod simple_message_notification {
     pub struct MessageNotification {
         message: SharedString,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
-        on_dismiss: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
@@ -300,7 +299,6 @@ pub mod simple_message_notification {
             Self {
                 message: message.into(),
                 on_click: None,
-                on_dismiss: None,
                 click_message: None,
                 secondary_on_click: None,
                 secondary_click_message: None,
@@ -331,7 +329,7 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn secondary_on_click<F>(mut self, on_click: F) -> Self
+        pub fn on_secondary_click<F>(mut self, on_click: F) -> Self
         where
             F: 'static + Fn(&mut ViewContext<Self>),
         {
@@ -340,9 +338,6 @@ pub mod simple_message_notification {
         }
 
         pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-            if self.on_dismiss {
-                (self.on_dismiss)(cx);
-            }
             cx.emit(DismissEvent);
         }
     }

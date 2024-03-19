@@ -71,20 +71,21 @@ async fn get_extensions(
 
 async fn download_latest_extension(
     Extension(app): Extension<Arc<AppState>>,
-    Path(params): Path<GetExtensionParams>,
+    Path(params): Path<DownloadLatestExtensionParams>,
 ) -> Result<Redirect> {
     let extension = app
         .db
-        .get_extension(params.extension_id)
+        .get_extension(&params.extension_id)
         .await?
         .ok_or_else(|| anyhow!("unknown extension"))?;
     download_extension(
         Extension(app),
         Path(DownloadExtensionParams {
             extension_id: params.extension_id,
-            version: extension.latest_version.as_str(),
+            version: extension.version,
         }),
     )
+    .await
 }
 
 async fn download_extension(

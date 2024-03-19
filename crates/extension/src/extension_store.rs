@@ -118,8 +118,8 @@ pub struct ExtensionIndex {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexEntry {
-    pub manifest: Arc<ExtensionManifest>,
-    pub dev: bool,
+    manifest: Arc<ExtensionManifest>,
+    dev: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
@@ -404,7 +404,8 @@ impl ExtensionStore {
 
     fn install_or_upgrade_extension_at_endpoint(
         &mut self,
-        url: &str,
+        extension_id: Arc<str>,
+        url: String,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
     ) {
@@ -455,9 +456,14 @@ impl ExtensionStore {
 
         let url = self
             .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/download"));
+            .build_zed_api_url(&format!("/extensions/{extension_id}/0.0.2/download"));
 
-        self.install_or_upgrade_extension_at_endpoint(&url, ExtensionOperation::Install, cx);
+        self.install_or_upgrade_extension_at_endpoint(
+            extension_id,
+            url,
+            ExtensionOperation::Install,
+            cx,
+        );
     }
 
     pub fn upgrade_extension(
@@ -481,7 +487,7 @@ impl ExtensionStore {
             .http_client
             .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
 
-        self.install_or_upgrade_extension_at_endpoint(&url, operation, cx);
+        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx);
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {

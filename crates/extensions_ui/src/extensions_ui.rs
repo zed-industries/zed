@@ -3,23 +3,15 @@ mod extension_suggest;
 
 use crate::components::ExtensionCard;
 use client::telemetry::Telemetry;
-use editor::{Editor, EditorElement, EditorStyle, EditorMode, EditorEvent};
+use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-<<<<<<< HEAD
     actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
     FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
-=======
-    actions, canvas, uniform_list, AnyElement, AppContext, AvailableSpace, EventEmitter,
-    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Render,
-    Styled, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace,
-    WindowContext, impl_actions,
->>>>>>> 7732ab878 (button on notification opens extension page with langauge query)
 };
 use settings::Settings;
-use workspace::notifications::simple_message_notification;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
@@ -30,30 +22,15 @@ use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
 };
-use language::{Event, Language};
-use serde::Deserialize;
 
 actions!(zed, [Extensions, InstallDevExtension]);
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct ExtensionsWithQuery {
-    query: SharedString,
-}
-
-impl_actions!(zed, [ExtensionsWithQuery]);
-
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
         workspace
             .register_action(move |workspace, _: &Extensions, cx| {
-                let extensions_page = ExtensionsPage::new(workspace, cx, None);
+                let extensions_page = ExtensionsPage::new(workspace, cx);
                 workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
-            })
-            .register_action(move |workspace, ExtensionsWithQuery{query}: &ExtensionsWithQuery, cx| {
-
-                let extensions_page = ExtensionsPage::new(workspace, cx, Some(query));
-                workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
-
             })
             .register_action(move |_, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
@@ -77,7 +54,6 @@ pub fn init(cx: &mut AppContext) {
                     })
                     .detach();
             });
-
     })
     .detach();
 
@@ -115,7 +91,7 @@ pub struct ExtensionsPage {
 }
 
 impl ExtensionsPage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>, initial_query: Option<&str>) -> View<Self> {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
             let subscriptions = [
@@ -128,12 +104,7 @@ impl ExtensionsPage {
 
             let query_editor = cx.new_view(|cx| {
                 let mut input = Editor::single_line(cx);
-
-                match initial_query {
-                    None => {input.set_placeholder_text("Search extensions...", cx);},
-                    Some(query) => {input.set_text(Arc::from(query), cx);}
-                }
-                
+                input.set_placeholder_text("Search extensions...", cx);
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
@@ -151,7 +122,7 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
             };
-            this.fetch_extensions(initial_query.map(|query| query.to_string()), cx);
+            this.fetch_extensions(None, cx);
             this
         })
     }

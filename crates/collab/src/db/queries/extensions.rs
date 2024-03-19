@@ -56,9 +56,6 @@ impl Database {
         self.transaction(|tx| async move {
             let extension = extension::Entity::find()
                 .filter(extension::Column::ExternalId.eq(extension_id))
-                .order_by_desc(extension::Column::TotalDownloadCount)
-                .order_by_asc(extension::Column::Name)
-                .limit(Some(limit as u64))
                 .filter(
                     extension::Column::LatestVersion
                         .into_expr()
