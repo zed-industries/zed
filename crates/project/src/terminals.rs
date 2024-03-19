@@ -28,7 +28,7 @@ impl Project {
             "creating terminals as a guest is not supported yet"
         );
 
-        let is_terminal = !spawn_task.is_some();
+        let is_terminal = spawn_task.is_none();
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);

@@ -649,7 +649,7 @@ impl Terminal {
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
-            },
+            }
             AlacTermEvent::ChildExit(_) => {
                 // TODO: Handle child exit
             }
