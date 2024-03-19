@@ -24,6 +24,7 @@ use std::{
 use anyhow::Result;
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
+use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
@@ -1122,6 +1123,23 @@ impl<'a> ElementContext<'a> {
     ) -> Result<()> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
+
+        let data = if let Some(sized_future) = data.rendered(
+            size(bounds.size.width.into(), bounds.size.height.into()),
+            self,
+        ) {
+            if let Some(data) = sized_future
+                .clone()
+                .now_or_never()
+                .and_then(|result| result.ok())
+            {
+                data
+            } else {
+                return Ok(());
+            }
+        } else {
+            data
+        };
         let params = RenderImageParams {
             image_id: data.id(),
         };
