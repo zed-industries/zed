@@ -57,6 +57,7 @@ pub use element::{
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use git::blame::{self, Blame};
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
@@ -433,19 +434,15 @@ pub struct Editor {
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame: bool,
-    blame: Option<BlameState>,
+    blame: Option<Model<Blame>>,
+    blame_subscription: Option<Subscription>,
+    buffer_blame: Option<BufferBlame>,
     custom_context_menu: Option<
         Box<
             dyn 'static
                 + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
         >,
     >,
-}
-
-// TODO: Make this a model
-struct BlameState {
-    blame: BufferBlame,
-    refresh_subscription: Subscription,
 }
 
 pub struct EditorSnapshot {
@@ -1484,6 +1481,8 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame: false,
             blame: None,
+            buffer_blame: None,
+            blame_subscription: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -8839,56 +8838,39 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        self.show_git_blame = !self.show_git_blame;
-
-        if self.show_git_blame {
+        if !self.show_git_blame {
             if self.show_git_blame_internal(cx).is_none() {
                 log::error!("failed to toggle on 'git blame'");
+                return;
             }
+            self.show_git_blame = true
         } else {
+            self.blame_subscription.take();
+            self.buffer_blame.take();
             self.blame.take();
+            self.show_git_blame = false
         }
 
         cx.notify();
     }
 
     fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project_handle = self.project.as_ref()?.clone();
-        let project = project_handle.read(cx);
-        let buffer = self.buffer().read(cx).as_singleton()?;
-        let file = buffer.read(cx).file()?.as_local()?.path();
+        if let Some(project) = self.project.as_ref() {
+            let buffer = self.buffer().clone();
+            let project = project.clone();
 
-        let buffer_project_path = buffer.read(cx).project_path(cx)?;
-        let working_directory = project.get_workspace_root(&buffer_project_path, cx)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
+            let blame = cx.new_model(|cx| Blame::new(buffer, project, cx));
 
-        let git_blame_generation = cx.background_executor().spawn({
-            let file = file.clone();
-            async move { BufferBlame::new_with_cli(&working_directory, &file, &buffer_snapshot) }
-        });
+            self.blame_subscription = Some(cx.subscribe(&blame, |editor, _, event, cx| {
+                let blame::Event::ShowBufferBlame { buffer_blame } = event;
+                editor.buffer_blame = Some(buffer_blame.clone());
+                cx.notify();
+            }));
 
-        let refresh_subscription = cx.subscribe(&project_handle, |_, _, event, _| match event {
-            project::Event::WorktreeUpdatedGitRepositories(_) => {
-                println!(
-                    "WorktreeUpdatedGitRepositories. Update blame data. event: {:?}",
-                    event
-                );
-            }
-            _ => {}
-        });
+            blame.update(cx, |blame, cx| blame.generate(cx));
 
-        cx.spawn(move |this, mut cx| async move {
-            git_blame_generation.await.and_then(|blame| {
-                this.update(&mut cx, |editor, cx| {
-                    editor.blame = Some(BlameState {
-                        blame,
-                        refresh_subscription,
-                    });
-                    cx.notify();
-                })
-            })
-        })
-        .detach();
+            self.blame = Some(blame);
+        }
 
         Some(())
     }

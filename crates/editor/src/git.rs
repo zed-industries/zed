@@ -1,12 +1,9 @@
+pub mod blame;
 pub mod permalink;
 
-use core::fmt;
 use std::ops::Range;
 
-use git::{
-    blame::BlameEntry,
-    diff::{DiffHunk, DiffHunkStatus},
-};
+use git::diff::{DiffHunk, DiffHunkStatus};
 use language::Point;
 
 use crate::{
@@ -91,60 +88,6 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
             display_row_range: start..end,
             status: hunk.status(),
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DisplayBlameEntry {
-    Folded {
-        display_row: u32,
-    },
-
-    Unfolded {
-        display_row_range: Range<u32>,
-        entry: BlameEntry,
-    },
-}
-
-impl fmt::Display for DisplayBlameEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DisplayBlameEntry::Folded { .. } => Ok(()),
-            DisplayBlameEntry::Unfolded { entry, .. } => {
-                let datetime = entry
-                    .committer_datetime()
-                    .map_err(|_| std::fmt::Error)?
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string();
-
-                let pretty_commit_id = format!("{}", entry.sha);
-                let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
-
-                let name = entry.committer.as_deref().unwrap_or("<no name>");
-                let name = if name.len() > 20 {
-                    format!("{}...", &name[..16])
-                } else {
-                    name.to_string()
-                };
-
-                write!(f, "{:6} {:20} ({})", short_commit_id, name, datetime)
-            }
-        }
-    }
-}
-
-pub fn blame_entry_to_display(entry: &BlameEntry, snapshot: &DisplaySnapshot) -> DisplayBlameEntry {
-    // TODO: This is all wrong, I bet
-    let hunk_start_point = Point::new(entry.range.start, 0);
-
-    let start = hunk_start_point.to_display_point(snapshot).row();
-    let hunk_end_row = entry.range.end.max(entry.range.start);
-    let hunk_end_point = Point::new(hunk_end_row, 0);
-    let end = hunk_end_point.to_display_point(snapshot).row();
-
-    DisplayBlameEntry::Unfolded {
-        display_row_range: start..end,
-        entry: entry.clone(),
     }
 }
 

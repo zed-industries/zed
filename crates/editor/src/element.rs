@@ -4,7 +4,8 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{blame_entry_to_display, diff_hunk_to_display, DisplayBlameEntry, DisplayDiffHunk},
+    git::blame::{blame_entry_to_display, DisplayBlameEntry},
+    git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -3274,19 +3275,17 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let (display_blame_entries, blame_width) =
-                    if let Some(blame_state) = self.editor.read(cx).blame.as_ref() {
-                        let display_entries = self.layout_git_blame_gutters(
-                            &blame_state.blame,
-                            start_row..end_row,
-                            &snapshot,
-                        );
-                        let width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+                let buffer_blame = self.editor.read(cx).buffer_blame.as_ref();
+                let (display_blame_entries, blame_width) = if let Some(buffer_blame) = buffer_blame
+                {
+                    let display_entries =
+                        self.layout_git_blame_gutters(&buffer_blame, start_row..end_row, &snapshot);
+                    let width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
 
-                        (Some(display_entries), Some(width))
-                    } else {
-                        (None, None)
-                    };
+                    (Some(display_entries), Some(width))
+                } else {
+                    (None, None)
+                };
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
