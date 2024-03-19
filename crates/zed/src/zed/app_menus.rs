@@ -165,20 +165,20 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Help",
             items: vec![
-                MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
-                MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
+                MenuItem::action("View Telemetry", super::OpenTelemetryLog),
+                MenuItem::action("View Dependency Licenses", super::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::action("Give Feedback...", feedback::GiveFeedback),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
-                    crate::OpenBrowser {
+                    super::OpenBrowser {
                         url: "https://zed.dev/docs".into(),
                     },
                 ),
                 MenuItem::action(
                     "Zed Twitter",
-                    crate::OpenBrowser {
+                    super::OpenBrowser {
                         url: "https://twitter.com/zeddotdev".into(),
                     },
                 ),

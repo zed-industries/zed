@@ -10,11 +10,6 @@ authors = ["Zed Team <hi@zed.dev>"]
 [lints]
 workspace = true
 
-[lib]
-name = "zed"
-path = "src/zed.rs"
-doctest = false
-
 [[bin]]
 name = "Zed"
 path = "src/main.rs"
