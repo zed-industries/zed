@@ -15,6 +15,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
+    items::MinimalContext,
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
     ToPoint,
@@ -23,16 +24,16 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
 use project::Project;
-use project_panel::file_associations::FileAssociations;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
@@ -1273,17 +1274,10 @@ struct Summary {
     done: bool,
 }
 
-#[derive(Debug, Clone, Default)]
-struct LlmContext {
-    excerpts: Vec<Model<Buffer>>,
-    // TODO: Bring in project diagnostics
-    // diagnostics: ???,
-}
-
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    llm_context: LlmContext,
+    language_model_contexts: Vec<LanguageModelContextSelection>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1305,7 +1299,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        context_for_llm: LlmContext,
+        language_model_contexts: Vec<LanguageModelContextSelection>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1339,7 +1333,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            llm_context: context_for_llm,
+            language_model_contexts,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1441,7 +1435,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
-                llm_context: Default::default(),
+                language_model_contexts: Default::default(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1638,26 +1632,9 @@ impl Conversation {
 
         // Build up a prompt to include the file context as a system message
         let s: String = self
-            .llm_context
-            .excerpts
+            .language_model_contexts
             .iter()
-            .map(|buffer| {
-                let buffer = buffer.read(cx);
-
-                let filename = buffer
-                    .file()
-                    .map(|file| file.path().to_string_lossy())
-                    .unwrap_or_default();
-
-                let text = buffer.text();
-
-                let language = buffer
-                    .language()
-                    .map(|l| l.name().to_string())
-                    .unwrap_or_default();
-
-                format!("`{filename}`\n\n```{language}\n{text}```\n\n")
-            })
+            .map(|item| item.context.markdown(cx))
             .collect();
 
         request.messages.push(LanguageModelRequestMessage {
@@ -2049,6 +2026,22 @@ struct ConversationEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+struct LanguageModelContextSelection {
+    entity_id: EntityId,
+    enabled: bool,
+    // TODO: This has to go after the MinimalContext trait instead
+    context: Box<dyn MinimalContext>,
+}
+
+impl LanguageModelContextSelection {
+    fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+        // Send event?
+    }
+}
+
+// Take the trait approach forward so we can defer the render and the llm_markdown bits
+
 impl ConversationEditor {
     fn new(
         model: LanguageModel,
@@ -2063,17 +2056,28 @@ impl ConversationEditor {
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
-    fn llm_context(workspace: &View<Workspace>, cx: &mut WindowContext) -> LlmContext {
-        let excerpts = workspace
+    fn llm_context(
+        workspace: &View<Workspace>,
+        cx: &mut WindowContext,
+    ) -> Vec<LanguageModelContextSelection> {
+        workspace
             .update(cx, |workspace, cx| {
+                // TODO: Project Diagnostics from the workspace
+                // let project = workspace.project();
+                // project.update(cx, |project, cx| {
+                //     //     let summaries = project.diagnostic_summaries(true, cx);
+                //     //     // Note: this is now stale data
+                // });
+
                 workspace
-                    .active_item_as::<Editor>(cx)
-                    .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+                    .active_item_as::<Editor>(cx).map(|editor| LanguageModelContextSelection {
+                            entity_id: editor.entity_id(),
+                            enabled: true,
+                            context: Box::new(editor),
+                        })
             })
             .into_iter()
-            .collect();
-
-        LlmContext { excerpts }
+            .collect()
     }
 
     fn for_conversation(
@@ -2242,8 +2246,8 @@ impl ConversationEditor {
     fn handle_workspace_notify(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
         let updated_llm_context = Self::llm_context(&workspace, cx);
 
-        self.conversation.update(cx, |conversation, cx| {
-            conversation.llm_context = updated_llm_context;
+        self.conversation.update(cx, |conversation, _cx| {
+            conversation.language_model_contexts = updated_llm_context;
         });
     }
 
@@ -2489,38 +2493,45 @@ impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        // let excerpts: Vec<Model<Buffer>> = llm_context_for_human_consumption.excerpts;
+        //
+        // The ConversationEditor has two main segments
+        //
+        // 1. Editor
+        // 2. Context
+        //   - File Context (currently only the active file)
+        //   - Project Diagnostics (Planned)
+        //   - Deep Code Context (Planned, for query and other tools for the model)
+        //
 
-        // // Little icons of the available excerpts
-
-        // let excerpt_elements = excerpts.iter().map(|buffer| {
-        //     let buffer = buffer.read(cx);
-
-        //     let language = buffer.language();
-
-        //     // let icon = FileAssociations.get_icon_for_language(language);
-
-        //     icon
-        // });
         let conversation = self.conversation.read(cx);
-        let llm_context = conversation.llm_context.excerpts.iter().map(|buffer| {
-            let buffer = buffer.read(cx);
-            let language = buffer.language();
 
-            div()
-                .h_flex()
-                // TODO: Add icons for the languages
-                // .child(FileAssociations.get_icon_for_language(language))
-                .child(if let Some(file) = buffer.file() {
-                    // TODO: Use path instead of full_path if the project contains multiple roots
-                    file.full_path(cx)
-                        .to_string_lossy()
-                        .to_string()
-                        .into_any_element()
-                } else {
-                    "Untitled".into_any_element()
-                })
+        // In the future we'll need some way to group on the file context, project diagnostics, etc.
+        // For now, we'll just render the file context as is.
+        let file_context_items = conversation.language_model_contexts.iter().map(|item| {
+            let element_id = ElementId::Name(format!("llm-context-{}", item.entity_id).into());
+
+            let el = item.context.mini_render(cx);
+
+            div().h_flex().child(el).child(div().id(element_id))
         });
+
+        let file_context_container = div()
+            .p_4()
+            .v_flex()
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .child(Icon::new(IconName::File))
+                    .child(
+                        div()
+                            .h_6()
+                            .child(Label::new("File Context"))
+                            .ml_1()
+                            .font_weight(FontWeight::SEMIBOLD),
+                    ),
+            )
+            .child(div().ml_4().children(file_context_items));
 
         div()
             .key_context("ConversationEditor")
@@ -2531,15 +2542,15 @@ impl Render for ConversationEditor {
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
             .size_full()
-            .relative()
+            .v_flex()
             .child(
                 div()
-                    .size_full()
+                    .flex_grow()
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
-            .children(llm_context)
+            .child(div().flex_shrink().child(file_context_container))
     }
 }
 

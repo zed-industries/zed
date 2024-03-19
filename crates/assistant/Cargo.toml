@@ -28,7 +28,6 @@ open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
 parking_lot.workspace = true
 project.workspace = true
-project_panel.workspace = true
 regex.workspace = true
 schemars.workspace = true
 search.workspace = true
