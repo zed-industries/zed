@@ -34,7 +34,6 @@ jobs:
         run: cargo build --release --package extension_cli
 
       - name: Upload binary
-        if: ${{ github.ref == 'refs/heads/main' }}
         env:
           DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
           DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
