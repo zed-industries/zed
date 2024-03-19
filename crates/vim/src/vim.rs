@@ -73,9 +73,6 @@ actions!(
         InnerObject,
         FindForward,
         FindBackward,
-        AddSurrounds,
-        ChangeSurrounds,
-        DeleteSurrounds
     ]
 );
 
