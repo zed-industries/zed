@@ -8,7 +8,6 @@ use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFut
 use gpui::{AnyView, AppContext, Task};
 use std::{future, sync::Arc};
 use ui::prelude::*;
-use util::ResultExt;
 
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
@@ -122,10 +121,11 @@ impl ZedDotDevCompletionProvider {
             .request_stream(request)
             .map_ok(|stream| {
                 stream
-                    .filter_map(|response| {
-                        future::ready(response.log_err().and_then(|mut response| {
-                            Some(Ok(response.choices.pop()?.delta?.content?))
-                        }))
+                    .filter_map(|response| async move {
+                        match response {
+                            Ok(mut response) => Some(Ok(response.choices.pop()?.delta?.content?)),
+                            Err(error) => Some(Err(error)),
+                        }
                     })
                     .boxed()
             })
