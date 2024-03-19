@@ -202,7 +202,7 @@ impl DispatchTree {
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
-    pub fn last_view_id(&mut self) -> Option<EntityId> {
+    pub fn parent_view_id(&mut self) -> Option<EntityId> {
         self.view_stack.last().copied()
     }
 

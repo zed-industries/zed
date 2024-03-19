@@ -1270,8 +1270,8 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Get the last view id for the current element
-    pub fn last_view_id(&mut self) -> Option<EntityId> {
-        self.window.next_frame.dispatch_tree.last_view_id()
+    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+        self.window.next_frame.dispatch_tree.parent_view_id()
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

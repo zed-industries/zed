@@ -528,9 +528,6 @@ impl TransformationMatrix {
 
     /// Move the origin by a given point
     pub fn translate(mut self, point: Point<ScaledPixels>) -> Self {
-        if point.x.0 == 0.0 && point.y.0 == 0.0 {
-            return self;
-        }
         self.compose(Self {
             rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
             translation: [point.x.0, point.y.0],
@@ -539,9 +536,6 @@ impl TransformationMatrix {
 
     /// Clockwise rotation in radians around the origin
     pub fn rotate(self, angle: Radian) -> Self {
-        if angle.0 == 0.0 {
-            return self;
-        }
         self.compose(Self {
             rotation_scale: [
                 [angle.0.cos(), -angle.0.sin()],
@@ -553,9 +547,6 @@ impl TransformationMatrix {
 
     /// Scale around the origin
     pub fn scale(self, size: Size<f32>) -> Self {
-        if size.width == 1.0 && size.height == 1.0 {
-            return self;
-        }
         self.compose(Self {
             rotation_scale: [[size.width, 0.0], [0.0, size.height]],
             translation: [0.0, 0.0],
@@ -570,25 +561,34 @@ impl TransformationMatrix {
         if other == Self::unit() {
             return self;
         }
-        let mut result = TransformationMatrix {
-            rotation_scale: [[0.0; 2]; 2],
-            translation: self.translation,
-        };
-        for i in 0..2 {
-            for j in 0..2 {
-                for k in 0..2 {
-                    result.rotation_scale[i][j] +=
-                        self.rotation_scale[i][k] * other.rotation_scale[k][j];
-                }
-            }
-            for k in 0..2 {
-                result.translation[i] += self.rotation_scale[i][k] * other.translation[k];
-            }
+        // Perform matrix multiplication
+        TransformationMatrix {
+            rotation_scale: [
+                [
+                    self.rotation_scale[0][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[0][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][1],
+                ],
+                [
+                    self.rotation_scale[1][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[1][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][1],
+                ],
+            ],
+            translation: [
+                self.translation[0]
+                    + self.rotation_scale[0][0] * other.translation[0]
+                    + self.rotation_scale[0][1] * other.translation[1],
+                self.translation[1]
+                    + self.rotation_scale[1][0] * other.translation[0]
+                    + self.rotation_scale[1][1] * other.translation[1],
+            ],
         }
-        result
     }
 
-    /// Apply transformation to a point
+    /// Apply transformation to a point, mainly useful for debugging
     pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
         let input = [point.x.0, point.y.0];
         let mut output = self.translation;

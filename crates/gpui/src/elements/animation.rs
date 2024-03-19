@@ -1,7 +1,5 @@
 use std::time::{Duration, Instant};
 
-use pathfinder_geometry::util::clamp;
-
 use crate::{AnyElement, Element, ElementId, IntoElement};
 
 /// An animation that can be applied to an element.
@@ -11,11 +9,7 @@ pub struct Animation {
     /// Whether to repeat this animation when it finishes
     pub oneshot: bool,
     /// A function that takes a delta between 0 and 1 and returns a new delta
-    /// based on the given easing function.
-    ///
-    /// Note that 0 and 1 are considered to be the start and end of the animation range
-    /// but the easing function can return values that are larger or smaller to indicate
-    /// that the animation should overshoot or undershoot the target values.
+    /// between 0 and 1 based on the given easing function.
     pub easing: Box<dyn Fn(f32) -> f32>,
 }
 
@@ -38,9 +32,7 @@ impl Animation {
 
     /// Set the easing function to use for this animation.
     /// The easing function will take a time delta between 0 and 1 and return a new delta
-    /// This new delta should consider 0 and 1 to be the start and end of the animation range
-    /// but can return values that are larger or smaller to indicate that the animation should
-    /// overshoot or undershoot the target values.
+    /// between 0 and 1
     pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
         self.easing = Box::new(easing);
         self
@@ -146,16 +138,21 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                     delta = delta % 1.0;
                 }
             }
-            let delta = (self.animation.easing)(clamp(delta, 0.0, 1.0));
+            let delta = (self.animation.easing)(delta);
+
+            debug_assert!(
+                delta >= 0.0 && delta <= 1.0,
+                "delta should always be between 0 and 1"
+            );
 
             let element = self.element.take().expect("should only be called once");
             let mut element = (self.animator)(element, delta).into_any_element();
 
             if !done {
-                let last_id = cx.last_view_id();
+                let parent_id = cx.parent_view_id();
                 cx.on_next_frame(move |cx| {
-                    if let Some(last_id) = last_id {
-                        cx.notify(last_id)
+                    if let Some(parent_id) = parent_id {
+                        cx.notify(parent_id)
                     } else {
                         cx.refresh()
                     }
