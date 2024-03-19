@@ -456,7 +456,7 @@ impl ExtensionStore {
 
         let url = self
             .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/0.0.2/download"));
+            .build_zed_api_url(&format!("/extensions/{extension_id}/download"));
 
         self.install_or_upgrade_extension_at_endpoint(
             extension_id,
