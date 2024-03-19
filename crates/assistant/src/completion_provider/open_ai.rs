@@ -260,8 +260,8 @@ impl Render for AuthenticationPrompt {
             " - You can create an API key at: platform.openai.com/api-keys",
             " - Make sure your OpenAI account has credits",
             " - Having a subscription for another service like GitHub Copilot won't work.",
-            " ",
-            "Paste your OpenAI API key or set the OPENAI_API_KEY environment variable to use the assistant:",
+            "",
+            "Paste your OpenAI API key below and hit enter to use the assistant:",
         ];
 
         v_flex()
@@ -280,6 +280,12 @@ impl Render for AuthenticationPrompt {
                     .bg(cx.theme().colors().editor_background)
                     .rounded_md()
                     .child(self.render_api_key_editor(cx)),
+            )
+            .child(
+                Label::new(
+                    "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
+                )
+                .size(LabelSize::Small),
             )
             .child(
                 h_flex()
