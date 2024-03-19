@@ -54,7 +54,7 @@ profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = "0.14"
+resvg = "0.40"
 schemars.workspace = true
 seahash = "4.1"
 serde.workspace = true
@@ -67,8 +67,6 @@ sum_tree.workspace = true
 taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
 thiserror.workspace = true
 time.workspace = true
-tiny-skia = "0.5"
-usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4", "v5"] }
 waker-fn = "1.1.0"
@@ -101,7 +99,7 @@ blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
-cosmic-text = "0.10.0"
+cosmic-text = "0.11.2"
 copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
