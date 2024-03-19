@@ -1,4 +1,4 @@
-use std::{arch::x86_64::CpuidResult, borrow::Cow, cell::Cell};
+use std::{arch::x86_64::CpuidResult, borrow::Cow, cell::Cell, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -6,7 +6,7 @@ use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
-    core::{implement, HSTRING, PCWSTR},
+    core::{implement, HRESULT, HSTRING, PCWSTR},
     Win32::{Foundation::BOOL, Globalization::GetUserDefaultLocaleName, Graphics::DirectWrite::*},
 };
 
@@ -159,9 +159,11 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 
 impl DirectWriteState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+        println!("Adding fonts");
         for font_data in fonts {
             match font_data {
                 Cow::Borrowed(data) => unsafe {
+                    println!("Add borrowed font");
                     let font_file = self
                         .components
                         .in_memory_loader
@@ -169,11 +171,12 @@ impl DirectWriteState {
                             &self.components.factory,
                             data.as_ptr() as _,
                             data.len() as _,
-                            &self.components.factory,
+                            None,
                         )?;
                     self.components.builder.AddFontFile(&font_file)?;
                 },
                 Cow::Owned(data) => unsafe {
+                    println!("Add owned font");
                     let font_file = self
                         .components
                         .in_memory_loader
@@ -181,7 +184,7 @@ impl DirectWriteState {
                             &self.components.factory,
                             data.as_ptr() as _,
                             data.len() as _,
-                            &self.components.factory,
+                            None,
                         )?;
                     self.components.builder.AddFontFile(&font_file)?;
                 },
@@ -196,19 +199,29 @@ impl DirectWriteState {
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
             for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
+                println!(
+                    "Checking fontsets: {}/{}",
+                    fontset_index + 1,
+                    self.font_sets.len()
+                );
                 let font = fontset
                     .GetMatchingFonts(
                         &HSTRING::from(target_font.family.to_string()),
-                        DWRITE_FONT_WEIGHT(target_font.weight.0 as _),
+                        // DWRITE_FONT_WEIGHT(target_font.weight.0 as _),
+                        DWRITE_FONT_WEIGHT_NORMAL,
                         DWRITE_FONT_STRETCH_NORMAL,
                         DWRITE_FONT_STYLE_NORMAL,
                     )
                     .unwrap();
                 let total_number = font.GetFontCount();
-                for _ in 0..total_number {
+                for sub_index in 0..total_number {
+                    println!("   Checking sub fonts: {}/{}", sub_index + 1, total_number);
                     let font_id = FontId(self.fonts.len());
                     let font_face_ref = font.GetFontFaceReference(0).unwrap();
-                    let Ok(font_face) = font_face_ref.CreateFontFace() else {
+                    let Ok(font_face) = font_face_ref
+                        .CreateFontFace()
+                        .inspect_err(|e| println!("        Error: {}", e))
+                    else {
                         continue;
                     };
                     let font_info = FontInfo {
@@ -238,13 +251,17 @@ impl DirectWriteState {
                     .encode_utf16()
                     .chain(Some(0))
                     .collect_vec();
+                let locale_string = PCWSTR::from_raw(locale_wide.as_ptr());
+                let cur_str_wide = &string[offset..(offset + run_len)];
+                let cur_string = PCWSTR::from_raw(cur_str_wide.as_ptr());
                 let analysis = Analysis::new(
                     PCWSTR::from_raw(locale_wide.as_ptr()),
-                    PCWSTR::from_raw(string[offset..(offset + run_len)].as_ptr()),
+                    cur_str_wide.to_vec(),
                     run_len as u32,
                 );
-                analysis.generate_result(&self.components.analyzer);
-                // let cur_str = &string[offset..offset + run_len];
+                println!("Generating res");
+                let x = analysis.generate_result(&self.components.analyzer);
+                println!("Generated res");
                 // let mut res = std::mem::zeroed();
                 // self.components.analyzer.AnalyzeScript(
                 //     PCWSTR::from_raw(cur_str.as_ptr()),
@@ -252,53 +269,42 @@ impl DirectWriteState {
                 //     run_len as _,
                 //     &mut res,
                 // );
-                // self.components.analyzer.GetGlyphs(
-                //     PCWSTR::from_raw(cur_str.as_ptr()),
-                //     run_len as _,
-                //     &font_info.font_face,
-                //     false,
-                //     false,
-                //     None,
-                //     localename,
-                //     numbersubstitution,
-                //     features,
-                //     featurerangelengths,
-                //     featureranges,
-                //     maxglyphcount,
-                //     clustermap,
-                //     textprops,
-                //     glyphindices,
-                //     glyphprops,
-                //     actualglyphcount,
-                // );
-                let collection = self
-                    .components
-                    .factory
-                    .CreateFontCollectionFromFontSet(&self.font_sets[font_info.font_set_index])
-                    .unwrap();
-                let format = self
-                    .components
-                    .factory
-                    .CreateTextFormat(
-                        &HSTRING::from(&font_info.font_family),
-                        &collection,
-                        font_info.font_face.GetWeight(),
-                        font_info.font_face.GetStyle(),
-                        font_info.font_face.GetStretch(),
-                        font_size.0,
-                        &HSTRING::from(&self.components.locale),
+                let list_capacity = run_len * 2;
+                let mut cluster_map = 0u16;
+                let mut text_props = vec![DWRITE_SHAPING_TEXT_PROPERTIES::default(); list_capacity];
+                let mut glyph_indeices = vec![0u16; list_capacity];
+                let mut glyph_props =
+                    vec![DWRITE_SHAPING_GLYPH_PROPERTIES::default(); list_capacity];
+                let mut glyph_count = 0u32;
+                println!("Getting glyphs");
+                self.components
+                    .analyzer
+                    .GetGlyphs(
+                        cur_string,
+                        run_len as _,
+                        &font_info.font_face,
+                        false,
+                        false,
+                        &x as _,
+                        locale_string,
+                        None,
+                        None,
+                        None,
+                        0,
+                        100,
+                        &mut cluster_map as _,
+                        text_props.as_mut_ptr(),
+                        glyph_indeices.as_mut_ptr(),
+                        glyph_props.as_mut_ptr(),
+                        &mut glyph_count,
                     )
                     .unwrap();
-                let encoded_string = &string[offset..offset + run_len];
-                let layout = self
-                    .components
-                    .factory
-                    .CreateTextLayout(encoded_string, &format, f32::MAX, f32::MAX)
-                    .unwrap();
-                offset += run_len;
-                let mut detail = std::mem::zeroed();
-                layout.GetMetrics(&mut detail).unwrap();
-                // let x = layout.SetFontStyle(fontstyle, textrange)
+
+                println!(
+                    "Res: len: {}, {} glyphs, indices: {:?}",
+                    run_len, glyph_count, glyph_indeices
+                );
+
                 let shaped_gylph = ShapedGlyph {
                     id: todo!(),
                     position: todo!(),
@@ -311,6 +317,7 @@ impl DirectWriteState {
                 };
             }
         }
+        unimplemented!();
         LineLayout::default()
     }
 }
@@ -326,56 +333,108 @@ impl Drop for DirectWriteState {
     }
 }
 
-#[implement(IDWriteTextAnalysisSource, IDWriteTextAnalysisSink)]
+// #[implement(IDWriteTextAnalysisSource, IDWriteTextAnalysisSink)]
 struct Analysis {
-    locale: PCWSTR,
-    text: PCWSTR,
-    text_length: u32,
-    substitution: Option<IDWriteNumberSubstitution>,
-    script_analysis: Cell<Option<DWRITE_SCRIPT_ANALYSIS>>,
+    source: IDWriteTextAnalysisSource,
+    sink: IDWriteTextAnalysisSink,
+    inner: Arc<RwLock<AnalysisInner>>,
+    length: u32,
 }
 
-impl Analysis {
-    pub fn new(locale: PCWSTR, text: PCWSTR, text_length: u32) -> Self {
-        Analysis {
+#[implement(IDWriteTextAnalysisSource)]
+struct AnalysisSource {
+    inner: Arc<RwLock<AnalysisInner>>,
+}
+
+#[implement(IDWriteTextAnalysisSink)]
+struct AnalysisSink {
+    inner: Arc<RwLock<AnalysisInner>>,
+}
+
+struct AnalysisInner {
+    locale: PCWSTR,
+    text: Vec<u16>,
+    text_length: u32,
+    substitution: Option<IDWriteNumberSubstitution>,
+    script_analysis: Option<DWRITE_SCRIPT_ANALYSIS>,
+}
+
+impl AnalysisSource {
+    pub fn new(inner: Arc<RwLock<AnalysisInner>>) -> Self {
+        AnalysisSource { inner }
+    }
+}
+
+impl AnalysisSink {
+    pub fn new(inner: Arc<RwLock<AnalysisInner>>) -> Self {
+        AnalysisSink { inner }
+    }
+
+    pub fn get_result(&self) -> DWRITE_SCRIPT_ANALYSIS {
+        self.inner.read().script_analysis.unwrap()
+    }
+}
+
+impl AnalysisInner {
+    pub fn new(locale: PCWSTR, text: Vec<u16>, text_length: u32) -> Self {
+        AnalysisInner {
             locale,
             text,
             text_length,
             substitution: None,
-            script_analysis: Cell::new(None),
+            script_analysis: None,
         }
     }
 
+    pub fn get_result(&self) -> DWRITE_SCRIPT_ANALYSIS {
+        self.script_analysis.unwrap()
+    }
+}
+
+impl Analysis {
+    pub fn new(locale: PCWSTR, text: Vec<u16>, text_length: u32) -> Self {
+        let inner = Arc::new(RwLock::new(AnalysisInner::new(locale, text, text_length)));
+        let source_struct = AnalysisSource::new(inner.clone());
+        let sink_struct = AnalysisSink::new(inner.clone());
+        let source: IDWriteTextAnalysisSource = source_struct.into();
+        let sink: IDWriteTextAnalysisSink = sink_struct.into();
+        Analysis {
+            source,
+            sink,
+            inner,
+            length: text_length,
+        }
+    }
+
+    // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwritetextanalyzer-getglyphs
     pub unsafe fn generate_result(&self, analyzer: &IDWriteTextAnalyzer) -> DWRITE_SCRIPT_ANALYSIS {
         analyzer
-            .AnalyzeScript(
-                &self.cast::<IDWriteTextAnalysisSource>().unwrap(),
-                0,
-                self.text_length,
-                &self.cast::<IDWriteTextAnalysisSink>().unwrap(),
-            )
+            .AnalyzeScript(&self.source, 0, self.length, &self.sink)
             .unwrap();
-        self.script_analysis.get().unwrap()
+        self.inner.read().get_result()
     }
 }
 
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/multimedia/DirectWrite/CustomLayout/TextAnalysis.cpp
-impl IDWriteTextAnalysisSource_Impl for Analysis {
+impl IDWriteTextAnalysisSource_Impl for AnalysisSource {
     fn GetTextAtPosition(
         &self,
         textposition: u32,
         textstring: *mut *mut u16,
         textlength: *mut u32,
     ) -> windows::core::Result<()> {
-        if textposition >= self.text_length {
+        println!("GetTextAtPosition");
+        let lock = self.inner.read();
+        if textposition >= lock.text_length {
             unsafe {
-                *textstring = 0 as _;
+                *textstring = std::ptr::null_mut() as _;
                 *textlength = 0;
             }
         } else {
             unsafe {
-                *textstring = self.text.as_wide()[textposition as usize..].as_ptr() as *mut u16;
-                *textlength = self.text_length - textposition;
+                // *textstring = self.text.as_wide()[textposition as usize..].as_ptr() as *mut u16;
+                *textstring = lock.text.as_ptr().add(textposition as usize) as _;
+                *textlength = lock.text_length - textposition;
             }
         }
         Ok(())
@@ -387,14 +446,16 @@ impl IDWriteTextAnalysisSource_Impl for Analysis {
         textstring: *mut *mut u16,
         textlength: *mut u32,
     ) -> windows::core::Result<()> {
-        if textposition == 0 || textposition >= self.text_length {
+        println!("GetTextBeforePosition");
+        let inner = self.inner.read();
+        if textposition == 0 || textposition >= inner.text_length {
             unsafe {
                 *textstring = 0 as _;
                 *textlength = 0;
             }
         } else {
             unsafe {
-                *textstring = self.text.as_ptr() as *mut u16;
+                *textstring = inner.text.as_ptr() as *mut u16;
                 *textlength = textposition - 0;
             }
         }
@@ -402,6 +463,7 @@ impl IDWriteTextAnalysisSource_Impl for Analysis {
     }
 
     fn GetParagraphReadingDirection(&self) -> DWRITE_READING_DIRECTION {
+        println!("GetParagraphReadingDirection");
         DWRITE_READING_DIRECTION_LEFT_TO_RIGHT
     }
 
@@ -411,9 +473,11 @@ impl IDWriteTextAnalysisSource_Impl for Analysis {
         textlength: *mut u32,
         localename: *mut *mut u16,
     ) -> windows::core::Result<()> {
+        println!("GetLocaleName");
+        let inner = self.inner.read();
         unsafe {
-            *localename = self.locale.as_ptr() as *mut u16;
-            *textlength = self.text_length - textposition;
+            *localename = inner.locale.as_ptr() as *mut u16;
+            *textlength = inner.text_length - textposition;
         }
         Ok(())
     }
@@ -424,23 +488,28 @@ impl IDWriteTextAnalysisSource_Impl for Analysis {
         textlength: *mut u32,
         numbersubstitution: *mut Option<IDWriteNumberSubstitution>,
     ) -> windows::core::Result<()> {
+        println!("GetNumberSubstitution");
+        let inner = self.inner.read();
         unsafe {
-            *numbersubstitution = self.substitution.clone();
-            *textlength = self.text_length - textposition;
+            *numbersubstitution = inner.substitution.clone();
+            *textlength = inner.text_length - textposition;
         }
         Ok(())
     }
 }
 
-impl IDWriteTextAnalysisSink_Impl for Analysis {
+impl IDWriteTextAnalysisSink_Impl for AnalysisSink {
     fn SetScriptAnalysis(
         &self,
         textposition: u32,
         textlength: u32,
         scriptanalysis: *const DWRITE_SCRIPT_ANALYSIS,
     ) -> windows::core::Result<()> {
+        println!("SetScriptAnalysis");
+        let mut inner = self.inner.write();
         unsafe {
-            self.script_analysis.set(Some(*scriptanalysis));
+            // (*scriptanalysis).shapes
+            inner.script_analysis = Some(*scriptanalysis);
         }
         Ok(())
     }
@@ -451,7 +520,8 @@ impl IDWriteTextAnalysisSink_Impl for Analysis {
         textlength: u32,
         linebreakpoints: *const DWRITE_LINE_BREAKPOINT,
     ) -> windows::core::Result<()> {
-        todo!()
+        println!("SetLineBreakpoints");
+        Err(windows::core::Error::new(HRESULT(-1), "SetLineBreakpoints"))
     }
 
     fn SetBidiLevel(
@@ -461,7 +531,8 @@ impl IDWriteTextAnalysisSink_Impl for Analysis {
         explicitlevel: u8,
         resolvedlevel: u8,
     ) -> windows::core::Result<()> {
-        todo!()
+        println!("SetBidiLevel");
+        Err(windows::core::Error::new(HRESULT(-1), "SetBidiLevel"))
     }
 
     fn SetNumberSubstitution(
@@ -470,6 +541,10 @@ impl IDWriteTextAnalysisSink_Impl for Analysis {
         textlength: u32,
         numbersubstitution: Option<&IDWriteNumberSubstitution>,
     ) -> windows::core::Result<()> {
-        todo!()
+        println!("SetNumberSubstitution");
+        Err(windows::core::Error::new(
+            HRESULT(-1),
+            "SetNumberSubstitution",
+        ))
     }
 }
