@@ -1122,7 +1122,9 @@ impl<'a> ElementContext<'a> {
     ) -> Result<()> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
-        let params = RenderImageParams { image_id: data.id };
+        let params = RenderImageParams {
+            image_id: data.id(),
+        };
 
         let tile = self
             .window

@@ -3,8 +3,8 @@ use collections::HashMap;
 use futures::{future::Shared, AsyncReadExt, FutureExt, TryFutureExt};
 use image::ImageError;
 use parking_lot::Mutex;
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::{fs, path::PathBuf};
 use thiserror::Error;
 use util::http::{self, HttpClient};
 
@@ -16,7 +16,7 @@ pub(crate) struct RenderImageParams {
 }
 
 #[derive(Debug, Error, Clone)]
-pub(crate) enum Error {
+pub enum ImageCacheError {
     #[error("http error: {0}")]
     Client(#[from] http::Error),
     #[error("IO error: {0}")]
@@ -28,17 +28,25 @@ pub(crate) enum Error {
     },
     #[error("image error: {0}")]
     Image(Arc<ImageError>),
+    #[error("svg error: {0}")]
+    Usvg(Arc<usvg::Error>),
 }
 
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for ImageCacheError {
     fn from(error: std::io::Error) -> Self {
-        Error::Io(Arc::new(error))
+        Self::Io(Arc::new(error))
     }
 }
 
-impl From<ImageError> for Error {
+impl From<ImageError> for ImageCacheError {
     fn from(error: ImageError) -> Self {
-        Error::Image(Arc::new(error))
+        Self::Image(Arc::new(error))
+    }
+}
+
+impl From<usvg::Error> for ImageCacheError {
+    fn from(error: usvg::Error) -> Self {
+        Self::Usvg(Arc::new(error))
     }
 }
 
@@ -65,7 +73,7 @@ impl From<Arc<PathBuf>> for UriOrPath {
     }
 }
 
-type FetchImageTask = Shared<Task<Result<Arc<ImageData>, Error>>>;
+pub type FetchImageTask = Shared<Task<Result<Arc<ImageData>, ImageCacheError>>>;
 
 impl ImageCache {
     pub fn new(client: Arc<dyn HttpClient>) -> Self {
@@ -89,31 +97,23 @@ impl ImageCache {
                         {
                             let uri_or_path = uri_or_path.clone();
                             async move {
-                                match uri_or_path {
-                                    UriOrPath::Path(uri) => {
-                                        let image = image::open(uri.as_ref())?.into_bgra8();
-                                        Ok(Arc::new(ImageData::new(image)))
-                                    }
+                                let body = match uri_or_path {
+                                    UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
                                     UriOrPath::Uri(uri) => {
                                         let mut response =
                                             client.get(uri.as_ref(), ().into(), true).await?;
                                         let mut body = Vec::new();
                                         response.body_mut().read_to_end(&mut body).await?;
-
                                         if !response.status().is_success() {
-                                            return Err(Error::BadStatus {
+                                            return Err(ImageCacheError::BadStatus {
                                                 status: response.status(),
                                                 body: String::from_utf8_lossy(&body).into_owned(),
                                             });
                                         }
-
-                                        let format = image::guess_format(&body)?;
-                                        let image =
-                                            image::load_from_memory_with_format(&body, format)?
-                                                .into_bgra8();
-                                        Ok(Arc::new(ImageData::new(image)))
+                                        body
                                     }
-                                }
+                                };
+                                Ok(Arc::new(ImageData::try_from_bytes(&body)?))
                             }
                         }
                         .map_err({
