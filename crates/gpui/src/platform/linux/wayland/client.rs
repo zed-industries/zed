@@ -313,8 +313,7 @@ impl Client for WaylandClient {
         }
         .to_string();
 
-        let mut cursor_state = self.state.cursor_state.borrow_mut();
-        cursor_state.cursor_icon_name = cursor_icon_name;
+        self.state.cursor_state.borrow_mut().cursor_icon_name = cursor_icon_name;
     }
 
     fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
@@ -819,21 +818,21 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
 
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
     fn event(
-        state: &mut Self,
+        self_state: &mut Self,
         wl_pointer: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
         data: &(),
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut cursor_state = state.cursor_state.borrow_mut();
-        let mut state = state.client_state_inner.borrow_mut();
-
-        if cursor_state.cursor.is_none() {
-            cursor_state.cursor = Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
+        let mut state = self_state.client_state_inner.borrow_mut();
+        {
+            let mut cursor_state = self_state.cursor_state.borrow_mut();
+            if cursor_state.cursor.is_none() {
+                cursor_state.cursor =
+                    Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
+            }
         }
-        let cursor_icon_name = cursor_state.cursor_icon_name.clone();
-        let mut cursor: &mut Cursor = cursor_state.cursor.as_mut().unwrap();
 
         match event {
             wl_pointer::Event::Enter {
@@ -852,8 +851,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 }
                 if mouse_focused_window.is_some() {
                     state.mouse_focused_window = mouse_focused_window;
-                    cursor.set_serial_id(serial);
-                    cursor.set_icon(&wl_pointer, cursor_icon_name);
+                    let mut cursor_state = self_state.cursor_state.borrow_mut();
+                    let cursor_icon_name = cursor_state.cursor_icon_name.clone();
+                    if let Some(mut cursor) = cursor_state.cursor.as_mut() {
+                        cursor.set_serial_id(serial);
+                        cursor.set_icon(&wl_pointer, cursor_icon_name);
+                    }
                 }
 
                 state.mouse_location = Some(Point {
@@ -881,7 +884,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         modifiers: state.modifiers,
                     }),
                 );
-                cursor.set_icon(&wl_pointer, cursor_icon_name);
+                let mut cursor_state = self_state.cursor_state.borrow_mut();
+                let cursor_icon_name = cursor_state.cursor_icon_name.clone();
+                if let Some(mut cursor) = cursor_state.cursor.as_mut() {
+                    cursor.set_icon(&wl_pointer, cursor_icon_name);
+                }
             }
             wl_pointer::Event::Button {
                 button,
