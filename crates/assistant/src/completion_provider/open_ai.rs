@@ -63,8 +63,7 @@ impl OpenAiCompletionProvider {
                         .update(|cx| cx.read_credentials(&api_url))?
                         .await?
                         .ok_or_else(|| anyhow!("credentials not found"))?;
-                    let api_key = String::from_utf8(api_key)?;
-                    api_key
+                    String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
                     if let CompletionProvider::OpenAi(provider) = provider {
@@ -256,7 +255,7 @@ impl AuthenticationPrompt {
 
 impl Render for AuthenticationPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const INSTRUCTIONS: [&'static str; 6] = [
+        const INSTRUCTIONS: [&str; 6] = [
             "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
             " - You can create an API key at: platform.openai.com/api-keys",
             " - Make sure your OpenAI account has credits",

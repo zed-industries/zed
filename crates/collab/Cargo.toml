@@ -32,7 +32,6 @@ dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true
 google_ai.workspace = true
-hyper = "0.14"
 hex.workspace = true
 live_kit_server.workspace = true
 log.workspace = true

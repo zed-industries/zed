@@ -2218,7 +2218,6 @@ dependencies = [
  "google_ai",
  "gpui",
  "hex",
- "hyper",
  "indoc",
  "language",
  "live_kit_client",
