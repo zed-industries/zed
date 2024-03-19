@@ -2,6 +2,8 @@ use std::time::{Duration, Instant};
 
 use crate::{AnyElement, Element, ElementId, IntoElement};
 
+pub use easing::*;
+
 /// An animation that can be applied to an element.
 pub struct Animation {
     /// The amount of time for which this animation should run
@@ -36,37 +38,6 @@ impl Animation {
     pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
         self.easing = Box::new(easing);
         self
-    }
-}
-
-/// The linear easing function, or delta itself
-pub fn linear(delta: f32) -> f32 {
-    delta
-}
-
-/// The quadratic easing function, delta * delta
-pub fn quadratic(delta: f32) -> f32 {
-    delta * delta
-}
-
-/// The quadratic ease-in-out function, which starts and ends slowly but speeds up in the middle
-pub fn ease_in_out(delta: f32) -> f32 {
-    if delta < 0.5 {
-        2.0 * delta * delta
-    } else {
-        let x = -2.0 * delta + 2.0;
-        1.0 - x * x / 2.0
-    }
-}
-
-/// Apply the given easing function, first in the forward direction and then in the reverse direction
-pub fn bounce(easing: impl Fn(f32) -> f32) -> impl Fn(f32) -> f32 {
-    move |delta| {
-        if delta < 0.5 {
-            easing(delta * 2.0)
-        } else {
-            easing((1.0 - delta) * 2.0)
-        }
     }
 }
 
@@ -180,5 +151,38 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         cx: &mut crate::ElementContext,
     ) {
         element.paint(cx);
+    }
+}
+
+mod easing {
+    /// The linear easing function, or delta itself
+    pub fn linear(delta: f32) -> f32 {
+        delta
+    }
+
+    /// The quadratic easing function, delta * delta
+    pub fn quadratic(delta: f32) -> f32 {
+        delta * delta
+    }
+
+    /// The quadratic ease-in-out function, which starts and ends slowly but speeds up in the middle
+    pub fn ease_in_out(delta: f32) -> f32 {
+        if delta < 0.5 {
+            2.0 * delta * delta
+        } else {
+            let x = -2.0 * delta + 2.0;
+            1.0 - x * x / 2.0
+        }
+    }
+
+    /// Apply the given easing function, first in the forward direction and then in the reverse direction
+    pub fn bounce(easing: impl Fn(f32) -> f32) -> impl Fn(f32) -> f32 {
+        move |delta| {
+            if delta < 0.5 {
+                easing(delta * 2.0)
+            } else {
+                easing((1.0 - delta) * 2.0)
+            }
+        }
     }
 }

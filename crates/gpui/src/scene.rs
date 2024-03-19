@@ -3,7 +3,7 @@
 
 use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, Radian, ScaledPixels, Size,
+    Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -535,7 +535,7 @@ impl TransformationMatrix {
     }
 
     /// Clockwise rotation in radians around the origin
-    pub fn rotate(self, angle: Radian) -> Self {
+    pub fn rotate(self, angle: Radians) -> Self {
         self.compose(Self {
             rotation_scale: [
                 [angle.0.cos(), -angle.0.sin()],

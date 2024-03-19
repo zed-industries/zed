@@ -160,9 +160,9 @@ impl<T: Clone + Debug + Default> Along for Point<T> {
     }
 }
 
-impl<T: Clone + Debug + Default + Invert> Invert for Point<T> {
-    fn invert(self) -> Self {
-        self.map(Invert::invert)
+impl<T: Clone + Debug + Default + Negate> Negate for Point<T> {
+    fn negate(self) -> Self {
+        self.map(Negate::negate)
     }
 }
 
@@ -2007,11 +2007,46 @@ impl From<Pixels> for Corners<Pixels> {
     Debug,
 )]
 #[repr(transparent)]
-pub struct Radian(pub f32);
+pub struct Radians(pub f32);
+
+/// Create a `Radian` from a raw value
+pub fn radians(value: f32) -> Radians {
+    Radians(value)
+}
+
+/// A type representing a percentage value.
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Neg,
+    Div,
+    DivAssign,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Debug,
+)]
+#[repr(transparent)]
+pub struct Percentage(pub f32);
 
 /// Generate a `Radian` from a percentage of a full circle.
-pub fn percentage(value: f32) -> Radian {
-    Radian(value * 2.0 * std::f32::consts::PI)
+pub fn percentage(value: f32) -> Percentage {
+    debug_assert!(
+        value >= 0.0 && value <= 1.0,
+        "Percentage must be between 0 and 1"
+    );
+    Percentage(value)
+}
+
+impl From<Percentage> for Radians {
+    fn from(value: Percentage) -> Self {
+        radians(value.0 * std::f32::consts::PI * 2.0)
+    }
 }
 
 /// Represents a length in pixels, the base unit of measurement in the UI framework.
@@ -2805,50 +2840,50 @@ impl Half for GlobalPixels {
     }
 }
 
-/// Provides a trait for types that can invert their values.
-pub trait Invert {
-    /// Returns the inverse of the given value
-    fn invert(self) -> Self;
+/// Provides a trait for types that can negate their values.
+pub trait Negate {
+    /// Returns the negation of the given value
+    fn negate(self) -> Self;
 }
 
-impl Invert for i32 {
-    fn invert(self) -> Self {
+impl Negate for i32 {
+    fn negate(self) -> Self {
         -self
     }
 }
 
-impl Invert for f32 {
-    fn invert(self) -> Self {
+impl Negate for f32 {
+    fn negate(self) -> Self {
         -self
     }
 }
 
-impl Invert for DevicePixels {
-    fn invert(self) -> Self {
+impl Negate for DevicePixels {
+    fn negate(self) -> Self {
         Self(-self.0)
     }
 }
 
-impl Invert for ScaledPixels {
-    fn invert(self) -> Self {
+impl Negate for ScaledPixels {
+    fn negate(self) -> Self {
         Self(-self.0)
     }
 }
 
-impl Invert for Pixels {
-    fn invert(self) -> Self {
+impl Negate for Pixels {
+    fn negate(self) -> Self {
         Self(-self.0)
     }
 }
 
-impl Invert for Rems {
-    fn invert(self) -> Self {
+impl Negate for Rems {
+    fn negate(self) -> Self {
         Self(-self.0)
     }
 }
 
-impl Invert for GlobalPixels {
-    fn invert(self) -> Self {
+impl Negate for GlobalPixels {
+    fn negate(self) -> Self {
         Self(-self.0)
     }
 }
