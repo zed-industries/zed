@@ -332,6 +332,7 @@ dependencies = [
  "ordered-float 2.10.0",
  "parking_lot",
  "project",
+ "project_panel",
  "rand 0.8.5",
  "regex",
  "schemars",
