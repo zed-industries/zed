@@ -105,12 +105,6 @@ impl<R: RequestMessage> StreamingResponse<R> {
     }
 }
 
-impl<R: RequestMessage> Drop for StreamingResponse<R> {
-    fn drop(&mut self) {
-        self.peer.end_stream(self.receipt).trace_err();
-    }
-}
-
 #[derive(Clone)]
 struct Session {
     user_id: UserId,
@@ -601,7 +595,10 @@ impl Server {
                     receipt,
                 };
                 match (handler)(envelope.payload, response, session).await {
-                    Ok(()) => Ok(()),
+                    Ok(()) => {
+                        peer.end_stream(receipt)?;
+                        Ok(())
+                    }
                     Err(error) => {
                         let proto_err = match &error {
                             Error::Internal(err) => err.to_proto(),
