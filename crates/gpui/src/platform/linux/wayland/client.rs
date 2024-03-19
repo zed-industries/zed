@@ -966,8 +966,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 value,
                 ..
             } => {
+                // We handle discrete scroll events with `AxisValue120`.
                 if wl_pointer.version() >= wl_pointer::EVT_AXIS_VALUE120_SINCE
-                    && state.axis_source != AxisSource::Continuous
+                    && state.axis_source == AxisSource::Wheel
                 {
                     return;
                 }
