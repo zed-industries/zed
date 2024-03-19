@@ -109,7 +109,6 @@ fn test_languages(extension_path: &Path, grammars: &HashMap<String, Language>) -
             Some(
                 grammars
                     .get(name.as_ref())
-                    .clone()
                     .ok_or_else(|| anyhow!("language"))?,
             )
         } else {
