@@ -3,14 +3,13 @@ use editor::{scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::ops::Deref;
+use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum SurroundsType {
     Motion(Motion),
     Object(Object),
 }
-
 
 pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
@@ -54,7 +53,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                 }
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                 let mut edits = Vec::new();
-                for selection in selections.iter() {
+                for selection in &selections {
                     let selection = selection.clone();
                     let offset_range = selection
                         .map(|p| p.to_offset(&display_map, Bias::Left))
@@ -111,6 +110,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
 
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
                         pair_object.expand_selection(map, selection, true);
@@ -155,6 +155,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
+                editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(stable_anchors);
                 });
@@ -191,7 +192,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                     }
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
-                    for selection in selections.iter() {
+                    for selection in &selections {
                         let selection = selection.clone();
                         let offset_range = selection
                             .map(|p| p.to_offset(&display_map, Bias::Left))
@@ -248,7 +249,6 @@ fn find_surround_pair(pairs: &[BracketPair], ch: &str) -> Option<BracketPair> {
     }
     None
 }
-
 
 fn all_support_surround_pair() -> Vec<BracketPair> {
     return vec![
@@ -322,7 +322,6 @@ fn pair_to_object(pair: &BracketPair) -> Option<Object> {
         _ => None,
     }
 }
-
 
 fn object_to_bracket_pair(object: Object) -> Option<BracketPair> {
     match object {

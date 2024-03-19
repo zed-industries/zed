@@ -265,9 +265,7 @@ impl Operator {
 
     pub fn context_flags(&self) -> &'static [&'static str] {
         match self {
-            Operator::Object { .. }
-            | Operator::ChangeSurrounds { target: None }
-             => &["VimObject"],
+            Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => &["VimObject"],
             Operator::FindForward { .. }
             | Operator::FindBackward { .. }
             | Operator::Replace

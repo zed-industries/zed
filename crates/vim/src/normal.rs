@@ -206,8 +206,8 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 }
             },
             Some(Operator::DeleteSurrounds) => {
-                    waiting_operator = Some(Operator::DeleteSurrounds);
-            },
+                waiting_operator = Some(Operator::DeleteSurrounds);
+            }
             Some(Operator::ChangeSurrounds { target: None }) => {
                 if is_valid_bracket_part(object) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
