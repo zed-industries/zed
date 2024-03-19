@@ -12,12 +12,12 @@ impl Database {
 
         self.transaction(|tx| async move {
             rate_buckets::Entity::insert_many(buckets.iter().map(|bucket| {
-                dbg!(rate_buckets::ActiveModel {
+                rate_buckets::ActiveModel {
                     user_id: ActiveValue::Set(bucket.user_id),
                     rate_limit_name: ActiveValue::Set(bucket.rate_limit_name.clone()),
                     token_count: ActiveValue::Set(bucket.token_count),
                     last_refill: ActiveValue::Set(bucket.last_refill),
-                })
+                }
             }))
             .on_conflict(
                 OnConflict::columns([
