@@ -2278,6 +2278,7 @@ impl EditorElement {
                             Edges::default(),
                             cx.theme().colors().scrollbar_thumb_border,
                         ));
+                        y_range = Some((start_y, end_y));
                     }
                     if let Some(group_y_range) = y_range {
                         let bounds = Bounds::from_corners(
