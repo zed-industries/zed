@@ -5,14 +5,14 @@ use util::ResultExt;
 
 use crate::static_source::{Definition, DefinitionProvider};
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct TaskOptions {
     cwd: Option<String>,
     #[serde(default)]
     env: HashMap<String, String>,
 }
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VsCodeTaskDefinition {
     label: String,
@@ -23,13 +23,21 @@ pub struct VsCodeTaskDefinition {
     options: Option<TaskOptions>,
 }
 
-#[derive(Deserialize, PartialEq, Debug)]
+#[derive(Clone, Deserialize, PartialEq, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "camelCase")]
 enum Command {
-    Npm { script: String },
-    Shell { command: String, args: Vec<String> },
-    Gulp { task: String },
+    Npm {
+        script: String,
+    },
+    Shell {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
+    Gulp {
+        task: String,
+    },
 }
 
 impl TryFrom<VsCodeTaskDefinition> for Definition {
@@ -84,56 +92,211 @@ impl TryFrom<VsCodeTaskFile> for DefinitionProvider {
 #[cfg(test)]
 mod tests {
     use crate::{
+        static_source::{Definition, DefinitionProvider},
         vscode_format::{Command, VsCodeTaskDefinition},
         VsCodeTaskFile,
     };
 
+    fn compare_without_other_attributes(lhs: VsCodeTaskDefinition, rhs: VsCodeTaskDefinition) {
+        assert_eq!(
+            VsCodeTaskDefinition {
+                other_attributes: Default::default(),
+                ..lhs
+            },
+            VsCodeTaskDefinition {
+                other_attributes: Default::default(),
+                ..rhs
+            },
+        );
+    }
     #[test]
     fn can_deserialize_ts_tasks() {
         static TYPESCRIPT_TASKS: &'static str = include_str!("../test_data/typescript.json");
         let vscode_definitions: VsCodeTaskFile =
             serde_json_lenient::from_str(&TYPESCRIPT_TASKS).unwrap();
-        assert_eq!(
-            vscode_definitions.tasks,
-            vec![
-                VsCodeTaskDefinition {
-                    label: "gulp: tests".to_string(),
-                    command: Some(Command::Npm {
-                        script: "foo".to_string()
-                    }),
-                    other_attributes: Default::default(),
-                    options: None,
-                },
-                VsCodeTaskDefinition {
-                    label: "tsc: watch ./src".to_string(),
-                    command: Some(Command::Npm {
-                        script: "foo".to_string()
-                    }),
-                    other_attributes: Default::default(),
-                    options: None,
-                },
-                VsCodeTaskDefinition {
-                    label: "npm: build:compiler".to_string(),
-                    command: Some(Command::Npm {
-                        script: "foo".to_string()
-                    }),
-                    other_attributes: Default::default(),
-                    options: None,
-                },
-                VsCodeTaskDefinition {
-                    label: "npm: build:tests".to_string(),
-                    command: Some(Command::Npm {
-                        script: "foo".to_string()
-                    }),
-                    other_attributes: Default::default(),
-                    options: None,
-                }
-            ]
-        );
+
+        let expected = vec![
+            VsCodeTaskDefinition {
+                label: "gulp: tests".to_string(),
+                command: Some(Command::Npm {
+                    script: "build:tests:notypecheck".to_string(),
+                }),
+                other_attributes: Default::default(),
+                options: None,
+            },
+            VsCodeTaskDefinition {
+                label: "tsc: watch ./src".to_string(),
+                command: Some(Command::Shell {
+                    command: "node".to_string(),
+                    args: vec![
+                        "${workspaceFolder}/node_modules/typescript/lib/tsc.js".to_string(),
+                        "--build".to_string(),
+                        "${workspaceFolder}/src".to_string(),
+                        "--watch".to_string(),
+                    ],
+                }),
+                other_attributes: Default::default(),
+                options: None,
+            },
+            VsCodeTaskDefinition {
+                label: "npm: build:compiler".to_string(),
+                command: Some(Command::Npm {
+                    script: "build:compiler".to_string(),
+                }),
+                other_attributes: Default::default(),
+                options: None,
+            },
+            VsCodeTaskDefinition {
+                label: "npm: build:tests".to_string(),
+                command: Some(Command::Npm {
+                    script: "build:tests:notypecheck".to_string(),
+                }),
+                other_attributes: Default::default(),
+                options: None,
+            },
+        ];
+
+        assert_eq!(vscode_definitions.tasks.len(), expected.len());
+        vscode_definitions
+            .tasks
+            .iter()
+            .zip(expected.into_iter())
+            .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
+
+        let expected = vec![
+            Definition {
+                label: "gulp: tests".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build:tests:notypecheck".to_string()],
+                ..Default::default()
+            },
+            Definition {
+                label: "tsc: watch ./src".to_string(),
+                command: "node".to_string(),
+                args: vec![
+                    "${workspaceFolder}/node_modules/typescript/lib/tsc.js".to_string(),
+                    "--build".to_string(),
+                    "${workspaceFolder}/src".to_string(),
+                    "--watch".to_string(),
+                ],
+                ..Default::default()
+            },
+            Definition {
+                label: "npm: build:compiler".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build:compiler".to_string()],
+                ..Default::default()
+            },
+            Definition {
+                label: "npm: build:tests".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build:tests:notypecheck".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        let tasks: DefinitionProvider = vscode_definitions.try_into().unwrap();
+        assert_eq!(tasks.0, expected);
     }
 
     #[test]
     fn can_deserialize_rust_analyzer_tasks() {
-        static RUSTANALYZER_TASKS: &'static str = include_str!("../test_data/rust-analyzer.json");
+        static RUST_ANALYZER_TASKS: &'static str = include_str!("../test_data/rust-analyzer.json");
+        let vscode_definitions: VsCodeTaskFile =
+            serde_json_lenient::from_str(&RUST_ANALYZER_TASKS).unwrap();
+        let expected = vec![
+            VsCodeTaskDefinition {
+                label: "Build Extension in Background".to_string(),
+                command: Some(Command::Npm {
+                    script: "watch".to_string(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Build Extension".to_string(),
+                command: Some(Command::Npm {
+                    script: "build".to_string(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Build Server".to_string(),
+                command: Some(Command::Shell {
+                    command: "cargo build --package rust-analyzer".to_string(),
+                    args: Default::default(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Build Server (Release)".to_string(),
+                command: Some(Command::Shell {
+                    command: "cargo build --release --package rust-analyzer".to_string(),
+                    args: Default::default(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Pretest".to_string(),
+                command: Some(Command::Npm {
+                    script: "pretest".to_string(),
+                }),
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Build Server and Extension".to_string(),
+                command: None,
+                options: None,
+                other_attributes: Default::default(),
+            },
+            VsCodeTaskDefinition {
+                label: "Build Server (Release) and Extension".to_string(),
+                command: None,
+                options: None,
+                other_attributes: Default::default(),
+            },
+        ];
+        assert_eq!(vscode_definitions.tasks.len(), expected.len());
+        vscode_definitions
+            .tasks
+            .iter()
+            .zip(expected.into_iter())
+            .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
+        let expected = vec![
+            Definition {
+                label: "Build Extension in Background".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "watch".to_string()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Build Extension".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build".to_string()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Build Server".to_string(),
+                command: "cargo build --package rust-analyzer".to_string(),
+                ..Default::default()
+            },
+            Definition {
+                label: "Build Server (Release)".to_string(),
+                command: "cargo build --release --package rust-analyzer".to_string(),
+                ..Default::default()
+            },
+            Definition {
+                label: "Pretest".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "pretest".to_string()],
+                ..Default::default()
+            },
+        ];
+        let tasks: DefinitionProvider = vscode_definitions.try_into().unwrap();
+        assert_eq!(tasks.0, expected);
     }
 }
