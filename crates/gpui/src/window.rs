@@ -854,18 +854,6 @@ impl<'a> WindowContext<'a> {
             .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
-    /// Updates the global of the given type. The given closure is given simultaneous mutable
-    /// access both to the global and the context.
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: Global,
-    {
-        let mut global = self.app.lease_global::<G>();
-        let result = f(&mut global, self);
-        self.app.end_global_lease(global);
-        result
-    }
-
     fn window_bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
@@ -2386,17 +2374,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     {
         let view = self.view().downgrade();
         self.window_cx.spawn(|cx| f(view, cx))
-    }
-
-    /// Updates the global state of the given type.
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: Global,
-    {
-        let mut global = self.app.lease_global::<G>();
-        let result = f(&mut global, self);
-        self.app.end_global_lease(global);
-        result
     }
 
     /// Register a callback to be invoked when the given global state changes.

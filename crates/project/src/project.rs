@@ -32,8 +32,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter,
-    Model, ModelContext, PromptLevel, Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
+    EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel,
 };
 use itertools::Itertools;
 use language::{

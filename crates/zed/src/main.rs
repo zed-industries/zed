@@ -1041,6 +1041,8 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
+    use gpui::BorrowAppContext;
+
     let path = {
         let p = Path::new("assets/icons/file_icons/file_types.json");
         let Ok(full_path) = p.canonicalize() else {

@@ -12,7 +12,7 @@ use editor::{
     Editor,
 };
 use futures::StreamExt;
-use gpui::{TestAppContext, VisualContext, VisualTestContext};
+use gpui::{BorrowAppContext, TestAppContext, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
