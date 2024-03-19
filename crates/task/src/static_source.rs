@@ -64,7 +64,7 @@ pub struct StaticSource {
 }
 
 /// Static task definition from the tasks config file.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct Definition {
     /// Human readable name of the task to display in the UI.
@@ -106,7 +106,7 @@ pub enum RevealStrategy {
 
 /// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DefinitionProvider(Vec<Definition>);
+pub struct DefinitionProvider(pub(crate) Vec<Definition>);
 
 impl DefinitionProvider {
     /// Generates JSON schema of Tasks JSON definition format.
