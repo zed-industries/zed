@@ -251,7 +251,6 @@
       "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -276,7 +275,6 @@
       "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -302,7 +300,6 @@
       "alt-tab": "search::CycleMode",
       "alt-cmd-f": "project_search::ToggleFilters",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },

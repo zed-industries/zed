@@ -379,6 +379,16 @@ CREATE TABLE extension_versions (
 CREATE UNIQUE INDEX "index_extensions_external_id" ON "extensions" ("external_id");
 CREATE INDEX "index_extensions_total_download_count" ON "extensions" ("total_download_count");
 
+CREATE TABLE rate_buckets (
+    user_id INT NOT NULL,
+    rate_limit_name VARCHAR(255) NOT NULL,
+    token_count INT NOT NULL,
+    last_refill TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    PRIMARY KEY (user_id, rate_limit_name),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX idx_user_id_rate_limit ON rate_buckets (user_id, rate_limit_name);
+
 CREATE TABLE hosted_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_id INTEGER NOT NULL REFERENCES channels(id),

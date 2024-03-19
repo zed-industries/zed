@@ -86,32 +86,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bincode",
- "futures 0.3.28",
- "gpui",
- "isahc",
- "language",
- "log",
- "matrixmultiply",
- "ordered-float 2.10.0",
- "parking_lot",
- "parse_duration",
- "postage",
- "rand 0.8.5",
- "rusqlite",
- "schemars",
- "serde",
- "serde_json",
- "tiktoken-rs",
- "util",
-]
-
-[[package]]
 name = "alacritty_terminal"
 version = "0.22.1-dev"
 source = "git+https://github.com/alacritty/alacritty?rev=992011a4cd9a35f197acc0a0bd430d89a0d01013#992011a4cd9a35f197acc0a0bd430d89a0d01013"
@@ -339,9 +313,9 @@ dependencies = [
 name = "assistant"
 version = "0.1.0"
 dependencies = [
- "ai",
  "anyhow",
  "chrono",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -354,13 +328,14 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "open_ai",
  "ordered-float 2.10.0",
+ "parking_lot",
  "project",
  "rand 0.8.5",
  "regex",
  "schemars",
  "search",
- "semantic_index",
  "serde",
  "serde_json",
  "settings",
@@ -1339,7 +1314,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6773ddc0eafc0e509fb60e48dff7f450f8e674a0686ae8605e8d9901bd5eefa"
 dependencies = [
- "num-bigint 0.4.4",
+ "num-bigint",
  "num-integer",
  "num-traits",
 ]
@@ -2209,11 +2184,11 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "git",
+ "google_ai",
  "gpui",
  "hex",
  "indoc",
  "language",
- "lazy_static",
  "live_kit_client",
  "live_kit_server",
  "log",
@@ -2222,6 +2197,7 @@ dependencies = [
  "nanoid",
  "node_runtime",
  "notifications",
+ "open_ai",
  "parking_lot",
  "pretty_assertions",
  "project",
@@ -3556,21 +3532,9 @@ dependencies = [
 
 [[package]]
 name = "fallible-iterator"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
-
-[[package]]
-name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
-
-[[package]]
-name = "fallible-streaming-iterator"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fancy-regex"
@@ -4183,7 +4147,7 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
 dependencies = [
- "fallible-iterator 0.3.0",
+ "fallible-iterator",
  "indexmap 2.0.0",
  "stable_deref_trait",
 ]
@@ -4277,6 +4241,17 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "google_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "serde",
+ "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -5668,16 +5643,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
-name = "matrixmultiply"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7574c1cf36da4798ab73da5b215bbf444f50718207754cb522201d78d1cd0ff2"
-dependencies = [
- "autocfg",
- "rawpointer",
-]
-
-[[package]]
 name = "maybe-owned"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5947,19 +5912,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ndarray"
-version = "0.15.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
-dependencies = [
- "matrixmultiply",
- "num-complex 0.4.4",
- "num-integer",
- "num-traits",
- "rawpointer",
-]
-
-[[package]]
 name = "ndk"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6113,40 +6065,15 @@ dependencies = [
 
 [[package]]
 name = "num"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8536030f9fea7127f841b45bb6243b27255787fb4eb83958aa1ef9d2fdc0c36"
-dependencies = [
- "num-bigint 0.2.6",
- "num-complex 0.2.4",
- "num-integer",
- "num-iter",
- "num-rational 0.2.4",
- "num-traits",
-]
-
-[[package]]
-name = "num"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05180d69e3da0e530ba2a1dae5110317e49e3b7f3d41be227dc5f92e49ee7af"
 dependencies = [
- "num-bigint 0.4.4",
- "num-complex 0.4.4",
+ "num-bigint",
+ "num-complex",
  "num-integer",
  "num-iter",
  "num-rational 0.4.1",
- "num-traits",
-]
-
-[[package]]
-name = "num-bigint"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "090c7f9998ee0ff65aa5b723e4009f7b217707f1fb5ea551329cc4d6231fb304"
-dependencies = [
- "autocfg",
- "num-integer",
  "num-traits",
 ]
 
@@ -6198,16 +6125,6 @@ dependencies = [
 
 [[package]]
 name = "num-complex"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b19411a9719e753aff12e5187b74d60d3dc449ec3f4dc21e3989c3f554bc95"
-dependencies = [
- "autocfg",
- "num-traits",
-]
-
-[[package]]
-name = "num-complex"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ba157ca0885411de85d6ca030ba7e2a83a28636056c7c699b07c8b6f7383214"
@@ -6249,18 +6166,6 @@ dependencies = [
 
 [[package]]
 name = "num-rational"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c000134b5dbf44adc5cb772486d335293351644b801551abe8f75c84cfa4aef"
-dependencies = [
- "autocfg",
- "num-bigint 0.2.6",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-rational"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12ac428b1cb17fce6f731001d307d351ec70a6d202fc2e60f7d4c5e42d8f4f07"
@@ -6277,7 +6182,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0638a1c9d0a3c0914158145bc76cff373a75a627e6ecbfb71cbe6f453a5a19b0"
 dependencies = [
  "autocfg",
- "num-bigint 0.4.4",
+ "num-bigint",
  "num-integer",
  "num-traits",
 ]
@@ -6436,7 +6341,7 @@ dependencies = [
  "futures-util",
  "hkdf",
  "hmac 0.12.1",
- "num 0.4.1",
+ "num",
  "num-bigint-dig 0.8.4",
  "pbkdf2 0.12.2",
  "rand 0.8.5",
@@ -6462,6 +6367,18 @@ dependencies = [
  "is-wsl",
  "libc",
  "pathdiff",
+]
+
+[[package]]
+name = "open_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "schemars",
+ "serde",
+ "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -6677,17 +6594,6 @@ dependencies = [
  "redox_syscall 0.3.5",
  "smallvec",
  "windows-targets 0.48.5",
-]
-
-[[package]]
-name = "parse_duration"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7037e5e93e0172a5a96874380bf73bc6ecef022e26fa25f2be26864d6b3ba95d"
-dependencies = [
- "lazy_static",
- "num 0.2.1",
- "regex",
 ]
 
 [[package]]
@@ -7472,12 +7378,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rawpointer"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
-
-[[package]]
 name = "rayon"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7936,20 +7836,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rusqlite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "549b9d036d571d42e6e85d1c1425e2ac83491075078ca9a15be021c56b1641f2"
-dependencies = [
- "bitflags 2.4.2",
- "fallible-iterator 0.2.0",
- "fallible-streaming-iterator",
- "hashlink",
- "libsqlite3-sys",
- "smallvec",
-]
-
-[[package]]
 name = "rust-embed"
 version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8378,7 +8264,6 @@ dependencies = [
  "language",
  "menu",
  "project",
- "semantic_index",
  "serde",
  "serde_json",
  "settings",
@@ -8433,52 +8318,6 @@ name = "self_cell"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58bf37232d3bb9a2c4e641ca2a11d83b5062066f88df7fed36c28772046d65ba"
-
-[[package]]
-name = "semantic_index"
-version = "0.1.0"
-dependencies = [
- "ai",
- "anyhow",
- "collections",
- "ctor",
- "env_logger",
- "futures 0.3.28",
- "gpui",
- "language",
- "lazy_static",
- "log",
- "ndarray",
- "ordered-float 2.10.0",
- "parking_lot",
- "postage",
- "pretty_assertions",
- "project",
- "rand 0.8.5",
- "release_channel",
- "rpc",
- "rusqlite",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "sha1",
- "smol",
- "tempfile",
- "tree-sitter",
- "tree-sitter-cpp",
- "tree-sitter-elixir",
- "tree-sitter-json 0.20.0",
- "tree-sitter-lua",
- "tree-sitter-php",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-toml",
- "tree-sitter-typescript",
- "unindent",
- "util",
- "workspace",
-]
 
 [[package]]
 name = "semver"
@@ -8766,7 +8605,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eb4ea60fb301dc81dfc113df680571045d375ab7345d171c5dc7d7e13107a80"
 dependencies = [
  "chrono",
- "num-bigint 0.4.4",
+ "num-bigint",
  "num-traits",
  "thiserror",
 ]
@@ -9197,7 +9036,7 @@ dependencies = [
  "log",
  "md-5",
  "memchr",
- "num-bigint 0.4.4",
+ "num-bigint",
  "once_cell",
  "rand 0.8.5",
  "rust_decimal",
@@ -12729,7 +12568,6 @@ dependencies = [
  "release_channel",
  "rope",
  "search",
- "semantic_index",
  "serde",
  "serde_json",
  "settings",

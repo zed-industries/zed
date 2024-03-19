@@ -1,6 +1,5 @@
 use crate::{
     db::{ExtensionMetadata, NewExtensionVersion},
-    executor::Executor,
     AppState, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
@@ -136,7 +135,7 @@ async fn download_extension(
 const EXTENSION_FETCH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const EXTENSION_DOWNLOAD_URL_LIFETIME: Duration = Duration::from_secs(3 * 60);
 
-pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>, executor: Executor) {
+pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>) {
     let Some(blob_store_client) = app_state.blob_store_client.clone() else {
         log::info!("no blob store client");
         return;
@@ -146,6 +145,7 @@ pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>, e
         return;
     };
 
+    let executor = app_state.executor.clone();
     executor.spawn_detached({
         let executor = executor.clone();
         async move {
