@@ -85,6 +85,15 @@ enum AvailableGrammar {
     Unloaded(PathBuf),
 }
 
+#[derive(Debug)]
+pub struct LanguageNotFound;
+
+impl std::fmt::Display for LanguageNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "language not found")
+    }
+}
+
 pub const QUERY_FILENAME_PREFIXES: &[(
     &str,
     fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
@@ -471,7 +480,7 @@ impl LanguageRegistry {
             .max_by_key(|e| e.1)
             .clone()
         else {
-            let _ = tx.send(Err(anyhow!("language not found")));
+            let _ = tx.send(Err(anyhow!(LanguageNotFound)));
             return rx;
         };
 

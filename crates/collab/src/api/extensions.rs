@@ -22,6 +22,10 @@ pub fn router() -> Router {
     Router::new()
         .route("/extensions", get(get_extensions))
         .route(
+            "/extensions/:extension_id/download",
+            get(download_latest_extension),
+        )
+        .route(
             "/extensions/:extension_id/:version/download",
             get(download_extension),
         )
@@ -30,6 +34,11 @@ pub fn router() -> Router {
 #[derive(Debug, Deserialize)]
 struct GetExtensionsParams {
     filter: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadLatestExtensionParams {
+    extension_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +67,25 @@ async fn get_extensions(
 ) -> Result<Json<GetExtensionsResponse>> {
     let extensions = app.db.get_extensions(params.filter.as_deref(), 500).await?;
     Ok(Json(GetExtensionsResponse { data: extensions }))
+}
+
+async fn download_latest_extension(
+    Extension(app): Extension<Arc<AppState>>,
+    Path(params): Path<DownloadLatestExtensionParams>,
+) -> Result<Redirect> {
+    let extension = app
+        .db
+        .get_extension(&params.extension_id)
+        .await?
+        .ok_or_else(|| anyhow!("unknown extension"))?;
+    download_extension(
+        Extension(app),
+        Path(DownloadExtensionParams {
+            extension_id: params.extension_id,
+            version: extension.version,
+        }),
+    )
+    .await
 }
 
 async fn download_extension(

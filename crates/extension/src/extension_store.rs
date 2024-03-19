@@ -402,27 +402,13 @@ impl ExtensionStore {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Install, cx)
     }
 
-    pub fn upgrade_extension(
+    fn install_or_upgrade_extension_at_endpoint(
         &mut self,
         extension_id: Arc<str>,
-        version: Arc<str>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
-    }
-
-    fn install_or_upgrade_extension(
-        &mut self,
-        extension_id: Arc<str>,
-        version: Arc<str>,
+        url: String,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
     ) {
-        log::info!("installing extension {extension_id} {version}");
-        let url = self
-            .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
-
         let extensions_dir = self.extensions_dir();
         let http_client = self.http_client.clone();
 
@@ -459,6 +445,49 @@ impl ExtensionStore {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn install_latest_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        log::info!("installing extension {extension_id} latest version");
+
+        let url = self
+            .http_client
+            .build_zed_api_url(&format!("/extensions/{extension_id}/download"));
+
+        self.install_or_upgrade_extension_at_endpoint(
+            extension_id,
+            url,
+            ExtensionOperation::Install,
+            cx,
+        );
+    }
+
+    pub fn upgrade_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        version: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
+    }
+
+    fn install_or_upgrade_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        version: Arc<str>,
+        operation: ExtensionOperation,
+        cx: &mut ModelContext<Self>,
+    ) {
+        log::info!("installing extension {extension_id} {version}");
+        let url = self
+            .http_client
+            .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
+
+        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx);
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
