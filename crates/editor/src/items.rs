@@ -1,3 +1,4 @@
+use crate::EditorLanguageModelContext;
 use crate::{
     editor_settings::SeedQuerySetting, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll,
     Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
@@ -19,7 +20,7 @@ use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::ItemSettings;
+use workspace::item::{ItemSettings, LanguageModelContext};
 
 use std::{
     borrow::Cow,
@@ -957,6 +958,45 @@ impl Item for Editor {
                 })
             })
             .unwrap_or_else(|error| Task::ready(Err(error)))
+    }
+
+    fn language_model_context(&self, cx: &AppContext) -> Option<LanguageModelContext> {
+        // let lmc = workspace::item::RenderContext {
+
+        // }
+
+        let buffer = self.buffer.read(cx);
+
+        if let Some(singleton) = buffer.as_singleton() {
+            let singleton = singleton.read(cx);
+
+            let filename = singleton
+                .file()
+                .map(|file| file.path().to_string_lossy())
+                .unwrap_or("Untitled".into());
+
+            let text = singleton.text();
+
+            let language = singleton
+                .language()
+                .map(|l| l.name().to_string())
+                .unwrap_or_default();
+
+            let markdown = format!("`{filename}`\n\n```{language}\n{text}```\n\n");
+
+            Some(LanguageModelContext {
+                markdown,
+                rendered: EditorLanguageModelContext {
+                    icon_path: "".into(),
+                    path: singleton.file().map(|file| file.full_path(cx)),
+                    selection_ranges: vec![],
+                    focused: false,
+                }
+                .into_any_element(),
+            })
+        } else {
+            None
+        }
     }
 }
 

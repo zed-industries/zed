@@ -34,6 +34,7 @@ mod selections_collection;
 
 #[cfg(test)]
 mod editor_tests;
+mod llm_context;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
@@ -78,6 +79,7 @@ use language::{
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
+pub use llm_context::*;
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};

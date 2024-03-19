@@ -23,11 +23,12 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
@@ -47,6 +48,7 @@ use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
+    item::{ItemHandle, LanguageModelContext},
     searchable::Direction,
     Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
@@ -1258,17 +1260,10 @@ struct Summary {
     done: bool,
 }
 
-#[derive(Debug, Clone, Default)]
-struct LlmContext {
-    excerpts: Vec<Model<Buffer>>,
-    // TODO: Bring in project diagnostics
-    // diagnostics: ???,
-}
-
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    llm_context: LlmContext,
+    language_model_contexts: Vec<LanguageModelContext>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1290,7 +1285,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        context_for_llm: LlmContext,
+        context_for_llm: Vec<LanguageModelContext>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1324,7 +1319,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            llm_context: context_for_llm,
+            language_model_contexts: context_for_llm,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1426,7 +1421,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
-                llm_context: Default::default(),
+                language_model_contexts: Default::default(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1623,7 +1618,7 @@ impl Conversation {
 
         // Build up a prompt to include the file context as a system message
         let s: String = self
-            .llm_context
+            .language_model_contexts
             .excerpts
             .iter()
             .map(|buffer| {
@@ -2024,6 +2019,11 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
+// maintain a set of block decorations on the editor for every item in the workspace, potentially more
+//
+
+// Take the
+
 struct ConversationEditor {
     conversation: Model<Conversation>,
     fs: Arc<dyn Fs>,
@@ -2032,7 +2032,17 @@ struct ConversationEditor {
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
+
+    lm_contexts: Vec<LanguageModelContextSelection>,
 }
+
+struct LanguageModelContextSelection {
+    entity_id: EntityId,
+    enabled: bool,
+    entity: Box<dyn RenderContext>,
+}
+
+// Take the trait approach forward so we can defer the render and the llm_markdown bits
 
 impl ConversationEditor {
     fn new(
@@ -2048,17 +2058,19 @@ impl ConversationEditor {
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
-    fn llm_context(workspace: &View<Workspace>, cx: &mut WindowContext) -> LlmContext {
-        let excerpts = workspace
+    fn llm_context(
+        workspace: &View<Workspace>,
+        cx: &mut WindowContext,
+    ) -> Vec<LanguageModelContext> {
+        workspace
             .update(cx, |workspace, cx| {
                 workspace
                     .active_item_as::<Editor>(cx)
-                    .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+                    // Each item should be able to be disabled by the user to not send on to the language model
+                    .and_then(|editor| editor.language_model_context(cx))
             })
             .into_iter()
-            .collect();
-
-        LlmContext { excerpts }
+            .collect()
     }
 
     fn for_conversation(
@@ -2227,8 +2239,8 @@ impl ConversationEditor {
     fn handle_workspace_notify(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
         let updated_llm_context = Self::llm_context(&workspace, cx);
 
-        self.conversation.update(cx, |conversation, cx| {
-            conversation.llm_context = updated_llm_context;
+        self.conversation.update(cx, |conversation, _cx| {
+            conversation.language_model_contexts = updated_llm_context;
         });
     }
 
@@ -2474,38 +2486,29 @@ impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        // let excerpts: Vec<Model<Buffer>> = llm_context_for_human_consumption.excerpts;
-
-        // // Little icons of the available excerpts
-
-        // let excerpt_elements = excerpts.iter().map(|buffer| {
-        //     let buffer = buffer.read(cx);
-
-        //     let language = buffer.language();
-
-        //     // let icon = FileAssociations.get_icon_for_language(language);
-
-        //     icon
-        // });
         let conversation = self.conversation.read(cx);
-        let llm_context = conversation.llm_context.excerpts.iter().map(|buffer| {
-            let buffer = buffer.read(cx);
-            let language = buffer.language();
+        let llm_context = conversation
+            .language_model_contexts
+            .excerpts
+            .iter()
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                let language = buffer.language();
 
-            div()
-                .h_flex()
-                // TODO: Add icons for the languages
-                // .child(FileAssociations.get_icon_for_language(language))
-                .child(if let Some(file) = buffer.file() {
-                    // TODO: Use path instead of full_path if the project contains multiple roots
-                    file.full_path(cx)
-                        .to_string_lossy()
-                        .to_string()
-                        .into_any_element()
-                } else {
-                    "Untitled".into_any_element()
-                })
-        });
+                div()
+                    .h_flex()
+                    // TODO: Add icons for the languages
+                    // .child(FileAssociations.get_icon_for_language(language))
+                    .child(if let Some(file) = buffer.file() {
+                        // TODO: Use path instead of full_path if the project contains multiple roots
+                        file.full_path(cx)
+                            .to_string_lossy()
+                            .to_string()
+                            .into_any_element()
+                    } else {
+                        "Untitled".into_any_element()
+                    })
+            });
 
         div()
             .key_context("ConversationEditor")
