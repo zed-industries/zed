@@ -3515,6 +3515,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "extension_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap 4.4.4",
+ "env_logger",
+ "extension",
+ "fs",
+ "language",
+ "log",
+ "theme",
+ "tokio",
+ "toml 0.8.10",
+ "tree-sitter",
+ "wasmtime",
+]
+
+[[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [

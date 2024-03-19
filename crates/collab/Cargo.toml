@@ -54,7 +54,7 @@ rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true
-tokio = { version = "1", features = ["full"] }
+tokio.workspace = true
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }

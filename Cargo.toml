@@ -24,6 +24,7 @@ members = [
     "crates/editor",
     "crates/extension",
     "crates/extension_api",
+    "crates/extension_cli",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -273,6 +274,7 @@ time = { version = "0.3", features = [
     "formatting",
 ] }
 toml = "0.8"
+tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
