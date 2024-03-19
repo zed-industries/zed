@@ -430,7 +430,6 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
-    always_treat_brackets_as_autoclosed: bool,
     auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
         Box<
@@ -1558,7 +1557,6 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
-            always_treat_brackets_as_autoclosed: false,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -1849,13 +1847,6 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
-    }
-
-    pub fn set_always_treat_brackets_as_autoclosed(
-        &mut self,
-        always_treat_brackets_as_autoclosed: bool,
-    ) {
-        self.always_treat_brackets_as_autoclosed = always_treat_brackets_as_autoclosed;
     }
 
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
@@ -2521,11 +2512,9 @@ impl Editor {
                             }
                         }
 
-                        let always_treat_brackets_as_autoclosed = self
-                            .always_treat_brackets_as_autoclosed
-                            && snapshot
-                                .settings_at(selection.start, cx)
-                                .always_treat_brackets_as_autoclosed;
+                        let always_treat_brackets_as_autoclosed = snapshot
+                            .settings_at(selection.start, cx)
+                            .always_treat_brackets_as_autoclosed;
                         if always_treat_brackets_as_autoclosed
                             && is_bracket_pair_end
                             && snapshot.contains_str_at(selection.end, text.as_ref())
@@ -3082,10 +3071,9 @@ impl Editor {
                     }
                 }
 
-                let always_treat_brackets_as_autoclosed = self.always_treat_brackets_as_autoclosed
-                    && buffer
-                        .settings_at(selection.start, cx)
-                        .always_treat_brackets_as_autoclosed;
+                let always_treat_brackets_as_autoclosed = buffer
+                    .settings_at(selection.start, cx)
+                    .always_treat_brackets_as_autoclosed;
 
                 if !always_treat_brackets_as_autoclosed {
                     return selection;

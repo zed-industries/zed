@@ -4573,7 +4573,6 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
     });
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.update_editor(|view, _cx| view.set_always_treat_brackets_as_autoclosed(true));
 
     let language = Arc::new(Language::new(
         LanguageConfig {
@@ -4606,10 +4605,8 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
         Some(tree_sitter_rust::language()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(language.clone());
+    cx.language_registry().add(language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
     });
 
@@ -5272,7 +5269,6 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
     });
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.update_editor(|view, _cx| view.set_always_treat_brackets_as_autoclosed(true));
 
     let language = Arc::new(Language::new(
         LanguageConfig {
@@ -5305,10 +5301,8 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
         Some(tree_sitter_rust::language()),
     ));
 
-    let registry = Arc::new(LanguageRegistry::test());
-    registry.add(language.clone());
+    cx.language_registry().add(language.clone());
     cx.update_buffer(|buffer, cx| {
-        buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
     });
 
