@@ -29,7 +29,7 @@ pub enum ImageCacheError {
     #[error("image error: {0}")]
     Image(Arc<ImageError>),
     #[error("svg error: {0}")]
-    Usvg(Arc<usvg::Error>),
+    Usvg(Arc<resvg::usvg::Error>),
 }
 
 impl From<std::io::Error> for ImageCacheError {
@@ -44,8 +44,8 @@ impl From<ImageError> for ImageCacheError {
     }
 }
 
-impl From<usvg::Error> for ImageCacheError {
-    fn from(error: usvg::Error) -> Self {
+impl From<resvg::usvg::Error> for ImageCacheError {
+    fn from(error: resvg::usvg::Error) -> Self {
         Self::Usvg(Arc::new(error))
     }
 }

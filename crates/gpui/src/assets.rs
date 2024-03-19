@@ -56,7 +56,7 @@ pub enum ImageData {
         /// The unique identifier for this image.
         id: ImageId,
         /// The SVG tree for this image.
-        data: usvg::Tree,
+        data: resvg::usvg::Tree,
         /// Rendered image cache.
         rendered: Arc<Mutex<HashMap<Size<DevicePixels>, FetchImageTask>>>,
     },
@@ -81,10 +81,10 @@ impl ImageData {
                 data,
             })
         } else {
-            let data = usvg::Tree::from_data(
+            let data = resvg::usvg::Tree::from_data(
                 bytes,
-                &usvg::Options::default(),
-                &usvg::fontdb::Database::default(),
+                &resvg::usvg::Options::default(),
+                &resvg::usvg::fontdb::Database::default(),
             )?;
             Ok(Self::Vector {
                 id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),
@@ -116,7 +116,7 @@ impl ImageData {
                             let ratio = size.width.0 as f32 / tree.size().width();
                             resvg::render(
                                 &tree,
-                                tiny_skia::Transform::from_scale(ratio, ratio),
+                                resvg::tiny_skia::Transform::from_scale(ratio, ratio),
                                 &mut pixmap.as_mut(),
                             );
                             let png = pixmap.encode_png().unwrap();

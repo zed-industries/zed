@@ -24,20 +24,21 @@ impl SvgRenderer {
 
         // Load the tree.
         let bytes = self.asset_source.load(&params.path)?;
-        let tree = usvg::Tree::from_data(
+        let tree = resvg::usvg::Tree::from_data(
             &bytes,
-            &usvg::Options::default(),
-            &usvg::fontdb::Database::default(),
+            &resvg::usvg::Options::default(),
+            &resvg::usvg::fontdb::Database::default(),
         )?;
 
         // Render the SVG to a pixmap with the specified width and height.
         let mut pixmap =
-            tiny_skia::Pixmap::new(params.size.width.into(), params.size.height.into()).unwrap();
+            resvg::tiny_skia::Pixmap::new(params.size.width.into(), params.size.height.into())
+                .unwrap();
 
         let ratio = params.size.width.0 as f32 / tree.size().width();
         resvg::render(
             &tree,
-            tiny_skia::Transform::from_scale(ratio, ratio),
+            resvg::tiny_skia::Transform::from_scale(ratio, ratio),
             &mut pixmap.as_mut(),
         );
 

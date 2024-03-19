@@ -4368,8 +4368,6 @@ dependencies = [
  "taffy",
  "thiserror",
  "time",
- "tiny-skia",
- "usvg",
  "util",
  "uuid",
  "waker-fn",
