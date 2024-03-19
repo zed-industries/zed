@@ -29,7 +29,9 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
+use language::{
+    language_settings::SoftWrap, Buffer, BufferId, BufferSnapshot, LanguageRegistry, ToOffset as _,
+};
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -1229,9 +1231,17 @@ struct Summary {
     done: bool,
 }
 
+// struct ContextForLLM {
+//     excerpts: Vec<Model<Buffer>>,
+//     diagnostics: Vec<Diagnostic>,
+// }
+
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
+    // WANT: Context object. For now we'll just take a vector of Buffers and Ranges
+    excerpts: Vec<Model<Buffer>>,
+
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1253,6 +1263,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        excerpts: Vec<Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1286,6 +1297,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
+            excerpts,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1387,6 +1399,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
+                excerpts: Default::default(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1484,7 +1497,12 @@ impl Conversation {
                 return Default::default();
             }
 
+            // Call to OpenAI to make completions
             let request = self.to_completion_request(cx);
+
+            // Append a system message that includes the file context from the BufferSnapshots
+            //let messages = request.messages;
+
             let stream = CompletionProvider::global(cx).complete(request);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -1568,7 +1586,7 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let request = LanguageModelRequest {
+        let mut request = LanguageModelRequest {
             model: self.model.clone(),
             messages: self
                 .messages(cx)
@@ -1578,6 +1596,35 @@ impl Conversation {
             stop: vec![],
             temperature: 1.0,
         };
+
+        // Build up a prompt to include the file context as a system message
+        let s: String = self
+            .excerpts
+            .iter()
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+
+                let filename = buffer
+                    .file()
+                    .map(|file| file.path().to_string_lossy())
+                    .unwrap_or_default();
+
+                let text = buffer.text();
+
+                let language = buffer
+                    .language()
+                    .map(|l| l.name().to_string())
+                    .unwrap_or_default();
+
+                format!("`{filename}`\n\n```{language}\n{text}```\n\n")
+            })
+            .collect();
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::System,
+            content: s,
+        });
+
         request
     }
 
@@ -1970,7 +2017,8 @@ impl ConversationEditor {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx.new_model(|cx| Conversation::new(model, language_registry, cx));
+        let conversation =
+            cx.new_model(|cx| Conversation::new(model, language_registry, Default::default(), cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2764,8 +2812,9 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, Default::default(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -2896,8 +2945,9 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, Default::default(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -2995,8 +3045,9 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, Default::default(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3080,8 +3131,14 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                Default::default(),
+                cx,
+            )
+        });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);
