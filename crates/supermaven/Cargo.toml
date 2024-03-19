@@ -1,0 +1,28 @@
+[package]
+name = "supermaven"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/supermaven.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+editor.workspace = true
+gpui.workspace = true
+futures.workspace = true
+language.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

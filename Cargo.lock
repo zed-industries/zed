@@ -9595,6 +9595,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "supermaven"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "sval"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

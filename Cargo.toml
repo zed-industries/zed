@@ -86,6 +86,7 @@ members = [
     "crates/storybook",
     "crates/sum_tree",
     "crates/tab_switcher",
+    "crates/supermaven",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
