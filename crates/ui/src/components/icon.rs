@@ -1,4 +1,4 @@
-use gpui::{svg, IntoElement, Rems};
+use gpui::{svg, IntoElement, Rems, Transformation};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -219,6 +219,7 @@ pub struct Icon {
     path: SharedString,
     color: Color,
     size: IconSize,
+    transformation: Transformation,
 }
 
 impl Icon {
@@ -227,6 +228,7 @@ impl Icon {
             path: icon.path().into(),
             color: Color::default(),
             size: IconSize::default(),
+            transformation: Transformation::default(),
         }
     }
 
@@ -235,6 +237,7 @@ impl Icon {
             path: path.into(),
             color: Color::default(),
             size: IconSize::default(),
+            transformation: Transformation::default(),
         }
     }
 
@@ -247,11 +250,17 @@ impl Icon {
         self.size = size;
         self
     }
+
+    pub fn transform(mut self, transformation: Transformation) -> Self {
+        self.transformation = transformation;
+        self
+    }
 }
 
 impl RenderOnce for Icon {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         svg()
+            .with_transformation(self.transformation)
             .size(self.size.rems())
             .flex_none()
             .path(self.path)
