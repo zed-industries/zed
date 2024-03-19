@@ -6,12 +6,19 @@ impl Database {
     /// Saves the rate limit for the given user and rate limit name if the last_refill is later
     /// than the currently saved timestamp.
     pub async fn save_rate_buckets(&self, buckets: &[rate_buckets::Model]) -> Result<()> {
+        if buckets.is_empty() {
+            return Ok(());
+        }
+
         self.transaction(|tx| async move {
-            rate_buckets::Entity::insert_many(
-                buckets
-                    .iter()
-                    .map(|bucket| bucket.clone().into_active_model()),
-            )
+            rate_buckets::Entity::insert_many(buckets.iter().map(|bucket| {
+                dbg!(rate_buckets::ActiveModel {
+                    user_id: ActiveValue::Set(bucket.user_id),
+                    rate_limit_name: ActiveValue::Set(bucket.rate_limit_name.clone()),
+                    token_count: ActiveValue::Set(bucket.token_count),
+                    last_refill: ActiveValue::Set(bucket.last_refill),
+                })
+            }))
             .on_conflict(
                 OnConflict::columns([
                     rate_buckets::Column::UserId,
