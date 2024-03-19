@@ -15,10 +15,9 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
         vim.update_active_editor(cx, |_, editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| match &target {
                         SurroundsType::Object(object) => {
@@ -37,20 +36,11 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                 });
 
                 let input_text = text.to_string();
-                let mut surround = false;
-                let mut open_str = input_text.clone();
-                let mut close_str = input_text.clone();
-                let pairs = all_support_surround_pair();
-                for pair in pairs {
-                    if pair.start == input_text || pair.end == input_text {
-                        // Spaces are added only if the current input is open parenthesis
-                        // Does not contain ', ", |", etc
-                        surround = pair.end != input_text;
-                        open_str = pair.start;
-                        close_str = pair.end;
-                        break;
-                    }
-                }
+                let pair = match find_surround_pair(&all_support_surround_pair(), text.deref()) {
+                    Some(pair) => pair,
+                    None => return,
+                };
+                let surround = pair.end != input_text;
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                 let mut edits = Vec::new();
                 for selection in &selections {
@@ -65,9 +55,9 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                         .text_for_range(offset_range.clone())
                         .collect::<String>();
                     if surround {
-                        select_text = format!("{} {} {}", open_str, select_text, close_str);
+                        select_text = format!("{} {} {}", pair.start, select_text, pair.end);
                     } else {
-                        select_text = format!("{}{}{}", open_str, select_text, close_str);
+                        select_text = format!("{}{}{}", pair.start, select_text, pair.end);
                     }
                     edits.push((offset_range, select_text));
                 }
@@ -83,6 +73,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
+                editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(stable_anchors);
                 });
@@ -137,7 +128,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                             select_text.remove(pos);
                         }
                         if surround {
-                            select_text = select_text.trim().to_string();
+                            select_text = select_text.trim_matches(' ').to_string();
                         }
                         (offset_range, select_text)
                     })
@@ -152,6 +143,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                         start..start
                     })
                     .collect::<Vec<_>>();
+                println!("edits is {:?}", edits);
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
@@ -169,10 +161,9 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
         Vim::update(cx, |vim, cx| {
             vim.stop_recording();
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
-                // let text_layout_details = editor.text_layout_details(cx);
-
                 editor.transact(cx, |editor, cx| {
+                    editor.set_clip_at_line_ends(false, cx);
+
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.move_with(|map, selection| {
                             target.expand_selection(map, selection, true);
@@ -180,16 +171,12 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                     });
 
                     let input_text = text.to_string();
-                    let mut open_str = input_text.clone();
-                    let mut close_str = input_text.clone();
-                    let pairs = all_support_surround_pair();
-                    for pair in pairs {
-                        if pair.start == input_text || pair.end == input_text {
-                            open_str = pair.start;
-                            close_str = pair.end;
-                            break;
-                        }
-                    }
+                    let pair = match find_surround_pair(&all_support_surround_pair(), text.deref())
+                    {
+                        Some(pair) => pair,
+                        None => return,
+                    };
+                    let surround = pair.end != input_text;
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
                     for selection in &selections {
@@ -203,12 +190,16 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             .snapshot(cx)
                             .text_for_range(offset_range.clone())
                             .collect::<String>();
-                        if select_text.starts_with(&will_replace_pair.start)
-                            && select_text.ends_with(&will_replace_pair.end)
-                        {
-                            let len = select_text.len();
-                            select_text.replace_range(0..1, &open_str);
-                            select_text.replace_range(len - 1..len, &close_str);
+                        if let Some(pos) = select_text.find(will_replace_pair.start.as_str()) {
+                            select_text.remove(pos);
+                        }
+                        if let Some(pos) = select_text.rfind(will_replace_pair.end.as_str()) {
+                            select_text.remove(pos);
+                        }
+                        if surround {
+                            select_text = format!("{} {} {}", pair.start, select_text, pair.end);
+                        } else {
+                            select_text = format!("{}{}{}", pair.start, select_text, pair.end);
                         }
                         edits.push((offset_range, select_text));
                     }
@@ -229,7 +220,6 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                     });
                 });
             });
-            vim.switch_mode(Mode::Normal, false, cx);
         });
     }
 }

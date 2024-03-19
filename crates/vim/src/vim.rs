@@ -639,6 +639,7 @@ impl Vim {
                 Mode::Normal => {
                     if let Some(target) = target {
                         add_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                     }
                 }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
@@ -646,6 +647,7 @@ impl Vim {
             Some(Operator::ChangeSurrounds { target }) => {
                 if let Some(target) = target {
                     change_surrounds(text, target, cx);
+                    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                 }
             }
             Some(Operator::DeleteSurrounds) => {
