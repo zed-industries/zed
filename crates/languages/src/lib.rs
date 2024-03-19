@@ -129,8 +129,13 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new(language::DefaultContextProvider)),
-                move || Ok((config.clone(), load_queries($name))),
+                move || {
+                    Ok((
+                        config.clone(),
+                        load_queries($name),
+                        Some(Arc::new(language::DefaultContextProvider)),
+                    ))
+                },
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -144,8 +149,13 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new(language::DefaultContextProvider)),
-                move || Ok((config.clone(), load_queries($name))),
+                move || {
+                    Ok((
+                        config.clone(),
+                        load_queries($name),
+                        Some(Arc::new(language::DefaultContextProvider)),
+                    ))
+                },
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -159,8 +169,13 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new($context_provider)),
-                move || Ok((config.clone(), load_queries($name))),
+                move || {
+                    Ok((
+                        config.clone(),
+                        load_queries($name),
+                        Some(Arc::new($context_provider)),
+                    ))
+                },
             );
         };
     }
