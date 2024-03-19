@@ -2249,6 +2249,7 @@ impl EditorElement {
                     );
                     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
                     let right_x = left_x + column_width;
+                    let mut y_range: Option<(Pixels, Pixels)> = None;
                     for hunk in selection_ranges {
                         let start_display = Point::new(hunk.0.start.row(), 0)
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
@@ -2256,8 +2257,33 @@ impl EditorElement {
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
                         let (start_y, end_y) =
                             scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
+                        let Some(group_y_range) = y_range else {
+                            y_range = Some((start_y, end_y));
+                            continue;
+                        };
+                        if start_y <= group_y_range.1 {
+                            y_range = Some((group_y_range.0, end_y));
+                            continue;
+                        }
+                        let bounds = Bounds::from_corners(
+                            point(left_x, group_y_range.0),
+                            point(right_x, group_y_range.1),
+                        );
                         let bounds =
                             Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
+                        cx.paint_quad(quad(
+                            bounds,
+                            Corners::default(),
+                            cx.theme().status().info,
+                            Edges::default(),
+                            cx.theme().colors().scrollbar_thumb_border,
+                        ));
+                    }
+                    if let Some(group_y_range) = y_range {
+                        let bounds = Bounds::from_corners(
+                            point(left_x, group_y_range.0),
+                            point(right_x, group_y_range.1),
+                        );
                         cx.paint_quad(quad(
                             bounds,
                             Corners::default(),
