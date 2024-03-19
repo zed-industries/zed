@@ -1301,14 +1301,7 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        let hitbox = if self.occlude_mouse
-                            || style.mouse_cursor.is_some()
-                            || self.group.is_some()
-                            || self.has_hover_styles()
-                            || self.has_mouse_listeners()
-                            || self.scroll_offset.is_some()
-                            || self.tracked_focus_handle.is_some()
-                        {
+                        let hitbox = if self.should_insert_hitbox(&style) {
                             Some(cx.insert_hitbox(bounds, self.occlude_mouse))
                         } else {
                             None
@@ -1323,18 +1316,22 @@ impl Interactivity {
         )
     }
 
-    fn has_hover_styles(&self) -> bool {
-        self.hover_style.is_some() || self.group_hover_style.is_some()
-    }
-
-    fn has_mouse_listeners(&self) -> bool {
-        !self.mouse_up_listeners.is_empty()
+    fn should_insert_hitbox(&self, style: &Style) -> bool {
+        self.occlude_mouse
+            || style.mouse_cursor.is_some()
+            || self.group.is_some()
+            || self.scroll_offset.is_some()
+            || self.tracked_focus_handle.is_some()
+            || self.hover_style.is_some()
+            || self.group_hover_style.is_some()
+            || !self.mouse_up_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
+            || self.tooltip_builder.is_some()
     }
 
     fn clamp_scroll_position(
