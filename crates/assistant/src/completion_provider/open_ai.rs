@@ -1,10 +1,14 @@
-use crate::{assistant_settings::OpenAiModel, LanguageModel, LanguageModelRequest, Role};
+use crate::{
+    assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
+};
 use anyhow::{anyhow, Result};
-use editor::Editor;
+use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, Task, View};
+use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
 use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
+use settings::Settings;
 use std::{env, sync::Arc};
+use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{http::HttpClient, ResultExt};
 
@@ -13,6 +17,7 @@ pub struct OpenAiCompletionProvider {
     api_url: String,
     default_model: OpenAiModel,
     http_client: Arc<dyn HttpClient>,
+    settings_version: usize,
 }
 
 impl OpenAiCompletionProvider {
@@ -20,36 +25,71 @@ impl OpenAiCompletionProvider {
         default_model: OpenAiModel,
         api_url: String,
         http_client: Arc<dyn HttpClient>,
+        settings_version: usize,
     ) -> Self {
         Self {
-            api_key: env::var("OPENAI_API_KEY").log_err(),
+            api_key: None,
             api_url,
             default_model,
             http_client,
+            settings_version,
         }
     }
 
-    pub fn update(&mut self, default_model: OpenAiModel, api_url: String) {
+    pub fn update(&mut self, default_model: OpenAiModel, api_url: String, settings_version: usize) {
         self.default_model = default_model;
         self.api_url = api_url;
+        self.settings_version = settings_version;
+    }
+
+    pub fn settings_version(&self) -> usize {
+        self.settings_version
     }
 
     pub fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
 
-    pub fn authenticate(&self, _cx: &AppContext) -> Task<Result<()>> {
+    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
-            Task::ready(Err(anyhow!(
-                "OPENAI_API_KEY environment variable not found"
-            )))
+            let api_url = self.api_url.clone();
+            cx.spawn(|mut cx| async move {
+                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
+                    api_key
+                } else {
+                    let (_, api_key) = cx
+                        .update(|cx| cx.read_credentials(&api_url))?
+                        .await?
+                        .ok_or_else(|| anyhow!("credentials not found"))?;
+                    let api_key = String::from_utf8(api_key)?;
+                    api_key
+                };
+                cx.update_global::<CompletionProvider, _>(|provider, _cx| {
+                    if let CompletionProvider::OpenAi(provider) = provider {
+                        provider.api_key = Some(api_key);
+                    }
+                })
+            })
         }
     }
 
+    pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+        let delete_credentials = cx.delete_credentials(&self.api_url);
+        cx.spawn(|mut cx| async move {
+            delete_credentials.await.log_err();
+            cx.update_global::<CompletionProvider, _>(|provider, _cx| {
+                if let CompletionProvider::OpenAi(provider) = provider {
+                    provider.api_key = None;
+                }
+            })
+        })
+    }
+
     pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(cx)).into()
+        cx.new_view(|cx| AuthenticationPrompt::new(self.api_url.clone(), cx))
+            .into()
     }
 
     pub fn default_model(&self) -> OpenAiModel {
@@ -151,10 +191,11 @@ impl From<Role> for open_ai::Role {
 
 struct AuthenticationPrompt {
     api_key: View<Editor>,
+    api_url: String,
 }
 
 impl AuthenticationPrompt {
-    fn new(cx: &mut WindowContext) -> Self {
+    fn new(api_url: String, cx: &mut WindowContext) -> Self {
         Self {
             api_key: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -164,19 +205,92 @@ impl AuthenticationPrompt {
                 );
                 editor
             }),
+            api_url,
         }
+    }
+
+    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        let api_key = self.api_key.read(cx).text(cx);
+        if api_key.is_empty() {
+            return;
+        }
+
+        let write_credentials = cx.write_credentials(&self.api_url, "Bearer", api_key.as_bytes());
+        cx.spawn(|_, mut cx| async move {
+            write_credentials.await?;
+            cx.update_global::<CompletionProvider, _>(|provider, _cx| {
+                if let CompletionProvider::OpenAi(provider) = provider {
+                    provider.api_key = Some(api_key);
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            white_space: WhiteSpace::Normal,
+        };
+        EditorElement::new(
+            &self.api_key,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 }
 
 impl Render for AuthenticationPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const INSTRUCTIONS: [&'static str; 6] = [
+            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
+            " - You can create an API key at: platform.openai.com/api-keys",
+            " - Make sure your OpenAI account has credits",
+            " - Having a subscription for another service like GitHub Copilot won't work.",
+            " ",
+            "Paste your OpenAI API key or set the OPENAI_API_KEY environment variable to use the assistant:",
+        ];
+
         v_flex()
-            .gap_6()
             .p_4()
-            .child(Label::new(concat!(
-                "To use the assistant with OpenAI, please assign an OPENAI_API_KEY ",
-                "environment variable, then restart Zed.",
-            )))
+            .size_full()
+            .on_action(cx.listener(Self::save_api_key))
+            .children(
+                INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .my_2()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .rounded_md()
+                    .child(self.render_api_key_editor(cx)),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Label::new("Click on").size(LabelSize::Small))
+                    .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
+                    .child(
+                        Label::new("in the status bar to close this panel.").size(LabelSize::Small),
+                    ),
+            )
             .into_any()
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    NewConversation, QuoteSelection, Role, SavedConversation, SavedConversationMetadata,
+    NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation,
 };
 use anyhow::Result;
@@ -143,7 +143,15 @@ impl AssistantPanel {
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
-                        cx.observe_global::<CompletionProvider>(Self::completion_provider_changed),
+                        cx.observe_global::<CompletionProvider>({
+                            let mut prev_settings_version =
+                                CompletionProvider::global(cx).settings_version();
+                            move |this, cx| {
+                                this.completion_provider_changed(prev_settings_version, cx);
+                                prev_settings_version =
+                                    CompletionProvider::global(cx).settings_version();
+                            }
+                        }),
                     ];
                     let model = CompletionProvider::global(cx).default_model();
 
@@ -192,7 +200,11 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    fn completion_provider_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn completion_provider_changed(
+        &mut self,
+        prev_settings_version: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
         if self.is_authenticated(cx) {
             self.authentication_prompt = None;
 
@@ -202,13 +214,14 @@ impl AssistantPanel {
             if self.active_conversation_editor().is_none() {
                 self.new_conversation(cx);
             }
-        } else {
+        } else if self.authentication_prompt.is_none()
+            || prev_settings_version != CompletionProvider::global(cx).settings_version()
+        {
             self.authentication_prompt =
                 Some(cx.update_global::<CompletionProvider, _>(|provider, cx| {
                     provider.authentication_prompt(cx)
                 }));
         }
-        cx.notify()
     }
 
     pub fn inline_assist(
@@ -828,6 +841,12 @@ impl AssistantPanel {
         }
     }
 
+    fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
+        CompletionProvider::global(cx)
+            .reset_credentials(cx)
+            .detach_and_log_err(cx);
+    }
+
     fn active_conversation_editor(&self) -> Option<&View<ConversationEditor>> {
         Some(&self.active_conversation_editor.as_ref()?.editor)
     }
@@ -1031,6 +1050,7 @@ impl AssistantPanel {
             .on_action(cx.listener(AssistantPanel::select_next_match))
             .on_action(cx.listener(AssistantPanel::select_prev_match))
             .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
+            .on_action(cx.listener(AssistantPanel::reset_credentials))
             .track_focus(&self.focus_handle)
             .child(header)
             .children(if self.toolbar.read(cx).hidden() {

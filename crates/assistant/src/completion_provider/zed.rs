@@ -13,12 +13,18 @@ use util::ResultExt;
 pub struct ZedDotDevCompletionProvider {
     client: Arc<Client>,
     default_model: ZedDotDevModel,
+    settings_version: usize,
     status: client::Status,
     _maintain_client_status: Task<()>,
 }
 
 impl ZedDotDevCompletionProvider {
-    pub fn new(default_model: ZedDotDevModel, client: Arc<Client>, cx: &mut AppContext) -> Self {
+    pub fn new(
+        default_model: ZedDotDevModel,
+        client: Arc<Client>,
+        settings_version: usize,
+        cx: &mut AppContext,
+    ) -> Self {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
         let maintain_client_status = cx.spawn(|mut cx| async move {
@@ -35,13 +41,19 @@ impl ZedDotDevCompletionProvider {
         Self {
             client,
             default_model,
+            settings_version,
             status,
             _maintain_client_status: maintain_client_status,
         }
     }
 
-    pub fn update(&mut self, default_model: ZedDotDevModel) {
+    pub fn update(&mut self, default_model: ZedDotDevModel, settings_version: usize) {
         self.default_model = default_model;
+        self.settings_version = settings_version;
+    }
+
+    pub fn settings_version(&self) -> usize {
+        self.settings_version
     }
 
     pub fn default_model(&self) -> ZedDotDevModel {
