@@ -16,7 +16,7 @@ use extension_manifest::ExtensionLibraryKind;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
-        mpsc::{unbounded, UnboundedSender},
+        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     io::BufReader,
@@ -762,6 +762,7 @@ impl ExtensionStore {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
+                    //let tasks = std::fs::read_to_string(language_path.join("tasks.json")).ok().map(|contents| task::static_source::StaticSource::new(format!("language-extension-{}", config.name), unbounded().1,  cx))
                     Ok((config, queries, None))
                 },
             );

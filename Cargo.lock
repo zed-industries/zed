@@ -3535,6 +3535,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "task",
  "theme",
  "toml 0.8.10",
  "util",
