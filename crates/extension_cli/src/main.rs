@@ -256,7 +256,6 @@ fn test_languages(
             Some(
                 grammars
                     .get(name.as_ref())
-                    .clone()
                     .ok_or_else(|| anyhow!("language"))?,
             )
         } else {
