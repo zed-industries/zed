@@ -1,7 +1,7 @@
 use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
-    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
-    MarkupContent, Project, ProjectTransaction, ResolveState,
+    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, LanguageServerToQuery,
+    Location, LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -32,11 +32,28 @@ pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     }
 }
 
+trait CommandRequestContainer<C: LspCommand> {}
+
+pub struct CommandRequest<C: LspCommand> {
+    pub params: <C::LspRequest as lsp::request::Request>::Params,
+    pub server: LanguageServerToQuery,
+}
+
+impl<C: LspCommand> CommandRequestContainer<C> for CommandRequest<C> {}
+
+pub struct MultiServerCommandRequest<C: LspCommand> {
+    pub params: <C::LspRequest as lsp::request::Request>::Params,
+    pub servers: Vec<LanguageServerToQuery>,
+}
+
+impl<C: LspCommand> CommandRequestContainer<C> for MultiServerCommandRequest<C> {}
+
 #[async_trait(?Send)]
 pub trait LspCommand: 'static + Sized + Send {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
+    type RequestContainer: CommandRequestContainer<Self>;
 
     fn check_capabilities(&self, _: &lsp::ServerCapabilities) -> bool {
         true
@@ -46,9 +63,9 @@ pub trait LspCommand: 'static + Sized + Send {
         &self,
         path: &Path,
         buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
+        project: &Project,
         cx: &AppContext,
-    ) -> <Self::LspRequest as lsp::request::Request>::Params;
+    ) -> Self::RequestContainer;
 
     async fn response_from_lsp(
         self,
@@ -158,6 +175,7 @@ impl LspCommand for PrepareRename {
     type Response = Option<Range<Anchor>>;
     type LspRequest = lsp::request::PrepareRenameRequest;
     type ProtoRequest = proto::PrepareRename;
+    type RequestContainer = CommandRequest<Self>;
 
     fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
         if let Some(lsp::OneOf::Right(rename)) = &capabilities.rename_provider {
@@ -167,18 +185,15 @@ impl LspCommand for PrepareRename {
         }
     }
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::TextDocumentPositionParams {
-        lsp::TextDocumentPositionParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: point_to_lsp(self.position),
             },
-            position: point_to_lsp(self.position),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -289,23 +304,21 @@ impl LspCommand for PerformRename {
     type Response = ProjectTransaction;
     type LspRequest = lsp::request::Rename;
     type ProtoRequest = proto::PerformRename;
+    type RequestContainer = CommandRequest<Self>;
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::RenameParams {
-        lsp::RenameParams {
-            text_document_position: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::RenameParams {
+                text_document_position: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                new_name: self.new_name.clone(),
+                work_done_progress_params: Default::default(),
             },
-            new_name: self.new_name.clone(),
-            work_done_progress_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -408,23 +421,21 @@ impl LspCommand for GetDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoDefinition;
     type ProtoRequest = proto::GetDefinition;
+    type RequestContainer = CommandRequest<Self>;
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::GotoDefinitionParams {
-        lsp::GotoDefinitionParams {
-            text_document_position_params: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::GotoDefinitionParams {
+                text_document_position_params: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
             },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -501,23 +512,21 @@ impl LspCommand for GetImplementation {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoImplementation;
     type ProtoRequest = proto::GetImplementation;
+    type RequestContainer = CommandRequest<Self>;
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::GotoImplementationParams {
-        lsp::GotoImplementationParams {
-            text_document_position_params: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::GotoImplementationParams {
+                text_document_position_params: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
             },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -594,6 +603,7 @@ impl LspCommand for GetTypeDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoTypeDefinition;
     type ProtoRequest = proto::GetTypeDefinition;
+    type RequestContainer = CommandRequest<Self>;
 
     fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
         match &capabilities.type_definition_provider {
@@ -603,22 +613,19 @@ impl LspCommand for GetTypeDefinition {
         }
     }
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::GotoTypeDefinitionParams {
-        lsp::GotoTypeDefinitionParams {
-            text_document_position_params: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::GotoTypeDefinitionParams {
+                text_document_position_params: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
             },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -893,26 +900,24 @@ impl LspCommand for GetReferences {
     type Response = Vec<Location>;
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
+    type RequestContainer = CommandRequest<Self>;
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::ReferenceParams {
-        lsp::ReferenceParams {
-            text_document_position: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::ReferenceParams {
+                text_document_position: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: lsp::ReferenceContext {
+                    include_declaration: true,
+                },
             },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: lsp::ReferenceContext {
-                include_declaration: true,
-            },
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -1056,27 +1061,25 @@ impl LspCommand for GetDocumentHighlights {
     type Response = Vec<DocumentHighlight>;
     type LspRequest = lsp::request::DocumentHighlightRequest;
     type ProtoRequest = proto::GetDocumentHighlights;
+    type RequestContainer = CommandRequest<Self>;
 
     fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
         capabilities.document_highlight_provider.is_some()
     }
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::DocumentHighlightParams {
-        lsp::DocumentHighlightParams {
-            text_document_position_params: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::DocumentHighlightParams {
+                text_document_position_params: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
             },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -1207,22 +1210,20 @@ impl LspCommand for GetHover {
     type Response = Option<Hover>;
     type LspRequest = lsp::request::HoverRequest;
     type ProtoRequest = proto::GetHover;
+    type RequestContainer = CommandRequest<Self>;
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::HoverParams {
-        lsp::HoverParams {
-            text_document_position_params: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(path).unwrap(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::HoverParams {
+                text_document_position_params: lsp::TextDocumentPositionParams {
+                    text_document: lsp::TextDocumentIdentifier {
+                        uri: lsp::Url::from_file_path(path).unwrap(),
+                    },
+                    position: point_to_lsp(self.position),
                 },
-                position: point_to_lsp(self.position),
+                work_done_progress_params: Default::default(),
             },
-            work_done_progress_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -1430,22 +1431,20 @@ impl LspCommand for GetCompletions {
     type Response = Vec<Completion>;
     type LspRequest = lsp::request::Completion;
     type ProtoRequest = proto::GetCompletions;
+    type RequestContainer = CommandRequest<Self>;
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::CompletionParams {
-        lsp::CompletionParams {
-            text_document_position: lsp::TextDocumentPositionParams::new(
-                lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
-                point_to_lsp(self.position),
-            ),
-            context: Default::default(),
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::CompletionParams {
+                text_document_position: lsp::TextDocumentPositionParams::new(
+                    lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
+                    point_to_lsp(self.position),
+                ),
+                context: Default::default(),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -1694,6 +1693,7 @@ impl LspCommand for GetCodeActions {
     type Response = Vec<CodeAction>;
     type LspRequest = lsp::request::CodeActionRequest;
     type ProtoRequest = proto::GetCodeActions;
+    type RequestContainer = CommandRequest<Self>;
 
     fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
         match &capabilities.code_action_provider {
@@ -1707,29 +1707,32 @@ impl LspCommand for GetCodeActions {
         &self,
         path: &Path,
         buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
+        project: &Project,
         _: &AppContext,
-    ) -> lsp::CodeActionParams {
+    ) -> CommandRequest<Self> {
         let relevant_diagnostics = buffer
             .snapshot()
             .diagnostics_in_range::<_, usize>(self.range.clone(), false)
             .map(|entry| entry.to_lsp_diagnostic_stub())
             .collect();
-        lsp::CodeActionParams {
-            text_document: lsp::TextDocumentIdentifier::new(
-                lsp::Url::from_file_path(path).unwrap(),
-            ),
-            range: range_to_lsp(self.range.to_point_utf16(buffer)),
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: lsp::CodeActionContext {
-                diagnostics: relevant_diagnostics,
-                only: self
-                    .kinds
-                    .clone()
-                    .or_else(|| language_server.code_action_kinds()),
-                ..lsp::CodeActionContext::default()
+        CommandRequest {
+            params: lsp::CodeActionParams {
+                text_document: lsp::TextDocumentIdentifier::new(
+                    lsp::Url::from_file_path(path).unwrap(),
+                ),
+                range: range_to_lsp(self.range.to_point_utf16(buffer)),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: lsp::CodeActionContext {
+                    diagnostics: relevant_diagnostics,
+                    // only: self
+                    //     .kinds
+                    //     .clone()
+                    //     .or_else(|| language_server.code_action_kinds()),
+                    ..lsp::CodeActionContext::default()
+                },
             },
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -1852,6 +1855,7 @@ impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
     type LspRequest = lsp::request::OnTypeFormatting;
     type ProtoRequest = proto::OnTypeFormatting;
+    type RequestContainer = CommandRequest<Self>;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(on_type_formatting_options) =
@@ -1869,20 +1873,17 @@ impl LspCommand for OnTypeFormatting {
                 .any(|chars| chars.contains(&self.trigger))
     }
 
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &AppContext,
-    ) -> lsp::DocumentOnTypeFormattingParams {
-        lsp::DocumentOnTypeFormattingParams {
-            text_document_position: lsp::TextDocumentPositionParams::new(
-                lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
-                point_to_lsp(self.position),
-            ),
-            ch: self.trigger.clone(),
-            options: lsp_formatting_options(self.options.tab_size),
+    fn to_lsp(&self, path: &Path, _: &Buffer, _: &Project, _: &AppContext) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::DocumentOnTypeFormattingParams {
+                text_document_position: lsp::TextDocumentPositionParams::new(
+                    lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
+                    point_to_lsp(self.position),
+                ),
+                ch: self.trigger.clone(),
+                options: lsp_formatting_options(self.options.tab_size),
+            },
+            server: LanguageServerToQuery::Primary,
         }
     }
 
@@ -2358,6 +2359,7 @@ impl LspCommand for InlayHints {
     type Response = Vec<InlayHint>;
     type LspRequest = lsp::InlayHintRequest;
     type ProtoRequest = proto::InlayHints;
+    type RequestContainer = CommandRequest<Self>;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else {
@@ -2376,15 +2378,18 @@ impl LspCommand for InlayHints {
         &self,
         path: &Path,
         buffer: &Buffer,
-        _: &Arc<LanguageServer>,
+        _: &Project,
         _: &AppContext,
-    ) -> lsp::InlayHintParams {
-        lsp::InlayHintParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+    ) -> CommandRequest<Self> {
+        CommandRequest {
+            params: lsp::InlayHintParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                range: range_to_lsp(self.range.to_point_utf16(buffer)),
+                work_done_progress_params: Default::default(),
             },
-            range: range_to_lsp(self.range.to_point_utf16(buffer)),
-            work_done_progress_params: Default::default(),
+            server: LanguageServerToQuery::Primary,
         }
     }
 
