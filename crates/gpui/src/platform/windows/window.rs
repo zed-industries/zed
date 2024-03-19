@@ -484,9 +484,13 @@ impl WindowsWindowInner {
             if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
                 modifiers.shift = false;
             }
+            let key = match first_char {
+                ' ' => "space".to_string(),
+                first_char => first_char.to_lowercase().to_string(),
+            };
             Some(Keystroke {
                 modifiers,
-                key: first_char.to_lowercase().to_string(),
+                key,
                 ime_key: Some(first_char.to_string()),
             })
         }
