@@ -267,12 +267,13 @@ impl Operator {
         match self {
             Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
-            | Operator::DeleteSurrounds => &["VimObject"],
+             => &["VimObject"],
             Operator::FindForward { .. }
             | Operator::FindBackward { .. }
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }
-            | Operator::ChangeSurrounds { target: Some(_) } => &["VimWaiting"],
+            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::DeleteSurrounds => &["VimWaiting"],
             _ => &[],
         }
     }

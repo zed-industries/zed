@@ -38,7 +38,7 @@ use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
-use surrounds::{add_surrounds, change_surrounds};
+use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
@@ -641,13 +641,16 @@ impl Vim {
                         add_surrounds(text, target, cx);
                     }
                 }
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
             Some(Operator::ChangeSurrounds { target }) => {
                 if let Some(target) = target {
                     change_surrounds(text, target, cx);
                 }
+            }
+            Some(Operator::DeleteSurrounds) => {
+                delete_surrounds(text, cx);
+                Vim::update(cx, |vim, cx| vim.clear_operator(cx));
             }
             _ => match Vim::read(cx).state().mode {
                 Mode::Replace => multi_replace(text, cx),

@@ -205,7 +205,9 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                     // Can't do anything for namespace operators. Ignoring
                 }
             },
-            Some(Operator::DeleteSurrounds) => delete_surrounds(vim, object, cx),
+            Some(Operator::DeleteSurrounds) => {
+                    waiting_operator = Some(Operator::DeleteSurrounds);
+            },
             Some(Operator::ChangeSurrounds { target: None }) => {
                 if is_valid_bracket_part(object) {
                     waiting_operator = Some(Operator::ChangeSurrounds {

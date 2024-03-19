@@ -4,12 +4,13 @@ use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
 use std::sync::Arc;
-
+use std::ops::Deref;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum SurroundsType {
     Motion(Motion),
     Object(Object),
 }
+
 
 pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
@@ -92,14 +93,27 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
     });
 }
 
-pub fn delete_surrounds(vim: &mut Vim, object: Object, cx: &mut WindowContext) {
-    if let Some(surround_pair) = object_to_bracbracket_pair(object) {
+pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
         vim.stop_recording();
+
+        let input_text = text.to_string();
+        // only legitimate surrounds can be removed
+        let pair = match find_surround_pair(&all_support_surround_pair(), text.deref()) {
+            Some(pair) => pair,
+            None => return,
+        };
+        let pair_object = match pair_to_object(&pair) {
+            Some(pair_object) => pair_object,
+            None => return,
+        };
+        let surround = pair.end != input_text;
+
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, true);
+                        pair_object.expand_selection(map, selection, true);
                     });
                 });
 
@@ -116,11 +130,14 @@ pub fn delete_surrounds(vim: &mut Vim, object: Object, cx: &mut WindowContext) {
                             .snapshot(cx)
                             .text_for_range(offset_range.clone())
                             .collect::<String>();
-                        if let Some(pos) = select_text.find(surround_pair.start.as_str()) {
+                        if let Some(pos) = select_text.find(pair.start.as_str()) {
                             select_text.remove(pos);
                         }
-                        if let Some(pos) = select_text.rfind(surround_pair.end.as_str()) {
+                        if let Some(pos) = select_text.rfind(pair.end.as_str()) {
                             select_text.remove(pos);
+                        }
+                        if surround {
+                            select_text = select_text.trim().to_string();
                         }
                         (offset_range, select_text)
                     })
@@ -143,11 +160,11 @@ pub fn delete_surrounds(vim: &mut Vim, object: Object, cx: &mut WindowContext) {
                 });
             });
         });
-    }
+    });
 }
 
 pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) {
-    if let Some(will_replace_pair) = object_to_bracbracket_pair(target) {
+    if let Some(will_replace_pair) = object_to_bracket_pair(target) {
         Vim::update(cx, |vim, cx| {
             vim.stop_recording();
             vim.update_active_editor(cx, |_, editor, cx| {
@@ -217,11 +234,21 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
 }
 
 pub fn is_valid_bracket_part(object: Object) -> bool {
-    if let Some(_) = object_to_bracbracket_pair(object) {
+    if let Some(_) = object_to_bracket_pair(object) {
         return true;
     }
     return false;
 }
+
+fn find_surround_pair(pairs: &[BracketPair], ch: &str) -> Option<BracketPair> {
+    for pair in pairs {
+        if pair.start == ch || pair.end == ch {
+            return Some(pair.clone());
+        }
+    }
+    None
+}
+
 
 fn all_support_surround_pair() -> Vec<BracketPair> {
     return vec![
@@ -282,7 +309,22 @@ fn all_support_surround_pair() -> Vec<BracketPair> {
     ];
 }
 
-fn object_to_bracbracket_pair(object: Object) -> Option<BracketPair> {
+fn pair_to_object(pair: &BracketPair) -> Option<Object> {
+    match pair.start.as_str() {
+        "'" => Some(Object::Quotes),
+        "`" => Some(Object::BackQuotes),
+        "\"" => Some(Object::DoubleQuotes),
+        "|" => Some(Object::VerticalBars),
+        "(" => Some(Object::Parentheses),
+        "[" => Some(Object::SquareBrackets),
+        "{" => Some(Object::CurlyBrackets),
+        "<" => Some(Object::AngleBrackets),
+        _ => None,
+    }
+}
+
+
+fn object_to_bracket_pair(object: Object) -> Option<BracketPair> {
     match object {
         Object::Quotes => Some(BracketPair {
             start: "'".to_string(),
