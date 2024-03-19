@@ -63,6 +63,7 @@ lazy_static::lazy_static! {
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
     pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
+    pub static ref LOCAL_VSCODE_TASKS_RELATIVE_PATH: &'static Path = Path::new(".vscode/tasks.json");
     pub static ref TEMP_DIR: PathBuf = if cfg!(target_os = "widows") {
         dirs::data_local_dir()
             .expect("failed to determine LocalAppData directory")
