@@ -30,6 +30,8 @@ use crate::{
 
 use super::x11::X11Client;
 
+pub(super) const SCROLL_LINES: f64 = 3.0;
+
 #[derive(Default)]
 pub(crate) struct Callbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,

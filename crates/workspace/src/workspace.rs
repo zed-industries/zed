@@ -51,6 +51,10 @@ use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -237,8 +241,22 @@ pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
 
-pub type WorkspaceId = i64;
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkspaceId(i64);
 
+impl StaticColumnCount for WorkspaceId {}
+impl Bind for WorkspaceId {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.0.bind(statement, start_index)
+    }
+}
+impl Column for WorkspaceId {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        i64::column(statement, start_index)
+            .map(|(i, next_index)| (Self(i), next_index))
+            .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
+    }
+}
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
@@ -867,7 +885,7 @@ impl Workspace {
             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
                 serialized_workspace.id
             } else {
-                DB.next_id().await.unwrap_or(0)
+                DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
             let window = if let Some(window) = requesting_window {
@@ -882,32 +900,39 @@ impl Workspace {
 
                 let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None, false)
-                } else if let Some((serialized_display, mut bounds, fullscreen)) =
-                    serialized_workspace.as_ref().and_then(|workspace| {
-                        Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
-                    })
-                {
-                    // Stored bounds are relative to the containing display.
-                    // So convert back to global coordinates if that screen still exists
-                    let screen_bounds = cx
-                        .update(|cx| {
-                            cx.displays()
-                                .into_iter()
-                                .find(|display| display.uuid().ok() == Some(serialized_display))
-                        })
-                        .ok()
-                        .flatten()
-                        .map(|screen| screen.bounds());
-
-                    if let Some(screen_bounds) = screen_bounds {
-                        bounds.origin.x += screen_bounds.origin.x;
-                        bounds.origin.y += screen_bounds.origin.y;
-                    }
-
-                    (Some(bounds), Some(serialized_display), fullscreen)
                 } else {
-                    let display = DB.last_monitor().log_err().flatten();
-                    (None, display, false)
+                    let restorable_bounds = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| {
+                            Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
+                        })
+                        .or_else(|| {
+                            let (display, bounds, fullscreen) = DB.last_window().log_err()?;
+                            Some((display?, bounds?.0, fullscreen.unwrap_or(false)))
+                        });
+
+                    if let Some((serialized_display, mut bounds, fullscreen)) = restorable_bounds {
+                        // Stored bounds are relative to the containing display.
+                        // So convert back to global coordinates if that screen still exists
+                        let screen_bounds = cx
+                            .update(|cx| {
+                                cx.displays()
+                                    .into_iter()
+                                    .find(|display| display.uuid().ok() == Some(serialized_display))
+                            })
+                            .ok()
+                            .flatten()
+                            .map(|screen| screen.bounds());
+
+                        if let Some(screen_bounds) = screen_bounds {
+                            bounds.origin.x += screen_bounds.origin.x;
+                            bounds.origin.y += screen_bounds.origin.y;
+                        }
+
+                        (Some(bounds), Some(serialized_display), fullscreen)
+                    } else {
+                        (None, None, false)
+                    }
                 };
 
                 // Use the serialized workspace to construct the new window
@@ -3675,7 +3700,7 @@ impl Workspace {
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
-        let workspace = Self::new(0, project, app_state, cx);
+        let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
         workspace
     }
@@ -4636,7 +4661,9 @@ pub fn join_hosted_project(
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
-                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
                 })
             })?
         };
@@ -4695,7 +4722,9 @@ pub fn join_in_room_project(
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
-                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
                 })
             })?
         };
@@ -4809,7 +4838,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(ui::titlebar_height(cx))
+            .top(ui::TitleBar::height(cx))
             .size_full()
             .flex()
             .items_center()

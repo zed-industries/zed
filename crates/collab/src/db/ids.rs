@@ -91,7 +91,9 @@ id_type!(NotificationKindId);
 id_type!(HostedProjectId);
 
 /// ChannelRole gives you permissions for both channels and calls.
-#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
+#[derive(
+    Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash, Serialize,
+)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
 pub enum ChannelRole {
     /// Admin can read/write and change permissions.

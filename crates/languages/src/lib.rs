@@ -7,6 +7,8 @@ use settings::Settings;
 use std::{str, sync::Arc};
 use util::asset_str;
 
+use crate::rust::RustContextProvider;
+
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod astro;
@@ -90,6 +92,7 @@ pub fn init(
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
+        ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
         ("markdown", tree_sitter_markdown::language()),
@@ -106,6 +109,7 @@ pub fn init(
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
+        ("regex", tree_sitter_regex::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
@@ -149,7 +153,7 @@ pub fn init(
             let config = load_config($name);
             // typeck helper
             let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
-            for adapter in $adapters {
+            for adapter in adapters {
                 languages.register_lsp_adapter(config.name.clone(), adapter);
             }
             languages.register_language(
@@ -239,7 +243,11 @@ pub fn init(
             node_runtime.clone(),
         ))]
     );
-    language!("rust", vec![Arc::new(rust::RustLspAdapter)]);
+    language!(
+        "rust",
+        vec![Arc::new(rust::RustLspAdapter)],
+        RustContextProvider
+    );
     language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
@@ -258,6 +266,7 @@ pub fn init(
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
+            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new())]);
         }
         false => {
             language!(
@@ -283,6 +292,12 @@ pub fn init(
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
+            language!(
+                "jsdoc",
+                vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+                    node_runtime.clone(),
+                ))]
+            );
         }
     }
 
@@ -304,6 +319,7 @@ pub fn init(
     );
     language!("scheme");
     language!("racket");
+    language!("regex");
     language!("lua", vec![Arc::new(lua::LuaLspAdapter)]);
     language!(
         "yaml",

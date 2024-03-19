@@ -3,7 +3,7 @@ use gpui::Render;
 use itertools::Itertools;
 use story::{Story, StoryContainer};
 
-use crate::{prelude::*, KeyBinding, KeyBindingDisplay};
+use crate::{prelude::*, KeyBinding};
 
 pub struct KeybindingStory;
 
@@ -59,18 +59,22 @@ impl Render for KeybindingStory {
         .child(KeyBinding::new(binding("ctrl-a shift-z")))
         .child(KeyBinding::new(binding("fn-s")))
         .child(Story::label("Single Key with All Modifiers (Linux)"))
-        .child(KeyBinding::new(binding("ctrl-alt-cmd-shift-z")).display(KeyBindingDisplay::Linux))
+        .child(
+            KeyBinding::new(binding("ctrl-alt-cmd-shift-z")).platform_style(PlatformStyle::Linux),
+        )
         .child(Story::label("Chord (Linux)"))
-        .child(KeyBinding::new(binding("a z")).display(KeyBindingDisplay::Linux))
+        .child(KeyBinding::new(binding("a z")).platform_style(PlatformStyle::Linux))
         .child(Story::label("Chord with Modifier (Linux)"))
-        .child(KeyBinding::new(binding("ctrl-a shift-z")).display(KeyBindingDisplay::Linux))
-        .child(KeyBinding::new(binding("fn-s")).display(KeyBindingDisplay::Linux))
+        .child(KeyBinding::new(binding("ctrl-a shift-z")).platform_style(PlatformStyle::Linux))
+        .child(KeyBinding::new(binding("fn-s")).platform_style(PlatformStyle::Linux))
         .child(Story::label("Single Key with All Modifiers (Windows)"))
-        .child(KeyBinding::new(binding("ctrl-alt-cmd-shift-z")).display(KeyBindingDisplay::Windows))
+        .child(
+            KeyBinding::new(binding("ctrl-alt-cmd-shift-z")).platform_style(PlatformStyle::Windows),
+        )
         .child(Story::label("Chord (Windows)"))
-        .child(KeyBinding::new(binding("a z")).display(KeyBindingDisplay::Windows))
+        .child(KeyBinding::new(binding("a z")).platform_style(PlatformStyle::Windows))
         .child(Story::label("Chord with Modifier (Windows)"))
-        .child(KeyBinding::new(binding("ctrl-a shift-z")).display(KeyBindingDisplay::Windows))
-        .child(KeyBinding::new(binding("fn-s")).display(KeyBindingDisplay::Windows))
+        .child(KeyBinding::new(binding("ctrl-a shift-z")).platform_style(PlatformStyle::Windows))
+        .child(KeyBinding::new(binding("fn-s")).platform_style(PlatformStyle::Windows))
     }
 }
