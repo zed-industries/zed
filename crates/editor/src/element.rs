@@ -4,8 +4,10 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::blame::{blame_entry_to_display, DisplayBlameEntry},
-    git::{diff_hunk_to_display, DisplayDiffHunk},
+    git::{
+        blame::{blame_entry_to_display, DisplayBlameEntry, MultiBufferBlame},
+        diff_hunk_to_display, DisplayDiffHunk,
+    },
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -31,8 +33,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
+use language::ToPoint as _;
 use lsp::DiagnosticSeverity;
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, MultiBufferSnapshot};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -49,6 +52,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
+use text::ToOffset;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
@@ -1085,26 +1089,33 @@ impl EditorElement {
 
     fn layout_git_blame_gutters(
         &self,
-        blame: &BufferBlame,
+        blame: &MultiBufferBlame,
         display_rows: Range<u32>,
         snapshot: &EditorSnapshot,
     ) -> Vec<DisplayBlameEntry> {
-        // TODO: Doesn't work in multibuffer then?
-        if let Some((_, _, buffer_snapshot)) = &snapshot.buffer_snapshot.as_singleton() {
-            let buffer_start_row = DisplayPoint::new(display_rows.start, 0)
-                .to_point(snapshot)
-                .row;
-            let buffer_end_row = DisplayPoint::new(display_rows.end, 0)
-                .to_point(snapshot)
-                .row;
+        let mut entries = Vec::new();
 
-            blame
-                .entries_in_row_range(buffer_start_row..buffer_end_row, buffer_snapshot)
-                .map(|hunk| blame_entry_to_display(hunk, snapshot))
-                .collect()
-        } else {
-            Vec::default()
+        for (buffer, buffer_range, excerpt_range) in snapshot
+            .buffer_snapshot
+            .excerpt_ranges_with_multi_buffer_ranges(display_rows)
+        {
+            if let Some(buffer_blame) = blame.get(buffer.remote_id()) {
+                let mut buffer_entries = buffer_blame
+                    .entries_in_row_range(buffer_range.clone(), &buffer)
+                    .flat_map(|hunk| {
+                        blame_entry_to_display(
+                            hunk,
+                            buffer_range.clone(),
+                            excerpt_range.clone(),
+                            snapshot,
+                        )
+                    })
+                    .collect();
+
+                entries.append(&mut buffer_entries);
+            }
         }
+        entries
     }
 
     fn layout_code_actions_indicator(
@@ -2166,7 +2177,7 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for entry in display_blame_entries {
+            for (idx, entry) in display_blame_entries.iter().enumerate() {
                 let (blame_entry, display_row_range) = match entry {
                     &DisplayBlameEntry::Folded { .. } => {
                         // TODO: what?
@@ -2202,6 +2213,7 @@ impl EditorElement {
                 };
                 let runs = [commit_sha_run, info_run];
 
+                println!("entry {}. display_row_range: {:?}", idx, display_row_range);
                 for row in display_row_range.start..display_row_range.end {
                     let start_y = row as f32 * line_height - scroll_top;
                     let start_x = layout.position_map.em_width * 1;

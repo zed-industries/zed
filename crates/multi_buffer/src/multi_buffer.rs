@@ -2829,7 +2829,7 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    fn excerpts_for_range<T: ToOffset>(
+    pub fn excerpts_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = (&Excerpt, usize)> + '_ {
@@ -3283,6 +3283,69 @@ impl MultiBufferSnapshot {
             Some(buffer_hunks)
         })
         .flatten()
+    }
+
+    //        multi-buffer
+    //    ┌───────────────────────────────┐
+    //  1 │ buffer_1.txt                  │
+    //  2 │ 8                             │
+    //  3 │ 9                             │
+    //  4 │ 10                            │
+    //  5 │ 11                            │
+    //  6 │ 12                            │
+    //  7 │ 13                            │
+    //  8 │ 14                            │
+    //  9 │                               │
+    // 10 │ buffer_1.txt                  │
+    // 11 │ 1                             │
+    // 12 │ 2                             │
+    // 13 │ 3                             │
+    // 14 │ 4                             │
+    // 15 │ 5                             │
+    // 16 │ 6                             │
+    //    └───────────────────────────────┘
+    pub fn excerpt_ranges_with_multi_buffer_ranges(
+        &self,
+        row_range: Range<u32>,
+    ) -> impl Iterator<Item = (BufferSnapshot, Range<u32>, Range<u32>)> + '_ {
+        let mut cursor = self.excerpts.cursor::<Point>();
+
+        cursor.seek(&Point::new(row_range.start, 0), Bias::Left, &());
+
+        println!(
+            "excerpt_ranges_with_multi_buffer_ranges. row_range: {:?}",
+            row_range
+        );
+        std::iter::from_fn(move || {
+            let excerpt = cursor.item()?;
+
+            let multibuffer_start = *cursor.start();
+            let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
+
+            let multibuffer_start_row = multibuffer_start.row;
+            let multibuffer_end_row = multibuffer_end.row;
+
+            let multibuffer_range = multibuffer_start_row..multibuffer_end_row;
+
+            let buffer_start = excerpt.range.context.start;
+            let buffer_end = excerpt.range.context.end;
+
+            let buffer_start_row = buffer_start.to_point(&excerpt.buffer).row;
+            let buffer_end_row = buffer_end.to_point(&excerpt.buffer).row;
+
+            let buffer_range = buffer_start_row..buffer_end_row;
+
+            println!(
+                "excerpt : {:?}. buffer_range: {:?}, multi_buffer_range: {:?}",
+                excerpt.buffer.file().unwrap().path(),
+                buffer_range,
+                multibuffer_range
+            );
+
+            cursor.next(&());
+
+            Some((excerpt.buffer.clone(), buffer_range, multibuffer_range))
+        })
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {

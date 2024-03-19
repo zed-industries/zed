@@ -1,5 +1,7 @@
 use anyhow::Result;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
+use language::Buffer;
+use language::Point;
 
 use core::fmt;
 use git::blame::{BlameEntry, BufferBlame};
@@ -7,14 +9,14 @@ use gpui::{EventEmitter, Model, ModelContext, Subscription, Task};
 use multi_buffer::MultiBuffer;
 use project::{Item, Project};
 use std::ops::Range;
-use text::Point;
-
-use crate::display_map::ToDisplayPoint;
+use text::BufferId;
 
 use crate::DisplaySnapshot;
 
+use crate::display_map::ToDisplayPoint;
+
 pub enum Event {
-    ShowBufferBlame { buffer_blame: BufferBlame },
+    ShowMultiBufferBlame { blame: MultiBufferBlame },
 }
 
 pub struct Blame {
@@ -65,37 +67,78 @@ impl Blame {
     }
 
     pub fn generate(&mut self, cx: &mut ModelContext<Self>) -> Option<()> {
-        let buffer = self.buffer.read(cx).as_singleton()?;
-        let file = buffer.read(cx).file()?.as_local()?.path();
+        let mut tasks = Vec::new();
 
-        let buffer_project_path = buffer.read(cx).project_path(cx)?;
-        let working_directory = self
-            .project
-            .read(cx)
-            .get_workspace_root(&buffer_project_path, cx)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-
-        let generation_task = cx.background_executor().spawn({
-            let file = file.clone();
-            async move { BufferBlame::new_with_cli(&working_directory, &file, &buffer_snapshot) }
-        });
+        for buffer in self.buffer.read(cx).all_buffers() {
+            if let Some(task) = self.generate_buffer(buffer, cx) {
+                tasks.push(task);
+            } else {
+                log::debug!("unable to 'git blame' buffer");
+            }
+        }
 
         self.task = Some(cx.spawn(move |this, mut cx| async move {
-            generation_task.await.and_then(|blame| {
-                this.update(&mut cx, |_, cx| {
-                    cx.emit(Event::ShowBufferBlame {
-                        buffer_blame: blame,
-                    });
-                    cx.notify();
-                })
+            let blames: HashMap<BufferId, BufferBlame> = futures::future::join_all(tasks)
+                .await
+                .into_iter()
+                .filter_map(|result| result.ok())
+                .collect();
+
+            let multi_buffer_blame = MultiBufferBlame::new(blames);
+
+            this.update(&mut cx, |_, cx| {
+                cx.emit(Event::ShowMultiBufferBlame {
+                    blame: multi_buffer_blame,
+                });
+                cx.notify();
             })
         }));
 
         Some(())
     }
+
+    fn generate_buffer(
+        &self,
+        buffer: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<(BufferId, BufferBlame)>>> {
+        let buffer = buffer.read(cx);
+
+        let buffer_project_path = buffer.project_path(cx)?;
+        let working_directory = self
+            .project
+            .read(cx)
+            .get_workspace_root(&buffer_project_path, cx)?;
+
+        let file = buffer.file()?.as_local()?.path();
+        let buffer_snapshot = buffer.snapshot();
+
+        Some(cx.background_executor().spawn({
+            let file = file.clone();
+            async move {
+                let blame = BufferBlame::new_with_cli(&working_directory, &file, &buffer_snapshot)?;
+                Ok((buffer_snapshot.remote_id(), blame))
+            }
+        }))
+    }
 }
 
 impl EventEmitter<Event> for Blame {}
+
+#[derive(Clone)]
+pub struct MultiBufferBlame {
+    blames: HashMap<BufferId, BufferBlame>,
+}
+
+impl MultiBufferBlame {
+    fn new(blames: HashMap<BufferId, BufferBlame>) -> Self {
+        MultiBufferBlame { blames }
+    }
+
+    pub fn get(&self, buffer_id: BufferId) -> Option<&BufferBlame> {
+        self.blames.get(&buffer_id)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisplayBlameEntry {
@@ -136,17 +179,43 @@ impl fmt::Display for DisplayBlameEntry {
     }
 }
 
-pub fn blame_entry_to_display(entry: &BlameEntry, snapshot: &DisplaySnapshot) -> DisplayBlameEntry {
-    // TODO: This is all wrong, I bet
-    let hunk_start_point = Point::new(entry.range.start, 0);
+pub fn blame_entry_to_display(
+    entry: &BlameEntry,
+    buffer_range: Range<u32>,
+    display_row_range: Range<u32>,
+    snapshot: &DisplaySnapshot,
+) -> Option<DisplayBlameEntry> {
+    // buffer_range: original range
 
-    let start = hunk_start_point.to_display_point(snapshot).row();
-    let hunk_end_row = entry.range.end.max(entry.range.start);
-    let hunk_end_point = Point::new(hunk_end_row, 0);
-    let end = hunk_end_point.to_display_point(snapshot).row();
+    let offset = buffer_range.start - display_row_range.start;
 
-    DisplayBlameEntry::Unfolded {
-        display_row_range: start..end,
-        entry: entry.clone(),
+    println!(
+        "buffer_range: {:?}, display_row_range: {:?}, entry.range: {:?}, offset: {}",
+        buffer_range, display_row_range, entry.range, offset
+    );
+
+    if entry.range.end == buffer_range.start {
+        return None;
     }
+
+    let start = entry.range.start.max(buffer_range.start);
+    let end = entry.range.end.min(buffer_range.end);
+
+    let buffer_display_row_range = (start - offset)..(end - offset);
+    println!("buffer display row range: {:?}", buffer_display_row_range);
+
+    let start_point = Point::new(buffer_display_row_range.start, 0);
+    let start_display_point = start_point.to_display_point(snapshot).row();
+    println!("start display point: {:?}", start_display_point);
+
+    let end_point = Point::new(buffer_display_row_range.end, 0);
+    let end_display_point = end_point.to_display_point(snapshot).row();
+    println!("end display point: {:?}", end_display_point);
+    // let end_point = Point::new(end, 0);
+    // let end = hunk_end_point.to_display_point(snapshot).row();
+
+    Some(DisplayBlameEntry::Unfolded {
+        display_row_range: start_display_point..end_display_point,
+        entry: entry.clone(),
+    })
 }

@@ -57,7 +57,7 @@ pub use element::{
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{self, Blame};
+use git::blame::{self, Blame, MultiBufferBlame};
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
@@ -436,7 +436,7 @@ pub struct Editor {
     show_git_blame: bool,
     blame: Option<Model<Blame>>,
     blame_subscription: Option<Subscription>,
-    buffer_blame: Option<BufferBlame>,
+    buffer_blame: Option<MultiBufferBlame>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -8861,11 +8861,13 @@ impl Editor {
 
             let blame = cx.new_model(|cx| Blame::new(buffer, project, cx));
 
-            self.blame_subscription = Some(cx.subscribe(&blame, |editor, _, event, cx| {
-                let blame::Event::ShowBufferBlame { buffer_blame } = event;
-                editor.buffer_blame = Some(buffer_blame.clone());
-                cx.notify();
-            }));
+            self.blame_subscription =
+                Some(cx.subscribe(&blame, |editor, _, event, cx| match event {
+                    blame::Event::ShowMultiBufferBlame { blame } => {
+                        editor.buffer_blame = Some(blame.clone());
+                        cx.notify();
+                    }
+                }));
 
             blame.update(cx, |blame, cx| blame.generate(cx));
 
