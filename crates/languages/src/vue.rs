@@ -79,11 +79,11 @@ impl super::LspAdapter for VueLspAdapter {
     }
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = version.downcast::<VueLspVersion>().unwrap();
+        let latest_version = latest_version.downcast::<VueLspVersion>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
         let ts_path = container_dir.join(Self::TYPESCRIPT_PATH);
 
