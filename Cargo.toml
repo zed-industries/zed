@@ -36,6 +36,7 @@ members = [
     "crates/go_to_line",
     "crates/gpui",
     "crates/gpui_macros",
+    "crates/image_viewer",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
@@ -140,6 +141,7 @@ go_to_line = { path = "crates/go_to_line" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 install_cli = { path = "crates/install_cli" }
+image_viewer = { path = "crates/image_viewer" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }

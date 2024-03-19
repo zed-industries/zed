@@ -4785,6 +4785,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "gpui",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12691,6 +12704,7 @@ dependencies = [
  "futures 0.3.28",
  "go_to_line",
  "gpui",
+ "image_viewer",
  "install_cli",
  "isahc",
  "journal",
