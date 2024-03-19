@@ -34,7 +34,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use theme::{ThemeRegistry, ThemeSettings};
+use theme::{Appearance, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
     paths::EXTENSIONS_DIR,
@@ -92,6 +92,7 @@ pub enum ExtensionStatus {
     Removing,
 }
 
+#[derive(Copy, Clone)]
 enum ExtensionOperation {
     Upgrade,
     Install,
@@ -330,6 +331,7 @@ impl ExtensionStore {
             .unbounded_send(modified_extension)
             .expect("reload task exited");
         cx.emit(Event::StartedReloading);
+
         async move {
             rx.await.ok();
         }
@@ -441,8 +443,20 @@ impl ExtensionStore {
             archive
                 .unpack(extensions_dir.join(extension_id.as_ref()))
                 .await?;
-            this.update(&mut cx, |this, cx| this.reload(Some(extension_id), cx))?
-                .await;
+            this.update(&mut cx, |this, cx| {
+                this.reload(Some(extension_id.clone()), cx)
+            })?
+            .await;
+
+            match operation {
+                ExtensionOperation::Install => {
+                    this.update(&mut cx, |this, cx| {
+                        this.apply_installed_theme(extension_id, cx);
+                    })?;
+                }
+                _ => {}
+            }
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -642,6 +656,50 @@ impl ExtensionStore {
             result
         })
         .detach_and_log_err(cx)
+    }
+
+    /// Apply the installed theme with matching system appearance.
+    ///
+    /// If no theme matches the system appearance, use the first installed theme.
+    fn apply_installed_theme(&self, extension: Arc<str>, cx: &mut ModelContext<Self>) {
+        let theme_registry = ThemeRegistry::global(cx);
+        let system_appearance = SystemAppearance::global(cx);
+        let mut themes = self
+            .extension_index
+            .themes
+            .iter()
+            .filter(|(_, ext)| ext.extension == extension);
+
+        let mut theme_name = None;
+        for (name, _) in themes.clone() {
+            let theme = theme_registry.get(name).log_err();
+            if let Some(theme) = theme {
+                match theme.appearance {
+                    Appearance::Light => {
+                        if system_appearance.is_light() {
+                            theme_name = Some(name);
+                            break;
+                        }
+                    }
+                    Appearance::Dark => {
+                        if !system_appearance.is_light() {
+                            theme_name = Some(name);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        match theme_name {
+            Some(name) => ThemeSettings::set_current_theme(name, cx),
+            None => {
+                // If no theme matched in current appearance, switch to the first theme
+                if let Some((name, _)) = themes.next() {
+                    ThemeSettings::set_current_theme(name, cx);
+                }
+            }
+        }
     }
 
     /// Updates the set of installed extensions.
