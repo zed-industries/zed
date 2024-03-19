@@ -985,7 +985,7 @@ impl WindowsWindowInner {
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
-                button: button.clone(),
+                button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
                 click_count: 1,
