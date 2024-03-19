@@ -289,8 +289,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, lparam: LPARAM) -> LRESULT {
-        let width = lparam.loword() as f32;
-        let height = lparam.hiword() as f32;
+        let width = lparam.loword().max(1) as f32;
+        let height = lparam.hiword().max(1) as f32;
         let scale_factor = self.scale_factor.get();
         let new_physical_size = Size {
             width: GlobalPixels(width),
