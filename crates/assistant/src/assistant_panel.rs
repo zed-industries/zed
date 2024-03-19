@@ -1518,7 +1518,7 @@ impl Conversation {
             }
 
             // Call to OpenAI to make completions
-            let request = self.to_completion_request(cx);
+            let request = dbg!(self.to_completion_request(cx));
 
             // Append a system message that includes the file context from the BufferSnapshots
             //let messages = request.messages;
@@ -2037,8 +2037,21 @@ impl ConversationEditor {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let buffer = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_item_as::<Editor>(cx)
+                    .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+            })
+            .ok()
+            .flatten()
+            .into_iter()
+            .collect();
+
+        dbg!(&buffer);
+
         let conversation =
-            cx.new_model(|cx| Conversation::new(model, language_registry, Default::default(), cx));
+            cx.new_model(|cx| Conversation::new(model, language_registry, buffer, cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
