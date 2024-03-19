@@ -197,6 +197,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             select_text.remove(pos);
                         }
                         if surround {
+                            select_text = select_text.trim_matches(' ').to_string();
                             select_text = format!("{} {} {}", pair.start, select_text, pair.end);
                         } else {
                             select_text = format!("{}{}{}", pair.start, select_text, pair.end);
