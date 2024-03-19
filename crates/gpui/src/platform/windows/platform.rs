@@ -59,7 +59,7 @@ pub(crate) struct WindowsPlatformInner {
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    pub(crate) dispatch_event: HANDLE,
+    pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
 
@@ -73,12 +73,6 @@ impl WindowsPlatformInner {
             .iter()
             .find(|entry| *entry == &hwnd)
             .and_then(|hwnd| try_get_window_inner(*hwnd))
-    }
-}
-
-impl Drop for WindowsPlatformInner {
-    fn drop(&mut self) {
-        unsafe { CloseHandle(self.dispatch_event) }.ok();
     }
 }
 
@@ -152,8 +146,9 @@ impl WindowsPlatform {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let dispatch_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event));
+        let dispatch_event =
+            OwnedHandle::new(unsafe { CreateEventW(None, false, false, None) }.unwrap());
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(WindowsTextSystem::new());
@@ -208,14 +203,15 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let dispatch_event = self.inner.dispatch_event;
-        let vsync_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        let timer_stop_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        begin_vsync_timer(vsync_event, timer_stop_event);
+        let dispatch_event = self.inner.dispatch_event.to_raw();
+        let vsync_event = create_event().unwrap();
+        let timer_stop_event = create_event().unwrap();
+        let raw_timer_stop_event = timer_stop_event.to_raw();
+        begin_vsync_timer(vsync_event.to_raw(), timer_stop_event);
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    Some(&[vsync_event, dispatch_event]),
+                    Some(&[vsync_event.to_raw(), dispatch_event]),
                     false,
                     INFINITE,
                     QS_ALLINPUT,
@@ -257,8 +253,7 @@ impl Platform for WindowsPlatform {
                 }
             }
         }
-        end_vsync_timer(timer_stop_event);
-        unsafe { CloseHandle(dispatch_event) }.log_err();
+        end_vsync_timer(raw_timer_stop_event);
 
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {
@@ -737,15 +732,14 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: HANDLE) {
+fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: OwnedHandle) {
     let vsync_fn = select_vsync_fn();
     std::thread::spawn(move || {
-        while vsync_fn(timer_stop_event) {
+        while vsync_fn(timer_stop_event.to_raw()) {
             if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
                 break;
             }
         }
-        unsafe { CloseHandle(timer_stop_event) }.log_err();
     });
 }
 
