@@ -54,6 +54,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
+use task::TaskSource;
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -125,8 +126,12 @@ pub struct LanguageContext {
     pub symbol: Option<String>,
 }
 
+/// Language Contexts are used by Zed tasks to extract information about source file.
 pub trait LanguageContextProvider: Send + Sync {
     fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
+    fn as_source(&self) -> Option<Model<Box<dyn TaskSource>>> {
+        None
+    }
 }
 
 /// A context provider that fills out LanguageContext without inspecting the contents.

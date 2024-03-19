@@ -9,8 +9,9 @@ use task::{Task, TaskContext};
 use util::ResultExt;
 use workspace::Workspace;
 
+mod buffer_source;
 mod modal;
-
+pub use buffer_source::BufferSource;
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {

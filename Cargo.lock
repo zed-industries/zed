@@ -5202,6 +5202,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
+ "task",
  "text",
  "theme",
  "tree-sitter",

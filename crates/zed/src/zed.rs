@@ -30,6 +30,7 @@ use settings::{
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::{oneshot_source::OneshotSource, static_source::StaticSource};
+use tasks_ui::BufferSource;
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -168,6 +169,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             );
                             StaticSource::new("global_tasks", tasks_file_rx, cx)
                         },
+                        cx,
+                    );
+                    inventory.add_source(
+                        TaskSourceKind::Buffer,
+                        |cx| BufferSource::new(workspace_handle.model.downgrade(), cx),
                         cx,
                     );
                 })

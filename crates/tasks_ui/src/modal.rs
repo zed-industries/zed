@@ -276,6 +276,7 @@ impl PickerDelegate for TasksModalDelegate {
         let (source_kind, _) = &self.candidates[hit.candidate_id];
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
+            TaskSourceKind::Buffer => "language extension".to_string(),
             TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
                 abs_path.compact().to_string_lossy().to_string()
             }
