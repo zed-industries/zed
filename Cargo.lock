@@ -2237,7 +2237,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prometheus",
- "prost 0.8.0",
+ "prost",
  "rand 0.8.5",
  "release_channel",
  "reqwest",
@@ -5492,9 +5492,9 @@ dependencies = [
  "hmac 0.12.1",
  "jwt",
  "log",
- "prost 0.8.0",
+ "prost",
  "prost-build",
- "prost-types 0.8.0",
+ "prost-types",
  "reqwest",
  "serde",
  "sha2 0.10.7",
@@ -7203,22 +7203,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de5e2533f59d08fcf364fd374ebda0692a70bd6d7e66ef97f306f45c6c5d8020"
-dependencies = [
- "bytes 1.5.0",
- "prost-derive 0.8.0",
-]
-
-[[package]]
-name = "prost"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "444879275cb4fd84958b1a1d5420d15e6fcf7c235fe47f053c9c2a80aceb6001"
 dependencies = [
  "bytes 1.5.0",
- "prost-derive 0.9.0",
+ "prost-derive",
 ]
 
 [[package]]
@@ -7234,24 +7224,11 @@ dependencies = [
  "log",
  "multimap",
  "petgraph",
- "prost 0.9.0",
- "prost-types 0.9.0",
+ "prost",
+ "prost-types",
  "regex",
  "tempfile",
  "which 4.4.2",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "600d2f334aa05acb02a755e217ef1ab6dea4d51b58b7846588b747edec04efba"
-dependencies = [
- "anyhow",
- "itertools 0.10.5",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -7269,22 +7246,12 @@ dependencies = [
 
 [[package]]
 name = "prost-types"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "603bbd6394701d13f3f25aada59c7de9d35a6a5887cfc156181234a44002771b"
-dependencies = [
- "bytes 1.5.0",
- "prost 0.8.0",
-]
-
-[[package]]
-name = "prost-types"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "534b7a0e836e3c482d2693070f982e39e7611da9695d4d1f5a4b186b51faef0a"
 dependencies = [
  "bytes 1.5.0",
- "prost 0.9.0",
+ "prost",
 ]
 
 [[package]]
@@ -7890,7 +7857,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "parking_lot",
- "prost 0.8.0",
+ "prost",
  "prost-build",
  "rand 0.8.5",
  "rsa 0.4.0",
