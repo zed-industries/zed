@@ -1,6 +1,8 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
+mod zed;
+
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
