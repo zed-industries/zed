@@ -23,6 +23,7 @@ extension.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
+project.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true

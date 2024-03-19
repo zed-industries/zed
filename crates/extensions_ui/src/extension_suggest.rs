@@ -5,11 +5,11 @@ use std::{
 
 use db::kvp::KEY_VALUE_STORE;
 
-use editor::{Editor, EditorMode};
+use editor::Editor;
 use extension::ExtensionStore;
-use gpui::{AppContext, VisualContext};
-use ui::WindowContext;
-use util::ResultExt;
+use gpui::{Entity, Model, VisualContext};
+use language::Buffer;
+use ui::ViewContext;
 use workspace::{notifications::simple_message_notification, Workspace};
 
 pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
@@ -23,19 +23,19 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
                 ("fish", "fish"),
                 ("git-firefly", ".gitconfig"),
                 ("git-firefly", ".gitignore"),
-                ("git-firefly", "git-rebase-todo"),
                 ("git-firefly", "COMMIT_EDITMSG"),
                 ("git-firefly", "EDIT_DESCRIPTION"),
+                ("git-firefly", "git-rebase-todo"),
                 ("git-firefly", "MERGE_MSG"),
                 ("git-firefly", "NOTES_EDITMSG"),
                 ("git-firefly", "TAG_EDITMSG"),
                 ("graphql", "gql"),
                 ("graphql", "graphql"),
                 ("java", "java"),
-                ("nix", "nix"),
                 ("kotlin", "kt"),
                 ("latex", "tex"),
                 ("make", "Makefile"),
+                ("nix", "nix"),
                 ("r", "r"),
                 ("r", "R"),
                 ("sql", "sql"),
@@ -51,57 +51,41 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
         .map(|str| str.clone())
 }
 
-pub(crate) fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |editor: &mut Editor, cx| {
-        if let EditorMode::Full = editor.mode() {
-            let file_name_or_extension =
-                editor.buffer().read(cx).as_singleton().and_then(|buffer| {
-                    let buffer = buffer.read(cx);
-                    if buffer.language().is_some() {
-                        None
-                    } else {
-                        let path = buffer.file()?.path();
-                        Some(match path.extension() {
-                            Some(extension) => extension.to_str()?.to_string(),
-                            None => path.to_str()?.to_string(),
-                        })
-                    }
-                });
-
-            let Some(file_name_or_extension) = file_name_or_extension else {
-                return;
-            };
-
-            check_and_suggest(&file_name_or_extension, cx).log_err();
-        }
-    })
-    .detach();
-}
-
 fn language_extension_key(extension_id: &str) -> String {
     format!("{}_extension_suggest", extension_id)
 }
 
-fn check_and_suggest(file_name_or_extension: &str, cx: &mut WindowContext) -> anyhow::Result<()> {
-    let workspace = cx
-        .window_handle()
-        .downcast::<Workspace>()
-        .map(|handle| handle.root(cx))
-        .ok_or_else(|| anyhow::anyhow!("No workspace"))??;
+pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
+    let Some(file_name_or_extension) = buffer.read(cx).file().and_then(|file| {
+        Some(match file.path().extension() {
+            Some(extension) => extension.to_str()?.to_string(),
+            None => file.path().to_str()?.to_string(),
+        })
+    }) else {
+        return;
+    };
 
     let Some(extension_id) = suggested_extension(&file_name_or_extension) else {
-        return Ok(());
+        return;
     };
 
     let key = language_extension_key(&extension_id);
-    let value = KEY_VALUE_STORE.read_kvp(&key)?;
+    let value = KEY_VALUE_STORE.read_kvp(&key);
 
-    if value.is_some() {
-        return Ok(());
+    if value.is_err() || value.unwrap().is_some() {
+        return;
     }
 
-    workspace.update(cx, |workspace, cx| {
-        workspace.show_notification(0 as usize, cx, |cx| {
+    cx.on_next_frame(move |workspace, cx| {
+        let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
+            return;
+        };
+
+        if editor.read(cx).buffer().read(cx).as_singleton().as_ref() != Some(&buffer) {
+            return;
+        }
+
+        workspace.show_notification(buffer.entity_id().as_u64() as usize, cx, |cx| {
             cx.new_view(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension?",
@@ -126,8 +110,6 @@ fn check_and_suggest(file_name_or_extension: &str, cx: &mut WindowContext) -> an
                     });
                 })
             })
-        })
-    });
-
-    Ok(())
+        });
+    })
 }

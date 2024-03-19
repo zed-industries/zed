@@ -26,7 +26,7 @@ use workspace::{
 actions!(zed, [Extensions, InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace
             .register_action(move |workspace, _: &Extensions, cx| {
                 let extensions_page = ExtensionsPage::new(workspace, cx);
@@ -54,10 +54,16 @@ pub fn init(cx: &mut AppContext) {
                     })
                     .detach();
             });
+
+        cx.subscribe(workspace.project(), |_, _, event, cx| match event {
+            project::Event::LanguageNotFound(buffer) => {
+                extension_suggest::suggest(buffer.clone(), cx);
+            }
+            _ => {}
+        })
+        .detach();
     })
     .detach();
-
-    extension_suggest::init(cx);
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
