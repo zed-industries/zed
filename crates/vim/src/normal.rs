@@ -15,7 +15,7 @@ use crate::{
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
-    surrounds::{delete_surrounds, is_valid_bracket_part, SurroundsType},
+    surrounds::{is_valid_bracket_part, SurroundsType},
     Vim,
 };
 use collections::HashSet;
