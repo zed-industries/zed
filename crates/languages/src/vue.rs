@@ -79,19 +79,30 @@ impl super::LspAdapter for VueLspAdapter {
     }
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<VueLspVersion>().unwrap();
+        let latest_version = latest_version.downcast::<VueLspVersion>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
         let ts_path = container_dir.join(Self::TYPESCRIPT_PATH);
 
-        if fs::metadata(&server_path).await.is_err() {
+        let vue_package_name = "@vue/language-server";
+        let should_install_vue_language_server = self
+            .node
+            .should_install_npm_package(
+                vue_package_name,
+                &server_path,
+                &container_dir,
+                &latest_version.vue_version,
+            )
+            .await;
+
+        if should_install_vue_language_server {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    &[("@vue/language-server", version.vue_version.as_str())],
+                    &[(vue_package_name, latest_version.vue_version.as_str())],
                 )
                 .await?;
         }
@@ -99,11 +110,23 @@ impl super::LspAdapter for VueLspAdapter {
             fs::metadata(&server_path).await.is_ok(),
             "@vue/language-server package installation failed"
         );
-        if fs::metadata(&ts_path).await.is_err() {
+
+        let ts_package_name = "typescript";
+        let should_install_ts_language_server = self
+            .node
+            .should_install_npm_package(
+                ts_package_name,
+                &server_path,
+                &container_dir,
+                &latest_version.ts_version,
+            )
+            .await;
+
+        if should_install_ts_language_server {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    &[("typescript", version.ts_version.as_str())],
+                    &[(ts_package_name, latest_version.ts_version.as_str())],
                 )
                 .await?;
         }

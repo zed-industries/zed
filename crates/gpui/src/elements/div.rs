@@ -1320,6 +1320,8 @@ impl Interactivity {
         self.occlude_mouse
             || style.mouse_cursor.is_some()
             || self.group.is_some()
+            || self.scroll_offset.is_some()
+            || self.tracked_focus_handle.is_some()
             || self.hover_style.is_some()
             || self.group_hover_style.is_some()
             || !self.mouse_up_listeners.is_empty()
@@ -1329,8 +1331,6 @@ impl Interactivity {
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
-            || self.scroll_offset.is_some()
-            || self.tracked_focus_handle.is_some()
             || self.tooltip_builder.is_some()
     }
 

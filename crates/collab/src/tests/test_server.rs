@@ -40,7 +40,7 @@ use std::{
     },
 };
 use util::{http::FakeHttpClient, SemanticVersion};
-use workspace::{Workspace, WorkspaceStore};
+use workspace::{Workspace, WorkspaceId, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -755,7 +755,12 @@ impl TestClient {
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+            Workspace::new(
+                WorkspaceId::default(),
+                project.clone(),
+                self.app_state.clone(),
+                cx,
+            )
         })
     }
 
@@ -766,7 +771,12 @@ impl TestClient {
         let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+            Workspace::new(
+                WorkspaceId::default(),
+                project.clone(),
+                self.app_state.clone(),
+                cx,
+            )
         })
     }
 

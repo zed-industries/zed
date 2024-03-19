@@ -1,4 +1,4 @@
-mod build_extension;
+pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
 mod wasm_host;
@@ -10,8 +10,8 @@ use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use build_extension::{CompileExtensionOptions, ExtensionBuilder};
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension_manifest::ExtensionLibraryKind;
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -402,27 +402,13 @@ impl ExtensionStore {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Install, cx)
     }
 
-    pub fn upgrade_extension(
+    fn install_or_upgrade_extension_at_endpoint(
         &mut self,
         extension_id: Arc<str>,
-        version: Arc<str>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
-    }
-
-    fn install_or_upgrade_extension(
-        &mut self,
-        extension_id: Arc<str>,
-        version: Arc<str>,
+        url: String,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
     ) {
-        log::info!("installing extension {extension_id} {version}");
-        let url = self
-            .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
-
         let extensions_dir = self.extensions_dir();
         let http_client = self.http_client.clone();
 
@@ -459,6 +445,49 @@ impl ExtensionStore {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn install_latest_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        log::info!("installing extension {extension_id} latest version");
+
+        let url = self
+            .http_client
+            .build_zed_api_url(&format!("/extensions/{extension_id}/download"));
+
+        self.install_or_upgrade_extension_at_endpoint(
+            extension_id,
+            url,
+            ExtensionOperation::Install,
+            cx,
+        );
+    }
+
+    pub fn upgrade_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        version: Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
+    }
+
+    fn install_or_upgrade_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        version: Arc<str>,
+        operation: ExtensionOperation,
+        cx: &mut ModelContext<Self>,
+    ) {
+        log::info!("installing extension {extension_id} {version}");
+        let url = self
+            .http_client
+            .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
+
+        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx);
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
@@ -545,6 +574,7 @@ impl ExtensionStore {
                         builder
                             .compile_extension(
                                 &extension_source_path,
+                                &extension_manifest,
                                 CompileExtensionOptions { release: false },
                             )
                             .await
@@ -580,6 +610,7 @@ impl ExtensionStore {
     pub fn rebuild_dev_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
         let path = self.installed_dir.join(extension_id.as_ref());
         let builder = self.builder.clone();
+        let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
             hash_map::Entry::Occupied(_) => return,
@@ -588,8 +619,9 @@ impl ExtensionStore {
 
         cx.notify();
         let compile = cx.background_executor().spawn(async move {
+            let manifest = Self::load_extension_manifest(fs, &path).await?;
             builder
-                .compile_extension(&path, CompileExtensionOptions { release: true })
+                .compile_extension(&path, &manifest, CompileExtensionOptions { release: true })
                 .await
         });
 
@@ -1000,7 +1032,7 @@ impl ExtensionStore {
         Ok(())
     }
 
-    async fn load_extension_manifest(
+    pub async fn load_extension_manifest(
         fs: Arc<dyn Fs>,
         extension_dir: &Path,
     ) -> Result<ExtensionManifest> {

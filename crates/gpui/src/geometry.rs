@@ -26,7 +26,7 @@ pub enum Axis {
 
 impl Axis {
     /// Swap this axis to the opposite axis.
-    pub fn invert(&self) -> Self {
+    pub fn invert(self) -> Self {
         match self {
             Axis::Vertical => Axis::Horizontal,
             Axis::Horizontal => Axis::Vertical,
@@ -157,6 +157,12 @@ impl<T: Clone + Debug + Default> Along for Point<T> {
                 y: f(self.y.clone()),
             },
         }
+    }
+}
+
+impl<T: Clone + Debug + Default + Negate> Negate for Point<T> {
+    fn negate(self) -> Self {
+        self.map(Negate::negate)
     }
 }
 
@@ -417,6 +423,19 @@ where
         Size {
             width: f(self.width.clone()),
             height: f(self.height.clone()),
+        }
+    }
+}
+
+impl<T> Size<T>
+where
+    T: Clone + Default + Debug + Half,
+{
+    /// Compute the center point of the size.g
+    pub fn center(&self) -> Point<T> {
+        Point {
+            x: self.width.half(),
+            y: self.height.half(),
         }
     }
 }
@@ -1970,6 +1989,66 @@ impl From<Pixels> for Corners<Pixels> {
     }
 }
 
+/// Represents an angle in Radians
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Neg,
+    Div,
+    DivAssign,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Debug,
+)]
+#[repr(transparent)]
+pub struct Radians(pub f32);
+
+/// Create a `Radian` from a raw value
+pub fn radians(value: f32) -> Radians {
+    Radians(value)
+}
+
+/// A type representing a percentage value.
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Neg,
+    Div,
+    DivAssign,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Debug,
+)]
+#[repr(transparent)]
+pub struct Percentage(pub f32);
+
+/// Generate a `Radian` from a percentage of a full circle.
+pub fn percentage(value: f32) -> Percentage {
+    debug_assert!(
+        value >= 0.0 && value <= 1.0,
+        "Percentage must be between 0 and 1"
+    );
+    Percentage(value)
+}
+
+impl From<Percentage> for Radians {
+    fn from(value: Percentage) -> Self {
+        radians(value.0 * std::f32::consts::PI * 2.0)
+    }
+}
+
 /// Represents a length in pixels, the base unit of measurement in the UI framework.
 ///
 /// `Pixels` is a value type that represents an absolute length in pixels, which is used
@@ -2758,6 +2837,54 @@ impl Half for Rems {
 impl Half for GlobalPixels {
     fn half(&self) -> Self {
         Self(self.0 / 2.)
+    }
+}
+
+/// Provides a trait for types that can negate their values.
+pub trait Negate {
+    /// Returns the negation of the given value
+    fn negate(self) -> Self;
+}
+
+impl Negate for i32 {
+    fn negate(self) -> Self {
+        -self
+    }
+}
+
+impl Negate for f32 {
+    fn negate(self) -> Self {
+        -self
+    }
+}
+
+impl Negate for DevicePixels {
+    fn negate(self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Negate for ScaledPixels {
+    fn negate(self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Negate for Pixels {
+    fn negate(self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Negate for Rems {
+    fn negate(self) -> Self {
+        Self(-self.0)
+    }
+}
+
+impl Negate for GlobalPixels {
+    fn negate(self) -> Self {
+        Self(-self.0)
     }
 }
 

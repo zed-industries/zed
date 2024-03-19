@@ -546,7 +546,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    fn from_model(value: channel::Model) -> Self {
+    pub fn from_model(value: channel::Model) -> Self {
         Channel {
             id: value.id,
             visibility: value.visibility,
@@ -604,16 +604,14 @@ pub struct RejoinedChannelBuffer {
 #[derive(Clone)]
 pub struct JoinRoom {
     pub room: proto::Room,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
 }
 
 pub struct RejoinedRoom {
     pub room: proto::Room,
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
 }
 
 pub struct ResharedProject {
@@ -649,8 +647,7 @@ pub struct RejoinedWorktree {
 
 pub struct LeftRoom {
     pub room: proto::Room,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
     pub left_projects: HashMap<ProjectId, LeftProject>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
     pub deleted: bool,
@@ -658,8 +655,7 @@ pub struct LeftRoom {
 
 pub struct RefreshedRoom {
     pub room: proto::Room,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
     pub stale_participant_user_ids: Vec<UserId>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
 }
