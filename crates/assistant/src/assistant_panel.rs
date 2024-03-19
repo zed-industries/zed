@@ -7,7 +7,7 @@ use crate::{
     NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -29,11 +29,10 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{
-    language_settings::SoftWrap, Buffer, BufferId, BufferSnapshot, LanguageRegistry, ToOffset as _,
-};
+use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
 use project::Project;
+use project_panel::file_associations::FileAssociations;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
@@ -711,18 +710,22 @@ impl AssistantPanel {
         });
     }
 
-    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
+    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> Result<View<ConversationEditor>> {
+        let workspace = self
+            .workspace
+            .upgrade()
+            .ok_or_else(|| anyhow!("workspaced dropped"))?;
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
                 self.model.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
-                self.workspace.clone(),
+                workspace,
                 cx,
             )
         });
         self.show_conversation(editor.clone(), cx);
-        editor
+        Ok(editor)
     }
 
     fn show_conversation(
@@ -991,11 +994,15 @@ impl AssistantPanel {
             .await?;
 
             this.update(&mut cx, |this, cx| {
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ConversationEditor::for_conversation(conversation, fs, workspace, cx)
                 });
                 this.show_conversation(editor, cx);
-            })?;
+                anyhow::Ok(())
+            })??;
             Ok(())
         })
     }
@@ -1266,17 +1273,17 @@ struct Summary {
     done: bool,
 }
 
-// struct ContextForLLM {
-//     excerpts: Vec<Model<Buffer>>,
-//     diagnostics: Vec<Diagnostic>,
-// }
+#[derive(Debug, Clone, Default)]
+struct LlmContext {
+    excerpts: Vec<Model<Buffer>>,
+    // TODO: Bring in project diagnostics
+    // diagnostics: ???,
+}
 
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    // WANT: Context object. For now we'll just take a vector of Buffers and Ranges
-    excerpts: Vec<Model<Buffer>>,
-
+    llm_context: LlmContext,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1298,7 +1305,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        excerpts: Vec<Model<Buffer>>,
+        context_for_llm: LlmContext,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1332,7 +1339,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            excerpts,
+            llm_context: context_for_llm,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1434,7 +1441,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
-                excerpts: Default::default(),
+                llm_context: Default::default(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1535,9 +1542,6 @@ impl Conversation {
             // Call to OpenAI to make completions
             let request = self.to_completion_request(cx);
 
-            // Append a system message that includes the file context from the BufferSnapshots
-            //let messages = request.messages;
-
             let stream = CompletionProvider::global(cx).complete(request);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -1634,6 +1638,7 @@ impl Conversation {
 
         // Build up a prompt to include the file context as a system message
         let s: String = self
+            .llm_context
             .excerpts
             .iter()
             .map(|buffer| {
@@ -2049,31 +2054,32 @@ impl ConversationEditor {
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = workspace
+        let context_for_llm = Self::llm_context(&workspace, cx);
+        let conversation =
+            cx.new_model(|cx| Conversation::new(model, language_registry, context_for_llm, cx));
+        Self::for_conversation(conversation, fs, workspace, cx)
+    }
+
+    fn llm_context(workspace: &View<Workspace>, cx: &mut WindowContext) -> LlmContext {
+        let excerpts = workspace
             .update(cx, |workspace, cx| {
                 workspace
                     .active_item_as::<Editor>(cx)
                     .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton())
             })
-            .ok()
-            .flatten()
             .into_iter()
             .collect();
 
-        dbg!(&buffer);
-
-        let conversation =
-            cx.new_model(|cx| Conversation::new(model, language_registry, buffer, cx));
-        Self::for_conversation(conversation, fs, workspace, cx)
+        LlmContext { excerpts }
     }
 
     fn for_conversation(
         conversation: Model<Conversation>,
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.new_view(|cx| {
@@ -2088,6 +2094,7 @@ impl ConversationEditor {
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
+            cx.observe(&workspace, Self::handle_workspace_notify),
         ];
 
         let mut this = Self {
@@ -2096,7 +2103,7 @@ impl ConversationEditor {
             blocks: Default::default(),
             scroll_position: None,
             fs,
-            workspace,
+            workspace: workspace.downgrade(),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2230,6 +2237,14 @@ impl ConversationEditor {
             }
             _ => {}
         }
+    }
+
+    fn handle_workspace_notify(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
+        let updated_llm_context = Self::llm_context(&workspace, cx);
+
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.llm_context = updated_llm_context;
+        });
     }
 
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
@@ -2393,15 +2408,17 @@ impl ConversationEditor {
 
         if let Some(text) = text {
             panel.update(cx, |panel, cx| {
-                let conversation = panel
+                if let Some(conversation) = panel
                     .active_conversation_editor()
                     .cloned()
-                    .unwrap_or_else(|| panel.new_conversation(cx));
-                conversation.update(cx, |conversation, cx| {
-                    conversation
-                        .editor
-                        .update(cx, |editor, cx| editor.insert(&text, cx))
-                });
+                    .or_else(|| panel.new_conversation(cx).log_err())
+                {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&text, cx))
+                    });
+                };
             });
         }
     }
@@ -2472,6 +2489,39 @@ impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        // let excerpts: Vec<Model<Buffer>> = llm_context_for_human_consumption.excerpts;
+
+        // // Little icons of the available excerpts
+
+        // let excerpt_elements = excerpts.iter().map(|buffer| {
+        //     let buffer = buffer.read(cx);
+
+        //     let language = buffer.language();
+
+        //     // let icon = FileAssociations.get_icon_for_language(language);
+
+        //     icon
+        // });
+        let conversation = self.conversation.read(cx);
+        let llm_context = conversation.llm_context.excerpts.iter().map(|buffer| {
+            let buffer = buffer.read(cx);
+            let language = buffer.language();
+
+            div()
+                .h_flex()
+                // TODO: Add icons for the languages
+                // .child(FileAssociations.get_icon_for_language(language))
+                .child(if let Some(file) = buffer.file() {
+                    // TODO: Use path instead of full_path if the project contains multiple roots
+                    file.full_path(cx)
+                        .to_string_lossy()
+                        .to_string()
+                        .into_any_element()
+                } else {
+                    "Untitled".into_any_element()
+                })
+        });
+
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -2489,6 +2539,7 @@ impl Render for ConversationEditor {
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
+            .children(llm_context)
     }
 }
 

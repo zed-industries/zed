@@ -45,6 +45,14 @@ impl FileAssociations {
             })
     }
 
+    pub fn icon_for_language(language: &str, cx: &AppContext) -> Option<Arc<str>> {
+        let this = cx.try_global::<Self>()?;
+
+        this.types
+            .get(language)
+            .map(|type_config| type_config.icon.clone())
+    }
+
     pub fn get_icon(path: &Path, cx: &AppContext) -> Option<Arc<str>> {
         let this = cx.try_global::<Self>()?;
 
