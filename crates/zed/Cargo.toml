@@ -89,6 +89,9 @@ welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
