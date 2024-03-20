@@ -51,6 +51,7 @@ pub struct ChannelMessage {
     pub nonce: u128,
     pub mentions: Vec<(Range<usize>, UserId)>,
     pub reply_to_message_id: Option<u64>,
+    pub edited_at: Option<OffsetDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -83,6 +84,10 @@ pub enum ChannelChatEvent {
         old_range: Range<usize>,
         new_count: usize,
     },
+    UpdateMessage {
+        message_id: ChannelMessageId,
+        message_ix: usize,
+    },
     NewMessage {
         channel_id: ChannelId,
         message_id: u64,
@@ -93,6 +98,7 @@ impl EventEmitter<ChannelChatEvent> for ChannelChat {}
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelChat::handle_message_sent);
     client.add_model_message_handler(ChannelChat::handle_message_removed);
+    client.add_model_message_handler(ChannelChat::handle_message_updated);
 }
 
 impl ChannelChat {
@@ -189,6 +195,7 @@ impl ChannelChat {
                     mentions: message.mentions.clone(),
                     nonce,
                     reply_to_message_id: message.reply_to_message_id,
+                    edited_at: None,
                 },
                 &(),
             ),
@@ -232,6 +239,35 @@ impl ChannelChat {
             })?;
             Ok(())
         })
+    }
+
+    pub fn update_message(
+        &mut self,
+        id: u64,
+        message: MessageParams,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Task<Result<()>>> {
+        self.message_update(
+            ChannelMessageId::Saved(id),
+            message.text.clone(),
+            message.mentions.clone(),
+            Some(OffsetDateTime::now_utc()),
+            cx,
+        );
+
+        let nonce: u128 = self.rng.gen();
+
+        let request = self.rpc.request(proto::UpdateChannelMessage {
+            channel_id: self.channel_id.0,
+            message_id: id,
+            body: message.text,
+            nonce: Some(nonce.into()),
+            mentions: mentions_to_proto(&message.mentions),
+        });
+        Ok(cx.spawn(move |_, _| async move {
+            request.await?;
+            Ok(())
+        }))
     }
 
     pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Option<()>>> {
@@ -523,6 +559,32 @@ impl ChannelChat {
         Ok(())
     }
 
+    async fn handle_message_updated(
+        this: Model<Self>,
+        message: TypedEnvelope<proto::ChannelMessageUpdate>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
+        let message = message
+            .payload
+            .message
+            .ok_or_else(|| anyhow!("empty message"))?;
+
+        let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
+
+        this.update(&mut cx, |this, cx| {
+            this.message_update(
+                message.id,
+                message.body,
+                message.mentions,
+                message.edited_at,
+                cx,
+            )
+        })?;
+        Ok(())
+    }
+
     fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
             let nonces = messages
@@ -599,6 +661,38 @@ impl ChannelChat {
             }
         }
     }
+
+    fn message_update(
+        &mut self,
+        id: ChannelMessageId,
+        body: String,
+        mentions: Vec<(Range<usize>, u64)>,
+        edited_at: Option<OffsetDateTime>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let mut cursor = self.messages.cursor::<ChannelMessageId>();
+        let mut messages = cursor.slice(&id, Bias::Left, &());
+        let ix = messages.summary().count;
+
+        if let Some(mut message_to_update) = cursor.item().cloned() {
+            message_to_update.body = body;
+            message_to_update.mentions = mentions;
+            message_to_update.edited_at = edited_at;
+            messages.push(message_to_update, &());
+            cursor.next(&());
+        }
+
+        messages.append(cursor.suffix(&()), &());
+        drop(cursor);
+        self.messages = messages;
+
+        cx.emit(ChannelChatEvent::UpdateMessage {
+            message_ix: ix,
+            message_id: id,
+        });
+
+        cx.notify();
+    }
 }
 
 async fn messages_from_proto(
@@ -623,6 +717,15 @@ impl ChannelMessage {
                 user_store.get_user(message.sender_id, cx)
             })?
             .await?;
+
+        let edited_at = message.edited_at.and_then(|t| -> Option<OffsetDateTime> {
+            if let Ok(a) = OffsetDateTime::from_unix_timestamp(t as i64) {
+                return Some(a);
+            }
+
+            None
+        });
+
         Ok(ChannelMessage {
             id: ChannelMessageId::Saved(message.id),
             body: message.body,
@@ -641,6 +744,7 @@ impl ChannelMessage {
                 .ok_or_else(|| anyhow!("nonce is required"))?
                 .into(),
             reply_to_message_id: message.reply_to_message_id,
+            edited_at,
         })
     }
 

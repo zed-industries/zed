@@ -380,6 +380,26 @@ To override settings for a language, add an entry for that language server's nam
 
 `boolean` values
 
+## Always Treat Brackets As Autoclosed
+
+- Description: Controls how the editor handles the autoclosed characters.
+- Setting: `always_treat_brackets_as_autoclosed`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+If the setting is set to `true`:
+
+1. Enter in the editor: `)))`
+2. Move the cursor to the start: `^)))`
+3. Enter again: `)))`
+
+The result is still `)))` and not `))))))`, which is what it would be by default.
+
 ## File Types
 
 - Setting: `file_types`
@@ -573,6 +593,8 @@ The following settings can be overridden for each specific language:
 - `show_whitespaces`
 - `soft_wrap`
 - `tab_size`
+- `use_autoclose`
+- `always_treat_brackets_as_autoclosed`
 
 These values take in the same options as the root-level settings with the same name.
 
@@ -600,28 +622,6 @@ These values take in the same options as the root-level settings with the same n
 
 - Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it.
 - Setting: `remove_trailing_whitespace_on_save`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-## Semantic Index
-
-- Description: Settings related to semantic index.
-- Setting: `semantic_index`
-- Default:
-
-```json
-"semantic_index": {
-  "enabled": false
-},
-```
-
-### Enabled
-
-- Description: Whether or not to display the `Semantic` mode in project search.
-- Setting: `enabled`
 - Default: `true`
 
 **Options**

@@ -251,7 +251,6 @@
       "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -276,7 +275,6 @@
       "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -302,7 +300,6 @@
       "alt-tab": "search::CycleMode",
       "alt-cmd-f": "project_search::ToggleFilters",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -561,8 +558,10 @@
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
+      "backspace": "project_panel::Delete",
       "delete": "project_panel::Delete",
-      "cmd-backspace": "project_panel::Delete",
+      "cmd-backspace": ["project_panel::Delete", { "skip_prompt": true }],
+      "cmd-delete": ["project_panel::Delete", { "skip_prompt": true }],
       "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
@@ -596,12 +595,6 @@
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
-    }
-  },
-  {
-    "context": "ChatPanel > MessageEditor",
-    "bindings": {
-      "escape": "chat_panel::CloseReplyPreview"
     }
   },
   {

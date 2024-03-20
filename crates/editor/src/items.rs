@@ -595,27 +595,18 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        let git_status = if ItemSettings::get_global(cx).git_status {
+        let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
                 .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
-                .and_then(|entry| entry.git_status())
+                .map(|entry| {
+                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, selected)
+                })
+                .unwrap_or_else(|| entry_label_color(selected))
         } else {
-            None
-        };
-        let label_color = match git_status {
-            Some(GitFileStatus::Added) => Color::Created,
-            Some(GitFileStatus::Modified) => Color::Modified,
-            Some(GitFileStatus::Conflict) => Color::Conflict,
-            None => {
-                if selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }
-            }
+            entry_label_color(selected)
         };
 
         let description = detail.and_then(|detail| {
@@ -1191,6 +1182,31 @@ pub fn active_match_index(
             }
         }) {
             Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+        }
+    }
+}
+
+pub fn entry_label_color(selected: bool) -> Color {
+    if selected {
+        Color::Default
+    } else {
+        Color::Muted
+    }
+}
+
+pub fn entry_git_aware_label_color(
+    git_status: Option<GitFileStatus>,
+    ignored: bool,
+    selected: bool,
+) -> Color {
+    if ignored {
+        Color::Disabled
+    } else {
+        match git_status {
+            Some(GitFileStatus::Added) => Color::Created,
+            Some(GitFileStatus::Modified) => Color::Modified,
+            Some(GitFileStatus::Conflict) => Color::Conflict,
+            None => entry_label_color(selected),
         }
     }
 }

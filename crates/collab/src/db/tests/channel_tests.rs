@@ -109,10 +109,9 @@ async fn test_channels(db: &Arc<Database>) {
     assert!(db.get_channel(crdb_id, a_id).await.is_err());
 
     // Remove a channel tree
-    let (mut channel_ids, user_ids) = db.delete_channel(rust_id, a_id).await.unwrap();
+    let (_, mut channel_ids) = db.delete_channel(rust_id, a_id).await.unwrap();
     channel_ids.sort();
     assert_eq!(channel_ids, &[rust_id, cargo_id, cargo_ra_id]);
-    assert_eq!(user_ids, &[a_id]);
 
     assert!(db.get_channel(rust_id, a_id).await.is_err());
     assert!(db.get_channel(cargo_id, a_id).await.is_err());

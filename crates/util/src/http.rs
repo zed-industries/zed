@@ -5,9 +5,8 @@ use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
 pub use isahc::{
     http::{Method, StatusCode, Uri},
-    Error,
+    AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
 };
-pub use isahc::{AsyncBody, Request, Response};
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{

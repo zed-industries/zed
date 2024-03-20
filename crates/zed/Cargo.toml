@@ -10,11 +10,6 @@ authors = ["Zed Team <hi@zed.dev>"]
 [lints]
 workspace = true
 
-[lib]
-name = "zed"
-path = "src/zed.rs"
-doctest = false
-
 [[bin]]
 name = "Zed"
 path = "src/main.rs"
@@ -51,6 +46,7 @@ fs.workspace = true
 futures.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
+image_viewer.workspace = true
 install_cli.workspace = true
 isahc.workspace = true
 journal.workspace = true
@@ -75,7 +71,6 @@ recent_projects.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 search.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -93,6 +88,9 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

@@ -186,6 +186,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     mentions: vec![],
                     nonce: Some(1.into()),
                     reply_to_message_id: None,
+                    edited_at: None,
                 },
                 proto::ChannelMessage {
                     id: 11,
@@ -195,6 +196,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     mentions: vec![],
                     nonce: Some(2.into()),
                     reply_to_message_id: None,
+                    edited_at: None,
                 },
             ],
             done: false,
@@ -243,6 +245,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             mentions: vec![],
             nonce: Some(3.into()),
             reply_to_message_id: None,
+            edited_at: None,
         }),
     });
 
@@ -297,6 +300,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     nonce: Some(4.into()),
                     mentions: vec![],
                     reply_to_message_id: None,
+                    edited_at: None,
                 },
                 proto::ChannelMessage {
                     id: 9,
@@ -306,6 +310,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     nonce: Some(5.into()),
                     mentions: vec![],
                     reply_to_message_id: None,
+                    edited_at: None,
                 },
             ],
         },

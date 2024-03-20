@@ -14,6 +14,14 @@ pub struct SemanticVersion {
     pub patch: usize,
 }
 
+pub fn semver(major: usize, minor: usize, patch: usize) -> SemanticVersion {
+    SemanticVersion {
+        major,
+        minor,
+        patch,
+    }
+}
+
 impl SemanticVersion {
     pub fn new(major: usize, minor: usize, patch: usize) -> Self {
         Self {

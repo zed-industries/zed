@@ -1,15 +1,16 @@
-use crate::db::UserId;
+use crate::db::{ChannelId, ChannelRole, UserId};
 use anyhow::{anyhow, Result};
-use collections::{BTreeMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
 use serde::Serialize;
 use tracing::instrument;
-use util::SemanticVersion;
+use util::{semver, SemanticVersion};
 
 #[derive(Default, Serialize)]
 pub struct ConnectionPool {
     connections: BTreeMap<ConnectionId, Connection>,
     connected_users: BTreeMap<UserId, ConnectedUser>,
+    channels: ChannelPool,
 }
 
 #[derive(Default, Serialize)]
@@ -28,11 +29,8 @@ impl fmt::Display for ZedVersion {
 }
 
 impl ZedVersion {
-    pub fn is_supported(&self) -> bool {
-        self.0 != SemanticVersion::new(0, 123, 0)
-    }
-    pub fn supports_talker_role(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 125, 0)
+    pub fn can_collaborate(&self) -> bool {
+        self.0 >= semver(0, 127, 3) || (self.0 >= semver(0, 126, 3) && self.0 < semver(0, 127, 0))
     }
 }
 
@@ -47,6 +45,7 @@ impl ConnectionPool {
     pub fn reset(&mut self) {
         self.connections.clear();
         self.connected_users.clear();
+        self.channels.clear();
     }
 
     #[instrument(skip(self))]
@@ -81,6 +80,7 @@ impl ConnectionPool {
         connected_user.connection_ids.remove(&connection_id);
         if connected_user.connection_ids.is_empty() {
             self.connected_users.remove(&user_id);
+            self.channels.remove_user(&user_id);
         }
         self.connections.remove(&connection_id).unwrap();
         Ok(())
@@ -108,6 +108,38 @@ impl ConnectionPool {
             .into_iter()
             .flat_map(|state| &state.connection_ids)
             .copied()
+    }
+
+    pub fn channel_user_ids(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl Iterator<Item = (UserId, ChannelRole)> + '_ {
+        self.channels.users_to_notify(channel_id)
+    }
+
+    pub fn channel_connection_ids(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl Iterator<Item = (ConnectionId, ChannelRole)> + '_ {
+        self.channels
+            .users_to_notify(channel_id)
+            .flat_map(|(user_id, role)| {
+                self.user_connection_ids(user_id)
+                    .map(move |connection_id| (connection_id, role))
+            })
+    }
+
+    pub fn subscribe_to_channel(
+        &mut self,
+        user_id: UserId,
+        channel_id: ChannelId,
+        role: ChannelRole,
+    ) {
+        self.channels.subscribe(user_id, channel_id, role);
+    }
+
+    pub fn unsubscribe_from_channel(&mut self, user_id: &UserId, channel_id: &ChannelId) {
+        self.channels.unsubscribe(user_id, channel_id);
     }
 
     pub fn is_user_online(&self, user_id: UserId) -> bool {
@@ -138,5 +170,72 @@ impl ConnectionPool {
                 );
             }
         }
+    }
+}
+
+#[derive(Default, Serialize)]
+pub struct ChannelPool {
+    by_user: HashMap<UserId, HashMap<ChannelId, ChannelRole>>,
+    by_channel: HashMap<ChannelId, HashSet<UserId>>,
+}
+
+impl ChannelPool {
+    pub fn clear(&mut self) {
+        self.by_user.clear();
+        self.by_channel.clear();
+    }
+
+    pub fn subscribe(&mut self, user_id: UserId, channel_id: ChannelId, role: ChannelRole) {
+        self.by_user
+            .entry(user_id)
+            .or_default()
+            .insert(channel_id, role);
+        self.by_channel
+            .entry(channel_id)
+            .or_default()
+            .insert(user_id);
+    }
+
+    pub fn unsubscribe(&mut self, user_id: &UserId, channel_id: &ChannelId) {
+        if let Some(channels) = self.by_user.get_mut(user_id) {
+            channels.remove(channel_id);
+            if channels.is_empty() {
+                self.by_user.remove(user_id);
+            }
+        }
+        if let Some(users) = self.by_channel.get_mut(channel_id) {
+            users.remove(user_id);
+            if users.is_empty() {
+                self.by_channel.remove(channel_id);
+            }
+        }
+    }
+
+    pub fn remove_user(&mut self, user_id: &UserId) {
+        if let Some(channels) = self.by_user.remove(&user_id) {
+            for channel_id in channels.keys() {
+                self.unsubscribe(user_id, &channel_id)
+            }
+        }
+    }
+
+    pub fn users_to_notify(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl '_ + Iterator<Item = (UserId, ChannelRole)> {
+        self.by_channel
+            .get(&channel_id)
+            .into_iter()
+            .flat_map(move |users| {
+                users.iter().flat_map(move |user_id| {
+                    Some((
+                        *user_id,
+                        self.by_user
+                            .get(user_id)
+                            .and_then(|channels| channels.get(&channel_id))
+                            .copied()?,
+                    ))
+                })
+            })
     }
 }

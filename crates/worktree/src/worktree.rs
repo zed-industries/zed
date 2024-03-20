@@ -4225,6 +4225,9 @@ impl BackgroundScanner {
         let mut entries_by_id_edits = Vec::new();
         let mut entries_by_path_edits = Vec::new();
         let path = job.abs_path.strip_prefix(&snapshot.abs_path).unwrap();
+        let repo = snapshot
+            .local_repo_for_path(path)
+            .map_or(None, |local_repo| Some(local_repo.1));
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
@@ -4259,6 +4262,15 @@ impl BackgroundScanner {
                 let mut path_entry = snapshot.entries_by_id.get(&entry.id, &()).unwrap().clone();
                 path_entry.scan_id = snapshot.scan_id;
                 path_entry.is_ignored = entry.is_ignored;
+                if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
+                    if let Some(repo) = repo {
+                        if let Some(mtime) = &entry.mtime {
+                            let repo_path = RepoPath(entry.path.to_path_buf());
+                            let repo = repo.repo_ptr.lock();
+                            entry.git_status = repo.status(&repo_path, *mtime);
+                        }
+                    }
+                }
                 entries_by_id_edits.push(Edit::Insert(path_entry));
                 entries_by_path_edits.push(Edit::Insert(entry));
             }
