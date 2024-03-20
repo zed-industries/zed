@@ -268,7 +268,6 @@ pub fn is_valid_bracket_part(vim: &mut Vim, object: Object, cx: &mut WindowConte
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
 
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
@@ -597,7 +596,6 @@ mod test {
             the ˇlazy dog."},
             Mode::Normal,
         );
-
 
         cx.set_state(
             indoc! {"
