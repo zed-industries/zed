@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
     "sender_id" INTEGER NOT NULL REFERENCES users (id),
     "body" TEXT NOT NULL,
     "sent_at" TIMESTAMP,
+    "edited_at" TIMESTAMP,
     "nonce" BLOB NOT NULL,
     "reply_to_message_id" INTEGER DEFAULT NULL
 );

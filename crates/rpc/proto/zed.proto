@@ -203,7 +203,9 @@ message Envelope {
         CompleteWithLanguageModel complete_with_language_model = 166;
         LanguageModelResponse language_model_response = 167;
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
-        CountTokensResponse count_tokens_response = 169; // current max
+        CountTokensResponse count_tokens_response = 169;
+        UpdateChannelMessage update_channel_message = 170;
+        ChannelMessageUpdate channel_message_update = 171;  // current max
     }
 
     reserved 158 to 161;
@@ -1184,6 +1186,14 @@ message RemoveChannelMessage {
     uint64 message_id = 2;
 }
 
+message UpdateChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+    Nonce nonce = 4;
+    string body = 5;
+    repeated ChatMention mentions = 6;
+}
+
 message AckChannelMessage {
     uint64 channel_id = 1;
     uint64 message_id = 2;
@@ -1194,6 +1204,11 @@ message SendChannelMessageResponse {
 }
 
 message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message ChannelMessageUpdate {
     uint64 channel_id = 1;
     ChannelMessage message = 2;
 }
@@ -1229,6 +1244,7 @@ message ChannelMessage {
     Nonce nonce = 5;
     repeated ChatMention mentions = 6;
     optional uint64 reply_to_message_id = 7;
+    optional uint64 edited_at = 8;
 }
 
 message ChatMention {

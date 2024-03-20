@@ -6,7 +6,7 @@ use crate::{
         self, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage,
         Database, InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project,
         ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
-        User, UserId,
+        UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
@@ -283,6 +283,7 @@ impl Server {
             .add_message_handler(leave_channel_chat)
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
+            .add_request_handler(update_channel_message)
             .add_request_handler(get_channel_messages)
             .add_request_handler(get_channel_messages_by_id)
             .add_request_handler(get_notifications)
@@ -3191,6 +3192,7 @@ async fn send_channel_message(
             },
         )
         .await?;
+
     let message = proto::ChannelMessage {
         sender_id: session.user_id.to_proto(),
         id: message_id.to_proto(),
@@ -3199,6 +3201,7 @@ async fn send_channel_message(
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
         reply_to_message_id: request.reply_to_message_id,
+        edited_at: None,
     };
     broadcast(
         Some(session.connection_id),
@@ -3258,6 +3261,71 @@ async fn remove_channel_message(
         session.peer.send(connection, request.clone())
     });
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn update_channel_message(
+    request: proto::UpdateChannelMessage,
+    response: Response<proto::UpdateChannelMessage>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let message_id = MessageId::from_proto(request.message_id);
+    let updated_at = OffsetDateTime::now_utc();
+    let UpdatedChannelMessage {
+        message_id,
+        participant_connection_ids,
+        notifications,
+        reply_to_message_id,
+        timestamp,
+    } = session
+        .db()
+        .await
+        .update_channel_message(
+            channel_id,
+            message_id,
+            session.user_id,
+            request.body.as_str(),
+            &request.mentions,
+            updated_at,
+        )
+        .await?;
+
+    let nonce = request
+        .nonce
+        .clone()
+        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+
+    let message = proto::ChannelMessage {
+        sender_id: session.user_id.to_proto(),
+        id: message_id.to_proto(),
+        body: request.body.clone(),
+        mentions: request.mentions.clone(),
+        timestamp: timestamp.assume_utc().unix_timestamp() as u64,
+        nonce: Some(nonce),
+        reply_to_message_id: reply_to_message_id.map(|id| id.to_proto()),
+        edited_at: Some(updated_at.unix_timestamp() as u64),
+    };
+
+    response.send(proto::Ack {})?;
+
+    let pool = &*session.connection_pool().await;
+    broadcast(
+        Some(session.connection_id),
+        participant_connection_ids,
+        |connection| {
+            session.peer.send(
+                connection,
+                proto::ChannelMessageUpdate {
+                    channel_id: channel_id.to_proto(),
+                    message: Some(message.clone()),
+                },
+            )
+        },
+    );
+
+    send_notifications(pool, &session.peer, notifications);
+
     Ok(())
 }
 

@@ -598,12 +598,6 @@
     }
   },
   {
-    "context": "ChatPanel > MessageEditor",
-    "bindings": {
-      "escape": "chat_panel::CloseReplyPreview"
-    }
-  },
-  {
     "context": "Terminal",
     "bindings": {
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
