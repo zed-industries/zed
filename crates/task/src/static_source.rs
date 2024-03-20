@@ -171,14 +171,10 @@ impl<T: PartialEq + 'static> TrackedFile<T> {
         cx.new_model(move |cx| {
             cx.spawn(|tracked_file, mut cx| async move {
                 while let Some(new_contents) = tracker.next().await {
-                    dbg!("In a loop");
                     if !new_contents.trim().is_empty() {
-                        // String -> T (ZedTaskFormat)
-                        // String -> U (VsCodeFormat) -> Into::into T
                         let Some(new_contents) =
                             serde_json_lenient::from_str::<U>(&new_contents).log_err()
                         else {
-                            dbg!("Skipping");
                             continue;
                         };
                         let Some(new_contents) = new_contents.try_into().log_err() else {
