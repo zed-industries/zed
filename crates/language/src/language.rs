@@ -1282,6 +1282,10 @@ impl Language {
     pub fn prettier_parser_name(&self) -> Option<&str> {
         self.config.prettier_parser_name.as_deref()
     }
+
+    pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
+        &self.config.prettier_plugins
+    }
 }
 
 impl LanguageScope {

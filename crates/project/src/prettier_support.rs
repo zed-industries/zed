@@ -14,7 +14,7 @@ use futures::{
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings},
-    Buffer, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    Buffer, Language, LanguageServerName, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -25,23 +25,19 @@ use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
 };
 
-pub fn prettier_plugins_for_language(
-    language_registry: &Arc<LanguageRegistry>,
-    language: &Arc<Language>,
+pub fn prettier_plugins_for_language<'a>(
+    language: &'a Arc<Language>,
     language_settings: &LanguageSettings,
-) -> Option<HashSet<Arc<str>>> {
+) -> Option<&'a Vec<Arc<str>>> {
     match &language_settings.formatter {
         Formatter::Prettier { .. } | Formatter::Auto => {}
         Formatter::LanguageServer | Formatter::External { .. } => return None,
     };
-    let mut prettier_plugins = None;
     if language.prettier_parser_name().is_some() {
-        prettier_plugins
-            .get_or_insert_with(|| HashSet::default())
-            .extend(language_registry.all_prettier_plugins())
+        Some(language.prettier_plugins())
+    } else {
+        None
     }
-
-    prettier_plugins
 }
 
 pub(super) async fn format_with_prettier(
@@ -636,32 +632,22 @@ impl Project {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn install_default_prettier(
-        &mut self,
-        _worktree: Option<WorktreeId>,
-        plugins: HashSet<Arc<str>>,
-        _cx: &mut ModelContext<Self>,
-    ) {
-        // suppress unused code warnings
-        let _ = should_write_prettier_server_file;
-        let _ = install_prettier_packages;
-        let _ = save_prettier_server_file;
-
-        self.default_prettier.installed_plugins.extend(plugins);
-        self.default_prettier.prettier = PrettierInstallation::Installed(PrettierInstance {
-            attempt: 0,
-            prettier: None,
-        });
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     pub fn install_default_prettier(
         &mut self,
         worktree: Option<WorktreeId>,
-        mut new_plugins: HashSet<Arc<str>>,
+        plugins: impl Iterator<Item = Arc<str>>,
         cx: &mut ModelContext<Self>,
     ) {
+        if cfg!(any(test, feature = "test-support")) {
+            self.default_prettier.installed_plugins.extend(plugins);
+            self.default_prettier.prettier = PrettierInstallation::Installed(PrettierInstance {
+                attempt: 0,
+                prettier: None,
+            });
+            return;
+        }
+
+        let mut new_plugins = plugins.collect::<HashSet<_>>();
         let Some(node) = self.node.as_ref().cloned() else {
             return;
         };
