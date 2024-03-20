@@ -202,7 +202,7 @@ async function handleMessage(message, prettier) {
       ...resolvedConfig,
       plugins,
       parser: params.options.parser,
-      path: params.options.filepath,
+      filepath: params.options.filepath,
     };
     process.stderr.write(
       `Resolved config: ${JSON.stringify(resolvedConfig)}, will format file '${
