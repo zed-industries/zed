@@ -30,6 +30,7 @@ use windows::{
         Graphics::Gdi::*,
         Media::*,
         Security::Credentials::*,
+        Storage::FileSystem::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -59,7 +60,7 @@ pub(crate) struct WindowsPlatformInner {
     text_system: Arc<WindowsTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    pub(crate) dispatch_event: HANDLE,
+    pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
 }
 
@@ -73,12 +74,6 @@ impl WindowsPlatformInner {
             .iter()
             .find(|entry| *entry == &hwnd)
             .and_then(|hwnd| try_get_window_inner(*hwnd))
-    }
-}
-
-impl Drop for WindowsPlatformInner {
-    fn drop(&mut self) {
-        unsafe { CloseHandle(self.dispatch_event) }.ok();
     }
 }
 
@@ -152,8 +147,9 @@ impl WindowsPlatform {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let dispatch_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event));
+        let dispatch_event =
+            OwnedHandle::new(unsafe { CreateEventW(None, false, false, None) }.unwrap());
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(WindowsTextSystem::new());
@@ -208,14 +204,15 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let dispatch_event = self.inner.dispatch_event;
-        let vsync_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        let timer_stop_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        begin_vsync_timer(vsync_event, timer_stop_event);
+        let dispatch_event = self.inner.dispatch_event.to_raw();
+        let vsync_event = create_event().unwrap();
+        let timer_stop_event = create_event().unwrap();
+        let raw_timer_stop_event = timer_stop_event.to_raw();
+        begin_vsync_timer(vsync_event.to_raw(), timer_stop_event);
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(
-                    Some(&[vsync_event, dispatch_event]),
+                    Some(&[vsync_event.to_raw(), dispatch_event]),
                     false,
                     INFINITE,
                     QS_ALLINPUT,
@@ -257,8 +254,7 @@ impl Platform for WindowsPlatform {
                 }
             }
         }
-        end_vsync_timer(timer_stop_event);
-        unsafe { CloseHandle(dispatch_event) }.log_err();
+        end_vsync_timer(raw_timer_stop_event);
 
         let mut callbacks = self.inner.callbacks.lock();
         if let Some(callback) = callbacks.quit.as_mut() {
@@ -525,11 +521,97 @@ impl Platform for WindowsPlatform {
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        })
+        let mut file_name_buffer = vec![0u16; MAX_PATH as usize];
+        let file_name = {
+            let mut file_name_buffer_capacity = MAX_PATH as usize;
+            let mut file_name_length;
+            loop {
+                file_name_length =
+                    unsafe { GetModuleFileNameW(None, &mut file_name_buffer) } as usize;
+                if file_name_length < file_name_buffer_capacity {
+                    break;
+                }
+                // buffer too small
+                file_name_buffer_capacity *= 2;
+                file_name_buffer = vec![0u16; file_name_buffer_capacity];
+            }
+            PCWSTR::from_raw(file_name_buffer[0..(file_name_length + 1)].as_ptr())
+        };
+
+        let version_info_block = {
+            let mut version_handle = 0;
+            let version_info_size =
+                unsafe { GetFileVersionInfoSizeW(file_name, Some(&mut version_handle)) } as usize;
+            if version_info_size == 0 {
+                log::error!(
+                    "unable to get version info size: {}",
+                    std::io::Error::last_os_error()
+                );
+                return Err(anyhow!("unable to get version info size"));
+            }
+            let mut version_data = vec![0u8; version_info_size + 2];
+            unsafe {
+                GetFileVersionInfoW(
+                    file_name,
+                    version_handle,
+                    version_info_size as u32,
+                    version_data.as_mut_ptr() as _,
+                )
+            }
+            .inspect_err(|_| {
+                log::error!(
+                    "unable to retrieve version info: {}",
+                    std::io::Error::last_os_error()
+                )
+            })?;
+            version_data
+        };
+
+        let version_info_raw = {
+            let mut buffer = unsafe { std::mem::zeroed() };
+            let mut size = 0;
+            let entry = "\\".encode_utf16().chain(Some(0)).collect_vec();
+            if !unsafe {
+                VerQueryValueW(
+                    version_info_block.as_ptr() as _,
+                    PCWSTR::from_raw(entry.as_ptr()),
+                    &mut buffer,
+                    &mut size,
+                )
+            }
+            .as_bool()
+            {
+                log::error!(
+                    "unable to query version info data: {}",
+                    std::io::Error::last_os_error()
+                );
+                return Err(anyhow!("the specified resource is not valid"));
+            }
+            if size == 0 {
+                log::error!(
+                    "unable to query version info data: {}",
+                    std::io::Error::last_os_error()
+                );
+                return Err(anyhow!("no value is available for the specified name"));
+            }
+            buffer
+        };
+
+        let version_info = unsafe { &*(version_info_raw as *mut VS_FIXEDFILEINFO) };
+        // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
+        if version_info.dwSignature == 0xFEEF04BD {
+            return Ok(SemanticVersion {
+                major: ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
+                minor: (version_info.dwProductVersionMS & 0xFFFF) as usize,
+                patch: ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
+            });
+        } else {
+            log::error!(
+                "no version info present: {}",
+                std::io::Error::last_os_error()
+            );
+            return Err(anyhow!("no version info present"));
+        }
     }
 
     // todo(windows)
@@ -737,15 +819,14 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: HANDLE) {
+fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: OwnedHandle) {
     let vsync_fn = select_vsync_fn();
     std::thread::spawn(move || {
-        while vsync_fn(timer_stop_event) {
+        while vsync_fn(timer_stop_event.to_raw()) {
             if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
                 break;
             }
         }
-        unsafe { CloseHandle(timer_stop_event) }.log_err();
     });
 }
 

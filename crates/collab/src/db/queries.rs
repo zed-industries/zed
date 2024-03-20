@@ -10,6 +10,7 @@ pub mod hosted_projects;
 pub mod messages;
 pub mod notifications;
 pub mod projects;
+pub mod rate_buckets;
 pub mod rooms;
 pub mod servers;
 pub mod users;

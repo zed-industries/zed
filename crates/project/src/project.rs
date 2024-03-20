@@ -283,6 +283,7 @@ pub enum Event {
     LanguageServerLog(LanguageServerId, String),
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageNotFound(Model<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -2797,18 +2798,31 @@ impl Project {
         &mut self,
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let file = buffer.file()?;
+        let Some(file) = buffer.file() else {
+            return;
+        };
         let content = buffer.as_rope();
-        let new_language = self
+        let Some(new_language_result) = self
             .languages
             .language_for_file(file, Some(content), cx)
-            .now_or_never()?
-            .ok()?;
-        self.set_language_for_buffer(buffer_handle, new_language, cx);
-        None
+            .now_or_never()
+        else {
+            return;
+        };
+
+        match new_language_result {
+            Err(e) => {
+                if e.is::<language::LanguageNotFound>() {
+                    cx.emit(Event::LanguageNotFound(buffer_handle.clone()))
+                }
+            }
+            Ok(new_language) => {
+                self.set_language_for_buffer(buffer_handle, new_language, cx);
+            }
+        };
     }
 
     pub fn set_language_for_buffer(

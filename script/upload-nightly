@@ -2,6 +2,7 @@
 
 # Based on the template in: https://docs.digitalocean.com/reference/api/spaces-api/
 bash -euo pipefail
+source script/lib/blob-store.sh
 
 allowed_targets=("linux-deb" "macos")
 is_allowed_target() {
@@ -28,47 +29,22 @@ exit 1
 fi
 echo "Uploading nightly for target: $target"
 
-# Step 1: Define the parameters for the Space you want to upload to.
-SPACE="zed-nightly-host" # Find your endpoint in the control panel, under Settings.
-REGION="nyc3" # Must be "us-east-1" when creating new Spaces. Otherwise, use the region in your endpoint (e.g. nyc3).
-
-# Step 2: Define a function that uploads your object via cURL.
-function uploadToSpaces
-{
-  file_to_upload="$1"
-  file_name="$2"
-  space_path="nightly"
-  date=$(date +"%a, %d %b %Y %T %z")
-  acl="x-amz-acl:private"
-  content_type="application/octet-stream"
-  storage_type="x-amz-storage-class:STANDARD"
-  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${space_path}/${file_name}"
-  signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
-
-  curl --fail -vv -s -X PUT -T "$file_to_upload" \
-    -H "Host: ${SPACE}.${REGION}.digitaloceanspaces.com" \
-    -H "Date: $date" \
-    -H "Content-Type: $content_type" \
-    -H "$storage_type" \
-    -H "$acl" \
-    -H "Authorization: AWS ${DIGITALOCEAN_SPACES_ACCESS_KEY}:$signature" \
-    "https://${SPACE}.${REGION}.digitaloceanspaces.com/${space_path}/${file_name}"
-}
+bucket_name="zed-nightly-host"
 
 sha=$(git rev-parse HEAD)
 echo ${sha} > target/latest-sha
 case "$target" in
     macos)
-        uploadToSpaces "target/aarch64-apple-darwin/release/Zed.dmg" "Zed-aarch64.dmg"
-        uploadToSpaces "target/x86_64-apple-darwin/release/Zed.dmg" "Zed-x86_64.dmg"
-        uploadToSpaces "target/release/Zed.dmg" "Zed.dmg"
-        uploadToSpaces "target/latest-sha" "latest-sha"
+        upload_to_blob_store $bucket_name "target/aarch64-apple-darwin/release/Zed.dmg" "nightly/Zed-aarch64.dmg"
+        upload_to_blob_store $bucket_name "target/x86_64-apple-darwin/release/Zed.dmg" "nightly/Zed-x86_64.dmg"
+        upload_to_blob_store $bucket_name "target/release/Zed.dmg" "nightly/Zed.dmg"
+        upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha"
         ;;
     linux-deb)
         find target/release -type f -name "*.deb" -print0 | while IFS= read -r -d '' bundle_file; do
-            uploadToSpaces "$bundle_file" "$(basename "$bundle_file")"
+            upload_to_blob_store $bucket_name "$bundle_file" "nightly/$(basename "$bundle_file")"
         done
-        uploadToSpaces "target/latest-sha" "latest-sha-linux-deb"
+        upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha-linux-deb"
         ;;
     *)
         echo "Error: Unknown target '$target'"

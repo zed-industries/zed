@@ -7,7 +7,7 @@ use axum::{
 };
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
-    Config, MigrateConfig, Result,
+    Config, MigrateConfig, RateLimiter, Result,
 };
 use db::Database;
 use std::{
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
 
             run_migrations().await?;
 
-            let state = AppState::new(config).await?;
+            let state = AppState::new(config, Executor::Production).await?;
 
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
@@ -72,8 +72,7 @@ async fn main() -> Result<()> {
                     .db
                     .create_server(&state.config.zed_environment)
                     .await?;
-                let rpc_server =
-                    collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
+                let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                 rpc_server.start().await?;
 
                 Some(rpc_server)
@@ -81,8 +80,12 @@ async fn main() -> Result<()> {
                 None
             };
 
+            if is_collab {
+                RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
+            }
+
             if is_api {
-                fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+                fetch_extensions_from_blob_store_periodically(state.clone());
             }
 
             let mut app = collab::api::routes(rpc_server.clone(), state.clone());

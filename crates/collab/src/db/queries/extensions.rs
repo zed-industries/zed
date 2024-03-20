@@ -52,6 +52,41 @@ impl Database {
         .await
     }
 
+    pub async fn get_extension(&self, extension_id: &str) -> Result<Option<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let extension = extension::Entity::find()
+                .filter(extension::Column::ExternalId.eq(extension_id))
+                .filter(
+                    extension::Column::LatestVersion
+                        .into_expr()
+                        .eq(extension_version::Column::Version.into_expr()),
+                )
+                .inner_join(extension_version::Entity)
+                .select_also(extension_version::Entity)
+                .one(&*tx)
+                .await?;
+
+            Ok(extension.and_then(|(extension, latest_version)| {
+                let version = latest_version?;
+                Some(ExtensionMetadata {
+                    id: extension.external_id,
+                    name: extension.name,
+                    version: version.version,
+                    authors: version
+                        .authors
+                        .split(',')
+                        .map(|author| author.trim().to_string())
+                        .collect::<Vec<_>>(),
+                    description: version.description,
+                    repository: version.repository,
+                    published_at: version.published_at,
+                    download_count: extension.total_download_count as u64,
+                })
+            }))
+        })
+        .await
+    }
+
     pub async fn get_known_extension_versions<'a>(&self) -> Result<HashMap<String, Vec<String>>> {
         self.transaction(|tx| async move {
             let mut extension_external_ids_by_id = HashMap::default();

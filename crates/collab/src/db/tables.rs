@@ -22,6 +22,7 @@ pub mod observed_buffer_edits;
 pub mod observed_channel_messages;
 pub mod project;
 pub mod project_collaborator;
+pub mod rate_buckets;
 pub mod room;
 pub mod room_participant;
 pub mod server;

@@ -631,6 +631,28 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
+    /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
+    pub fn notify(&mut self, view_id: EntityId) {
+        for view_id in self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .view_path(view_id)
+            .into_iter()
+            .rev()
+        {
+            if !self.window.dirty_views.insert(view_id) {
+                break;
+            }
+        }
+
+        if self.window.draw_phase == DrawPhase::None {
+            self.window.dirty.set(true);
+            self.app.push_effect(Effect::Notify { emitter: view_id });
+        }
+    }
+
     /// Close this window.
     pub fn remove_window(&mut self) {
         self.window.removed = true;
@@ -2159,25 +2181,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
-        for view_id in self
-            .window
-            .rendered_frame
-            .dispatch_tree
-            .view_path(self.view.entity_id())
-            .into_iter()
-            .rev()
-        {
-            if !self.window.dirty_views.insert(view_id) {
-                break;
-            }
-        }
-
-        if self.window.draw_phase == DrawPhase::None {
-            self.window_cx.window.dirty.set(true);
-            self.window_cx.app.push_effect(Effect::Notify {
-                emitter: self.view.model.entity_id,
-            });
-        }
+        self.window_cx.notify(self.view.entity_id());
     }
 
     /// Register a callback to be invoked when the window is resized.

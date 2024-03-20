@@ -1,4 +1,6 @@
-#!/usr/bin/bash -e
+#!/usr/bin/bash
+
+set -e
 
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || command -v doas || true)

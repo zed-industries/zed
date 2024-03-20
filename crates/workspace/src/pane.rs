@@ -172,7 +172,7 @@ pub struct Pane {
     new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
     //     tab_context_menu: View<ContextMenu>,
-    workspace: WeakView<Workspace>,
+    pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
