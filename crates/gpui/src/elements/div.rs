@@ -1737,7 +1737,6 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                let first_mouse = mouse_down.first_mouse;
                                 let mouse_click = ClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
