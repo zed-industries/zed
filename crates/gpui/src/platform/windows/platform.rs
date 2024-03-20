@@ -638,11 +638,6 @@ impl Platform for WindowsPlatform {
         UtcOffset::from_hms(hours as _, minutes as _, 0).unwrap()
     }
 
-    fn double_click_interval(&self) -> Duration {
-        let millis = unsafe { GetDoubleClickTime() };
-        Duration::from_millis(millis as _)
-    }
-
     // todo(windows)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow!("not yet implemented"))

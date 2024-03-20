@@ -315,10 +315,6 @@ impl Platform for LinuxPlatform {
         "Linux"
     }
 
-    fn double_click_interval(&self) -> Duration {
-        DOUBLE_CLICK_INTERVAL
-    }
-
     fn os_version(&self) -> Result<SemanticVersion> {
         Ok(SemanticVersion {
             major: 1,

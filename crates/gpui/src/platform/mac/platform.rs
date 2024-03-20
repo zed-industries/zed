@@ -715,13 +715,6 @@ impl Platform for MacPlatform {
         "macOS"
     }
 
-    fn double_click_interval(&self) -> Duration {
-        unsafe {
-            let double_click_interval: f64 = msg_send![class!(NSEvent), doubleClickInterval];
-            Duration::from_secs_f64(double_click_interval)
-        }
-    }
-
     fn os_version(&self) -> Result<SemanticVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
