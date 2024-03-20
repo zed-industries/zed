@@ -7,9 +7,9 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    div, point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId,
-    EventEmitter, IntoElement, Model, ParentElement, Pixels, Render, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
+    IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
@@ -21,7 +21,6 @@ use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::ItemSettings;
 
-use std::fmt::Write;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -33,11 +32,8 @@ use std::{
 use text::{BufferId, Selection};
 use theme::Theme;
 use ui::{h_flex, prelude::*, Label};
-use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
-use workspace::{
-    item::{BreadcrumbText, FollowEvent, FollowableItemHandle},
-    StatusItemView,
-};
+use util::{paths::PathExt, ResultExt, TryFutureExt};
+use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -599,27 +595,18 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        let git_status = if ItemSettings::get_global(cx).git_status {
+        let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
                 .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
-                .and_then(|entry| entry.git_status())
+                .map(|entry| {
+                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, selected)
+                })
+                .unwrap_or_else(|| entry_label_color(selected))
         } else {
-            None
-        };
-        let label_color = match git_status {
-            Some(GitFileStatus::Added) => Color::Created,
-            Some(GitFileStatus::Modified) => Color::Modified,
-            Some(GitFileStatus::Conflict) => Color::Conflict,
-            None => {
-                if selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }
-            }
+            entry_label_color(selected)
         };
 
         let description = detail.and_then(|detail| {
@@ -1154,8 +1141,8 @@ impl SearchableItem for Editor {
                                 let end = excerpt
                                     .buffer
                                     .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id, start)
-                                    ..buffer.anchor_in_excerpt(excerpt.id, end)
+                                buffer.anchor_in_excerpt(excerpt.id, start).unwrap()
+                                    ..buffer.anchor_in_excerpt(excerpt.id, end).unwrap()
                             }),
                     );
                 }
@@ -1199,80 +1186,28 @@ pub fn active_match_index(
     }
 }
 
-pub struct CursorPosition {
-    position: Option<Point>,
-    selected_count: usize,
-    _observe_active_editor: Option<Subscription>,
-}
-
-impl Default for CursorPosition {
-    fn default() -> Self {
-        Self::new()
+pub fn entry_label_color(selected: bool) -> Color {
+    if selected {
+        Color::Default
+    } else {
+        Color::Muted
     }
 }
 
-impl CursorPosition {
-    pub fn new() -> Self {
-        Self {
-            position: None,
-            selected_count: 0,
-            _observe_active_editor: None,
+pub fn entry_git_aware_label_color(
+    git_status: Option<GitFileStatus>,
+    ignored: bool,
+    selected: bool,
+) -> Color {
+    if ignored {
+        Color::Disabled
+    } else {
+        match git_status {
+            Some(GitFileStatus::Added) => Color::Created,
+            Some(GitFileStatus::Modified) => Color::Modified,
+            Some(GitFileStatus::Conflict) => Color::Conflict,
+            None => entry_label_color(selected),
         }
-    }
-
-    fn update_position(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-
-        self.selected_count = 0;
-        let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count += selection.end - selection.start;
-            if last_selection
-                .as_ref()
-                .map_or(true, |last_selection| selection.id > last_selection.id)
-            {
-                last_selection = Some(selection);
-            }
-        }
-        self.position = last_selection.map(|s| s.head().to_point(&buffer));
-
-        cx.notify();
-    }
-}
-
-impl Render for CursorPosition {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        div().when_some(self.position, |el, position| {
-            let mut text = format!(
-                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                position.row + 1,
-                position.column + 1
-            );
-            if self.selected_count > 0 {
-                write!(text, " ({} selected)", self.selected_count).unwrap();
-            }
-
-            el.child(Label::new(text).size(LabelSize::Small))
-        })
-    }
-}
-
-impl StatusItemView for CursorPosition {
-    fn set_active_pane_item(
-        &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
-            self.update_position(editor, cx);
-        } else {
-            self.position = None;
-            self._observe_active_editor = None;
-        }
-
-        cx.notify();
     }
 }
 
@@ -1328,65 +1263,15 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::AppContext;
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-        time::SystemTime,
-    };
+    use language::TestFile;
+    use std::path::Path;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut AppContext) {
         let file = TestFile {
             path: Path::new("").into(),
-            full_path: PathBuf::from(""),
+            root_name: String::new(),
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
-    }
-
-    struct TestFile {
-        path: Arc<Path>,
-        full_path: PathBuf,
-    }
-
-    impl language::File for TestFile {
-        fn path(&self) -> &Arc<Path> {
-            &self.path
-        }
-
-        fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
-            self.full_path.clone()
-        }
-
-        fn as_local(&self) -> Option<&dyn language::LocalFile> {
-            unimplemented!()
-        }
-
-        fn mtime(&self) -> SystemTime {
-            unimplemented!()
-        }
-
-        fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn worktree_id(&self) -> usize {
-            0
-        }
-
-        fn is_deleted(&self) -> bool {
-            unimplemented!()
-        }
-
-        fn as_any(&self) -> &dyn std::any::Any {
-            unimplemented!()
-        }
-
-        fn to_proto(&self) -> rpc::proto::File {
-            unimplemented!()
-        }
-
-        fn is_private(&self) -> bool {
-            false
-        }
     }
 }

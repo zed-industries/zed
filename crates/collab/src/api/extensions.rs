@@ -1,6 +1,5 @@
 use crate::{
     db::{ExtensionMetadata, NewExtensionVersion},
-    executor::Executor,
     AppState, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
@@ -22,6 +21,10 @@ pub fn router() -> Router {
     Router::new()
         .route("/extensions", get(get_extensions))
         .route(
+            "/extensions/:extension_id/download",
+            get(download_latest_extension),
+        )
+        .route(
             "/extensions/:extension_id/:version/download",
             get(download_extension),
         )
@@ -30,6 +33,11 @@ pub fn router() -> Router {
 #[derive(Debug, Deserialize)]
 struct GetExtensionsParams {
     filter: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadLatestExtensionParams {
+    extension_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +66,25 @@ async fn get_extensions(
 ) -> Result<Json<GetExtensionsResponse>> {
     let extensions = app.db.get_extensions(params.filter.as_deref(), 500).await?;
     Ok(Json(GetExtensionsResponse { data: extensions }))
+}
+
+async fn download_latest_extension(
+    Extension(app): Extension<Arc<AppState>>,
+    Path(params): Path<DownloadLatestExtensionParams>,
+) -> Result<Redirect> {
+    let extension = app
+        .db
+        .get_extension(&params.extension_id)
+        .await?
+        .ok_or_else(|| anyhow!("unknown extension"))?;
+    download_extension(
+        Extension(app),
+        Path(DownloadExtensionParams {
+            extension_id: params.extension_id,
+            version: extension.version,
+        }),
+    )
+    .await
 }
 
 async fn download_extension(
@@ -108,7 +135,7 @@ async fn download_extension(
 const EXTENSION_FETCH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const EXTENSION_DOWNLOAD_URL_LIFETIME: Duration = Duration::from_secs(3 * 60);
 
-pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>, executor: Executor) {
+pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>) {
     let Some(blob_store_client) = app_state.blob_store_client.clone() else {
         log::info!("no blob store client");
         return;
@@ -118,6 +145,7 @@ pub fn fetch_extensions_from_blob_store_periodically(app_state: Arc<AppState>, e
         return;
     };
 
+    let executor = app_state.executor.clone();
     executor.spawn_detached({
         let executor = executor.clone();
         async move {
@@ -140,6 +168,8 @@ async fn fetch_extensions_from_blob_store(
     blob_store_bucket: &String,
     app_state: &Arc<AppState>,
 ) -> anyhow::Result<()> {
+    log::info!("fetching extensions from blob store");
+
     let list = blob_store_client
         .list_objects()
         .bucket(blob_store_bucket)
@@ -164,10 +194,12 @@ async fn fetch_extensions_from_blob_store(
         let Some(version) = parts.next() else {
             continue;
         };
-        published_versions
-            .entry(extension_id)
-            .or_default()
-            .push(version);
+        if parts.next() == Some("manifest.json") {
+            published_versions
+                .entry(extension_id)
+                .or_default()
+                .push(version);
+        }
     }
 
     let known_versions = app_state.db.get_known_extension_versions().await?;
@@ -182,46 +214,20 @@ async fn fetch_extensions_from_blob_store(
                 .binary_search_by_key(&published_version, String::as_str)
                 .is_err()
             {
-                let object = blob_store_client
-                    .get_object()
-                    .bucket(blob_store_bucket)
-                    .key(format!(
-                        "extensions/{extension_id}/{published_version}/manifest.json"
-                    ))
-                    .send()
-                    .await?;
-                let manifest_bytes = object
-                    .body
-                    .collect()
-                    .await
-                    .map(|data| data.into_bytes())
-                    .with_context(|| format!("failed to download manifest for extension {extension_id} version {published_version}"))?
-                    .to_vec();
-                let manifest = serde_json::from_slice::<ExtensionManifest>(&manifest_bytes)
-                    .with_context(|| format!("invalid manifest for extension {extension_id} version {published_version}: {}", String::from_utf8_lossy(&manifest_bytes)))?;
-
-                let published_at = object.last_modified.ok_or_else(|| anyhow!("missing last modified timestamp for extension {extension_id} version {published_version}"))?;
-                let published_at =
-                    time::OffsetDateTime::from_unix_timestamp_nanos(published_at.as_nanos())?;
-                let published_at = PrimitiveDateTime::new(published_at.date(), published_at.time());
-
-                let version = semver::Version::parse(&manifest.version).with_context(|| {
-                    format!(
-                        "invalid version for extension {extension_id} version {published_version}"
-                    )
-                })?;
-
-                new_versions
-                    .entry(extension_id)
-                    .or_default()
-                    .push(NewExtensionVersion {
-                        name: manifest.name,
-                        version,
-                        description: manifest.description.unwrap_or_default(),
-                        authors: manifest.authors,
-                        repository: manifest.repository,
-                        published_at,
-                    });
+                if let Some(extension) = fetch_extension_manifest(
+                    blob_store_client,
+                    blob_store_bucket,
+                    extension_id,
+                    published_version,
+                )
+                .await
+                .log_err()
+                {
+                    new_versions
+                        .entry(extension_id)
+                        .or_default()
+                        .push(extension);
+                }
             }
         }
     }
@@ -231,5 +237,56 @@ async fn fetch_extensions_from_blob_store(
         .insert_extension_versions(&new_versions)
         .await?;
 
+    log::info!(
+        "fetched {} new extensions from blob store",
+        new_versions.values().map(|v| v.len()).sum::<usize>()
+    );
+
     Ok(())
+}
+
+async fn fetch_extension_manifest(
+    blob_store_client: &aws_sdk_s3::Client,
+    blob_store_bucket: &String,
+    extension_id: &str,
+    version: &str,
+) -> Result<NewExtensionVersion, anyhow::Error> {
+    let object = blob_store_client
+        .get_object()
+        .bucket(blob_store_bucket)
+        .key(format!("extensions/{extension_id}/{version}/manifest.json"))
+        .send()
+        .await?;
+    let manifest_bytes = object
+        .body
+        .collect()
+        .await
+        .map(|data| data.into_bytes())
+        .with_context(|| {
+            format!("failed to download manifest for extension {extension_id} version {version}")
+        })?
+        .to_vec();
+    let manifest =
+        serde_json::from_slice::<ExtensionManifest>(&manifest_bytes).with_context(|| {
+            format!(
+                "invalid manifest for extension {extension_id} version {version}: {}",
+                String::from_utf8_lossy(&manifest_bytes)
+            )
+        })?;
+    let published_at = object.last_modified.ok_or_else(|| {
+        anyhow!("missing last modified timestamp for extension {extension_id} version {version}")
+    })?;
+    let published_at = time::OffsetDateTime::from_unix_timestamp_nanos(published_at.as_nanos())?;
+    let published_at = PrimitiveDateTime::new(published_at.date(), published_at.time());
+    let version = semver::Version::parse(&manifest.version).with_context(|| {
+        format!("invalid version for extension {extension_id} version {version}")
+    })?;
+    Ok(NewExtensionVersion {
+        name: manifest.name,
+        version,
+        description: manifest.description.unwrap_or_default(),
+        authors: manifest.authors,
+        repository: manifest.repository,
+        published_at,
+    })
 }

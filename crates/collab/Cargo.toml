@@ -17,13 +17,13 @@ name = "collab"
 name = "seed"
 
 [dependencies]
-console-subscriber = "0.2"
 anyhow.workspace = true
 async-tungstenite = "0.16"
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
 axum = { version = "0.6", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.4", features = ["erased-json"] }
+base64.workspace = true
 chrono.workspace = true
 clock.workspace = true
 clickhouse.workspace = true
@@ -31,10 +31,12 @@ collections.workspace = true
 dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true
+google_ai.workspace = true
 hex.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
 nanoid = "0.4"
+open_ai.workspace = true
 parking_lot.workspace = true
 prometheus = "0.13"
 prost.workspace = true
@@ -49,11 +51,12 @@ serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+subtle.workspace = true
 rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true
-tokio = { version = "1", features = ["full"] }
+tokio.workspace = true
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
@@ -79,7 +82,6 @@ git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
-lazy_static.workspace = true
 live_kit_client = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true

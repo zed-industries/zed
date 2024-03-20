@@ -10,19 +10,28 @@ You can [download](https://zed.dev/download) Zed today for macOS (v10.15+).
 
 Support for additional platforms is on our [roadmap](https://zed.dev/roadmap):
 
-- Linux ([tracking issue](https://github.com/zed-industries/zed/issues/5395))
+- Linux ([tracking issue](https://github.com/zed-industries/zed/issues/7015))
 - Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
 - Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
 
-For macOS users, you can also install Zed from Homebrew:
+For macOS users, you can also install Zed using [Homebrew](https://brew.sh/):
+
 ```sh
 brew install zed
+```
+
+Alternatively, to install the Preview release:
+
+```sh
+brew tap homebrew/cask-versions
+brew install zed-preview
 ```
 
 ## Developing Zed
 
 - [Building Zed for macOS](./docs/src/developing_zed__building_zed_macos.md)
 - [Building Zed for Linux](./docs/src/developing_zed__building_zed_linux.md)
+- [Building Zed for Windows](./docs/src/developing_zed__building_zed_windows.md)
 - [Running Collaboration Locally](./docs/src/developing_zed__local_collaboration.md)
 
 ## Contributing

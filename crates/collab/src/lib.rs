@@ -1,8 +1,10 @@
+pub mod ai;
 pub mod api;
 pub mod auth;
 pub mod db;
 pub mod env;
 pub mod executor;
+mod rate_limiter;
 pub mod rpc;
 
 #[cfg(test)]
@@ -11,8 +13,9 @@ mod tests;
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
 use axum::{http::StatusCode, response::IntoResponse};
-use db::Database;
+use db::{ChannelId, Database};
 use executor::Executor;
+pub use rate_limiter::*;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -126,8 +129,11 @@ pub struct Config {
     pub blob_store_secret_key: Option<String>,
     pub blob_store_bucket: Option<String>,
     pub zed_environment: Arc<str>,
+    pub openai_api_key: Option<Arc<str>>,
+    pub google_ai_api_key: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
+    pub auto_join_channel_id: Option<ChannelId>,
 }
 
 impl Config {
@@ -146,12 +152,14 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub executor: Executor,
     pub clickhouse_client: Option<clickhouse::Client>,
     pub config: Config,
 }
 
 impl AppState {
-    pub async fn new(config: Config) -> Result<Arc<Self>> {
+    pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
         db_options.max_connections(config.database_max_connections);
         let mut db = Database::new(db_options, Executor::Production).await?;
@@ -172,10 +180,13 @@ impl AppState {
             None
         };
 
+        let db = Arc::new(db);
         let this = Self {
-            db: Arc::new(db),
+            db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
+            rate_limiter: Arc::new(RateLimiter::new(db)),
+            executor,
             clickhouse_client: config
                 .clickhouse_url
                 .as_ref()

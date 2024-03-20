@@ -40,7 +40,7 @@ use smol::future::FutureExt as _;
 use std::{
     any::Any,
     cell::RefCell,
-    ffi::OsString,
+    ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
@@ -62,8 +62,8 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
 pub use language_registry::{
-    LanguageQueries, LanguageRegistry, LanguageServerBinaryStatus, PendingLanguageServer,
-    QUERY_FILENAME_PREFIXES,
+    LanguageNotFound, LanguageQueries, LanguageRegistry, LanguageServerBinaryStatus,
+    PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
@@ -277,11 +277,12 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
-    async fn which_command(&self, command: OsString) -> Option<(PathBuf, HashMap<String, String>)>;
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait LspAdapter: 'static + Send + Sync {
     fn name(&self) -> LanguageServerName;
 
@@ -305,7 +306,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
             // for each worktree we might have open.
-            if let Some(binary) = self.check_if_user_installed(delegate.as_ref()).await {
+            if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
                 log::info!(
                     "found user-installed language server for {}. path: {:?}, arguments: {:?}",
                     language.name(),
@@ -325,43 +326,25 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .context("failed to create container directory")?;
             }
 
-            if let Some(task) = self.will_fetch_server(&delegate, cx) {
-                task.await?;
-            }
-
-            let name = self.name();
-            log::info!("fetching latest version of language server {:?}", name.0);
-            delegate.update_status(
-                name.clone(),
-                LanguageServerBinaryStatus::CheckingForUpdate,
-            );
-            let version_info = self.fetch_latest_server_version(delegate.as_ref()).await?;
-
-            log::info!("downloading language server {:?}", name.0);
-            delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
-            let mut binary = self
-                .fetch_server_binary(version_info, container_dir.to_path_buf(), delegate.as_ref())
-                .await;
-
-            delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+            let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
 
             if let Err(error) = binary.as_ref() {
                 if let Some(prev_downloaded_binary) = self
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Cached);
+                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
-                        name.clone(),
-                        prev_downloaded_binary.path.display()
+                        self.name(),
+                        prev_downloaded_binary.path
                     );
                     binary = Ok(prev_downloaded_binary);
                 } else {
                     delegate.update_status(
-                        name.clone(),
+                        self.name(),
                         LanguageServerBinaryStatus::Failed {
-                            error: format!("{:?}", error),
+                            error: format!("{error:?}"),
                         },
                     );
                 }
@@ -379,6 +362,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -406,7 +390,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary>;
@@ -496,6 +480,33 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn as_fake(&self) -> Option<&FakeLspAdapter> {
         None
     }
+}
+
+async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
+    adapter: &L,
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    container_dir: PathBuf,
+    cx: &mut AsyncAppContext,
+) -> Result<LanguageServerBinary> {
+    if let Some(task) = adapter.will_fetch_server(delegate, cx) {
+        task.await?;
+    }
+
+    let name = adapter.name();
+    log::info!("fetching latest version of language server {:?}", name.0);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    let latest_version = adapter
+        .fetch_latest_server_version(delegate.as_ref())
+        .await?;
+
+    log::info!("downloading language server {:?}", name.0);
+    delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+    let binary = adapter
+        .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+        .await;
+
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    binary
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -851,11 +862,7 @@ struct BracketConfig {
 
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
-        Self::new_with_id(
-            LanguageId(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst)),
-            config,
-            ts_language,
-        )
+        Self::new_with_id(LanguageId::new(), config, ts_language)
     }
 
     fn new_with_id(
@@ -939,13 +946,17 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -973,7 +984,9 @@ impl Language {
     }
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1004,7 +1017,9 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
@@ -1026,7 +1041,9 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
@@ -1054,7 +1071,9 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut content_capture_ix = None;
@@ -1094,7 +1113,13 @@ impl Language {
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = Query::new(&self.grammar_mut().ts_language, source)?;
+        let query = {
+            let grammar = self
+                .grammar
+                .as_ref()
+                .ok_or_else(|| anyhow!("no grammar for language"))?;
+            Query::new(&grammar.ts_language, source)?
+        };
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
@@ -1158,7 +1183,11 @@ impl Language {
         }
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
-        self.grammar_mut().override_config = Some(OverrideConfig {
+
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
         });
@@ -1166,7 +1195,10 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+
         let query = Query::new(&grammar.ts_language, source)?;
         let mut redaction_capture_ix = None;
         get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
@@ -1181,8 +1213,8 @@ impl Language {
         Ok(self)
     }
 
-    fn grammar_mut(&mut self) -> &mut Grammar {
-        Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
+    fn grammar_mut(&mut self) -> Option<&mut Grammar> {
+        Arc::get_mut(self.grammar.as_mut()?)
     }
 
     pub fn name(&self) -> Arc<str> {
@@ -1460,7 +1492,7 @@ impl Default for FakeLspAdapter {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for FakeLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
@@ -1569,43 +1601,8 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 10)]
-    async fn test_first_line_pattern(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-
-        languages.set_executor(cx.executor());
-        let languages = Arc::new(languages);
-        languages.register_test_language(LanguageConfig {
-            name: "JavaScript".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".into()],
-                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
-            },
-            ..Default::default()
-        });
-
-        languages
-            .language_for_file("the/script".as_ref(), None)
-            .await
-            .unwrap_err();
-        languages
-            .language_for_file("the/script".as_ref(), Some(&"nothing".into()))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            languages
-                .language_for_file("the/script".as_ref(), Some(&"#!/bin/env node".into()))
-                .await
-                .unwrap()
-                .name()
-                .as_ref(),
-            "JavaScript"
-        );
-    }
-
-    #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
-        let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor());
+        let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
         languages.register_native_grammars([
             ("json", tree_sitter_json::language()),

@@ -12,9 +12,7 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{
-    CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
-};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
     EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, MemoryEvent, SettingEvent,
@@ -175,7 +173,7 @@ impl Telemetry {
         cx.spawn(|_| async move {
             // Avoiding calling `System::new_all()`, as there have been crashes related to it
             let refresh_kind = RefreshKind::new()
-                .with_memory() // For memory usage
+                .with_memory(MemoryRefreshKind::everything()) // For memory usage
                 .with_processes(ProcessRefreshKind::everything()) // For process usage
                 .with_cpu(CpuRefreshKind::everything()); // For core count
 
@@ -263,7 +261,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &str,
+        model: String,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,

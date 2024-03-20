@@ -16,7 +16,10 @@ pub struct EditorSettings {
     pub vertical_scroll_margin: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
+    #[serde(default)]
+    pub double_click_in_multibuffer: DoubleClickInMultibuffer,
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -29,6 +32,18 @@ pub enum SeedQuerySetting {
     Selection,
     /// Never populate the search query
     Never,
+}
+
+/// What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers).
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DoubleClickInMultibuffer {
+    /// Behave as a regular buffer and select the whole word.
+    #[default]
+    Select,
+    /// Open the excerpt clicked as a new buffer in the new tab, if no `alt` modifier was pressed during double click.
+    /// Otherwise, behave as a regular buffer and select the whole word.
+    Open,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -70,6 +85,16 @@ pub enum ShowScrollbar {
     Never,
 }
 
+/// The key to use for adding multiple cursors
+///
+/// Default: alt
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MultiCursorModifier {
+    Alt,
+    Cmd,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -107,7 +132,6 @@ pub struct EditorSettingsContent {
     pub scrollbar: Option<ScrollbarContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
-
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
@@ -120,13 +144,22 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
-
+    /// The key to use for adding multiple cursors
+    ///
+    /// Default: alt
+    pub multi_cursor_modifier: Option<MultiCursorModifier>,
     /// Hide the values of variables in `private` files, as defined by the
     /// private_files setting. This only changes the visual representation,
     /// the values are still present in the file and can be selected / copied / pasted
     ///
     /// Default: false
     pub redact_private_values: Option<bool>,
+
+    /// What to do when multibuffer is double clicked in some of its excerpts
+    /// (parts of singleton buffers).
+    ///
+    /// Default: select
+    pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
 }
 
 // Toolbar related settings

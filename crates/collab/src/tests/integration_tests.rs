@@ -20,6 +20,7 @@ use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
+    SearchResult,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -4772,8 +4773,15 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Some((buffer, ranges)) = search_rx.next().await {
-        results.entry(buffer).or_insert(ranges);
+    while let Some(result) = search_rx.next().await {
+        match result {
+            SearchResult::Buffer { buffer, ranges } => {
+                results.entry(buffer).or_insert(ranges);
+            }
+            SearchResult::LimitReached => {
+                panic!("Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call.")
+            }
+        };
     }
 
     let mut ranges_by_path = results

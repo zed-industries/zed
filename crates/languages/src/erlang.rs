@@ -6,7 +6,7 @@ use std::{any::Any, path::PathBuf};
 
 pub struct ErlangLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for ErlangLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("erlang_ls".into())

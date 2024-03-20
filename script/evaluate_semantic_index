@@ -1,3 +1,0 @@
-#!/bin/bash
-
-RUST_LOG=semantic_index=trace cargo run --example semantic_index_eval --release

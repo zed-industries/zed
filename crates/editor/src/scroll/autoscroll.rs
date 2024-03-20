@@ -81,8 +81,8 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(highlighted_rows) = &self.highlighted_rows {
-            target_top = highlighted_rows.start as f32;
+        if let Some(first_highlighted_row) = &self.highlighted_display_rows(cx).first_entry() {
+            target_top = *first_highlighted_row.key() as f32;
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
@@ -205,10 +205,7 @@ impl Editor {
         let mut target_left;
         let mut target_right;
 
-        if self.highlighted_rows.is_some() {
-            target_left = px(0.);
-            target_right = px(0.);
-        } else {
+        if self.highlighted_rows.is_empty() {
             target_left = px(f32::INFINITY);
             target_right = px(0.);
             for selection in selections {
@@ -229,6 +226,9 @@ impl Editor {
                     );
                 }
             }
+        } else {
+            target_left = px(0.);
+            target_right = px(0.);
         }
 
         target_right = target_right.min(scroll_width);

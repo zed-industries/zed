@@ -1,13 +1,16 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
+use gpui::AsyncAppContext;
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
+use project::project_settings::ProjectSettings;
 use regex::Regex;
+use settings::Settings;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -17,10 +20,41 @@ use util::{
 
 pub struct RustLspAdapter;
 
-#[async_trait]
+impl RustLspAdapter {
+    const SERVER_NAME: &'static str = "rust-analyzer";
+}
+
+#[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("rust-analyzer".into())
+        LanguageServerName(Self::SERVER_NAME.into())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let binary = cx
+            .update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .lsp
+                    .get(Self::SERVER_NAME)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()??;
+
+        let path = binary.path?;
+        Some(LanguageServerBinary {
+            path: path.into(),
+            arguments: binary
+                .arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -45,7 +79,7 @@ impl LspAdapter for RustLspAdapter {
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
@@ -280,6 +314,48 @@ impl LspAdapter for RustLspAdapter {
             text: text[display_range].to_string(),
             filter_range,
         })
+    }
+}
+
+pub(crate) struct RustContextProvider;
+
+impl LanguageContextProvider for RustContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut gpui::AppContext,
+    ) -> Result<LanguageContext> {
+        let mut context = DefaultContextProvider.build_context(location.clone(), cx)?;
+        if context.package.is_none() {
+            if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
+                let local_file = file.as_local()?.abs_path(cx);
+                local_file.parent().map(PathBuf::from)
+            }) {
+                // src/
+                //  main.rs
+                //  lib.rs
+                //  foo/
+                //      bar/
+                //          baz.rs <|>
+                //  /bin/
+                //     bin_1.rs
+                //
+                let Some(pkgid) = std::process::Command::new("cargo")
+                    .current_dir(path)
+                    .arg("pkgid")
+                    .output()
+                    .log_err()
+                else {
+                    return Ok(context);
+                };
+                let package_name = String::from_utf8(pkgid.stdout)
+                    .map(|name| name.trim().to_owned())
+                    .ok();
+
+                context.package = package_name;
+            }
+        }
+        Ok(context)
     }
 }
 

@@ -70,6 +70,7 @@ mod app;
 
 mod arena;
 mod assets;
+mod bounds_tree;
 mod color;
 mod element;
 mod elements;
@@ -124,7 +125,7 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui_macros::{register_action, test, IntoElement, Render};
-use image_cache::*;
+pub use image_cache::*;
 pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;

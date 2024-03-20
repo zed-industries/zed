@@ -1,6 +1,7 @@
 use crate::{
-    CachedLspAdapter, Language, LanguageConfig, LanguageContextProvider, LanguageId,
-    LanguageMatcher, LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    language_settings::all_language_settings, CachedLspAdapter, File, Language, LanguageConfig,
+    LanguageContextProvider, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
+    LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -10,7 +11,7 @@ use futures::{
     Future, FutureExt as _,
 };
 use gpui::{AppContext, BackgroundExecutor, Task};
-use lsp::{LanguageServerBinary, LanguageServerId};
+use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use std::{
@@ -30,11 +31,7 @@ pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
     login_shell_env_loaded: Shared<Task<()>>,
-    #[allow(clippy::type_complexity)]
-    lsp_binary_paths: Mutex<
-        HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
-    >,
-    executor: Option<BackgroundExecutor>,
+    executor: BackgroundExecutor,
     lsp_binary_status_tx: LspBinaryStatusSender,
 }
 
@@ -88,6 +85,15 @@ enum AvailableGrammar {
     Unloaded(PathBuf),
 }
 
+#[derive(Debug)]
+pub struct LanguageNotFound;
+
+impl std::fmt::Display for LanguageNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "language not found")
+    }
+}
+
 pub const QUERY_FILENAME_PREFIXES: &[(
     &str,
     fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
@@ -121,12 +127,12 @@ struct LspBinaryStatusSender {
 }
 
 impl LanguageRegistry {
-    pub fn new(login_shell_env_loaded: Task<()>) -> Self {
-        Self {
+    pub fn new(login_shell_env_loaded: Task<()>, executor: BackgroundExecutor) -> Self {
+        let this = Self {
             state: RwLock::new(LanguageRegistryState {
                 next_language_server_id: 0,
-                languages: vec![PLAIN_TEXT.clone()],
-                available_languages: Default::default(),
+                languages: Vec::new(),
+                available_languages: Vec::new(),
                 grammars: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
@@ -140,21 +146,18 @@ impl LanguageRegistry {
             }),
             language_server_download_dir: None,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
-            lsp_binary_paths: Default::default(),
-            executor: None,
             lsp_binary_status_tx: Default::default(),
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn test() -> Self {
-        let mut this = Self::new(Task::ready(()));
-        this.language_server_download_dir = Some(Path::new("/the-download-dir").into());
+            executor,
+        };
+        this.add(PLAIN_TEXT.clone());
         this
     }
 
-    pub fn set_executor(&mut self, executor: BackgroundExecutor) {
-        self.executor = Some(executor);
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(executor: BackgroundExecutor) -> Self {
+        let mut this = Self::new(Task::ready(()), executor);
+        this.language_server_download_dir = Some(Path::new("/the-download-dir").into());
+        this
     }
 
     /// Clears out all of the loaded languages and reload them from scratch.
@@ -317,8 +320,19 @@ impl LanguageRegistry {
         result
     }
 
+    /// Add a pre-loaded language to the registry.
     pub fn add(&self, language: Arc<Language>) {
-        self.state.write().add(language);
+        let mut state = self.state.write();
+        state.available_languages.push(AvailableLanguage {
+            id: language.id,
+            name: language.name(),
+            grammar: language.config.grammar.clone(),
+            matcher: language.config.matcher.clone(),
+            load: Arc::new(|| Err(anyhow!("already loaded"))),
+            loaded: true,
+            context_provider: language.context_provider.clone(),
+        });
+        state.add(language);
     }
 
     pub fn subscribe(&self) -> watch::Receiver<()> {
@@ -353,7 +367,13 @@ impl LanguageRegistry {
         name: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let name = UniCase::new(name);
-        let rx = self.get_or_load_language(|language_name, _| UniCase::new(language_name) == name);
+        let rx = self.get_or_load_language(|language_name, _| {
+            if UniCase::new(language_name) == name {
+                1
+            } else {
+                0
+            }
+        });
         async move { rx.await? }
     }
 
@@ -363,26 +383,60 @@ impl LanguageRegistry {
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let string = UniCase::new(string);
         let rx = self.get_or_load_language(|name, config| {
-            UniCase::new(name) == string
+            if UniCase::new(name) == string
                 || config
                     .path_suffixes
                     .iter()
                     .any(|suffix| UniCase::new(suffix) == string)
+            {
+                1
+            } else {
+                0
+            }
         });
         async move { rx.await? }
     }
 
     pub fn language_for_file(
         self: &Arc<Self>,
+        file: &Arc<dyn File>,
+        content: Option<&Rope>,
+        cx: &AppContext,
+    ) -> impl Future<Output = Result<Arc<Language>>> {
+        let user_file_types = all_language_settings(Some(file), cx);
+        self.language_for_file_internal(
+            &file.full_path(cx),
+            content,
+            Some(&user_file_types.file_types),
+        )
+    }
+
+    pub fn language_for_file_path(
+        self: &Arc<Self>,
+        path: &Path,
+    ) -> impl Future<Output = Result<Arc<Language>>> {
+        self.language_for_file_internal(path, None, None)
+    }
+
+    fn language_for_file_internal(
+        self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
+        user_file_types: Option<&HashMap<Arc<str>, Vec<String>>>,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
-        let rx = self.get_or_load_language(move |_, config| {
-            let path_matches = config
+        let empty = Vec::new();
+
+        let rx = self.get_or_load_language(move |language_name, config| {
+            let path_matches_default_suffix = config
                 .path_suffixes
+                .iter()
+                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            let path_matches_custom_suffix = user_file_types
+                .and_then(|types| types.get(language_name))
+                .unwrap_or(&empty)
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
@@ -394,93 +448,110 @@ impl LanguageRegistry {
                     pattern.is_match(&text)
                 },
             );
-            path_matches || content_matches
+            if path_matches_custom_suffix {
+                2
+            } else if path_matches_default_suffix || content_matches {
+                1
+            } else {
+                0
+            }
         });
         async move { rx.await? }
     }
 
     fn get_or_load_language(
         self: &Arc<Self>,
-        callback: impl Fn(&str, &LanguageMatcher) -> bool,
+        callback: impl Fn(&str, &LanguageMatcher) -> usize,
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
         let (tx, rx) = oneshot::channel();
 
         let mut state = self.state.write();
-        if let Some(language) = state
-            .languages
+        let Some((language, _)) = state
+            .available_languages
             .iter()
-            .find(|language| callback(language.config.name.as_ref(), &language.config.matcher))
-        {
-            let _ = tx.send(Ok(language.clone()));
-        } else if let Some(executor) = self.executor.clone() {
-            if let Some(language) = state
-                .available_languages
-                .iter()
-                .rfind(|l| !l.loaded && callback(&l.name, &l.matcher))
-                .cloned()
-            {
-                match state.loading_languages.entry(language.id) {
-                    hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(tx),
-                    hash_map::Entry::Vacant(entry) => {
-                        let this = self.clone();
-                        executor
-                            .spawn(async move {
-                                let id = language.id;
-                                let name = language.name.clone();
-                                let provider = language.context_provider.clone();
-                                let language = async {
-                                    let (config, queries) = (language.load)()?;
-
-                                    let grammar = if let Some(grammar) = config.grammar.clone() {
-                                        Some(this.get_or_load_grammar(grammar).await?)
-                                    } else {
-                                        None
-                                    };
-
-                                    Language::new_with_id(id, config, grammar)
-                                        .with_context_provider(provider)
-                                        .with_queries(queries)
-                                }
-                                .await;
-
-                                match language {
-                                    Ok(language) => {
-                                        let language = Arc::new(language);
-                                        let mut state = this.state.write();
-
-                                        state.add(language.clone());
-                                        state.mark_language_loaded(id);
-                                        if let Some(mut txs) = state.loading_languages.remove(&id) {
-                                            for tx in txs.drain(..) {
-                                                let _ = tx.send(Ok(language.clone()));
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("failed to load language {name}:\n{:?}", e);
-                                        let mut state = this.state.write();
-                                        state.mark_language_loaded(id);
-                                        if let Some(mut txs) = state.loading_languages.remove(&id) {
-                                            for tx in txs.drain(..) {
-                                                let _ = tx.send(Err(anyhow!(
-                                                    "failed to load language {}: {}",
-                                                    name,
-                                                    e
-                                                )));
-                                            }
-                                        }
-                                    }
-                                };
-                            })
-                            .detach();
-                        entry.insert(vec![tx]);
-                    }
+            .filter_map(|language| {
+                let score = callback(&language.name, &language.matcher);
+                if score > 0 {
+                    Some((language.clone(), score))
+                } else {
+                    None
                 }
-            } else {
-                let _ = tx.send(Err(anyhow!("language not found")));
+            })
+            .max_by_key(|e| e.1)
+            .clone()
+        else {
+            let _ = tx.send(Err(anyhow!(LanguageNotFound)));
+            return rx;
+        };
+
+        // If the language is already loaded, resolve with it immediately.
+        for loaded_language in state.languages.iter() {
+            if loaded_language.id == language.id {
+                let _ = tx.send(Ok(loaded_language.clone()));
+                return rx;
             }
-        } else {
-            let _ = tx.send(Err(anyhow!("executor does not exist")));
+        }
+
+        match state.loading_languages.entry(language.id) {
+            // If the language is already being loaded, then add this
+            // channel to a list that will be sent to when the load completes.
+            hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(tx),
+
+            // Otherwise, start loading the language.
+            hash_map::Entry::Vacant(entry) => {
+                let this = self.clone();
+                self.executor
+                    .spawn(async move {
+                        let id = language.id;
+                        let name = language.name.clone();
+                        let provider = language.context_provider.clone();
+                        let language = async {
+                            let (config, queries) = (language.load)()?;
+
+                            if let Some(grammar) = config.grammar.clone() {
+                                let grammar = Some(this.get_or_load_grammar(grammar).await?);
+                                Language::new_with_id(id, config, grammar)
+                                    .with_context_provider(provider)
+                                    .with_queries(queries)
+                            } else {
+                                Ok(Language::new_with_id(id, config, None)
+                                    .with_context_provider(provider))
+                            }
+                        }
+                        .await;
+
+                        match language {
+                            Ok(language) => {
+                                let language = Arc::new(language);
+                                let mut state = this.state.write();
+
+                                state.add(language.clone());
+                                state.mark_language_loaded(id);
+                                if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                    for tx in txs.drain(..) {
+                                        let _ = tx.send(Ok(language.clone()));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("failed to load language {name}:\n{:?}", e);
+                                let mut state = this.state.write();
+                                state.mark_language_loaded(id);
+                                if let Some(mut txs) = state.loading_languages.remove(&id) {
+                                    for tx in txs.drain(..) {
+                                        let _ = tx.send(Err(anyhow!(
+                                            "failed to load language {}: {}",
+                                            name,
+                                            e
+                                        )));
+                                    }
+                                }
+                            }
+                        };
+                    })
+                    .detach();
+                entry.insert(vec![tx]);
+            }
         }
 
         rx
@@ -502,43 +573,40 @@ impl LanguageRegistry {
                     txs.push(tx);
                 }
                 AvailableGrammar::Unloaded(wasm_path) => {
-                    if let Some(executor) = &self.executor {
-                        let this = self.clone();
-                        executor
-                            .spawn({
-                                let wasm_path = wasm_path.clone();
-                                async move {
-                                    let wasm_bytes = std::fs::read(&wasm_path)?;
-                                    let grammar_name = wasm_path
-                                        .file_stem()
-                                        .and_then(OsStr::to_str)
-                                        .ok_or_else(|| anyhow!("invalid grammar filename"))?;
-                                    let grammar = PARSER.with(|parser| {
-                                        let mut parser = parser.borrow_mut();
-                                        let mut store = parser.take_wasm_store().unwrap();
-                                        let grammar =
-                                            store.load_language(&grammar_name, &wasm_bytes);
-                                        parser.set_wasm_store(store).unwrap();
-                                        grammar
-                                    })?;
+                    let this = self.clone();
+                    self.executor
+                        .spawn({
+                            let wasm_path = wasm_path.clone();
+                            async move {
+                                let wasm_bytes = std::fs::read(&wasm_path)?;
+                                let grammar_name = wasm_path
+                                    .file_stem()
+                                    .and_then(OsStr::to_str)
+                                    .ok_or_else(|| anyhow!("invalid grammar filename"))?;
+                                let grammar = PARSER.with(|parser| {
+                                    let mut parser = parser.borrow_mut();
+                                    let mut store = parser.take_wasm_store().unwrap();
+                                    let grammar = store.load_language(&grammar_name, &wasm_bytes);
+                                    parser.set_wasm_store(store).unwrap();
+                                    grammar
+                                })?;
 
-                                    if let Some(AvailableGrammar::Loading(_, txs)) =
-                                        this.state.write().grammars.insert(
-                                            name,
-                                            AvailableGrammar::Loaded(wasm_path, grammar.clone()),
-                                        )
-                                    {
-                                        for tx in txs {
-                                            tx.send(Ok(grammar.clone())).ok();
-                                        }
+                                if let Some(AvailableGrammar::Loading(_, txs)) =
+                                    this.state.write().grammars.insert(
+                                        name,
+                                        AvailableGrammar::Loaded(wasm_path, grammar.clone()),
+                                    )
+                                {
+                                    for tx in txs {
+                                        tx.send(Ok(grammar.clone())).ok();
                                     }
-
-                                    anyhow::Ok(())
                                 }
-                            })
-                            .detach();
-                        *grammar = AvailableGrammar::Loading(wasm_path.clone(), vec![tx]);
-                    }
+
+                                anyhow::Ok(())
+                            }
+                        })
+                        .detach();
+                    *grammar = AvailableGrammar::Loading(wasm_path.clone(), vec![tx]);
                 }
             }
         } else {
@@ -694,9 +762,6 @@ impl LanguageRegistry {
     ) -> Task<()> {
         log::info!("deleting server container");
 
-        let mut lock = self.lsp_binary_paths.lock();
-        lock.remove(&adapter.name);
-
         let download_dir = self
             .language_server_download_dir
             .clone()
@@ -713,13 +778,6 @@ impl LanguageRegistry {
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
         self.state.write().next_language_server_id()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Default for LanguageRegistry {
-    fn default() -> Self {
-        Self::test()
     }
 }
 

@@ -517,15 +517,15 @@ impl ProjectDiagnosticsEditor {
         self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx);
             let block_ids = editor.insert_blocks(
-                blocks_to_add.into_iter().map(|block| {
+                blocks_to_add.into_iter().flat_map(|block| {
                     let (excerpt_id, text_anchor) = block.position;
-                    BlockProperties {
-                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
+                    Some(BlockProperties {
+                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
                         height: block.height,
                         style: block.style,
                         render: block.render,
                         disposition: block.disposition,
-                    }
+                    })
                 }),
                 Some(Autoscroll::fit()),
                 cx,
@@ -589,14 +589,16 @@ impl ProjectDiagnosticsEditor {
                         Ok(ix) | Err(ix) => ix,
                     };
                     if let Some(group) = groups.get(group_ix) {
-                        let offset = excerpts_snapshot
+                        if let Some(offset) = excerpts_snapshot
                             .anchor_in_excerpt(
                                 group.excerpts[group.primary_excerpt_ix],
                                 group.primary_diagnostic.range.start,
                             )
-                            .to_offset(&excerpts_snapshot);
-                        selection.start = offset;
-                        selection.end = offset;
+                            .map(|anchor| anchor.to_offset(&excerpts_snapshot))
+                        {
+                            selection.start = offset;
+                            selection.end = offset;
+                        }
                     }
                 }
             }
@@ -892,7 +894,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint, GutterDimensions,
     };
-    use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
+    use gpui::{px, Stateful, TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -1598,20 +1600,18 @@ mod tests {
                     let name: SharedString = match block {
                         TransformBlock::Custom(block) => cx.with_element_context({
                             |cx| -> Option<SharedString> {
-                                block
-                                    .render(&mut BlockContext {
-                                        context: cx,
-                                        anchor_x: px(0.),
-                                        gutter_dimensions: &GutterDimensions::default(),
-                                        line_height: px(0.),
-                                        em_width: px(0.),
-                                        max_width: px(0.),
-                                        block_id: ix,
-                                        editor_style: &editor::EditorStyle::default(),
-                                    })
-                                    .inner_id()?
-                                    .try_into()
-                                    .ok()
+                                let mut element = block.render(&mut BlockContext {
+                                    context: cx,
+                                    anchor_x: px(0.),
+                                    gutter_dimensions: &GutterDimensions::default(),
+                                    line_height: px(0.),
+                                    em_width: px(0.),
+                                    max_width: px(0.),
+                                    block_id: ix,
+                                    editor_style: &editor::EditorStyle::default(),
+                                });
+                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
+                                element.interactivity().element_id.clone()?.try_into().ok()
                             }
                         })?,
 

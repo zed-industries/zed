@@ -1,8 +1,13 @@
 use anyhow::anyhow;
-use axum::{extract::MatchedPath, http::Request, routing::get, Extension, Router};
+use axum::{
+    extract::MatchedPath,
+    http::{Request, Response},
+    routing::get,
+    Extension, Router,
+};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
-    Config, MigrateConfig, Result,
+    Config, MigrateConfig, RateLimiter, Result,
 };
 use db::Database;
 use std::{
@@ -10,11 +15,11 @@ use std::{
     net::{SocketAddr, TcpListener},
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 #[cfg(unix)]
 use tokio::signal::unix::SignalKind;
-use tower_http::trace::{self, TraceLayer};
-use tracing::Level;
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
 };
@@ -57,7 +62,7 @@ async fn main() -> Result<()> {
 
             run_migrations().await?;
 
-            let state = AppState::new(config).await?;
+            let state = AppState::new(config, Executor::Production).await?;
 
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
@@ -67,8 +72,7 @@ async fn main() -> Result<()> {
                     .db
                     .create_server(&state.config.zed_environment)
                     .await?;
-                let rpc_server =
-                    collab::rpc::Server::new(epoch, state.clone(), Executor::Production);
+                let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                 rpc_server.start().await?;
 
                 Some(rpc_server)
@@ -76,8 +80,12 @@ async fn main() -> Result<()> {
                 None
             };
 
+            if is_collab {
+                RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
+            }
+
             if is_api {
-                fetch_extensions_from_blob_store_periodically(state.clone(), Executor::Production);
+                fetch_extensions_from_blob_store_periodically(state.clone());
             }
 
             let mut app = collab::api::routes(rpc_server.clone(), state.clone());
@@ -107,7 +115,16 @@ async fn main() -> Result<()> {
                                 matched_path,
                             )
                         })
-                        .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
+                        .on_response(
+                            |response: &Response<_>, latency: Duration, _: &tracing::Span| {
+                                let duration_ms = latency.as_micros() as f64 / 1000.;
+                                tracing::info!(
+                                    duration_ms,
+                                    status = response.status().as_u16(),
+                                    "finished processing request"
+                                );
+                            },
+                        ),
                 );
 
             #[cfg(unix)]
@@ -184,7 +201,6 @@ pub fn init_tracing(config: &Config) -> Option<()> {
     let filter = EnvFilter::from_str(config.rust_log.as_deref()?).log_err()?;
 
     tracing_subscriber::registry()
-        .with(console_subscriber::spawn())
         .with(if config.log_json.unwrap_or(false) {
             Box::new(
                 tracing_subscriber::fmt::layer()
@@ -193,7 +209,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
                         tracing_subscriber::fmt::format()
                             .json()
                             .flatten_event(true)
-                            .with_span_list(true),
+                            .with_span_list(false),
                     )
                     .with_filter(filter),
             ) as Box<dyn Layer<_> + Send + Sync>

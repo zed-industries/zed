@@ -241,6 +241,17 @@ impl ActivityIndicator {
             };
         }
 
+        // Show any formatting failure
+        if let Some(failure) = self.project.read(cx).last_formatting_failure() {
+            return Content {
+                icon: Some(WARNING_ICON),
+                message: format!("Formatting failed: {}. Click to see logs.", failure),
+                on_click: Some(Arc::new(|_, cx| {
+                    cx.dispatch_action(Box::new(workspace::OpenLog));
+                })),
+            };
+        }
+
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
             return match &updater.read(cx).status() {

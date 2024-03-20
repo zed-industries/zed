@@ -19,7 +19,7 @@ fn terraform_ls_binary_arguments() -> Vec<OsString> {
 
 pub struct TerraformLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TerraformLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("terraform-ls".into())

@@ -13,7 +13,6 @@ path = "src/fs.rs"
 
 [dependencies]
 collections.workspace = true
-fsevent.workspace = true
 rope.workspace = true
 text.workspace = true
 util.workspace = true
@@ -37,14 +36,14 @@ time.workspace = true
 
 gpui = { workspace = true, optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+fsevent.workspace = true
+
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.52", features = [
-    "Win32_Foundation",
-    "Win32_Storage_FileSystem",
-] }
+windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

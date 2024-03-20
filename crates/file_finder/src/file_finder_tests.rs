@@ -4,7 +4,7 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext};
-use project::worktree::FS_WATCH_LATENCY;
+use project::FS_WATCH_LATENCY;
 use serde_json::json;
 use workspace::{AppState, Workspace};
 

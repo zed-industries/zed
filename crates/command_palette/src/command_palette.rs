@@ -27,7 +27,7 @@ actions!(command_palette, [Toggle]);
 pub fn init(cx: &mut AppContext) {
     client::init_settings(cx);
     cx.set_global(HitCounts::default());
-    cx.set_global(CommandPaletteFilter::default());
+    command_palette_hooks::init(cx);
     cx.observe_new_views(CommandPalette::register).detach();
 }
 
@@ -73,23 +73,18 @@ impl CommandPalette {
         telemetry: Arc<Telemetry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let filter = cx.try_global::<CommandPaletteFilter>();
+        let filter = CommandPaletteFilter::try_global(cx);
 
         let commands = cx
             .available_actions()
             .into_iter()
             .filter_map(|action| {
-                let name = action.name();
-                let namespace = name.split("::").next().unwrap_or("malformed action name");
-                if filter.is_some_and(|f| {
-                    f.hidden_namespaces.contains(namespace)
-                        || f.hidden_action_types.contains(&action.type_id())
-                }) {
+                if filter.is_some_and(|filter| filter.is_hidden(&*action)) {
                     return None;
                 }
 
                 Some(Command {
-                    name: humanize_action_name(&name),
+                    name: humanize_action_name(action.name()),
                     action,
                 })
             })
@@ -185,12 +180,8 @@ impl CommandPaletteDelegate {
     ) {
         self.updating_matches.take();
 
-        let mut intercept_result =
-            if let Some(interceptor) = cx.try_global::<CommandPaletteInterceptor>() {
-                (interceptor.0)(&query, cx)
-            } else {
-                None
-            };
+        let mut intercept_result = CommandPaletteInterceptor::try_global(cx)
+            .and_then(|interceptor| interceptor.intercept(&query, cx));
 
         if parse_zed_link(&query, cx).is_some() {
             intercept_result = Some(CommandInterceptResult {
@@ -523,10 +514,9 @@ mod tests {
 
         // Add namespace filter, and redeploy the palette
         cx.update(|cx| {
-            cx.set_global(CommandPaletteFilter::default());
-            cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
-                filter.hidden_namespaces.insert("editor");
-            })
+            CommandPaletteFilter::update_global(cx, |filter, _| {
+                filter.hide_namespace("editor");
+            });
         });
 
         cx.simulate_keystrokes("cmd-shift-p");

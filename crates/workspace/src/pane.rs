@@ -12,7 +12,7 @@ use gpui::{
     AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
     Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    WeakFocusHandle, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -166,13 +166,13 @@ pub struct Pane {
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
-    last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
+    last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
     new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
     //     tab_context_menu: View<ContextMenu>,
-    workspace: WeakView<Workspace>,
+    pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
@@ -183,6 +183,7 @@ pub struct Pane {
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     display_nav_history_buttons: bool,
+    double_click_dispatch_action: Box<dyn Action>,
 }
 
 pub struct ItemNavHistory {
@@ -242,6 +243,7 @@ impl Pane {
         project: Model<Project>,
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
+        double_click_dispatch_action: Box<dyn Action>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -260,7 +262,7 @@ impl Pane {
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
-            last_focused_view_by_item: Default::default(),
+            last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
                 backward_stack: Default::default(),
@@ -346,6 +348,7 @@ impl Pane {
             }),
             display_nav_history_buttons: true,
             _subscriptions: subscriptions,
+            double_click_dispatch_action,
         }
     }
 
@@ -377,18 +380,20 @@ impl Pane {
             if self.focus_handle.is_focused(cx) {
                 // Pane was focused directly. We need to either focus a view inside the active item,
                 // or focus the active item itself
-                if let Some(weak_last_focused_view) =
-                    self.last_focused_view_by_item.get(&active_item.item_id())
+                if let Some(weak_last_focus_handle) =
+                    self.last_focus_handle_by_item.get(&active_item.item_id())
                 {
-                    weak_last_focused_view.focus(cx);
-                    return;
+                    if let Some(focus_handle) = weak_last_focus_handle.upgrade() {
+                        focus_handle.focus(cx);
+                        return;
+                    }
                 }
 
                 active_item.focus_handle(cx).focus(cx);
             } else if let Some(focused) = cx.focused() {
                 if !self.context_menu_focused(cx) {
-                    self.last_focused_view_by_item
-                        .insert(active_item.item_id(), focused);
+                    self.last_focus_handle_by_item
+                        .insert(active_item.item_id(), focused.downgrade());
                 }
             }
         }
@@ -1550,9 +1555,9 @@ impl Pane {
                         this.drag_split_direction = None;
                         this.handle_external_paths_drop(paths, cx)
                     }))
-                    .on_click(cx.listener(move |_, event: &ClickEvent, cx| {
+                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                         if event.up.click_count == 2 {
-                            cx.dispatch_action(NewFile.boxed_clone());
+                            cx.dispatch_action(this.double_click_dispatch_action.boxed_clone())
                         }
                     })),
             )
@@ -1561,7 +1566,6 @@ impl Pane {
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div()
             .absolute()
-            .z_index(1)
             .bottom_0()
             .right_0()
             .size_0()
@@ -1886,7 +1890,6 @@ impl Render for Pane {
                     .child(
                         // drag target
                         div()
-                            .z_index(1)
                             .invisible()
                             .absolute()
                             .bg(theme::color_alpha(
@@ -2110,7 +2113,11 @@ impl NavHistoryState {
 fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     let path = buffer_path
         .as_ref()
-        .and_then(|p| p.path.to_str())
+        .and_then(|p| {
+            p.path
+                .to_str()
+                .and_then(|s| if s == "" { None } else { Some(s) })
+        })
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")

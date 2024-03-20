@@ -14,7 +14,7 @@ use util::{
 
 pub struct CLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("clangd".into())

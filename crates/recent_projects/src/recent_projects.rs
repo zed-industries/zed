@@ -1,8 +1,10 @@
+use collections::HashMap;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
     Subscription, Task, View, ViewContext, WeakView,
 };
+use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
@@ -56,7 +58,6 @@ impl RecentProjects {
                 .recent_workspaces_on_disk()
                 .await
                 .unwrap_or_default();
-
             this.update(&mut cx, move |this, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.workspaces = workspaces;
@@ -157,7 +158,7 @@ impl RecentProjectsDelegate {
     fn new(workspace: WeakView<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
         Self {
             workspace,
-            workspaces: vec![],
+            workspaces: Vec::new(),
             selected_match_index: 0,
             matches: Default::default(),
             create_new_window,
@@ -325,14 +326,21 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let highlighted_match = HighlightedMatchWithPaths {
             match_label: HighlightedText::join(match_labels.into_iter().flatten(), ", "),
-            paths: if self.render_paths { paths } else { Vec::new() },
+            paths,
         };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(highlighted_match.clone().render(cx))
+                .child({
+                    let mut highlighted = highlighted_match.clone();
+                    if !self.render_paths {
+                        highlighted.paths.clear();
+                    }
+                    highlighted.render(cx)
+                })
                 .when(!is_current_workspace, |el| {
                     let delete_button = div()
                         .child(
@@ -344,7 +352,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                                     this.delegate.delete_recent_project(ix, cx)
                                 }))
-                                .tooltip(|cx| Tooltip::text("Delete From Recent Projects...", cx)),
+                                .tooltip(|cx| Tooltip::text("Delete from Recent Projects...", cx)),
                         )
                         .into_any_element();
 
@@ -423,7 +431,20 @@ impl RecentProjectsDelegate {
                     .recent_workspaces_on_disk()
                     .await
                     .unwrap_or_default();
+                let mut unique_added_paths = HashMap::default();
+                for (id, workspace) in &workspaces {
+                    for path in workspace.paths().iter() {
+                        unique_added_paths.insert(path.clone(), id);
+                    }
+                }
+                let updated_paths = unique_added_paths
+                    .into_iter()
+                    .sorted_by_key(|(_, id)| *id)
+                    .map(|(path, _)| path)
+                    .collect::<Vec<_>>();
                 this.update(&mut cx, move |picker, cx| {
+                    cx.clear_recent_documents();
+                    cx.add_recent_documents(&updated_paths);
                     picker.delegate.workspaces = workspaces;
                     picker.delegate.set_selected_index(ix - 1, cx);
                     picker.delegate.reset_selected_match_index = false;
@@ -486,9 +507,16 @@ mod tests {
                 }),
             )
             .await;
-        cx.update(|cx| open_paths(&[PathBuf::from("/dir/main.ts")], &app_state, None, cx))
-            .await
-            .unwrap();
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/dir/main.ts")],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         let workspace = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
@@ -526,7 +554,10 @@ mod tests {
                         positions: Vec::new(),
                         string: "fake candidate".to_string(),
                     }];
-                    delegate.workspaces = vec![(0, WorkspaceLocation::new(vec!["/test/path/"]))];
+                    delegate.workspaces = vec![(
+                        WorkspaceId::default(),
+                        WorkspaceLocation::new(vec!["/test/path/"]),
+                    )];
                 });
             })
             .unwrap();

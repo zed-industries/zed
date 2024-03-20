@@ -60,6 +60,7 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
 
     // Deny all warnings.
     // We don't do this yet on Windows, as it still has some warnings present.
+    // todo(windows)
     #[cfg(not(target_os = "windows"))]
     clippy_command.args(["--deny", "warnings"]);
 

@@ -16,7 +16,7 @@ use util::{
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for LuaLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("lua-language-server".into())

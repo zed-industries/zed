@@ -47,6 +47,9 @@
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // The key to use for adding multiple cursors
+  // Currently "alt" or "cmd" are supported.
+  "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings
   "vim_mode": false,
   // Whether to show the informational hover box when moving the mouse
@@ -140,6 +143,15 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // What to do when multibuffer is double clicked in some of its excerpts
+  // (parts of singleton buffers).
+  // May take 2 values:
+  //  1. Behave as a regular buffer and select the whole word (default).
+  //         "double_click_in_multibuffer": "select"
+  //  2. Open the excerpt clicked as a new buffer in the new tab.
+  //         "double_click_in_multibuffer": "open",
+  // For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
+  "double_click_in_multibuffer": "select",
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
@@ -180,7 +192,7 @@
   "project_panel": {
     // Default width of the project panel.
     "default_width": 240,
-    // Where to dock project panel. Can be 'left' or 'right'.
+    // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Whether to show file icons in the project panel.
     "file_icons": true,
@@ -198,58 +210,53 @@
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
-    // Where to dock channels panel. Can be 'left' or 'right'.
+    // Where to dock the collaboration panel. Can be 'left' or 'right'.
     "dock": "left",
-    // Default width of the channels panel.
+    // Default width of the collaboration panel.
     "default_width": 240
   },
   "chat_panel": {
-    // Whether to show the collaboration panel button in the status bar.
+    // Whether to show the chat panel button in the status bar.
     "button": true,
-    // Where to dock channels panel. Can be 'left' or 'right'.
+    // Where to the chat panel. Can be 'left' or 'right'.
     "dock": "right",
-    // Default width of the channels panel.
+    // Default width of the chat panel.
     "default_width": 240
   },
+  "message_editor": {
+    // Whether to automatically replace emoji shortcodes with emoji characters.
+    // For example: typing `:wave:` gets replaced with `👋`.
+    "auto_replace_emoji_shortcode": true
+  },
   "notification_panel": {
-    // Whether to show the collaboration panel button in the status bar.
+    // Whether to show the notification panel button in the status bar.
     "button": true,
-    // Where to dock channels panel. Can be 'left' or 'right'.
+    // Where to dock the notification panel. Can be 'left' or 'right'.
     "dock": "right",
-    // Default width of the channels panel.
+    // Default width of the notification panel.
     "default_width": 380
   },
   "assistant": {
+    // Version of this setting.
+    "version": "1",
     // Whether to show the assistant panel button in the status bar.
     "button": true,
-    // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
+    // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
     // Default width when the assistant is docked to the left or right.
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // Deprecated: Please use `provider.api_url` instead.
-    // The default OpenAI API endpoint to use when starting new conversations.
-    "openai_api_url": "https://api.openai.com/v1",
-    // Deprecated: Please use `provider.default_model` instead.
-    // The default OpenAI model to use when starting new conversations. This
-    // setting can take three values:
-    //
-    // 1. "gpt-3.5-turbo-0613""
-    // 2. "gpt-4-0613""
-    // 3. "gpt-4-1106-preview"
-    "default_open_ai_model": "gpt-4-1106-preview",
+    // AI provider.
     "provider": {
-      "type": "openai",
-      // The default OpenAI API endpoint to use when starting new conversations.
-      "api_url": "https://api.openai.com/v1",
-      // The default OpenAI model to use when starting new conversations. This
+      "name": "openai",
+      // The default model to use when starting new conversations. This
       // setting can take three values:
       //
-      // 1. "gpt-3.5-turbo-0613""
-      // 2. "gpt-4-0613""
-      // 3. "gpt-4-1106-preview"
-      "default_model": "gpt-4-1106-preview"
+      // 1. "gpt-3.5-turbo"
+      // 2. "gpt-4"
+      // 3. "gpt-4-turbo-preview"
+      "default_model": "gpt-4-turbo-preview"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -488,10 +495,6 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  // Difference settings for semantic_index
-  "semantic_index": {
-    "enabled": true
-  },
   // Settings specific to our elixir integration
   "elixir": {
     // Change the LSP zed uses for elixir.
@@ -518,6 +521,19 @@
     "enable": false
   },
   "code_actions_on_format": {},
+  // An object whose keys are language names, and whose values
+  // are arrays of filenames or extensions of files that should
+  // use those languages.
+  //
+  // For example, to treat files like `foo.notjs` as JavaScript,
+  // and 'Embargo.lock' as TOML:
+  //
+  // {
+  //   "JavaScript": ["notjs"],
+  //   "TOML": ["Embargo.lock"]
+  // }
+  //
+  "file_types": {},
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {
@@ -590,7 +606,8 @@
   // Vim settings
   "vim": {
     "use_system_clipboard": "always",
-    "use_multiline_find": false
+    "use_multiline_find": false,
+    "use_smartcase_find": false
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

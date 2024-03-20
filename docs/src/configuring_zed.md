@@ -380,6 +380,25 @@ To override settings for a language, add an entry for that language server's nam
 
 `boolean` values
 
+## File Types
+
+- Setting: `file_types`
+- Description: Configure how Zed selects a language for a file based on its filename or extension.
+- Default: `{}`
+
+**Examples**
+
+To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
+
+```json
+{
+  "file_types": {
+    "C++": ["c"],
+    "TOML": ["MyLockFile"]
+  }
+}
+```
+
 ## Git
 
 - Description: Configuration for git-related features.
@@ -581,28 +600,6 @@ These values take in the same options as the root-level settings with the same n
 
 - Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it.
 - Setting: `remove_trailing_whitespace_on_save`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-## Semantic Index
-
-- Description: Settings related to semantic index.
-- Setting: `semantic_index`
-- Default:
-
-```json
-"semantic_index": {
-  "enabled": false
-},
-```
-
-### Enabled
-
-- Description: Whether or not to display the `Semantic` mode in project search.
-- Setting: `enabled`
 - Default: `true`
 
 **Options**

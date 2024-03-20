@@ -1,5 +1,8 @@
 use super::*;
-use rpc::{proto::channel_member::Kind, ErrorCode, ErrorCodeExt};
+use rpc::{
+    proto::{channel_member::Kind, ChannelBufferVersion, VectorClockEntry},
+    ErrorCode, ErrorCodeExt,
+};
 use sea_orm::TryGetableMany;
 
 impl Database {
@@ -42,11 +45,7 @@ impl Database {
         name: &str,
         parent_channel_id: Option<ChannelId>,
         admin_id: UserId,
-    ) -> Result<(
-        Channel,
-        Option<channel_member::Model>,
-        Vec<channel_member::Model>,
-    )> {
+    ) -> Result<(channel::Model, Option<channel_member::Model>)> {
         let name = Self::sanitize_channel_name(name)?;
         self.transaction(move |tx| async move {
             let mut parent = None;
@@ -87,12 +86,7 @@ impl Database {
                 );
             }
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .all(&*tx)
-                .await?;
-
-            Ok((Channel::from_model(channel), membership, channel_members))
+            Ok((channel, membership))
         })
         .await
     }
@@ -178,7 +172,7 @@ impl Database {
         channel_id: ChannelId,
         visibility: ChannelVisibility,
         admin_id: UserId,
-    ) -> Result<(Channel, Vec<channel_member::Model>)> {
+    ) -> Result<channel::Model> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_admin(&channel, admin_id, &tx)
@@ -211,12 +205,7 @@ impl Database {
             model.visibility = ActiveValue::Set(visibility);
             let channel = model.update(&*tx).await?;
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .all(&*tx)
-                .await?;
-
-            Ok((Channel::from_model(channel), channel_members))
+            Ok(channel)
         })
         .await
     }
@@ -242,19 +231,10 @@ impl Database {
         &self,
         channel_id: ChannelId,
         user_id: UserId,
-    ) -> Result<(Vec<ChannelId>, Vec<UserId>)> {
+    ) -> Result<(ChannelId, Vec<ChannelId>)> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_admin(&channel, user_id, &tx)
-                .await?;
-
-            let members_to_notify: Vec<UserId> = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .select_only()
-                .column(channel_member::Column::UserId)
-                .distinct()
-                .into_values::<_, QueryUserIds>()
-                .all(&*tx)
                 .await?;
 
             let channels_to_remove = self
@@ -270,7 +250,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            Ok((channels_to_remove, members_to_notify))
+            Ok((channel.root_id(), channels_to_remove))
         })
         .await
     }
@@ -340,7 +320,7 @@ impl Database {
         channel_id: ChannelId,
         admin_id: UserId,
         new_name: &str,
-    ) -> Result<(Channel, Vec<channel_member::Model>)> {
+    ) -> Result<channel::Model> {
         self.transaction(move |tx| async move {
             let new_name = Self::sanitize_channel_name(new_name)?.to_string();
 
@@ -352,12 +332,7 @@ impl Database {
             model.name = ActiveValue::Set(new_name.clone());
             let channel = model.update(&*tx).await?;
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
-                .all(&*tx)
-                .await?;
-
-            Ok((Channel::from_model(channel), channel_members))
+            Ok(channel)
         })
         .await
     }
@@ -625,6 +600,7 @@ impl Database {
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
 
         let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut latest_buffer_versions: Vec<ChannelBufferVersion> = vec![];
         let mut rows = buffer::Entity::find()
             .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
             .stream(tx)
@@ -632,12 +608,23 @@ impl Database {
         while let Some(row) = rows.next().await {
             let row = row?;
             channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+            latest_buffer_versions.push(ChannelBufferVersion {
+                channel_id: row.channel_id.0 as u64,
+                epoch: row.latest_operation_epoch.unwrap_or_default() as u64,
+                version: if let Some((latest_lamport_timestamp, latest_replica_id)) = row
+                    .latest_operation_lamport_timestamp
+                    .zip(row.latest_operation_replica_id)
+                {
+                    vec![VectorClockEntry {
+                        timestamp: latest_lamport_timestamp as u32,
+                        replica_id: latest_replica_id as u32,
+                    }]
+                } else {
+                    vec![]
+                },
+            });
         }
         drop(rows);
-
-        let latest_buffer_versions = self
-            .latest_channel_buffer_changes(&channel_ids_by_buffer_id, tx)
-            .await?;
 
         let latest_channel_messages = self.latest_channel_messages(&channel_ids, tx).await?;
 
@@ -969,7 +956,7 @@ impl Database {
         channel_id: ChannelId,
         new_parent_id: ChannelId,
         admin_id: UserId,
-    ) -> Result<(Vec<Channel>, Vec<channel_member::Model>)> {
+    ) -> Result<(ChannelId, Vec<Channel>)> {
         self.transaction(|tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             self.check_user_is_channel_admin(&channel, admin_id, &tx)
@@ -1024,12 +1011,7 @@ impl Database {
                 .map(|c| Channel::from_model(c))
                 .collect::<Vec<_>>();
 
-            let channel_members = channel_member::Entity::find()
-                .filter(channel_member::Column::ChannelId.eq(root_id))
-                .all(&*tx)
-                .await?;
-
-            Ok((channels, channel_members))
+            Ok((root_id, channels))
         })
         .await
     }
