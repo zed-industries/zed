@@ -113,7 +113,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                             && selection.end.row() == original_head.row();
 
                         // Only surround within the current cursor and the next pair of surrounds that match the current row should be handled
-                        if not_found || (is_inner == false && is_same_row == false) {
+                        if not_found || (!is_inner && !is_same_row) {
                             selection.start = original_head;
                             selection.end = original_head;
                         }
@@ -207,7 +207,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                         // In order to be able to accurately match and replace in this case, some cumbersome methods are used
                         if let Some(pos) = select_text.find(will_replace_pair.start.as_str()) {
                             select_text.replace_range(pos..pos + 1, pair.start.as_str());
-                            if let Some(space_pos) = select_text.find(" ") {
+                            if let Some(space_pos) = select_text.find(' ') {
                                 if surround {
                                     if space_pos != pos + 1 {
                                         select_text.replace_range(pos + 1..pos + 1, " ");
@@ -223,7 +223,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                         }
                         if let Some(pos) = select_text.rfind(will_replace_pair.end.as_str()) {
                             select_text.replace_range(pos..pos + 1, pair.end.as_str());
-                            if let Some(space_pos) = select_text.rfind(" ") {
+                            if let Some(space_pos) = select_text.rfind(' ') {
                                 if surround {
                                     if space_pos != pos - 1 {
                                         select_text.replace_range(pos..pos, " ");
@@ -264,7 +264,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
 pub fn is_valid_bracket_part(vim: &mut Vim, object: Object, cx: &mut WindowContext) -> bool {
     let mut valid = false;
 
-    if let Some(pair) = object_to_bracket_pair(object) {
+    if let Some(_) = object_to_bracket_pair(object) {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -281,7 +281,7 @@ pub fn is_valid_bracket_part(vim: &mut Vim, object: Object, cx: &mut WindowConte
                             selection.start < original_head && selection.end > original_head;
                         let is_same_row = selection.start.row() == original_head.row()
                             && selection.end.row() == original_head.row();
-                        if not_found || (is_inner == false && is_same_row == false) {
+                        if not_found || (!is_inner && !is_same_row) {
                             selection.start = original_head;
                             selection.end = original_head;
                         } else {
@@ -582,6 +582,39 @@ mod test {
             Mode::Normal,
         );
 
+        cx.set_state(
+            indoc! {"
+            Tˇhe [quick] brown
+            fox jumps over
+            the [laˇzy] dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the ˇlazy dog."},
+            Mode::Normal,
+        );
+
+
+        cx.set_state(
+            indoc! {"
+            Tˇhe [ quick ] brown
+            fox jumps over
+            the [laˇzy ] dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the ˇlazy dog."},
+            Mode::Normal,
+        );
+
         // test multi cursor delete different surrounds
         cx.set_state(
             indoc! {"
@@ -633,6 +666,38 @@ mod test {
             The ˇ[ quick ] brown
             fox jumps over
             the ˇ[ lazy ] dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            Thˇe {quick} brown
+            fox jumps over
+            the {laˇzy} dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.assert_state(
+            indoc! {"
+            The ˇ[ quick ] brown
+            fox jumps over
+            the ˇ[ lazy ] dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            Thˇe { quick } brown
+            fox jumps over
+            the {laˇzy} dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "s", "{", "]"]);
+        cx.assert_state(
+            indoc! {"
+            The ˇ[quick] brown
+            fox jumps over
+            the ˇ[lazy] dog."},
             Mode::Normal,
         );
 
