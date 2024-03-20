@@ -2475,7 +2475,7 @@ impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl ConversationEditor {
     fn render_llm_context(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        // The context area is a prototype, but the plan is to create this with three distinct sections:
+        // The context area is a prototype. The idea is to create this with three distinct sections:
         //
         // 1. File Context
         // 2. Project Diagnostics
@@ -2483,31 +2483,70 @@ impl ConversationEditor {
 
         let conversation = self.conversation.read(cx);
 
-        let llm_context = conversation.language_model_contexts.iter().map(|item| {
+        // Since we're just wanting to fake it to be close to the Figma mockup, we'll set up
+        // the file context as if we already grouped on it.
+
+        let file_context_items = conversation.language_model_contexts.iter().map(|item| {
             let element_id = ElementId::Name(format!("llm-context-{}", item.entity_id).into());
 
             let entity = item.entity.read(cx);
 
             div().h_flex().child(entity.mini_render(cx)).child(
-                div()
-                    .id(element_id)
-                    .child(Icon::new(IconName::Close))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |_this, _, _cx| {
-                        // item.toggle();
-                        // not sure yet
-                    })),
+                div().id(element_id), /*
+                                          .child(Icon::new(IconName::Close))
+                                          .cursor_pointer()
+                                          .on_click(cx.listener(move |_this, _, _cx| {
+                                              // item.toggle();
+                                              // not sure how to do this yet
+                                          })),
+                                      */
             )
         });
 
-        div().children(llm_context)
+        let llm_context = div().key_context("llm-context").h_flex().child(
+            // Each of the context areas
+            div()
+                .p_4()
+                .v_flex()
+                .child(
+                    div().v_flex().child(
+                        // File context area heading
+                        div()
+                            .h_flex()
+                            .child(Icon::new(IconName::File))
+                            .child(div().h_6().child(Label::new("File Context")).ml_1()),
+                    ),
+                )
+                .child(div().children(file_context_items).ml_4()),
+        );
+
+        // .child(
+        //     div()
+        //         .h_flex()
+        //         .child(Icon::new(IconName::Project))
+        //         .child(Text::new("Project Diagnostics").bold())
+        //         .child(Icon::new(IconName::ChevronDown)),
+        // )
+        // .child(
+        //     div()
+        //         .h_flex()
+        //         .child(Icon::new(IconName::DeepCode))
+        //         .child(Text::new("Deep Code Context").bold())
+        //         .child(Icon::new(IconName::ChevronDown)),
+        // ),
+        // .child(
+        //     div()
+        //         .h_flex()
+        //         .child(Icon::new(IconName::Close))
+        //         .cursor_pointer(),
+        // );
+
+        llm_context
     }
 }
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        let conversation = self.conversation.read(cx);
-
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -2520,18 +2559,13 @@ impl Render for ConversationEditor {
             .v_flex()
             .child(
                 div()
-                    .size(DefiniteLength::Fraction(0.8))
+                    .min_h_5_6()
                     .w_full()
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
-            .child(
-                div()
-                    .size(DefiniteLength::Fraction(0.20))
-                    .w_full()
-                    .child(self.render_llm_context(cx)),
-            )
+            .child(div().h_1_12().w_5_6().child(self.render_llm_context(cx)))
     }
 }
 

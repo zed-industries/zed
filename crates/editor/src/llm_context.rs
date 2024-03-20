@@ -15,12 +15,24 @@ pub struct EditorLanguageModelContext {
 // [ 🐍  my_file.py (1-5, 9-12) ]
 impl RenderOnce for EditorLanguageModelContext {
     fn render(self, _cx: &mut ui::prelude::WindowContext) -> impl ui::prelude::IntoElement {
+        let file_name = self.path.map_or("Untitled".to_string(), |path| {
+            path.to_string_lossy().to_string()
+        });
+        let file_name_text_color = if self.focused {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+
         div()
             .h_flex()
             .child(Icon::from_path(self.icon_path.clone()))
-            .child(self.path.map_or("Untitled".to_string(), |path| {
-                path.to_string_lossy().to_string()
-            }))
+            .child(
+                div()
+                    .h_6()
+                    .child(Label::new(file_name).color(file_name_text_color))
+                    .ml_1(),
+            )
     }
 }
 
