@@ -21,7 +21,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::{blame::BufferBlame, diff::DiffHunkStatus};
+use git::diff::DiffHunkStatus;
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
@@ -33,9 +33,8 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
-use language::ToPoint as _;
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, MultiBufferSnapshot};
+use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -52,7 +51,6 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use text::ToOffset;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
@@ -2177,23 +2175,19 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for (idx, entry) in display_blame_entries.iter().enumerate() {
-                let (blame_entry, display_row_range) = match entry {
+            for display_blame_entry in display_blame_entries {
+                let (entry, display_row_range) = match display_blame_entry {
                     &DisplayBlameEntry::Folded { .. } => {
                         // TODO: what?
                         continue;
                     }
                     DisplayBlameEntry::Unfolded {
                         display_row_range,
-                        entry: blame_hunk,
-                    } => (blame_hunk, display_row_range),
+                        entry,
+                    } => (entry, display_row_range),
                 };
 
-                let blame_line = format!("{}", entry);
-
-                let sha_number: u32 = blame_entry.sha.into();
-                let sha_color = cx.theme().players().color_for_participant(sha_number);
-
+                let sha_color = cx.theme().players().color_for_participant(entry.sha.into());
                 let commit_sha_run = TextRun {
                     len: 6,
                     font: self.style.text.font(),
@@ -2202,6 +2196,8 @@ impl EditorElement {
                     underline: Default::default(),
                     strikethrough: None,
                 };
+
+                let blame_line = format!("{}", display_blame_entry);
 
                 let info_run = TextRun {
                     len: blame_line.len() - 6,
@@ -2213,7 +2209,6 @@ impl EditorElement {
                 };
                 let runs = [commit_sha_run, info_run];
 
-                println!("entry {}. display_row_range: {:?}", idx, display_row_range);
                 for row in display_row_range.start..display_row_range.end {
                     let start_y = row as f32 * line_height - scroll_top;
                     let start_x = layout.position_map.em_width * 1;
@@ -3287,8 +3282,8 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let buffer_blame = self.editor.read(cx).buffer_blame.as_ref();
-                let (display_blame_entries, blame_width) = if let Some(buffer_blame) = buffer_blame
+                let blame_result = self.editor.read(cx).blame_result.as_ref();
+                let (display_blame_entries, blame_width) = if let Some(buffer_blame) = blame_result
                 {
                     let display_entries =
                         self.layout_git_blame_gutters(&buffer_blame, start_row..end_row, &snapshot);

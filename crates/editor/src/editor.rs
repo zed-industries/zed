@@ -37,7 +37,6 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-use ::git::blame::BufferBlame;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
@@ -436,7 +435,7 @@ pub struct Editor {
     show_git_blame: bool,
     blame: Option<Model<Blame>>,
     blame_subscription: Option<Subscription>,
-    buffer_blame: Option<MultiBufferBlame>,
+    blame_result: Option<MultiBufferBlame>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1481,7 +1480,7 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame: false,
             blame: None,
-            buffer_blame: None,
+            blame_result: None,
             blame_subscription: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -8839,14 +8838,14 @@ impl Editor {
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
         if !self.show_git_blame {
-            if self.show_git_blame_internal(cx).is_none() {
-                log::error!("failed to toggle on 'git blame'");
+            if let Err(error) = self.show_git_blame_internal(cx) {
+                log::error!("failed to toggle on 'git blame': {}", error);
                 return;
             }
             self.show_git_blame = true
         } else {
             self.blame_subscription.take();
-            self.buffer_blame.take();
+            self.blame_result.take();
             self.blame.take();
             self.show_git_blame = false
         }
@@ -8854,7 +8853,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
         if let Some(project) = self.project.as_ref() {
             let buffer = self.buffer().clone();
             let project = project.clone();
@@ -8864,17 +8863,17 @@ impl Editor {
             self.blame_subscription =
                 Some(cx.subscribe(&blame, |editor, _, event, cx| match event {
                     blame::Event::ShowMultiBufferBlame { blame } => {
-                        editor.buffer_blame = Some(blame.clone());
+                        editor.blame_result = Some(blame.clone());
                         cx.notify();
                     }
                 }));
 
-            blame.update(cx, |blame, cx| blame.generate(cx));
+            blame.update(cx, |blame, cx| blame.generate(cx))?;
 
             self.blame = Some(blame);
         }
 
-        Some(())
+        Ok(())
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {

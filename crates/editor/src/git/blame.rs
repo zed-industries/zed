@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::{HashMap, HashSet};
 use language::Buffer;
 use language::Point;
@@ -48,12 +48,16 @@ impl Blame {
                     .any(|(_, entry_id, _)| project_entry_ids.contains(entry_id))
                 {
                     log::debug!("Updated buffers. Regenerating blame data...",);
-                    this.generate(cx);
+                    if let Err(error) = this.generate(cx) {
+                        log::error!("Failed to regenerate blame data: {}", error);
+                    }
                 }
             }
             project::Event::WorktreeUpdatedGitRepositories(_) => {
                 log::debug!("Status of git repositories updated. Regenerating blame data...",);
-                this.generate(cx);
+                if let Err(error) = this.generate(cx) {
+                    log::error!("Failed to regenerate blame data: {}", error);
+                }
             }
             _ => {}
         });
@@ -66,15 +70,12 @@ impl Blame {
         }
     }
 
-    pub fn generate(&mut self, cx: &mut ModelContext<Self>) -> Option<()> {
+    pub fn generate(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         let mut tasks = Vec::new();
 
         for buffer in self.buffer.read(cx).all_buffers() {
-            if let Some(task) = self.generate_buffer(buffer, cx) {
-                tasks.push(task);
-            } else {
-                log::debug!("unable to 'git blame' buffer");
-            }
+            let task = self.generate_buffer(buffer, cx)?;
+            tasks.push(task);
         }
 
         self.task = Some(cx.spawn(move |this, mut cx| async move {
@@ -94,29 +95,36 @@ impl Blame {
             })
         }));
 
-        Some(())
+        Ok(())
     }
 
     fn generate_buffer(
         &self,
         buffer: Model<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Task<Result<(BufferId, BufferBlame)>>> {
+    ) -> Result<Task<Result<(BufferId, BufferBlame)>>> {
         let buffer = buffer.read(cx);
 
-        let buffer_project_path = buffer.project_path(cx)?;
+        let buffer_project_path = buffer
+            .project_path(cx)
+            .context("failed to get buffer project path")?;
         let working_directory = self
             .project
             .read(cx)
-            .get_workspace_root(&buffer_project_path, cx)?;
+            .get_workspace_root(&buffer_project_path, cx)
+            .context("failed to get workspace root")?;
 
-        let file = buffer.file()?.as_local()?.path();
-        let buffer_snapshot = buffer.snapshot();
+        let file = buffer.file().context("failed to get buffer file")?;
+        let local_file = file
+            .as_local()
+            .context("failed to turn file into local file")?;
 
-        Some(cx.background_executor().spawn({
-            let file = file.clone();
+        Ok(cx.background_executor().spawn({
+            let path = local_file.path().clone();
+            let buffer_snapshot = buffer.snapshot();
+
             async move {
-                let blame = BufferBlame::new_with_cli(&working_directory, &file, &buffer_snapshot)?;
+                let blame = BufferBlame::new_with_cli(&working_directory, &path, &buffer_snapshot)?;
                 Ok((buffer_snapshot.remote_id(), blame))
             }
         }))
