@@ -1009,18 +1009,28 @@ impl MinimalContext for Editor {
         let el = if let Some(singleton) = buffer.as_singleton() {
             let singleton = singleton.read(cx);
 
+            let language = singleton
+                .language()
+                .map(|l| l.name().to_string())
+                .unwrap_or_default();
+
+            let icon_path = match language.to_lowercase().as_str() {
+                "rust" => "icons/file_icons/rust.svg",
+                "python" => "icons/file_icons/python.svg",
+                "typescript" => "icons/file_icons/typescript.svg",
+                "javascript" => "icons/file_icons/javascript.svg",
+                _ => "icons/file_icons/file.svg",
+            };
+
             EditorLanguageModelContext {
-                icon_path: singleton
-                    .file()
-                    .map(|file| file.icon_path(cx))
-                    .unwrap_or_default(),
+                icon_path: icon_path.into(),
                 path: singleton.file().map(|file| file.full_path(cx)),
                 selection_ranges: vec![],
                 focused: false,
             }
             .into_any_element()
         } else {
-            "whoops".into_any_element()
+            todo!()
         };
 
         el
