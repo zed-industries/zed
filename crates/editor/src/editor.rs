@@ -66,6 +66,7 @@ use gpui::{
     WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use hover_popover::{hide_hover, HoverState};
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
@@ -77,9 +78,6 @@ use language::{
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
-use std::cell::RefCell;
-
-use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -844,26 +842,51 @@ impl CompletionsMenu {
     ) -> AnyElement {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
+        let max_completion_len = px(510.);
 
-        let widest_completion_ix = self
+        let widest_completion_pixels = self
             .matches
             .iter()
-            .enumerate()
-            .max_by_key(|(_, mat)| {
+            .map(|mat| {
                 let completions = self.completions.read();
                 let completion = &completions[mat.candidate_id];
                 let documentation = &completion.documentation;
+                let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
                 let mut len = completion.label.text.chars().count();
-                if let Some(Documentation::SingleLine(text)) = documentation {
-                    if show_completion_documentation {
-                        len += text.chars().count();
-                    }
+                print!("{}", completion.label.text);
+                if let Ok(text_width) = cx.text_system().layout_line(
+                    completion.label.text.as_str(),
+                    font_size,
+                    &[style.text.to_run(completion.label.text.as_str().len())],
+                ) {
+                    len = text_width.width.0 as usize;
                 }
 
-                len
+                if let Some(Documentation::SingleLine(documentation_text)) = documentation {
+                    print!("{}", documentation_text);
+
+                    if show_completion_documentation {
+                        if let Ok(documentation_width) = cx.text_system().layout_line(
+                            documentation_text.as_str(),
+                            font_size,
+                            &[style.text.to_run(documentation_text.as_str().len())],
+                        ) {
+                            len = documentation_width.width.0 as usize;
+                        }
+                    }
+                }
+                println!("Potential len: {}", len);
+
+                (len + 30).min(max_completion_len.0 as usize + 30)
             })
-            .map(|(ix, _)| ix);
+            .max();
+
+        if let Some(a) = widest_completion_pixels {
+            println!("Min Width: {}", a);
+        } else {
+            println!("ERROR FIDING WIDTH");
+        }
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -904,12 +927,13 @@ impl CompletionsMenu {
         } else {
             None
         };
-        let max_completion_len = px(510.);
-        // let mut min_completion_len = px(190.);
+        let min_completion_len = if let Some(a) = widest_completion_pixels {
+            px(a as f32)
+        } else {
+            px(190.)
+        };
 
-        // let min_completion_len = Arc::new(Mutex::new(190.));
-        // let min_completion_len_for_closure = Arc::clone(&min_completion_len);
-        let min_completion_len = RefCell::new(190.);
+        println!("Min set to {}", min_completion_len.0);
 
         let list = uniform_list(
             cx.view().clone(),
@@ -923,8 +947,6 @@ impl CompletionsMenu {
                     .iter()
                     .enumerate()
                     .map(|(ix, mat)| {
-                        // test.lock
-                        // test.lock().u
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
                         let completion = completions_guard[candidate_id].clone();
@@ -944,15 +966,8 @@ impl CompletionsMenu {
                                 documentation,
                                 max_completion_len,
                             );
-
-                        let mut min_completion_len = min_completion_len.borrow_mut();
-
-                        if completion_width.0 > *min_completion_len {
-                            *min_completion_len = completion_width.0;
-                        }
-                        println!("{}, {}", completion_width.0, *min_completion_len);
                         div()
-                            .min_w(completion_width + px(32.))
+                            .min_w(min_completion_len + px(30.))
                             .max_w(max_completion_len + px(30.))
                             .child(
                                 ListItem::new(mat.candidate_id)
@@ -978,9 +993,9 @@ impl CompletionsMenu {
         )
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix);
+        // .with_width_from_item(widest_completion_pixels)
+        .min_w(min_completion_len);
 
-        // println!("Max num: {}", *min_completion_len.borrow());
         Popover::new()
             .child(list)
             .when_some(multiline_docs, |popover, multiline_docs| {
