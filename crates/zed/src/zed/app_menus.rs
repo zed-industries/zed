@@ -20,7 +20,10 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
                         MenuItem::action("Open Local Settings", super::OpenLocalSettings),
-                        MenuItem::action("Select Theme...", theme_selector::Toggle),
+                        MenuItem::action(
+                            "Select Theme...",
+                            theme_selector::Toggle { theme_name: None },
+                        ),
                     ],
                 }),
                 MenuItem::action("Extensions", extensions_ui::Extensions),

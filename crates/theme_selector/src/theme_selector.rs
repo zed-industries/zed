@@ -3,10 +3,11 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View, ViewContext,
-    VisualContext, WeakView,
+    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use serde::Deserialize;
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{
@@ -16,7 +17,13 @@ use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
-actions!(theme_selector, [Toggle, Reload]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+pub struct Toggle {
+    pub theme_name: Option<String>,
+}
+
+impl_actions!(theme_selector, [Toggle]);
+actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -27,14 +34,18 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, cx: &mut ViewContext<Workspace>) {
     let fs = workspace.app_state().fs.clone();
     let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
-        ThemeSelector::new(
-            ThemeSelectorDelegate::new(cx.view().downgrade(), fs, telemetry, cx),
+        let delegate = ThemeSelectorDelegate::new(
+            cx.view().downgrade(),
+            fs,
+            telemetry,
+            toggle.theme_name.as_ref(),
             cx,
-        )
+        );
+        ThemeSelector::new(delegate, cx)
     });
 }
 
@@ -81,6 +92,7 @@ impl ThemeSelectorDelegate {
         weak_view: WeakView<ThemeSelector>,
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
+        theme_name: Option<&String>,
         cx: &mut ViewContext<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
@@ -113,7 +125,11 @@ impl ThemeSelectorDelegate {
             telemetry,
             view: weak_view,
         };
-        this.select_if_matching(&original_theme.name);
+        if let Some(theme_name) = theme_name {
+            this.select_if_matching(theme_name);
+        } else {
+            this.select_if_matching(&original_theme.name);
+        }
         this
     }
 

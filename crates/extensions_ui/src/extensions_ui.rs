@@ -9,13 +9,13 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
     FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
-use theme::ThemeSettings;
+use theme::{Appearance, SystemAppearance, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, ToggleButton, Tooltip};
 use util::ResultExt as _;
 use workspace::{
@@ -100,10 +100,14 @@ impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
+            let workspace_handle = workspace.weak_handle();
             let subscriptions = [
                 cx.observe(&store, |_, _, cx| cx.notify()),
-                cx.subscribe(&store, |this, _, event, cx| match event {
+                cx.subscribe(&store, move |this, _, event, cx| match event {
                     extension::Event::ExtensionsUpdated => this.fetch_extensions_debounced(cx),
+                    extension::Event::ExtensionInstalled(extension_id) => {
+                        this.on_extension_installed(workspace_handle.clone(), extension_id, cx)
+                    }
                     _ => {}
                 }),
             ];
@@ -131,6 +135,56 @@ impl ExtensionsPage {
             this.fetch_extensions(None, cx);
             this
         })
+    }
+
+    fn on_extension_installed(
+        &mut self,
+        workspace: WeakView<Workspace>,
+        extension_id: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let extension_store = ExtensionStore::global(cx).read(cx);
+        // if installed extension is theme, show theme selector.
+        let themes = extension_store
+            .extension_themes(extension_id)
+            .collect::<Vec<&Arc<str>>>();
+        if themes.len() > 0 {
+            let theme_registry = ThemeRegistry::global(cx);
+            let system_appearance = SystemAppearance::global(cx);
+
+            let mut matched = None;
+            for name in themes.clone() {
+                let theme = theme_registry.get(name).log_err();
+                if let Some(theme) = theme {
+                    match theme.appearance {
+                        Appearance::Light => {
+                            if system_appearance.is_light() {
+                                matched = Some(name);
+                                break;
+                            }
+                        }
+                        Appearance::Dark => {
+                            if !system_appearance.is_light() {
+                                matched = Some(name);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // if no theme matched in current appearance, use first one.
+            let theme_name = match matched {
+                Some(name) => Some(name.to_string()),
+                None => themes.first().map(|s| s.to_string()),
+            };
+
+            workspace
+                .update(cx, |workspace, cx| {
+                    theme_selector::toggle(workspace, &theme_selector::Toggle { theme_name }, cx)
+                })
+                .ok();
+        }
     }
 
     fn filter_extension_entries(&mut self, cx: &mut ViewContext<Self>) {
