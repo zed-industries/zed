@@ -92,7 +92,7 @@ pub enum ExtensionStatus {
     Removing,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone, Copy)]
 enum ExtensionOperation {
     Upgrade,
     Install,
@@ -342,16 +342,6 @@ impl ExtensionStore {
         self.installed_dir.clone()
     }
 
-    pub fn extension_themes<'a>(
-        &'a self,
-        extension_id: &'a str,
-    ) -> impl Iterator<Item = &'a Arc<str>> {
-        self.extension_index
-            .themes
-            .iter()
-            .filter_map(|(name, theme)| theme.extension.as_ref().eq(extension_id).then_some(name))
-    }
-
     pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
         match self.outstanding_operations.get(extension_id) {
             Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
@@ -369,6 +359,17 @@ impl ExtensionStore {
             .extensions
             .values()
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
+    }
+
+    /// Returns the names of themes provided by extensions.
+    pub fn extension_themes<'a>(
+        &'a self,
+        extension_id: &'a str,
+    ) -> impl Iterator<Item = &'a Arc<str>> {
+        self.extension_index
+            .themes
+            .iter()
+            .filter_map(|(name, theme)| theme.extension.as_ref().eq(extension_id).then_some(name))
     }
 
     pub fn fetch_extensions(
@@ -459,7 +460,6 @@ impl ExtensionStore {
             })?
             .await;
 
-            // after the extension reloaded, we can emit the install event.
             match operation {
                 ExtensionOperation::Install => {
                     this.update(&mut cx, |_, cx| {

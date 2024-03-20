@@ -19,7 +19,8 @@ use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
 pub struct Toggle {
-    pub match_themes: Option<Vec<String>>,
+    /// A list of theme names to filter the theme selector down to.
+    pub themes_filter: Option<Vec<String>>,
 }
 
 impl_actions!(theme_selector, [Toggle]);
@@ -42,7 +43,7 @@ pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, cx: &mut ViewContext<W
             cx.view().downgrade(),
             fs,
             telemetry,
-            toggle.match_themes.as_ref(),
+            toggle.themes_filter.as_ref(),
             cx,
         );
         ThemeSelector::new(delegate, cx)
@@ -92,7 +93,7 @@ impl ThemeSelectorDelegate {
         weak_view: WeakView<ThemeSelector>,
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
-        match_themes: Option<&Vec<String>>,
+        themes_filter: Option<&Vec<String>>,
         cx: &mut ViewContext<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
@@ -101,16 +102,15 @@ impl ThemeSelectorDelegate {
         let registry = ThemeRegistry::global(cx);
         let mut themes = registry
             .list(staff_mode)
-            .iter()
+            .into_iter()
             .filter(|meta| {
-                if let Some(match_themes) = match_themes {
-                    match_themes.contains(&meta.name.to_string())
+                if let Some(theme_filter) = themes_filter {
+                    theme_filter.contains(&meta.name.to_string())
                 } else {
                     true
                 }
             })
-            .cloned()
-            .collect::<Vec<ThemeMeta>>();
+            .collect::<Vec<_>>();
 
         themes.sort_unstable_by(|a, b| {
             a.appearance

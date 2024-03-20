@@ -144,18 +144,17 @@ impl ExtensionsPage {
         cx: &mut ViewContext<Self>,
     ) {
         let extension_store = ExtensionStore::global(cx).read(cx);
-        // if installed extension is theme, show theme selector.
         let themes = extension_store
             .extension_themes(extension_id)
             .map(|name| name.to_string())
-            .collect::<Vec<String>>();
-        if themes.len() > 0 {
+            .collect::<Vec<_>>();
+        if !themes.is_empty() {
             workspace
                 .update(cx, |workspace, cx| {
                     theme_selector::toggle(
                         workspace,
                         &theme_selector::Toggle {
-                            match_themes: Some(themes),
+                            themes_filter: Some(themes),
                         },
                         cx,
                     )
