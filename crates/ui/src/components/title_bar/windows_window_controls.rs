@@ -100,6 +100,8 @@ impl RenderOnce for WindowsCaptionButton {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         // todo(windows) report this width to the Windows platform API
         // NOTE: this is intentionally hard coded. An option to use the 'native' size
+        //       could be added when the width is reported to the Windows platform API
+        //       as this could change between future Windows verions.
         let width = px(36.);
 
         h_flex()

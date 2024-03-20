@@ -38,12 +38,12 @@ impl TitleBar {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn top_padding(_cx: &WindowContext) -> Pixels {
+    pub fn top_padding(&self, _cx: &WindowContext) -> Pixels {
         px(0.)
     }
 
     #[cfg(target_os = "windows")]
-    pub fn top_padding(cx: &WindowContext) -> Pixels {
+    pub fn top_padding(&self, cx: &WindowContext) -> Pixels {
         use windows::Win32::UI::{
             HiDpi::GetSystemMetricsForDpi,
             WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
@@ -80,8 +80,8 @@ impl RenderOnce for TitleBar {
         h_flex()
             .id("titlebar")
             .w_full()
-            .pt(Self::top_padding(cx))
-            .h(height + Self::top_padding(cx))
+            .pt(self.top_padding(cx))
+            .h(height + self.top_padding(cx))
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
