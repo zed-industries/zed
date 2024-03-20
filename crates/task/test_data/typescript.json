@@ -8,7 +8,7 @@
       // less annoying if moving up to the new build or going back to
       // the old build.
       //
-      // This is first because the acutal "npm: build:tests" task
+      // This is first because the actual "npm: build:tests" task
       // below has the same script value, and VS Code ignores labels
       // and deduplicates them.
       // https://github.com/microsoft/vscode/issues/93001
