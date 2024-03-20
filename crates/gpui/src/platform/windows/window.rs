@@ -573,6 +573,7 @@ impl WindowsWindowInner {
                 position: Point { x, y },
                 modifiers: self.current_modifiers(),
                 click_count: 1,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return LRESULT(0);
@@ -902,6 +903,7 @@ impl WindowsWindowInner {
                 position: Point { x, y },
                 modifiers: self.current_modifiers(),
                 click_count: 1,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return LRESULT(0);
