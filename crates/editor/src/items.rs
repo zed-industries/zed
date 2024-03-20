@@ -20,7 +20,7 @@ use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{ItemSettings, LanguageModelContext};
+use workspace::item::ItemSettings;
 
 use std::{
     borrow::Cow,
@@ -959,12 +959,27 @@ impl Item for Editor {
             })
             .unwrap_or_else(|error| Task::ready(Err(error)))
     }
+}
 
-    fn language_model_context(&self, cx: &AppContext) -> Option<LanguageModelContext> {
-        // let lmc = workspace::item::RenderContext {
+pub trait MinimalContext {
+    fn markdown(&self, cx: &AppContext) -> String;
+    fn mini_render(&self, cx: &AppContext) -> gpui::AnyElement;
+}
 
-        // }
+pub struct TestMinimalContext {}
 
+impl MinimalContext for TestMinimalContext {
+    fn markdown(&self, _cx: &AppContext) -> String {
+        "test".into()
+    }
+
+    fn mini_render(&self, _cx: &AppContext) -> gpui::AnyElement {
+        "test".into_any_element()
+    }
+}
+
+impl MinimalContext for Editor {
+    fn markdown(&self, cx: &AppContext) -> String {
         let buffer = self.buffer.read(cx);
 
         if let Some(singleton) = buffer.as_singleton() {
@@ -984,19 +999,27 @@ impl Item for Editor {
 
             let markdown = format!("`{filename}`\n\n```{language}\n{text}```\n\n");
 
-            Some(LanguageModelContext {
-                markdown,
-                rendered: EditorLanguageModelContext {
-                    icon_path: "".into(),
-                    path: singleton.file().map(|file| file.full_path(cx)),
-                    selection_ranges: vec![],
-                    focused: false,
-                }
-                .into_any_element(),
-            })
-        } else {
-            None
+            return markdown;
         }
+        return "".into();
+    }
+
+    fn mini_render(&self, cx: &AppContext) -> gpui::AnyElement {
+        let buffer = self.buffer.read(cx);
+        let el = if let Some(singleton) = buffer.as_singleton() {
+            let singleton = singleton.read(cx);
+            EditorLanguageModelContext {
+                icon_path: "".into(),
+                path: singleton.file().map(|file| file.full_path(cx)),
+                selection_ranges: vec![],
+                focused: false,
+            }
+            .into_any_element()
+        } else {
+            "whoops".into_any_element()
+        };
+
+        el
     }
 }
 

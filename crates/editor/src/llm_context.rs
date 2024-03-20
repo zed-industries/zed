@@ -14,7 +14,7 @@ pub struct EditorLanguageModelContext {
 // [ 🐍  my_file.py ]
 // [ 🐍  my_file.py (1-5, 9-12) ]
 impl RenderOnce for EditorLanguageModelContext {
-    fn render(self, cx: &mut ui::prelude::WindowContext) -> impl ui::prelude::IntoElement {
+    fn render(self, _cx: &mut ui::prelude::WindowContext) -> impl ui::prelude::IntoElement {
         div()
             .h_flex()
             .child(Icon::from_path(self.icon_path.clone()))

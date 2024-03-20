@@ -15,6 +15,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
+    items::MinimalContext,
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
     ToPoint,
@@ -22,18 +23,11 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
-    WindowContext,
+    canvas, div, point, relative, rems, size, uniform_list, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Length, Model, ModelContext, ParentElement, Pixels, Render, SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext
 };
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
 use project::Project;
-use project_panel::file_associations::FileAssociations;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{cmp, fmt::Write, iter, ops::Range, path::PathBuf, sync::Arc, time::Duration};
@@ -48,7 +42,6 @@ use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::{ItemHandle, LanguageModelContext},
     searchable::Direction,
     Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
@@ -1263,7 +1256,7 @@ struct Summary {
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    language_model_contexts: Vec<LanguageModelContext>,
+    language_model_contexts: Vec<LanguageModelContextSelection>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1285,7 +1278,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        context_for_llm: Vec<LanguageModelContext>,
+        language_model_contexts: Vec<LanguageModelContextSelection>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1319,7 +1312,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            language_model_contexts: context_for_llm,
+            language_model_contexts,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1619,25 +1612,8 @@ impl Conversation {
         // Build up a prompt to include the file context as a system message
         let s: String = self
             .language_model_contexts
-            .excerpts
             .iter()
-            .map(|buffer| {
-                let buffer = buffer.read(cx);
-
-                let filename = buffer
-                    .file()
-                    .map(|file| file.path().to_string_lossy())
-                    .unwrap_or_default();
-
-                let text = buffer.text();
-
-                let language = buffer
-                    .language()
-                    .map(|l| l.name().to_string())
-                    .unwrap_or_default();
-
-                format!("`{filename}`\n\n```{language}\n{text}```\n\n")
-            })
+            .map(|item| item.entity.read(cx).markdown(cx))
             .collect();
 
         request.messages.push(LanguageModelRequestMessage {
@@ -2019,11 +1995,6 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-// maintain a set of block decorations on the editor for every item in the workspace, potentially more
-//
-
-// Take the
-
 struct ConversationEditor {
     conversation: Model<Conversation>,
     fs: Arc<dyn Fs>,
@@ -2039,7 +2010,8 @@ struct ConversationEditor {
 struct LanguageModelContextSelection {
     entity_id: EntityId,
     enabled: bool,
-    entity: Box<dyn RenderContext>,
+    // TODO: This has to go after the MinimalContext trait instead
+    entity: View<Editor>,
 }
 
 // Take the trait approach forward so we can defer the render and the llm_markdown bits
@@ -2061,13 +2033,19 @@ impl ConversationEditor {
     fn llm_context(
         workspace: &View<Workspace>,
         cx: &mut WindowContext,
-    ) -> Vec<LanguageModelContext> {
+    ) -> Vec<LanguageModelContextSelection> {
         workspace
             .update(cx, |workspace, cx| {
                 workspace
                     .active_item_as::<Editor>(cx)
                     // Each item should be able to be disabled by the user to not send on to the language model
-                    .and_then(|editor| editor.language_model_context(cx))
+                    .and_then(|editor| {
+                        Some(LanguageModelContextSelection {
+                            entity_id: editor.entity_id(),
+                            enabled: true,
+                            entity: editor,
+                        })
+                    })
             })
             .into_iter()
             .collect()
@@ -2101,6 +2079,7 @@ impl ConversationEditor {
             scroll_position: None,
             fs,
             workspace: workspace.downgrade(),
+            lm_contexts: Self::llm_context(&workspace, cx),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2489,26 +2468,8 @@ impl Render for ConversationEditor {
         let conversation = self.conversation.read(cx);
         let llm_context = conversation
             .language_model_contexts
-            .excerpts
             .iter()
-            .map(|buffer| {
-                let buffer = buffer.read(cx);
-                let language = buffer.language();
-
-                div()
-                    .h_flex()
-                    // TODO: Add icons for the languages
-                    // .child(FileAssociations.get_icon_for_language(language))
-                    .child(if let Some(file) = buffer.file() {
-                        // TODO: Use path instead of full_path if the project contains multiple roots
-                        file.full_path(cx)
-                            .to_string_lossy()
-                            .to_string()
-                            .into_any_element()
-                    } else {
-                        "Untitled".into_any_element()
-                    })
-            });
+            .map(|item| item.entity.read(cx).mini_render(cx));
 
         div()
             .key_context("ConversationEditor")
@@ -2519,15 +2480,21 @@ impl Render for ConversationEditor {
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
             .size_full()
-            .relative()
+            .v_flex()
             .child(
                 div()
-                    .size_full()
+                    .size(DefiniteLength::Fraction(0.8))
+                    .w_full()
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
-            .children(llm_context)
+            .child(
+                div()
+                    .size(DefiniteLength::Fraction(0.20))
+                    .w_full()
+                    .children(llm_context),
+            )
     }
 }
 
