@@ -12,9 +12,10 @@ struct TaskOptions {
     #[serde(default)]
     env: HashMap<String, String>,
 }
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct VsCodeTaskDefinition {
+struct VsCodeTaskDefinition {
     label: String,
     #[serde(flatten)]
     command: Option<Command>,
@@ -40,14 +41,58 @@ enum Command {
     },
 }
 
-impl TryFrom<VsCodeTaskDefinition> for Definition {
-    type Error = anyhow::Error;
+type VsCodeEnvVariable = String;
+type ZedEnvVariable = String;
 
-    fn try_from(value: VsCodeTaskDefinition) -> Result<Self, Self::Error> {
-        if value.other_attributes.contains_key("dependsOn") {
-            bail!("Encountered dependsOn key during deserialization");
+struct EnvVariableReplacer {
+    variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
+}
+
+impl EnvVariableReplacer {
+    fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
+        Self { variables }
+    }
+    // Replaces occurences of VsCode-specific environment variables with Zed equivalents.
+    fn replace(&self, input: &str) -> String {
+        shellexpand::env_with_context_no_errors(&input, |var: &str| {
+            // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
+            let colon_position = var.find(':').unwrap_or(var.len());
+            let (variable_name, default) = var.split_at(colon_position);
+            let append_previous_default = |ret: &mut String| {
+                if !default.is_empty() {
+                    ret.push_str(default);
+                }
+            };
+            if let Some(substitution) = self.variables.get(variable_name) {
+                // Got a VSCode->Zed hit, perform a substitution
+                let mut name = format!("${{{substitution}");
+                append_previous_default(&mut name);
+                name.push_str("}");
+                return Some(name);
+            }
+            // This is an unknown variable.
+            // We should not error out, as they may come from user environment (e.g. $PATH). That means that the variable substitution might not be perfect.
+            // If there's a default, we need to return the string verbatim as otherwise shellexpand will apply that default for us.
+            if !default.is_empty() {
+                return Some(format!("${{{var}}}"));
+            }
+            // Else we can just return None and that variable will be left as is.
+            None
+        })
+        .into_owned()
+    }
+}
+
+impl VsCodeTaskDefinition {
+    fn to_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<Definition> {
+        if self.other_attributes.contains_key("dependsOn") {
+            bail!("Encountered unsupported `dependsOn` key during deserialization");
         }
-        let Some(command) = value.command else {
+        // `type` might not be set in e.g. tasks that use `dependsOn`; we still want to deserialize the whole object though (hence command is an Option),
+        // as that way we can provide more specific description of why deserialization failed.
+        // E.g. if the command is missing due to `dependsOn` presence, we can check other_attributes first before doing this (and provide nice error message)
+        // catch-all if on value.command presence.
+        let Some(command) = self.command else {
             bail!("Missing `type` field in task");
         };
 
@@ -56,22 +101,25 @@ impl TryFrom<VsCodeTaskDefinition> for Definition {
             Command::Shell { command, args } => (command, args),
             Command::Gulp { task } => ("gulp".to_owned(), vec![task]),
         };
-        let mut ret = Self {
-            label: value.label,
+        // Per VSC docs, only `command`, `args` and `options` support variable substitution.
+        let command = replacer.replace(&command);
+        let args = args.into_iter().map(|arg| replacer.replace(&arg)).collect();
+        let mut ret = Definition {
+            label: self.label,
             command,
             args,
             ..Default::default()
         };
-        if let Some(options) = value.options {
-            ret.cwd = options.cwd;
+        if let Some(options) = self.options {
+            ret.cwd = options.cwd.map(|cwd| replacer.replace(&cwd));
             ret.env = options.env;
         }
         Ok(ret)
     }
 }
-// https://github.com/microsoft/TypeScript/blob/main/.vscode/tasks.json
+
+/// [`VsCodeTaskFile`] is a superset of Code's task definition format.
 #[derive(Debug, Deserialize, PartialEq)]
-/// TODO: docs for this
 pub struct VsCodeTaskFile {
     tasks: Vec<VsCodeTaskDefinition>,
 }
@@ -80,10 +128,16 @@ impl TryFrom<VsCodeTaskFile> for DefinitionProvider {
     type Error = anyhow::Error;
 
     fn try_from(value: VsCodeTaskFile) -> Result<Self, Self::Error> {
+        let replacer = EnvVariableReplacer::new(HashMap::from_iter([
+            ("workspaceFolder".to_owned(), "ZED_WORKTREE_ROOT".to_owned()),
+            ("file".to_owned(), "ZED_FILE".to_owned()),
+            ("lineNumber".to_owned(), "ZED_ROW".to_owned()),
+            ("selectedText".to_owned(), "ZED_SELECTED_TEXT".to_owned()),
+        ]));
         let definitions = value
             .tasks
             .into_iter()
-            .filter_map(|vscode_definition| vscode_definition.try_into().log_err())
+            .filter_map(|vscode_definition| vscode_definition.to_zed_format(&replacer).log_err())
             .collect();
         Ok(Self(definitions))
     }
@@ -91,11 +145,15 @@ impl TryFrom<VsCodeTaskFile> for DefinitionProvider {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::{
         static_source::{Definition, DefinitionProvider},
         vscode_format::{Command, VsCodeTaskDefinition},
         VsCodeTaskFile,
     };
+
+    use super::EnvVariableReplacer;
 
     fn compare_without_other_attributes(lhs: VsCodeTaskDefinition, rhs: VsCodeTaskDefinition) {
         assert_eq!(
@@ -109,6 +167,32 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn test_variable_substitution() {
+        let replacer = EnvVariableReplacer::new(Default::default());
+        assert_eq!(replacer.replace("Food"), "Food");
+        // Unknown variables are left in tact.
+        assert_eq!(
+            replacer.replace("$PATH is an environment variable"),
+            "$PATH is an environment variable"
+        );
+        assert_eq!(replacer.replace("${PATH}"), "${PATH}");
+        assert_eq!(replacer.replace("${PATH:food}"), "${PATH:food}");
+        // And now, the actual replacing
+        let replacer = EnvVariableReplacer::new(HashMap::from_iter([(
+            "PATH".to_owned(),
+            "ZED_PATH".to_owned(),
+        )]));
+        assert_eq!(replacer.replace("Food"), "Food");
+        assert_eq!(
+            replacer.replace("$PATH is an environment variable"),
+            "${ZED_PATH} is an environment variable"
+        );
+        assert_eq!(replacer.replace("${PATH}"), "${ZED_PATH}");
+        assert_eq!(replacer.replace("${PATH:food}"), "${ZED_PATH:food}");
+    }
+
     #[test]
     fn can_deserialize_ts_tasks() {
         static TYPESCRIPT_TASKS: &'static str = include_str!("../test_data/typescript.json");
@@ -174,9 +258,9 @@ mod tests {
                 label: "tsc: watch ./src".to_string(),
                 command: "node".to_string(),
                 args: vec![
-                    "${workspaceFolder}/node_modules/typescript/lib/tsc.js".to_string(),
+                    "${ZED_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
                     "--build".to_string(),
-                    "${workspaceFolder}/src".to_string(),
+                    "${ZED_WORKTREE_ROOT}/src".to_string(),
                     "--watch".to_string(),
                 ],
                 ..Default::default()
