@@ -52,7 +52,7 @@ impl EnvVariableReplacer {
     fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
         Self { variables }
     }
-    // Replaces occurences of VsCode-specific environment variables with Zed equivalents.
+    // Replaces occurrences of VsCode-specific environment variables with Zed equivalents.
     fn replace(&self, input: &str) -> String {
         shellexpand::env_with_context_no_errors(&input, |var: &str| {
             // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
