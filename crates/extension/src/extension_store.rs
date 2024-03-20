@@ -92,16 +92,18 @@ pub enum ExtensionStatus {
     Removing,
 }
 
+#[derive(Clone, Copy)]
 enum ExtensionOperation {
     Upgrade,
     Install,
     Remove,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
+    ExtensionInstalled(Arc<str>),
 }
 
 impl EventEmitter<Event> for ExtensionStore {}
@@ -330,6 +332,7 @@ impl ExtensionStore {
             .unbounded_send(modified_extension)
             .expect("reload task exited");
         cx.emit(Event::StartedReloading);
+
         async move {
             rx.await.ok();
         }
@@ -356,6 +359,17 @@ impl ExtensionStore {
             .extensions
             .values()
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
+    }
+
+    /// Returns the names of themes provided by extensions.
+    pub fn extension_themes<'a>(
+        &'a self,
+        extension_id: &'a str,
+    ) -> impl Iterator<Item = &'a Arc<str>> {
+        self.extension_index
+            .themes
+            .iter()
+            .filter_map(|(name, theme)| theme.extension.as_ref().eq(extension_id).then_some(name))
     }
 
     pub fn fetch_extensions(
@@ -441,8 +455,21 @@ impl ExtensionStore {
             archive
                 .unpack(extensions_dir.join(extension_id.as_ref()))
                 .await?;
-            this.update(&mut cx, |this, cx| this.reload(Some(extension_id), cx))?
-                .await;
+            this.update(&mut cx, |this, cx| {
+                this.reload(Some(extension_id.clone()), cx)
+            })?
+            .await;
+
+            match operation {
+                ExtensionOperation::Install => {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::ExtensionInstalled(extension_id));
+                    })
+                    .ok();
+                }
+                _ => {}
+            }
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);

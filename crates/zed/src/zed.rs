@@ -29,7 +29,10 @@ use settings::{
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::{oneshot_source::OneshotSource, static_source::StaticSource};
+use task::{
+    oneshot_source::OneshotSource,
+    static_source::{StaticSource, TrackedFile},
+};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -166,7 +169,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                                 fs,
                                 paths::TASKS.clone(),
                             );
-                            StaticSource::new("global_tasks", tasks_file_rx, cx)
+                            StaticSource::new(
+                                "global_tasks",
+                                TrackedFile::new(tasks_file_rx, cx),
+                                cx,
+                            )
                         },
                         cx,
                     );

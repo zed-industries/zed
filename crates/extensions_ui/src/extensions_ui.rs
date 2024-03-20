@@ -9,7 +9,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
     FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WhiteSpace, WindowContext,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::ops::DerefMut;
@@ -100,10 +100,14 @@ impl ExtensionsPage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let store = ExtensionStore::global(cx);
+            let workspace_handle = workspace.weak_handle();
             let subscriptions = [
                 cx.observe(&store, |_, _, cx| cx.notify()),
-                cx.subscribe(&store, |this, _, event, cx| match event {
+                cx.subscribe(&store, move |this, _, event, cx| match event {
                     extension::Event::ExtensionsUpdated => this.fetch_extensions_debounced(cx),
+                    extension::Event::ExtensionInstalled(extension_id) => {
+                        this.on_extension_installed(workspace_handle.clone(), extension_id, cx)
+                    }
                     _ => {}
                 }),
             ];
@@ -131,6 +135,32 @@ impl ExtensionsPage {
             this.fetch_extensions(None, cx);
             this
         })
+    }
+
+    fn on_extension_installed(
+        &mut self,
+        workspace: WeakView<Workspace>,
+        extension_id: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let extension_store = ExtensionStore::global(cx).read(cx);
+        let themes = extension_store
+            .extension_themes(extension_id)
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        if !themes.is_empty() {
+            workspace
+                .update(cx, |workspace, cx| {
+                    theme_selector::toggle(
+                        workspace,
+                        &theme_selector::Toggle {
+                            themes_filter: Some(themes),
+                        },
+                        cx,
+                    )
+                })
+                .ok();
+        }
     }
 
     fn filter_extension_entries(&mut self, cx: &mut ViewContext<Self>) {

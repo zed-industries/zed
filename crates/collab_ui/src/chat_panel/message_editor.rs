@@ -37,6 +37,7 @@ pub struct MessageEditor {
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
     reply_to_message_id: Option<u64>,
+    edit_message_id: Option<u64>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
@@ -131,6 +132,7 @@ impl MessageEditor {
             mentions: Vec::new(),
             mentions_task: None,
             reply_to_message_id: None,
+            edit_message_id: None,
         }
     }
 
@@ -144,6 +146,18 @@ impl MessageEditor {
 
     pub fn clear_reply_to_message_id(&mut self) {
         self.reply_to_message_id = None;
+    }
+
+    pub fn edit_message_id(&self) -> Option<u64> {
+        self.edit_message_id
+    }
+
+    pub fn set_edit_message_id(&mut self, edit_message_id: u64) {
+        self.edit_message_id = Some(edit_message_id);
+    }
+
+    pub fn clear_edit_message_id(&mut self) {
+        self.edit_message_id = None;
     }
 
     pub fn set_channel(

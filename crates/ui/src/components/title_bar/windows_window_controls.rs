@@ -98,9 +98,11 @@ impl WindowsCaptionButton {
 
 impl RenderOnce for WindowsCaptionButton {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        // todo(windows): get padding from win32 api, need HWND from window context somehow
-        // should be GetSystemMetricsForDpi(SM_CXSIZE, dpi)
-        let width = px(36.0);
+        // todo(windows) report this width to the Windows platform API
+        // NOTE: this is intentionally hard coded. An option to use the 'native' size
+        //       could be added when the width is reported to the Windows platform API
+        //       as this could change between future Windows versions.
+        let width = px(36.);
 
         h_flex()
             .id(self.id)

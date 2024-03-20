@@ -458,6 +458,14 @@ pub struct CreatedChannelMessage {
     pub notifications: NotificationBatch,
 }
 
+pub struct UpdatedChannelMessage {
+    pub message_id: MessageId,
+    pub participant_connection_ids: Vec<ConnectionId>,
+    pub notifications: NotificationBatch,
+    pub reply_to_message_id: Option<MessageId>,
+    pub timestamp: PrimitiveDateTime,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,

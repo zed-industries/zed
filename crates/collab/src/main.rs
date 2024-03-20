@@ -67,16 +67,6 @@ async fn main() -> Result<()> {
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
                 .expect("failed to bind TCP listener");
 
-            let epoch = state
-                .db
-                .create_server(&state.config.zed_environment)
-                .await?;
-            let rpc_server = collab::rpc::Server::new(epoch, state.clone());
-            rpc_server.start().await?;
-
-            fetch_extensions_from_blob_store_periodically(state.clone());
-            RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
-
             let rpc_server = if is_collab {
                 let epoch = state
                     .db
@@ -89,6 +79,10 @@ async fn main() -> Result<()> {
             } else {
                 None
             };
+
+            if is_collab {
+                RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
+            }
 
             if is_api {
                 fetch_extensions_from_blob_store_periodically(state.clone());
