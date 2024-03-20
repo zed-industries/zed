@@ -390,7 +390,7 @@ impl ExtensionStore {
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
             let mut response = http_client
-                .get(&url?.to_string(), AsyncBody::empty(), true)
+                .get(&url?.as_ref(), AsyncBody::empty(), true)
                 .await?;
 
             let mut body = Vec::new();
@@ -453,7 +453,7 @@ impl ExtensionStore {
             });
 
             let mut response = http_client
-                .get(&url.to_string(), Default::default(), true)
+                .get(&url.as_ref(), Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
