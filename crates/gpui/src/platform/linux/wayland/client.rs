@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::LoopHandle;
@@ -35,10 +35,13 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
+use super::super::DOUBLE_CLICK_INTERVAL;
 use crate::platform::linux::client::Client;
+use crate::platform::linux::util::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::px;
 use crate::WindowParams;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
@@ -61,6 +64,7 @@ pub(crate) struct WaylandClientStateInner {
     outputs: Vec<(wl_output::WlOutput, Rc<RefCell<OutputState>>)>,
     platform_inner: Rc<LinuxPlatformInner>,
     keymap_state: Option<xkb::State>,
+    click_state: ClickState,
     repeat: KeyRepeat,
     modifiers: Modifiers,
     scroll_direction: f64,
@@ -83,6 +87,12 @@ pub(crate) struct WaylandClientState {
     cursor_state: Rc<RefCell<CursorState>>,
     clipboard: Rc<RefCell<Clipboard>>,
     primary: Rc<RefCell<Primary>>,
+}
+
+struct ClickState {
+    last_click: SystemTime,
+    last_location: Point<Pixels>,
+    current_count: usize,
 }
 
 pub(crate) struct KeyRepeat {
@@ -163,6 +173,11 @@ impl WaylandClient {
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
             keymap_state: None,
+            click_state: ClickState {
+                last_click: SystemTime::UNIX_EPOCH,
+                last_location: Point::new(px(0.0), px(0.0)),
+                current_count: 0,
+            },
             repeat: KeyRepeat {
                 characters_per_second: 16,
                 delay: Duration::from_millis(500),
@@ -902,13 +917,51 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
+                        let click_elapsed =
+                            state.click_state.last_click.elapsed().unwrap_or_default();
+
+                        let mut click_count = if click_elapsed > DOUBLE_CLICK_INTERVAL {
+                            state.click_state.current_count = 0;
+                            state.click_state.last_click = SystemTime::now();
+                            1 // single click
+                        } else {
+                            state.click_state.current_count += 1;
+                            let count = match state.click_state.current_count {
+                                1 => {
+                                    state.click_state.last_click = SystemTime::now();
+                                    2 // double click
+                                }
+                                2 => {
+                                    // Prevent a double click from happening right after a triple click
+                                    state.click_state.current_count = 0;
+                                    state.click_state.last_click = SystemTime::UNIX_EPOCH;
+                                    3 // triple click
+                                }
+                                _ => unreachable!(),
+                            };
+
+                            let within_click_distance = is_within_click_distance(
+                                state.click_state.last_location,
+                                state.mouse_location.unwrap(),
+                            );
+
+                            if !within_click_distance {
+                                state.click_state.current_count = 0;
+                                1
+                            } else {
+                                count
+                            }
+                        };
+
+                        state.click_state.last_location = state.mouse_location.unwrap();
+
                         state.button_pressed = Some(button);
                         state.mouse_focused_window.as_ref().unwrap().handle_input(
                             PlatformInput::MouseDown(MouseDownEvent {
                                 button,
                                 position: state.mouse_location.unwrap(),
                                 modifiers: state.modifiers,
-                                click_count: 1,
+                                click_count,
                             }),
                         );
                     }
