@@ -1,4 +1,3 @@
-use gpui::{windows_title_bar_height, windows_title_bar_top_offset};
 use gpui::{AnyElement, Interactivity, Stateful};
 use smallvec::SmallVec;
 
@@ -20,7 +19,8 @@ impl TitleBar {
 
     #[cfg(target_os = "windows")]
     pub fn height(cx: &mut WindowContext) -> Pixels {
-        windows_title_bar_height(cx)
+        // todo(windows) instead of hard coded size report the actual size to the Windows platform API
+        px(32.)
     }
 
     pub fn new(id: impl Into<ElementId>) -> Self {
@@ -37,9 +37,23 @@ impl TitleBar {
         self
     }
 
-    fn top_padding(&self, cx: &WindowContext) -> Pixels {
-        if self.platform_style == PlatformStyle::Windows {
-            windows_title_bar_top_offset(cx)
+    #[cfg(not(target_os = "windows"))]
+    pub fn top_padding(_cx: &WindowContext) -> Pixels {
+        px(0.)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn top_padding(cx: &WindowContext) -> Pixels {
+        use windows::Win32::UI::{
+            HiDpi::GetSystemMetricsForDpi,
+            WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
+        };
+
+        // this top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows
+        // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
+        if cx.is_maximized() {
+            px((padding * 2) as f32)
         } else {
             px(0.)
         }
@@ -62,19 +76,12 @@ impl ParentElement for TitleBar {
 
 impl RenderOnce for TitleBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let height = if self.platform_style == PlatformStyle::Windows {
-            windows_title_bar_height(cx)
-        } else {
-            Self::height(cx)
-        };
-
-        let top_padding = self.top_padding(cx);
-
+        let height = Self::height(cx);
         h_flex()
             .id("titlebar")
             .w_full()
-            .pt(top_padding)
-            .h(height)
+            .pt(Self::top_padding(cx))
+            .h(height + Self::top_padding(cx))
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()

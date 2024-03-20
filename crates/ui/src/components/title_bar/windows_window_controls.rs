@@ -1,4 +1,4 @@
-use gpui::{prelude::*, windows_caption_button_width, Rgba, WindowAppearance};
+use gpui::{prelude::*, Rgba, WindowAppearance};
 
 use crate::prelude::*;
 
@@ -97,8 +97,10 @@ impl WindowsCaptionButton {
 }
 
 impl RenderOnce for WindowsCaptionButton {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let width = windows_caption_button_width(cx);
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        // todo(windows) report this width to the Windows platform API
+        // NOTE: this is intentionally hard coded. An option to use the 'native' size
+        let width = px(36.);
 
         h_flex()
             .id(self.id)

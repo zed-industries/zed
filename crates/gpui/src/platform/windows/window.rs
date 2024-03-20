@@ -149,34 +149,22 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn title_bar_height(&self) -> Pixels {
-        const TOP_BOTTOM_BORDERS: i32 = 2;
-        let theme = unsafe { OpenThemeData(self.hwnd, w!("WINDOW")) };
-        let title_bar_size = unsafe {
-            GetThemePartSize(
-                theme,
-                HDC::default(),
-                WP_CAPTION.0,
-                CS_ACTIVE.0,
-                None,
-                TS_TRUE,
-            )
-        }
-        .expect("GetThemePartSize invalid parameters");
-        unsafe { CloseThemeData(theme) }.log_err();
-        px(title_bar_size.cy as f32) + self.title_bar_top_offset()
+        // todo(windows) this is hard set to match the ui title bar
+        //               in the future the ui title bar component will report the size
+        px(32.) + self.title_bar_top_offset()
     }
 
     pub(crate) fn caption_button_width(&self) -> Pixels {
-        // using USER_DEFAULT_SCREEN_DPI because GPUI handles the scale with the scale factor
-        let width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, USER_DEFAULT_SCREEN_DPI) };
-        px(width as f32)
+        // todo(windows) this is hard set to match the ui title bar
+        //               in the future the ui title bar component will report the size
+        px(36.)
     }
 
     fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
         let height = self.title_bar_height();
         let mut rect = RECT::default();
         unsafe { GetClientRect(self.hwnd, &mut rect) }?;
-        rect.bottom = rect.top + ((height * self.scale_factor).round().0 as i32);
+        rect.bottom = rect.top + ((height.0 as f32 * self.scale_factor.get()).round() as i32);
         Ok(rect)
     }
 
@@ -939,7 +927,8 @@ impl WindowsWindowInner {
         let titlebar_rect = self.get_titlebar_rect();
         if let Ok(titlebar_rect) = titlebar_rect {
             if cursor_point.y < titlebar_rect.bottom {
-                let caption_btn_width = unsafe { GetSystemMetricsForDpi(SM_CXSIZE, dpi) };
+                let caption_btn_width =
+                    (self.caption_button_width().0 * self.scale_factor.get()) as i32;
                 if cursor_point.x >= titlebar_rect.right - caption_btn_width {
                     return LRESULT(HTCLOSE as _);
                 } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {

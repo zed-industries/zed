@@ -23,6 +23,9 @@ story = { workspace = true, optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]
