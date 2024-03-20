@@ -373,6 +373,7 @@ CREATE TABLE extension_versions (
     authors TEXT NOT NULL,
     repository TEXT NOT NULL,
     description TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 0,
     download_count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (extension_id, version)
 );

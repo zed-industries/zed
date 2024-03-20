@@ -3482,6 +3482,7 @@ dependencies = [
  "settings",
  "theme",
  "toml 0.8.10",
+ "url",
  "util",
  "wasm-encoder",
  "wasmparser",
@@ -12630,7 +12631,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "wit-bindgen",
 ]
