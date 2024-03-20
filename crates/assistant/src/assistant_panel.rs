@@ -2047,6 +2047,14 @@ impl ConversationEditor {
     ) -> Vec<LanguageModelContextSelection> {
         workspace
             .update(cx, |workspace, cx| {
+                // WANT: Project Diagnostics from the workspace
+                let project = workspace.project();
+
+                project.update(cx, |project, cx| {
+                    // let summaries = project.diagnostic_summaries(true, cx);
+                    // This is now stale data... We can start on it though.
+                });
+
                 workspace
                     .active_item_as::<Editor>(cx)
                     // Each item should be able to be disabled by the user to not send on to the language model
