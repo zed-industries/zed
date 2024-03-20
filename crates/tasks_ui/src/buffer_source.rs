@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use editor::Editor;
 use gpui::{AppContext, Model, WeakModel};
-use task::TaskSource;
+use task::{static_source::tasks_for, TaskSource};
 use ui::Context;
 use workspace::Workspace;
 
@@ -22,7 +22,7 @@ impl TaskSource for BufferSource {
 
     fn tasks_for_path(
         &mut self,
-        path: Option<&std::path::Path>,
+        _: Option<&std::path::Path>,
         cx: &mut gpui::ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn task::Task>> {
         let Some(active_editor) = self
@@ -38,12 +38,15 @@ impl TaskSource for BufferSource {
             .update(cx, |this, cx| {
                 let (_, buffer, range) = this.active_excerpt(cx)?;
                 let language = buffer.update(cx, |this, _| this.language_at(range.start))?;
-                Some(
-                    language
-                        .context_provider()?
-                        .as_source()?
-                        .update(cx, |source, cx| source.tasks_for_path(path, cx)),
-                )
+
+                language
+                    .context_provider()?
+                    .associated_tasks()
+                    .map(|tasks| {
+                        let language_name = language.name();
+                        let id_base = format!("buffer_source_{language_name}");
+                        tasks_for(tasks, &id_base)
+                    })
             })
             .unwrap_or_default()
     }

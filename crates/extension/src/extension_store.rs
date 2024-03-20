@@ -1,12 +1,16 @@
 mod build_extension;
 mod extension_lsp_adapter;
 mod extension_manifest;
+mod extension_task;
 mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
 
-use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
+use crate::{
+    extension_lsp_adapter::ExtensionLspAdapter, extension_task::ExtensionContextProvider,
+    wasm_host::wit,
+};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -16,7 +20,7 @@ use extension_manifest::ExtensionLibraryKind;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        mpsc::{unbounded, UnboundedSender},
         oneshot,
     },
     io::BufReader,
@@ -762,8 +766,14 @@ impl ExtensionStore {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
-                    //let tasks = std::fs::read_to_string(language_path.join("tasks.json")).ok().map(|contents| task::static_source::StaticSource::new(format!("language-extension-{}", config.name), unbounded().1,  cx))
-                    Ok((config, queries, None))
+                    let tasks = std::fs::read_to_string(language_path.join("tasks.json"))
+                        .ok()
+                        .and_then(|contents| {
+                            let definitions = serde_json_lenient::from_str(&contents).log_err()?;
+                            Some(Arc::new(ExtensionContextProvider::new(definitions)) as Arc<_>)
+                        });
+
+                    Ok((config, queries, tasks))
                 },
             );
         }

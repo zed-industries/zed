@@ -19,6 +19,28 @@ struct StaticTask {
     definition: Definition,
 }
 
+impl StaticTask {
+    fn new(definition: Definition, (id_base, index_in_file): (&str, usize)) -> Arc<Self> {
+        Arc::new(Self {
+            id: TaskId(format!(
+                "static_{id_base}_{index_in_file}_{}",
+                definition.label
+            )),
+            definition,
+        })
+    }
+}
+
+/// TODO: doc
+pub fn tasks_for(tasks: DefinitionProvider, id_base: &str) -> Vec<Arc<dyn Task>> {
+    tasks
+        .0
+        .into_iter()
+        .enumerate()
+        .map(|(index, task)| StaticTask::new(task, (id_base, index)) as Arc<_>)
+        .collect()
+}
+
 impl Task for StaticTask {
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         let TaskContext { cwd, env } = cx;
@@ -182,15 +204,7 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| {
-                                Arc::new(StaticTask {
-                                    id: TaskId(format!(
-                                        "static_{id_base}_{i}_{}",
-                                        definition.label
-                                    )),
-                                    definition,
-                                })
-                            })
+                            .map(|(i, definition)| StaticTask::new(definition, (&id_base, i)))
                             .collect();
                         cx.notify();
                     }

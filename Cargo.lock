@@ -3534,6 +3534,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "task",
  "theme",
