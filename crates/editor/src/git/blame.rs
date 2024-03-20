@@ -225,11 +225,12 @@ impl GitBlame {
                 cx.background_executor().spawn(async move {
                     // In your code, you would use `git_blame_runner` which is an instance of a type that implements `GitBlameRunner`.
                     // For example, in tests, you can provide a mock implementation of `GitBlameRunner`.
-                    let parsed_git_blame = blame_runner.run(
+                    let mut parsed_git_blame = blame_runner.run(
                         &working_directory,
                         &path,
                         &background_buffer_snapshot.as_rope().to_string(),
                     )?;
+                    parsed_git_blame.sort_by(|a, b| a.range.start.cmp(&b.range.start));
 
                     let mut current_row = 0;
                     let mut entries = SumTree::from_iter(
