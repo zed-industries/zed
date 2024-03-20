@@ -11,7 +11,7 @@ use sum_tree::SumTree;
 
 pub use git2 as libgit;
 
-fn run_git_blame(working_directory: &Path, path: &Path, contents: &String) -> Result<String> {
+pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &String) -> Result<String> {
     let mut child = Command::new("git")
         .current_dir(working_directory)
         .arg("blame")
@@ -117,6 +117,7 @@ impl From<Oid> for u32 {
 pub struct BlameEntry {
     pub sha: Oid,
 
+    pub row: u32,
     pub range: Range<u32>,
 
     pub original_line_number: u32,
@@ -246,6 +247,7 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     for line in output.lines() {
         let mut done = false;
 
+        // TODO: remove is_zero()
         match &mut current_entry {
             None => {
                 let mut new_entry = BlameEntry::new_from_blame_line(line)?;
@@ -389,11 +391,19 @@ impl BufferBlame {
         Self { tree }
     }
 
+    // pub fn entries_for_rows(
+    //     &self,
+    //     rows: impl IntoIterator<Item = Option<u32>>,
+    // ) -> impl Iterator<Item = Option<BlameEntry>> {
+    //     todo!()
+    // }
+
     pub fn entries_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = &BlameEntry> {
+        // TODO: don't need filter, can use seek
         let mut cursor = self.tree.filter::<_, BlameEntrySummary>(move |summary| {
             let before_start = summary.buffer_range.end.cmp(&range.start).is_lt();
             let after_end = summary.buffer_range.start.cmp(&range.end).is_gt();

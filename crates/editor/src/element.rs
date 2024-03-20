@@ -5,7 +5,7 @@ use crate::{
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
     git::{
-        blame::{blame_entry_to_display, DisplayBlameEntry, MultiBufferBlame},
+        blame::{DisplayBlameEntry, GitBlame},
         diff_hunk_to_display, DisplayDiffHunk,
     },
     hover_popover::{
@@ -1087,33 +1087,50 @@ impl EditorElement {
 
     fn layout_git_blame_gutters(
         &self,
-        blame: &MultiBufferBlame,
+        blame: &mut GitBlame,
         display_rows: Range<u32>,
         snapshot: &EditorSnapshot,
-    ) -> Vec<DisplayBlameEntry> {
-        let mut entries = Vec::new();
+    ) -> Vec<Option<DisplayBlameEntry>> {
+        let buffer_rows = snapshot
+            .buffer_rows(display_rows.start)
+            .take(display_rows.len());
+        // Instead of each entry having a range, return one entry per row
+        // allows unit tests for buffer blame
+        //
+        // return in here: Vec<Option<BlameEntry>>
+        blame
+            .blame_for_rows(buffer_rows)
+            .map(|entry| {
+                entry.map(|entry| DisplayBlameEntry {
+                    display_row: Point::new(entry.row, 0).to_display_point(snapshot).row(),
+                    entry: entry.clone(),
+                })
+            })
+            .collect()
 
-        for (buffer, buffer_range, excerpt_range) in snapshot
-            .buffer_snapshot
-            .excerpt_ranges_with_multi_buffer_ranges(display_rows)
-        {
-            if let Some(buffer_blame) = blame.get(buffer.remote_id()) {
-                let mut buffer_entries = buffer_blame
-                    .entries_in_row_range(buffer_range.clone(), &buffer)
-                    .flat_map(|hunk| {
-                        blame_entry_to_display(
-                            hunk,
-                            buffer_range.clone(),
-                            excerpt_range.clone(),
-                            snapshot,
-                        )
-                    })
-                    .collect();
+        // let mut entries = Vec::new();
 
-                entries.append(&mut buffer_entries);
-            }
-        }
-        entries
+        // for (buffer, buffer_range, excerpt_range) in snapshot
+        //     .buffer_snapshot
+        //     .excerpt_ranges_with_multi_buffer_ranges(display_rows)
+        // {
+        //     if let Some(buffer_blame) = blame.get(buffer.remote_id()) {
+        //         let mut buffer_entries = buffer_blame
+        //             .entries_in_row_range(buffer_range.clone(), &buffer)
+        //             .flat_map(|hunk| {
+        //                 blame_entry_to_display(
+        //                     hunk,
+        //                     buffer_range.clone(),
+        //                     excerpt_range.clone(),
+        //                     snapshot,
+        //                 )
+        //             })
+        //             .collect();
+
+        //         entries.append(&mut buffer_entries);
+        //     }
+        // }
+        // entries
     }
 
     fn layout_code_actions_indicator(
@@ -2162,13 +2179,9 @@ impl EditorElement {
     }
 
     fn paint_blame_entries(&self, layout: &EditorLayout, cx: &mut ElementContext) {
-        let Some(display_blame_entries) = layout.display_blame_entries.as_ref() else {
+        let Some(display_blame_entries) = &layout.display_blame_entries else {
             return;
         };
-        if display_blame_entries.is_empty() {
-            return;
-        }
-
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -2176,41 +2189,33 @@ impl EditorElement {
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             for display_blame_entry in display_blame_entries {
-                let (entry, display_row_range) = match display_blame_entry {
-                    &DisplayBlameEntry::Folded { .. } => {
-                        // TODO: what?
-                        continue;
-                    }
-                    DisplayBlameEntry::Unfolded {
-                        display_row_range,
-                        entry,
-                    } => (entry, display_row_range),
-                };
+                if let Some(display_blame_entry) = display_blame_entry {
+                    let sha_color = cx
+                        .theme()
+                        .players()
+                        .color_for_participant(display_blame_entry.entry.sha.into());
+                    let commit_sha_run = TextRun {
+                        len: 6,
+                        font: self.style.text.font(),
+                        color: sha_color.cursor,
+                        background_color: None,
+                        underline: Default::default(),
+                        strikethrough: None,
+                    };
 
-                let sha_color = cx.theme().players().color_for_participant(entry.sha.into());
-                let commit_sha_run = TextRun {
-                    len: 6,
-                    font: self.style.text.font(),
-                    color: sha_color.cursor,
-                    background_color: None,
-                    underline: Default::default(),
-                    strikethrough: None,
-                };
+                    let blame_line = format!("{}", display_blame_entry.entry);
 
-                let blame_line = format!("{}", display_blame_entry);
+                    let info_run = TextRun {
+                        len: blame_line.len() - 6,
+                        font: self.style.text.font(),
+                        color: cx.theme().status().hint,
+                        background_color: None,
+                        underline: Default::default(),
+                        strikethrough: None,
+                    };
+                    let runs = [commit_sha_run, info_run];
 
-                let info_run = TextRun {
-                    len: blame_line.len() - 6,
-                    font: self.style.text.font(),
-                    color: cx.theme().status().hint,
-                    background_color: None,
-                    underline: Default::default(),
-                    strikethrough: None,
-                };
-                let runs = [commit_sha_run, info_run];
-
-                for row in display_row_range.start..display_row_range.end {
-                    let start_y = row as f32 * line_height - scroll_top;
+                    let start_y = display_blame_entry.display_row as f32 * line_height - scroll_top;
                     let start_x = layout.position_map.em_width * 1;
 
                     let origin = layout.gutter_hitbox.origin + point(start_x, start_y);
@@ -2223,6 +2228,8 @@ impl EditorElement {
                     {
                         line.paint(origin, line_height, cx).log_err();
                     }
+                } else {
+                    todo!("print folded duplicatd");
                 }
             }
         })
@@ -3282,17 +3289,19 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let blame_result = self.editor.read(cx).blame_result.as_ref();
-                let (display_blame_entries, blame_width) = if let Some(buffer_blame) = blame_result
-                {
-                    let display_entries =
-                        self.layout_git_blame_gutters(&buffer_blame, start_row..end_row, &snapshot);
-                    let width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+                let (display_blame_entries, blame_width) = self.editor.update(cx, |editor, cx| {
+                    if let Some(blame) = editor.blame.as_ref() {
+                        blame.update(cx, |blame, _| {
+                            let display_entries =
+                                self.layout_git_blame_gutters(blame, start_row..end_row, &snapshot);
+                            let width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
 
-                    (Some(display_entries), Some(width))
-                } else {
-                    (None, None)
-                };
+                            (Some(display_entries), Some(width))
+                        })
+                    } else {
+                        (None, None)
+                    }
+                });
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3609,7 +3618,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    display_blame_entries: Option<Vec<DisplayBlameEntry>>,
+    display_blame_entries: Option<Vec<Option<DisplayBlameEntry>>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

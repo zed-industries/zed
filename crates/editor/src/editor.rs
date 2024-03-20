@@ -56,7 +56,7 @@ pub use element::{
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{self, Blame, MultiBufferBlame};
+use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
@@ -433,9 +433,8 @@ pub struct Editor {
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame: bool,
-    blame: Option<Model<Blame>>,
+    blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
-    blame_result: Option<MultiBufferBlame>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1480,7 +1479,6 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame: false,
             blame: None,
-            blame_result: None,
             blame_subscription: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -8845,7 +8843,6 @@ impl Editor {
             self.show_git_blame = true
         } else {
             self.blame_subscription.take();
-            self.blame_result.take();
             self.blame.take();
             self.show_git_blame = false
         }
@@ -8855,21 +8852,14 @@ impl Editor {
 
     fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
         if let Some(project) = self.project.as_ref() {
-            let buffer = self.buffer().clone();
+            let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+                anyhow::bail!("git blame not available in multi buffers")
+            };
+
             let project = project.clone();
 
-            let blame = cx.new_model(|cx| Blame::new(buffer, project, cx));
-
-            self.blame_subscription =
-                Some(cx.subscribe(&blame, |editor, _, event, cx| match event {
-                    blame::Event::ShowMultiBufferBlame { blame } => {
-                        editor.blame_result = Some(blame.clone());
-                        cx.notify();
-                    }
-                }));
-
-            blame.update(cx, |blame, cx| blame.generate(cx))?;
-
+            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+            self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);
         }
 
