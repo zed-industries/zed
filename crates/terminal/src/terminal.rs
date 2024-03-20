@@ -321,8 +321,7 @@ impl TerminalBuilder {
         env.entry("LC_ALL".to_string())
             .or_insert_with(|| "en_US.UTF-8".to_string());
 
-        env.entry("ZED_TERM".to_string())
-            .or_insert_with(|| "true".to_string());
+        env.insert("ZED_TERM".to_string(), "true".to_string());
 
         let pty_options = {
             let alac_shell = match shell.clone() {
