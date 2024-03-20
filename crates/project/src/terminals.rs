@@ -160,10 +160,8 @@ impl Project {
                 let path_bin = path.join("bin");
                 // We need to set the PATH to include the virtual environment's bin directory
                 if let Some(paths) = std::env::var_os("PATH") {
-                    let mut paths = std::env::split_paths(&paths)
-                        .filter(|p| p != &path_bin) // so we don't add the same path twice
-                        .collect::<Vec<_>>();
-                    paths.insert(0, path_bin);
+                    let paths = std::iter::once(path_bin)
+                        .chain(std::env::split_paths(&paths));
                     let new_path = std::env::join_paths(paths).unwrap();
                     env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
                 } else {
