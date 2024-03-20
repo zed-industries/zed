@@ -142,21 +142,57 @@ impl SearchQuery {
             )
         }
     }
+
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
-                ref mut replacement,
-                ..
-            }
-            | Self::Regex {
                 ref mut replacement,
                 ..
             } => {
                 *replacement = Some(new_replacement);
                 self
             }
+            Self::Regex {
+                ref mut replacement,
+                ..
+            } => {
+                let unescaped = Self::unescape_replacement(&new_replacement);
+                *replacement = Some(unescaped.to_string());
+                self
+            }
         }
     }
+
+    /// Unescapes the replacement string, replacing \n, \r, and \t with their respective characters.
+    fn unescape_replacement(replacement: &str) -> Cow<str> {
+        if replacement.contains('\\') {
+            let mut result = String::with_capacity(replacement.len());
+            let mut chars = replacement.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    if let Some(next) = chars.next() {
+                        match next {
+                            'n' => result.push('\n'),
+                            'r' => result.push('\r'),
+                            't' => result.push('\t'),
+                            _ => {
+                                result.push(c);
+                                result.push(next);
+                            }
+                        }
+                    } else {
+                        result.push(c);
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            result.into()
+        } else {
+            replacement.into()
+        }
+    }
+
     pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
         proto::SearchProject {
             project_id,
@@ -463,5 +499,14 @@ mod tests {
                 Err(e) => panic!("Valid glob {valid_glob} should be accepted, but got: {e}"),
             }
         }
+    }
+
+    #[test]
+    fn test_unescape_replacement() {
+        assert_eq!(SearchQuery::unescape_replacement("foo"), "foo");
+        assert_eq!(SearchQuery::unescape_replacement("\\n"), "\n");
+        assert_eq!(SearchQuery::unescape_replacement("\\r"), "\r");
+        assert_eq!(SearchQuery::unescape_replacement("\\t"), "\t");
+        assert_eq!(SearchQuery::unescape_replacement("\\"), "\\");
     }
 }
