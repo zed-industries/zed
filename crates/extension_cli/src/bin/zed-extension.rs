@@ -20,10 +20,10 @@ use tree_sitter::{Language, Query, WasmStore};
 #[derive(Parser, Debug)]
 #[command(name = "zed-extension")]
 struct Args {
-    /// The path to the extension directory
+    /// The path to the extension source directory
     #[arg(long)]
     source_dir: PathBuf,
-    /// The output directory to place the packaged extension.
+    /// The path to a directory where the packaged extension tarball and manifest will be written
     #[arg(long)]
     output_dir: PathBuf,
     /// The path to a directory where build dependencies are downloaded
