@@ -2,7 +2,7 @@ use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    AppState, Config,
+    AppState, Config, RateLimiter,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
@@ -93,17 +93,14 @@ impl TestServer {
             deterministic.clone(),
         )
         .unwrap();
-        let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
+        let executor = Executor::Deterministic(deterministic.clone());
+        let app_state = Self::build_app_state(&test_db, &live_kit_server, executor.clone()).await;
         let epoch = app_state
             .db
             .create_server(&app_state.config.zed_environment)
             .await
             .unwrap();
-        let server = Server::new(
-            epoch,
-            app_state.clone(),
-            Executor::Deterministic(deterministic.clone()),
-        );
+        let server = Server::new(epoch, app_state.clone());
         server.start().await.unwrap();
         // Advance clock to ensure the server's cleanup task is finished.
         deterministic.advance_clock(CLEANUP_TIMEOUT);
@@ -482,12 +479,15 @@ impl TestServer {
 
     pub async fn build_app_state(
         test_db: &TestDb,
-        fake_server: &live_kit_client::TestServer,
+        live_kit_test_server: &live_kit_client::TestServer,
+        executor: Executor,
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
-            live_kit_client: Some(Arc::new(fake_server.create_api_client())),
+            live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
+            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
+            executor,
             clickhouse_client: None,
             config: Config {
                 http_port: 0,
@@ -506,6 +506,8 @@ impl TestServer {
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
+                openai_api_key: None,
+                google_ai_api_key: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,

@@ -1,4 +1,6 @@
-#!/usr/bin/bash -e
+#!/usr/bin/bash
+
+set -e
 
 # install the wasm toolchain
 rustup target add wasm32-wasi

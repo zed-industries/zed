@@ -606,28 +606,6 @@ These values take in the same options as the root-level settings with the same n
 
 `boolean` values
 
-## Semantic Index
-
-- Description: Settings related to semantic index.
-- Setting: `semantic_index`
-- Default:
-
-```json
-"semantic_index": {
-  "enabled": false
-},
-```
-
-### Enabled
-
-- Description: Whether or not to display the `Semantic` mode in project search.
-- Setting: `enabled`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
 ## Show Call Status Icon
 
 - Description: Whether or not to show the call status icon in the status bar.

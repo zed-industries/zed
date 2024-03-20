@@ -3060,7 +3060,7 @@ mod tests {
             collab_ui::init(&app_state, cx);
             project_panel::init((), cx);
             terminal_view::init(cx);
-            assistant::init(cx);
+            assistant::init(app_state.client.clone(), cx);
             initialize_workspace(app_state.clone(), cx);
             app_state
         })

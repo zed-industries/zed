@@ -12,7 +12,6 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-use extension_manifest::ExtensionLibraryKind;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -43,7 +42,9 @@ use util::{
 };
 use wasm_host::{WasmExtension, WasmHost};
 
-pub use extension_manifest::{ExtensionManifest, GrammarManifestEntry, OldExtensionManifest};
+pub use extension_manifest::{
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
+};
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);

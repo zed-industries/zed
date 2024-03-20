@@ -33,7 +33,6 @@ actions!(
         NextHistoryQuery,
         PreviousHistoryQuery,
         ActivateTextMode,
-        ActivateSemanticMode,
         ActivateRegexMode,
         ReplaceAll,
         ReplaceNext,
