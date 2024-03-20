@@ -101,7 +101,7 @@ impl RenderOnce for WindowsCaptionButton {
         // todo(windows) report this width to the Windows platform API
         // NOTE: this is intentionally hard coded. An option to use the 'native' size
         //       could be added when the width is reported to the Windows platform API
-        //       as this could change between future Windows verions.
+        //       as this could change between future Windows versions.
         let width = px(36.);
 
         h_flex()
