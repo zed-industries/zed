@@ -47,6 +47,11 @@ async fn main() -> Result<()> {
             run_migrations(&config).await?;
         }
         Some("seed") => {
+            let config = envy::from_env::<Config>().expect("error loading config");
+            let db_options = db::ConnectOptions::new(config.database_url.clone());
+            let mut db = Database::new(db_options, Executor::Production).await?;
+            db.initialize_notification_kinds().await?;
+
             collab::seed::seed(&config, &db, true).await?;
         }
         Some("serve") => {
@@ -57,7 +62,7 @@ async fn main() -> Result<()> {
             };
             if !is_api && !is_collab {
                 Err(anyhow!(
-                    "usage: collab <version | migrate | serve [api|collab]>"
+                    "usage: collab <version | migrate | seed | serve [api|collab]>"
                 ))?;
             }
 
@@ -159,7 +164,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             Err(anyhow!(
-                "usage: collab <version | migrate | serve [api|collab]>"
+                "usage: collab <version | migrate | seed | serve [api|collab]>"
             ))?;
         }
     }
