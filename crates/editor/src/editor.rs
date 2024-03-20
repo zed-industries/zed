@@ -3055,18 +3055,16 @@ impl Editor {
 
                 if let Some(region) = region {
                     let mut range = region.range.to_offset(&buffer);
-                    if selection.start == range.start {
-                        if range.start >= region.pair.start.len() {
-                            range.start -= region.pair.start.len();
-                            if buffer.contains_str_at(range.start, &region.pair.start) {
-                                if buffer.contains_str_at(range.end, &region.pair.end) {
-                                    range.end += region.pair.end.len();
-                                    selection.start = range.start;
-                                    selection.end = range.end;
+                    if selection.start == range.start && range.start >= region.pair.start.len() {
+                        range.start -= region.pair.start.len();
+                        if buffer.contains_str_at(range.start, &region.pair.start)
+                            && buffer.contains_str_at(range.end, &region.pair.end)
+                        {
+                            range.end += region.pair.end.len();
+                            selection.start = range.start;
+                            selection.end = range.end;
 
-                                    return selection;
-                                }
-                            }
+                            return selection;
                         }
                     }
                 }

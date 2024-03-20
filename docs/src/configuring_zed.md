@@ -390,6 +390,16 @@ To override settings for a language, add an entry for that language server's nam
 
 `boolean` values
 
+**Example**
+
+If the setting is set to `true`:
+
+1. Enter in the editor: `)))`
+2. Move the cursor to the start: `^)))`
+3. Enter again: `)))`
+
+The result is still `)))` and not `))))))`, which is what it would be by default.
+
 ## File Types
 
 - Setting: `file_types`
