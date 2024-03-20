@@ -44,7 +44,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter, mem,
-    ops::Range,
+    ops::{Range, RangeBounds},
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -2188,72 +2188,71 @@ impl EditorElement {
                 let right = scrollbar_layout.hitbox.right();
                 let column_width =
                     px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
-                if is_singleton && scrollbar_settings.selections {
-                    let start_anchor = Anchor::min();
-                    let end_anchor = Anchor::max();
-                    let background_ranges = self
-                        .editor
-                        .read(cx)
-                        .background_highlight_row_ranges::<BufferSearchHighlights>(
-                            start_anchor..end_anchor,
-                            &layout.position_map.snapshot,
-                            50000,
-                        );
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    let mut y_range: Option<(Pixels, Pixels)> = None;
-                    for range in background_ranges {
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(range.start().row(), range.end().row());
-                        let Some(group_y_range) = y_range else {
-                            y_range = Some((start_y, end_y));
-                            continue;
-                        };
-                        if start_y <= group_y_range.1 {
-                            y_range = Some((group_y_range.0, end_y));
-                            continue;
-                        }
-                        let bounds = Bounds::from_corners(
-                            point(left_x, group_y_range.0),
-                            point(right_x, group_y_range.1),
-                        );
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                        y_range = Some((start_y, end_y));
-                    }
-                    if let Some(group_y_range) = y_range {
-                        let bounds = Bounds::from_corners(
-                            point(left_x, group_y_range.0),
-                            point(right_x, group_y_range.1),
-                        );
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
-                }
+                // if is_singleton && scrollbar_settings.selections {
+                //     let start_anchor = Anchor::min();
+                //     let end_anchor = Anchor::max();
+                //     let background_ranges = self
+                //         .editor
+                //         .read(cx)
+                //         .background_highlight_row_ranges::<BufferSearchHighlights>(
+                //             start_anchor..end_anchor,
+                //             &layout.position_map.snapshot,
+                //             50000,
+                //         );
+                //     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
+                //     let right_x = left_x + column_width;
+                //     let mut y_range: Option<(Pixels, Pixels)> = None;
+                //     for range in background_ranges {
+                //         let (start_y, end_y) =
+                //             scrollbar_layout.ys_for_marker(range.start().row(), range.end().row());
+                //         let Some(group_y_range) = y_range else {
+                //             y_range = Some((start_y, end_y));
+                //             continue;
+                //         };
+                //         if start_y <= group_y_range.1 {
+                //             y_range = Some((group_y_range.0, end_y));
+                //             continue;
+                //         }
+                //         let bounds = Bounds::from_corners(
+                //             point(left_x, group_y_range.0),
+                //             point(right_x, group_y_range.1),
+                //         );
+                //         cx.paint_quad(quad(
+                //             bounds,
+                //             Corners::default(),
+                //             cx.theme().status().info,
+                //             Edges::default(),
+                //             cx.theme().colors().scrollbar_thumb_border,
+                //         ));
+                //         y_range = Some((start_y, end_y));
+                //     }
+                //     if let Some(group_y_range) = y_range {
+                //         let bounds = Bounds::from_corners(
+                //             point(left_x, group_y_range.0),
+                //             point(right_x, group_y_range.1),
+                //         );
+                //         cx.paint_quad(quad(
+                //             bounds,
+                //             Corners::default(),
+                //             cx.theme().status().info,
+                //             Edges::default(),
+                //             cx.theme().colors().scrollbar_thumb_border,
+                //         ));
+                //     }
+                // }
 
                 if is_singleton && scrollbar_settings.symbols_selections {
-                    let selection_ranges = self.editor.read(cx).background_highlights_in_range(
-                        Anchor::min()..Anchor::max(),
-                        &layout.position_map.snapshot,
-                        cx.theme().colors(),
-                    );
+                    let selection_ranges = self
+                        .editor
+                        .read(cx)
+                        .background_highlight_hunks(&layout.position_map.snapshot);
                     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
                     let right_x = left_x + column_width;
                     let mut y_range: Option<(Pixels, Pixels)> = None;
                     for hunk in selection_ranges {
-                        let start_display = Point::new(hunk.0.start.row(), 0)
+                        let start_display = Point::new(hunk.start, 0)
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = Point::new(hunk.0.end.row(), 0)
+                        let end_display = Point::new(hunk.end, 0)
                             .to_display_point(&layout.position_map.snapshot.display_snapshot);
                         let (start_y, end_y) =
                             scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
@@ -2261,16 +2260,16 @@ impl EditorElement {
                             y_range = Some((start_y, end_y));
                             continue;
                         };
-                        if start_y <= group_y_range.1 {
-                            y_range = Some((group_y_range.0, end_y));
+                        if start_y >= group_y_range.0 && start_y <= group_y_range.1 {
+                            if end_y > group_y_range.1 {
+                                y_range = Some((group_y_range.0, end_y));
+                            }
                             continue;
                         }
                         let bounds = Bounds::from_corners(
                             point(left_x, group_y_range.0),
                             point(right_x, group_y_range.1),
                         );
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
                         cx.paint_quad(quad(
                             bounds,
                             Corners::default(),

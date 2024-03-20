@@ -9285,6 +9285,51 @@ impl Editor {
         results
     }
 
+    pub fn background_highlight_hunks(
+        &self,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<Range<u32>> {
+        let mut results = Vec::new();
+        let mut current_hunk = None;
+        for (_, ranges) in self.background_highlights.values() {
+            for range in ranges {
+                let start_row = range.start.to_display_point(&display_snapshot).row();
+                let end_row = range.end.to_display_point(&display_snapshot).row();
+                let Some(mut hunk) = current_hunk.take() else {
+                    current_hunk = Some(Range {
+                        start: start_row,
+                        end: end_row,
+                    });
+                    continue;
+                };
+                if start_row < hunk.start {
+                    results.push(hunk);
+                    current_hunk = Some(Range {
+                        start: start_row,
+                        end: end_row,
+                    });
+                    continue;
+                }
+                if start_row <= hunk.end + 1 {
+                    if end_row > hunk.end {
+                        hunk.end = end_row;
+                    }
+                    current_hunk = Some(hunk);
+                    continue;
+                }
+                results.push(hunk);
+                current_hunk = Some(Range {
+                    start: start_row,
+                    end: end_row,
+                });
+            }
+        }
+        if let Some(hunk) = current_hunk.take() {
+            results.push(hunk);
+        }
+        results
+    }
+
     pub fn background_highlight_row_ranges<T: 'static>(
         &self,
         search_range: Range<Anchor>,
