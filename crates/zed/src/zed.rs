@@ -639,7 +639,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
         if base_keymap != BaseKeymap::default() {
             // all base keymaps assume the default keymap (vscode) is loaded
             if let Some(default_asset_path) = BaseKeymap::default().asset_path() {
-                KeymapFile::load_asset(default_asset_path).unwrap();
+                KeymapFile::load_asset(default_asset_path, cx).unwrap();
             }
         }
         KeymapFile::load_asset(asset_path, cx).unwrap();
