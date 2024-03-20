@@ -387,9 +387,16 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 
     let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
     let active_operator = Vim::read(cx).active_operator();
+    let mut waiting_operator: Option<Operator> = None;
     match Vim::read(cx).state().mode {
         Mode::Normal | Mode::Replace => {
-            normal_motion(motion.clone(), active_operator.clone(), count, cx)
+            if active_operator == Some(Operator::AddSurrounds { target: None }) {
+                waiting_operator = Some(Operator::AddSurrounds {
+                    target: Some(SurroundsType::Motion(motion)),
+                });
+            } else {
+                normal_motion(motion.clone(), active_operator.clone(), count, cx)
+            }
         }
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
@@ -400,13 +407,8 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     }
     Vim::update(cx, |vim, cx| {
         vim.clear_operator(cx);
-        if active_operator == Some(Operator::AddSurrounds { target: None }) {
-            vim.push_operator(
-                Operator::AddSurrounds {
-                    target: Some(SurroundsType::Motion(motion)),
-                },
-                cx,
-            )
+        if let Some(operator) = waiting_operator {
+            vim.push_operator(operator, cx);
         }
     });
 }
