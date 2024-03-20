@@ -128,12 +128,6 @@ impl Database {
         Ok(new_migrations)
     }
 
-    /// Initializes static data that resides in the database by upserting it.
-    pub async fn initialize_static_data(&mut self) -> Result<()> {
-        self.initialize_notification_kinds().await?;
-        Ok(())
-    }
-
     /// Transaction runs things in a transaction. If you want to call other methods
     /// and pass the transaction around you need to reborrow the transaction at each
     /// call site with: `&*tx`.

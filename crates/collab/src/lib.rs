@@ -4,6 +4,7 @@ pub mod db;
 pub mod env;
 pub mod executor;
 pub mod rpc;
+pub mod seed;
 
 #[cfg(test)]
 mod tests;
@@ -108,6 +109,8 @@ impl std::error::Error for Error {}
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
+    pub migrations_path: Option<PathBuf>,
+    pub seed_path: Option<PathBuf>,
     pub database_max_connections: u32,
     pub api_token: String,
     pub clickhouse_url: Option<String>,
@@ -137,12 +140,6 @@ impl Config {
     }
 }
 
-#[derive(Default, Deserialize)]
-pub struct MigrateConfig {
-    pub database_url: String,
-    pub migrations_path: Option<PathBuf>,
-}
-
 pub struct AppState {
     pub db: Arc<Database>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
@@ -155,8 +152,7 @@ impl AppState {
     pub async fn new(config: Config) -> Result<Arc<Self>> {
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
         db_options.max_connections(config.database_max_connections);
-        let mut db = Database::new(db_options, Executor::Production).await?;
-        db.initialize_notification_kinds().await?;
+        let db = Database::new(db_options, Executor::Production).await?;
 
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server

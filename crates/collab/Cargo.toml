@@ -13,8 +13,9 @@ workspace = true
 [[bin]]
 name = "collab"
 
-[[bin]]
-name = "seed"
+[features]
+sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
+test-support = ["sqlite"]
 
 [dependencies]
 anyhow.workspace = true
@@ -90,10 +91,8 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
-sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-sqlx = { version = "0.7", features = ["sqlite"] }
 theme.workspace = true
 unindent.workspace = true
 util.workspace = true

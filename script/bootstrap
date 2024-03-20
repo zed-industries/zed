@@ -5,9 +5,3 @@ which foreman > /dev/null || brew install foreman
 
 echo "creating database..."
 script/sqlx database create
-
-echo "migrating database..."
-cargo run -p collab -- migrate
-
-echo "seeding database..."
-script/seed-db

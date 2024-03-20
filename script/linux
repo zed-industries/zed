@@ -1,5 +1,8 @@
 #!/usr/bin/bash -e
 
+# install the wasm toolchain
+rustup target add wasm32-wasi
+
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || command -v doas || true)
 
@@ -25,6 +28,8 @@ fi
 dnf=$(command -v dnf || true)
 if [[ -n $dnf ]]; then
   deps=(
+    gcc
+    g++
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
@@ -33,6 +38,10 @@ if [[ -n $dnf ]]; then
     libzstd-devel
     vulkan-loader
   )
+  # libxkbcommon-x11-devel is in the crb repo
+  $maysudo "$dnf" config-manager --set-enabled crb
+  $maysudo "$dnf" install epel-release epel-next-release
+
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
 fi
