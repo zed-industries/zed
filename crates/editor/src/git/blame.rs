@@ -193,34 +193,33 @@ pub fn blame_entry_to_display(
     display_row_range: Range<u32>,
     snapshot: &DisplaySnapshot,
 ) -> Option<DisplayBlameEntry> {
-    // buffer_range: original range
-
-    let offset = buffer_range.start - display_row_range.start;
-
-    println!(
-        "buffer_range: {:?}, display_row_range: {:?}, entry.range: {:?}, offset: {}",
-        buffer_range, display_row_range, entry.range, offset
-    );
-
     if entry.range.end == buffer_range.start {
         return None;
     }
 
+    println!(
+        "buffer_range: {:?}, display_row_range: {:?}, entry.range: {:?}",
+        buffer_range, display_row_range, entry.range
+    );
+
     let start = entry.range.start.max(buffer_range.start);
     let end = entry.range.end.min(buffer_range.end);
 
-    let buffer_display_row_range = (start - offset)..(end - offset);
-    println!("buffer display row range: {:?}", buffer_display_row_range);
+    let buffer_display_row_range = if buffer_range.start > display_row_range.start {
+        let offset = buffer_range.start - display_row_range.start;
+        (start - offset)..(end - offset)
+    } else if buffer_range.start < display_row_range.start {
+        let offset = display_row_range.start - buffer_range.start;
+        (start + offset)..(end + offset)
+    } else {
+        start..end
+    };
 
     let start_point = Point::new(buffer_display_row_range.start, 0);
     let start_display_point = start_point.to_display_point(snapshot).row();
-    println!("start display point: {:?}", start_display_point);
 
     let end_point = Point::new(buffer_display_row_range.end, 0);
     let end_display_point = end_point.to_display_point(snapshot).row();
-    println!("end display point: {:?}", end_display_point);
-    // let end_point = Point::new(end, 0);
-    // let end = hunk_end_point.to_display_point(snapshot).row();
 
     Some(DisplayBlameEntry::Unfolded {
         display_row_range: start_display_point..end_display_point,
