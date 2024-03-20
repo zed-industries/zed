@@ -843,7 +843,7 @@ impl CompletionsMenu {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
         let max_completion_len = px(510.);
-
+        let padding_width = 30;
         let widest_completion_pixels = self
             .matches
             .iter()
@@ -854,7 +854,6 @@ impl CompletionsMenu {
                 let font_size = style.text.font_size.to_pixels(cx.rem_size());
 
                 let mut len = completion.label.text.chars().count();
-                print!("{}", completion.label.text);
                 if let Ok(text_width) = cx.text_system().layout_line(
                     completion.label.text.as_str(),
                     font_size,
@@ -864,29 +863,19 @@ impl CompletionsMenu {
                 }
 
                 if let Some(Documentation::SingleLine(documentation_text)) = documentation {
-                    print!("{}", documentation_text);
-
                     if show_completion_documentation {
                         if let Ok(documentation_width) = cx.text_system().layout_line(
                             documentation_text.as_str(),
                             font_size,
                             &[style.text.to_run(documentation_text.as_str().len())],
                         ) {
-                            len = documentation_width.width.0 as usize;
+                            len = documentation_width.width.0 as usize + padding_width;
                         }
                     }
                 }
-                println!("Potential len: {}", len);
-
-                (len + 30).min(max_completion_len.0 as usize + 30)
+                (len + padding_width).min(max_completion_len.0 as usize)
             })
             .max();
-
-        if let Some(a) = widest_completion_pixels {
-            println!("Min Width: {}", a);
-        } else {
-            println!("ERROR FIDING WIDTH");
-        }
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -932,9 +921,6 @@ impl CompletionsMenu {
         } else {
             px(190.)
         };
-
-        println!("Min set to {}", min_completion_len.0);
-
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -957,7 +943,7 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let (completion_width, completion_label, documentation_label) =
+                        let (_completion_width, completion_label, documentation_label) =
                             Self::truncate_completion(
                                 &style,
                                 cx,
@@ -967,8 +953,8 @@ impl CompletionsMenu {
                                 max_completion_len,
                             );
                         div()
-                            .min_w(min_completion_len + px(30.))
-                            .max_w(max_completion_len + px(30.))
+                            .min_w(min_completion_len + px(padding_width as f32))
+                            .max_w(max_completion_len + px(padding_width as f32))
                             .child(
                                 ListItem::new(mat.candidate_id)
                                     .inset(true)
@@ -993,8 +979,7 @@ impl CompletionsMenu {
         )
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
-        // .with_width_from_item(widest_completion_pixels)
-        .min_w(min_completion_len);
+        .min_w(min_completion_len + px(padding_width as f32));
 
         Popover::new()
             .child(list)
@@ -1271,8 +1256,6 @@ impl CompletionsMenu {
                 },
             ),
         );
-
-        println!("Completion_Text: {}", completion_label_text);
 
         let completion_label =
             StyledText::new(completion_label_text).with_highlights(&style.text, highlights);
