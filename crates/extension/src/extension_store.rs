@@ -103,7 +103,7 @@ enum ExtensionOperation {
 pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
-    ExtensionInstalled(String),
+    ExtensionInstalled(Arc<str>),
 }
 
 impl EventEmitter<Event> for ExtensionStore {}
@@ -463,7 +463,7 @@ impl ExtensionStore {
             match operation {
                 ExtensionOperation::Install => {
                     this.update(&mut cx, |_, cx| {
-                        cx.emit(Event::ExtensionInstalled(extension_id.to_string()));
+                        cx.emit(Event::ExtensionInstalled(extension_id));
                     })
                     .ok();
                 }
