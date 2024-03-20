@@ -29,8 +29,18 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         workspace
             .register_action(move |workspace, _: &Extensions, cx| {
-                let extensions_page = ExtensionsPage::new(workspace, cx);
-                workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ExtensionsPage>());
+
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, cx);
+                } else {
+                    let extensions_page = ExtensionsPage::new(workspace, cx);
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+                }
             })
             .register_action(move |_, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
