@@ -20,11 +20,11 @@ fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
 picker.workspace = true
+serde.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-serde.workspace = true
 
 [dev-dependencies]
