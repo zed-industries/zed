@@ -13,6 +13,14 @@ pub trait Extension: Send + Sync {
         config: wit::LanguageServerConfig,
         worktree: &wit::Worktree,
     ) -> Result<Command>;
+
+    fn language_server_initialization_options(
+        &mut self,
+        _config: wit::LanguageServerConfig,
+        _worktree: &wit::Worktree,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 #[macro_export]
@@ -59,5 +67,12 @@ impl wit::Guest for Component {
         worktree: &wit::Worktree,
     ) -> Result<wit::Command> {
         extension().language_server_command(config, worktree)
+    }
+
+    fn language_server_initialization_options(
+        config: LanguageServerConfig,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        extension().language_server_initialization_options(config, worktree)
     }
 }

@@ -90,7 +90,10 @@ impl LspAdapter for SvelteLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
         let config = json!({
           "inlayHints": {
             "parameterNames": {
@@ -116,17 +119,13 @@ impl LspAdapter for SvelteLspAdapter {
           }
         });
 
-        Some(json!({
+        Ok(Some(json!({
             "provideFormatter": true,
             "configuration": {
               "typescript": config,
               "javascript": config
             }
-        }))
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-svelte"]
+        })))
     }
 }
 
