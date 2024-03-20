@@ -81,4 +81,5 @@ world extension {
     }
 
     export language-server-command: func(config: language-server-config, worktree: borrow<worktree>) -> result<command, string>;
+    export language-server-initialization-options: func(config: language-server-config, worktree: borrow<worktree>) -> result<option<string>, string>;
 }

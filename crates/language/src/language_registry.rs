@@ -63,7 +63,7 @@ pub enum LanguageServerBinaryStatus {
 
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
-    pub task: Task<Result<lsp::LanguageServer>>,
+    pub task: Task<Result<(lsp::LanguageServer, Option<serde_json::Value>)>>,
     pub container_dir: Option<Arc<Path>>,
 }
 
@@ -680,6 +680,12 @@ impl LanguageRegistry {
                     )
                     .await?;
 
+                let options = adapter
+                    .adapter
+                    .clone()
+                    .initialization_options(&delegate)
+                    .await?;
+
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
                     task.await?;
                 }
@@ -727,18 +733,21 @@ impl LanguageRegistry {
                         })
                         .detach();
 
-                    return Ok(server);
+                    return Ok((server, options));
                 }
 
                 drop(this);
-                lsp::LanguageServer::new(
-                    stderr_capture,
-                    server_id,
-                    binary,
-                    &root_path,
-                    adapter.code_action_kinds(),
-                    cx,
-                )
+                Ok((
+                    lsp::LanguageServer::new(
+                        stderr_capture,
+                        server_id,
+                        binary,
+                        &root_path,
+                        adapter.code_action_kinds(),
+                        cx,
+                    )?,
+                    options,
+                ))
             }
         });
 

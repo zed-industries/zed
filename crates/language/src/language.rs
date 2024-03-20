@@ -441,8 +441,11 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
-    fn initialization_options(&self) -> Option<Value> {
-        None
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
     }
 
     fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
@@ -1547,8 +1550,11 @@ impl LspAdapter for FakeLspAdapter {
         self.disk_based_diagnostics_progress_token.clone()
     }
 
-    fn initialization_options(&self) -> Option<Value> {
-        self.initialization_options.clone()
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(self.initialization_options.clone())
     }
 
     fn prettier_plugins(&self) -> &[&'static str] {

@@ -3102,7 +3102,7 @@ impl Project {
     ) -> Result<Arc<LanguageServer>> {
         let workspace_config =
             cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
-        let language_server = pending_server.task.await?;
+        let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
         language_server
@@ -3342,7 +3342,6 @@ impl Project {
             })
             .detach();
 
-        let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
                 merge_json_value_into(override_options, initialization_options);
