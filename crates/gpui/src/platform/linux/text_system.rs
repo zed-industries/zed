@@ -217,11 +217,17 @@ impl LinuxTextSystemState {
         _features: FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let mut font_ids = SmallVec::new();
+
         let family = self
             .font_system
-            .get_font_matches(Attrs::new().family(cosmic_text::Family::Name(name)));
-        for font in family.as_ref() {
-            let font = self.font_system.get_font(*font).unwrap();
+            .db()
+            .faces()
+            .filter(|face| face.families.iter().any(|family| *name == family.0))
+            .map(|face| face.id)
+            .collect::<SmallVec<[_; 4]>>();
+
+        for font in family {
+            let font = self.font_system.get_font(font).unwrap();
             if font.as_swash().charmap().map('m') == 0 {
                 self.font_system.db_mut().remove_face(font.id());
                 continue;
