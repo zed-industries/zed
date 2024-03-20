@@ -10626,6 +10626,7 @@ dependencies = [
  "story",
  "strum",
  "theme",
+ "windows 0.53.0",
 ]
 
 [[package]]
