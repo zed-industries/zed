@@ -23,17 +23,13 @@ pub(crate) struct LinuxTextSystem(RwLock<LinuxTextSystemState>);
 struct LinuxTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
-    /// Contains all already loaded fonts. Indexed by `FontId`.
-    ///
-    /// When a font is requested via `LinuxTextSystem::font_id` all faces of the requested family
-    /// are loaded at once via `Self::load_family`. Not every item in this list is therefore actually
-    /// being used to render text on the screen.
-    // A reference to these fonts is also stored in `font_system`, but calling `FontSystem::get_font`
-    // would require a mutable reference and therefore a write lock
+    /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts_store: Vec<Arc<CosmicTextFont>>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
     /// for every font face in a family.
     font_ids_by_family_cache: HashMap<SharedString, SmallVec<[FontId; 4]>>,
+    /// The name of each font associated with the given font id
+    postscript_names: HashMap<FontId, String>,
 }
 
 impl LinuxTextSystem {
@@ -48,6 +44,7 @@ impl LinuxTextSystem {
             swash_cache: SwashCache::new(),
             loaded_fonts_store: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
+            postscript_names: HashMap::default(),
         }))
     }
 }
@@ -217,12 +214,22 @@ impl LinuxTextSystemState {
         _features: FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let mut font_ids = SmallVec::new();
-        let family = self
+        let families = self
             .font_system
-            .get_font_matches(Attrs::new().family(cosmic_text::Family::Name(name)));
-        for font in family.as_ref() {
-            let font = self.font_system.get_font(*font).unwrap();
-            if font.as_swash().charmap().map('m') == 0 {
+            .db()
+            .faces()
+            .filter(|face| face.families.iter().any(|family| *name == family.0))
+            .map(|face| (face.id, face.post_script_name.clone()))
+            .collect::<SmallVec<[_; 4]>>();
+
+        for (font_id, postscript_name) in families {
+            let font = self
+                .font_system
+                .get_font(font_id)
+                .ok_or_else(|| anyhow!("Could not load font"))?;
+
+            // HACK: to let the storybook run, we should actually do better font fallback
+            if font.as_swash().charmap().map('m') == 0 || postscript_name == "Segoe Fluent Icons" {
                 self.font_system.db_mut().remove_face(font.id());
                 continue;
             };
@@ -230,7 +237,9 @@ impl LinuxTextSystemState {
             let font_id = FontId(self.loaded_fonts_store.len());
             font_ids.push(font_id);
             self.loaded_fonts_store.push(font);
+            self.postscript_names.insert(font_id, postscript_name);
         }
+
         Ok(font_ids)
     }
 
@@ -258,12 +267,13 @@ impl LinuxTextSystemState {
         }
     }
 
-    // todo(linux)
-    fn is_emoji(&self, _font_id: FontId) -> bool {
-        false
+    fn is_emoji(&self, font_id: FontId) -> bool {
+        // TODO: Include other common emoji fonts
+        self.postscript_names
+            .get(&font_id)
+            .map_or(false, |postscript_name| postscript_name == "NotoColorEmoji")
     }
 
-    // todo(linux) both raster functions have problems because I am not sure this is the correct mapping from cosmic text to gpui system
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.loaded_fonts_store[params.font_id.0];
         let font_system = &mut self.font_system;
@@ -319,6 +329,32 @@ impl LinuxTextSystemState {
         }
     }
 
+    fn font_id_for_cosmic_id(&mut self, id: cosmic_text::fontdb::ID) -> FontId {
+        if let Some(ix) = self
+            .loaded_fonts_store
+            .iter()
+            .position(|font| font.id() == id)
+        {
+            FontId(ix)
+        } else {
+            // This matches the behavior of the mac text system
+            let font = self.font_system.get_font(id).unwrap();
+            let face = self
+                .font_system
+                .db()
+                .faces()
+                .find(|info| info.id == id)
+                .unwrap();
+
+            let font_id = FontId(self.loaded_fonts_store.len());
+            self.loaded_fonts_store.push(font);
+            self.postscript_names
+                .insert(font_id, face.post_script_name.clone());
+
+            font_id
+        }
+    }
+
     // todo(linux) This is all a quick first pass, maybe we should be using cosmic_text::Buffer
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
@@ -329,7 +365,7 @@ impl LinuxTextSystemState {
             let font = &self.loaded_fonts_store[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
-                offs..offs + run.len,
+                offs..(offs + run.len),
                 Attrs::new()
                     .family(Family::Name(&font.families.first().unwrap().0))
                     .stretch(font.stretch)
@@ -339,23 +375,19 @@ impl LinuxTextSystemState {
             offs += run.len;
         }
         let mut line = BufferLine::new(text, attrs_list, cosmic_text::Shaping::Advanced);
+
         let layout = line.layout(
             &mut self.font_system,
             font_size.0,
-            f32::MAX, // todo(linux) we don't have a width cause this should technically not be wrapped I believe
+            f32::MAX, // We do our own wrapping
             cosmic_text::Wrap::None,
         );
         let mut runs = Vec::new();
-        // todo(linux) what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering
+
         let layout = layout.first().unwrap();
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
-            let font_id = FontId(
-                self.loaded_fonts_store
-                    .iter()
-                    .position(|font| font.id() == font_id)
-                    .unwrap(),
-            );
+            let font_id = self.font_id_for_cosmic_id(font_id);
             let mut glyphs = SmallVec::new();
             // todo(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
@@ -364,8 +396,10 @@ impl LinuxTextSystemState {
                 index: glyph.start,
                 is_emoji: self.is_emoji(font_id),
             });
+
             runs.push(crate::ShapedRun { font_id, glyphs });
         }
+
         LineLayout {
             font_size,
             width: layout.w.into(),
