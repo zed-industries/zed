@@ -104,7 +104,19 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
+                        let original_head = selection.head();
                         pair_object.expand_selection(map, selection, true);
+                        let not_found = original_head == selection.head();
+                        let is_inner =
+                            selection.start < original_head && selection.end > original_head;
+                        let is_same_row = selection.start.row() == original_head.row()
+                            && selection.end.row() == original_head.row();
+
+                        // Only surround within the current cursor and the next pair of surrounds that match the current row should be handled
+                        if not_found || (is_inner == false && is_same_row == false) {
+                            selection.start = original_head;
+                            selection.end = original_head;
+                        }
                     });
                 });
 
@@ -143,7 +155,6 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                         start..start
                     })
                     .collect::<Vec<_>>();
-                println!("edits is {:?}", edits);
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
@@ -190,17 +201,41 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             .snapshot(cx)
                             .text_for_range(offset_range.clone())
                             .collect::<String>();
+                        // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
+                        // hello«ˇ  "hello in a word"  »again.
+                        // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
+                        // In order to be able to accurately match and replace in this case, some cumbersome methods are used
                         if let Some(pos) = select_text.find(will_replace_pair.start.as_str()) {
-                            select_text.remove(pos);
+                            select_text.replace_range(pos..pos + 1, pair.start.as_str());
+                            if let Some(space_pos) = select_text.find(" ") {
+                                if surround {
+                                    if space_pos != pos + 1 {
+                                        select_text.replace_range(pos + 1..pos + 1, " ");
+                                    }
+                                } else {
+                                    if space_pos == pos + 1 {
+                                        select_text.remove(space_pos);
+                                    }
+                                }
+                            } else if pos + 1 < select_text.len() && surround {
+                                select_text.replace_range(pos + 1..pos + 1, " ");
+                            }
                         }
                         if let Some(pos) = select_text.rfind(will_replace_pair.end.as_str()) {
-                            select_text.remove(pos);
-                        }
-                        if surround {
-                            select_text = select_text.trim_matches(' ').to_string();
-                            select_text = format!("{} {} {}", pair.start, select_text, pair.end);
-                        } else {
-                            select_text = format!("{}{}{}", pair.start, select_text, pair.end);
+                            select_text.replace_range(pos..pos + 1, pair.end.as_str());
+                            if let Some(space_pos) = select_text.rfind(" ") {
+                                if surround {
+                                    if space_pos != pos - 1 {
+                                        select_text.replace_range(pos..pos, " ");
+                                    }
+                                } else {
+                                    if space_pos == pos - 1 {
+                                        select_text.remove(space_pos);
+                                    }
+                                }
+                            } else if pos - 1 > 0 && surround {
+                                select_text.replace_range(pos - 1..pos - 1, " ");
+                            }
                         }
                         edits.push((offset_range, select_text));
                     }
@@ -216,6 +251,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                     editor.buffer().update(cx, |buffer, cx| {
                         buffer.edit(edits, None, cx);
                     });
+                    editor.set_clip_at_line_ends(true, cx);
                     editor.change_selections(None, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
@@ -225,11 +261,41 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
     }
 }
 
-pub fn is_valid_bracket_part(object: Object) -> bool {
-    if let Some(_) = object_to_bracket_pair(object) {
-        return true;
+pub fn is_valid_bracket_part(vim: &mut Vim, object: Object, cx: &mut WindowContext) -> bool {
+    let mut valid = false;
+
+    if let Some(pair) = object_to_bracket_pair(object) {
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let original_head = selection.head();
+                        object.expand_selection(map, selection, true);
+
+                        // Only surround within the current cursor and the next pair of surrounds that match the current row should be handled
+                        let not_found = original_head == selection.head();
+                        let is_inner =
+                            selection.start < original_head && selection.end > original_head;
+                        let is_same_row = selection.start.row() == original_head.row()
+                            && selection.end.row() == original_head.row();
+                        if not_found || (is_inner == false && is_same_row == false) {
+                            selection.start = original_head;
+                            selection.end = original_head;
+                        } else {
+                            // Jumps the cursor to the current matching location
+                            selection.end = selection.start;
+                            valid = true;
+                        }
+                    });
+                });
+                editor.set_clip_at_line_ends(true, cx);
+            });
+        });
     }
-    return false;
+    return valid;
 }
 
 fn find_surround_pair(pairs: &[BracketPair], ch: &str) -> Option<BracketPair> {
@@ -527,7 +593,7 @@ mod test {
         cx.simulate_keystrokes(["d", "s", "{"]);
         cx.assert_state(
             indoc! {"
-            The [quick] brown
+            The [quˇick] brown
             fox jumps over
             the ˇlazy dog."},
             Mode::Normal,
@@ -548,7 +614,7 @@ mod test {
         cx.simulate_keystrokes(["c", "s", "{", "["]);
         cx.assert_state(
             indoc! {"
-            The ˇ[quick] brown
+            The ˇ[ quick ] brown
             fox jumps over
             the lazy dog."},
             Mode::Normal,
@@ -564,9 +630,9 @@ mod test {
         cx.simulate_keystrokes(["c", "s", "{", "["]);
         cx.assert_state(
             indoc! {"
-            The ˇ[quick] brown
+            The ˇ[ quick ] brown
             fox jumps over
-            the ˇ[lazy] dog."},
+            the ˇ[ lazy ] dog."},
             Mode::Normal,
         );
 

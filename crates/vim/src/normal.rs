@@ -209,7 +209,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
             Some(Operator::ChangeSurrounds { target: None }) => {
-                if is_valid_bracket_part(object) {
+                if is_valid_bracket_part(vim, object, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
                     });

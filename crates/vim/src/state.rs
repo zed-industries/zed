@@ -270,7 +270,7 @@ impl Operator {
             | Operator::FindBackward { .. }
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }
-            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds { .. }
             | Operator::DeleteSurrounds => &["VimWaiting"],
             _ => &[],
         }

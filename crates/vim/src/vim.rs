@@ -66,14 +66,7 @@ struct Number(usize);
 
 actions!(
     vim,
-    [
-        Tab,
-        Enter,
-        Object,
-        InnerObject,
-        FindForward,
-        FindBackward,
-    ]
+    [Tab, Enter, Object, InnerObject, FindForward, FindBackward,]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
@@ -641,16 +634,22 @@ impl Vim {
                 }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
-            Some(Operator::ChangeSurrounds { target }) => {
-                if let Some(target) = target {
-                    change_surrounds(text, target, cx);
+            Some(Operator::ChangeSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        change_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::DeleteSurrounds) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    delete_surrounds(text, cx);
                     Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                 }
-            }
-            Some(Operator::DeleteSurrounds) => {
-                delete_surrounds(text, cx);
-                Vim::update(cx, |vim, cx| vim.clear_operator(cx));
-            }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
             _ => match Vim::read(cx).state().mode {
                 Mode::Replace => multi_replace(text, cx),
                 _ => {}
