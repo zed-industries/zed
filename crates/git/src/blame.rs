@@ -11,7 +11,7 @@ use sum_tree::SumTree;
 
 pub use git2 as libgit;
 
-pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &String) -> Result<String> {
+pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &str) -> Result<String> {
     let mut child = Command::new("git")
         .current_dir(working_directory)
         .arg("blame")
@@ -117,7 +117,6 @@ impl From<Oid> for u32 {
 pub struct BlameEntry {
     pub sha: Oid,
 
-    pub row: u32,
     pub range: Range<u32>,
 
     pub original_line_number: u32,

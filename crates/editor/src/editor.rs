@@ -8858,7 +8858,10 @@ impl Editor {
 
             let project = project.clone();
 
-            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+            let blame = cx.new_model(|cx| {
+                let blame_runner = crate::git::blame::RealGitBlameRunner::new();
+                GitBlame::new(blame_runner, buffer, project, cx)
+            });
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);
         }

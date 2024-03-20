@@ -3285,25 +3285,6 @@ impl MultiBufferSnapshot {
         .flatten()
     }
 
-    //        multi-buffer
-    //    ┌───────────────────────────────┐
-    //  1 │ buffer_1.txt                  │
-    //  2 │ 8                             │
-    //  3 │ 9                             │
-    //  4 │ 10                            │
-    //  5 │ 11                            │
-    //  6 │ 12                            │
-    //  7 │ 13                            │
-    //  8 │ 14                            │
-    //  9 │                               │
-    // 10 │ buffer_1.txt                  │
-    // 11 │ 1                             │
-    // 12 │ 2                             │
-    // 13 │ 3                             │
-    // 14 │ 4                             │
-    // 15 │ 5                             │
-    // 16 │ 6                             │
-    //    └───────────────────────────────┘
     pub fn excerpt_ranges_with_multi_buffer_ranges(
         &self,
         row_range: Range<u32>,
