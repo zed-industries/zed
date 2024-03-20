@@ -94,6 +94,7 @@ async fn main() -> Result<()> {
         version: manifest.version.to_string(),
         description: manifest.description,
         authors: manifest.authors,
+        schema_version: Some(manifest.schema_version),
         repository: manifest
             .repository
             .ok_or_else(|| anyhow!("missing repository in extension manifest"))?,

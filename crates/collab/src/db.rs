@@ -731,6 +731,7 @@ pub struct NewExtensionVersion {
     pub description: String,
     pub authors: Vec<String>,
     pub repository: String,
+    pub schema_version: i32,
     pub published_at: PrimitiveDateTime,
 }
 

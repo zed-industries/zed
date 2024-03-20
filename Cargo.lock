@@ -3482,6 +3482,7 @@ dependencies = [
  "settings",
  "theme",
  "toml 0.8.10",
+ "url",
  "util",
  "wasm-encoder",
  "wasmparser",

@@ -54,7 +54,7 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed API URL using the given path.
-    pub fn build_zed_api_url(&self, path: &str) -> String {
+    pub fn build_zed_api_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://api.zed.dev",
@@ -63,7 +63,10 @@ impl HttpClientWithUrl {
             other => other,
         };
 
-        format!("{}{}", base_api_url, path)
+        Ok(Url::parse_with_params(
+            &format!("{}{}", base_api_url, path),
+            query,
+        )?)
     }
 }
 

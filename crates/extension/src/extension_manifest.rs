@@ -29,6 +29,7 @@ pub struct ExtensionManifest {
     pub id: Arc<str>,
     pub name: String,
     pub version: Arc<str>,
+    pub schema_version: i32,
 
     #[serde(default)]
     pub description: Option<String>,
