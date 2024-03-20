@@ -11,3 +11,8 @@ cargo run -p collab -- migrate
 
 echo "seeding database..."
 script/seed-db
+
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  echo "Linux dependencies..."
+  script/linux
+fi

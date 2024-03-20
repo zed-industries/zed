@@ -705,11 +705,6 @@ impl BufferSearchBar {
         option.as_button(is_active, action)
     }
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
-        assert_ne!(
-            mode,
-            SearchMode::Semantic,
-            "Semantic search is not supported in buffer search"
-        );
         if mode == self.current_mode {
             return;
         }
@@ -1022,7 +1017,7 @@ impl BufferSearchBar {
         }
     }
     fn cycle_mode(&mut self, _: &CycleMode, cx: &mut ViewContext<Self>) {
-        self.activate_search_mode(next_mode(&self.current_mode, false), cx);
+        self.activate_search_mode(next_mode(&self.current_mode), cx);
     }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {

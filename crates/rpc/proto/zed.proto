@@ -1,7 +1,7 @@
 syntax = "proto3";
 package zed.messages;
 
-// Looking for a number? Search "// Current max"
+// Looking for a number? Search "// current max"
 
 message PeerId {
     uint32 owner_id = 1;
@@ -26,6 +26,7 @@ message Envelope {
         Error error = 6;
         Ping ping = 7;
         Test test = 8;
+        EndStream end_stream = 165;
 
         CreateRoom create_room = 9;
         CreateRoomResponse create_room_response = 10;
@@ -198,6 +199,13 @@ message Envelope {
         GetImplementationResponse get_implementation_response = 163;
 
         JoinHostedProject join_hosted_project = 164;
+
+        CompleteWithLanguageModel complete_with_language_model = 166;
+        LanguageModelResponse language_model_response = 167;
+        CountTokensWithLanguageModel count_tokens_with_language_model = 168;
+        CountTokensResponse count_tokens_response = 169;
+        UpdateChannelMessage update_channel_message = 170;
+        ChannelMessageUpdate channel_message_update = 171;  // current max
     }
 
     reserved 158 to 161;
@@ -235,6 +243,8 @@ enum ErrorCode {
     NoSuchProject = 13;
     reserved 6;
 }
+
+message EndStream {}
 
 message Test {
     uint64 id = 1;
@@ -947,6 +957,7 @@ message SearchProject {
 
 message SearchProjectResponse {
     repeated Location locations = 1;
+    bool limit_reached = 2;
 }
 
 message CodeAction {
@@ -1175,6 +1186,14 @@ message RemoveChannelMessage {
     uint64 message_id = 2;
 }
 
+message UpdateChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+    Nonce nonce = 4;
+    string body = 5;
+    repeated ChatMention mentions = 6;
+}
+
 message AckChannelMessage {
     uint64 channel_id = 1;
     uint64 message_id = 2;
@@ -1185,6 +1204,11 @@ message SendChannelMessageResponse {
 }
 
 message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message ChannelMessageUpdate {
     uint64 channel_id = 1;
     ChannelMessage message = 2;
 }
@@ -1220,6 +1244,7 @@ message ChannelMessage {
     Nonce nonce = 5;
     repeated ChatMention mentions = 6;
     optional uint64 reply_to_message_id = 7;
+    optional uint64 edited_at = 8;
 }
 
 message ChatMention {
@@ -1716,4 +1741,46 @@ message SetRoomParticipantRole {
     uint64 room_id = 1;
     uint64 user_id = 2;
     ChannelRole role = 3;
+}
+
+message CompleteWithLanguageModel {
+    string model = 1;
+    repeated LanguageModelRequestMessage messages = 2;
+    repeated string stop = 3;
+    float temperature = 4;
+}
+
+message LanguageModelRequestMessage {
+    LanguageModelRole role = 1;
+    string content = 2;
+}
+
+enum LanguageModelRole {
+    LanguageModelUser = 0;
+    LanguageModelAssistant = 1;
+    LanguageModelSystem = 2;
+}
+
+message LanguageModelResponseMessage {
+    optional LanguageModelRole role = 1;
+    optional string content = 2;
+}
+
+message LanguageModelResponse {
+    repeated LanguageModelChoiceDelta choices = 1;
+}
+
+message LanguageModelChoiceDelta {
+    uint32 index = 1;
+    LanguageModelResponseMessage delta = 2;
+    optional string finish_reason = 3;
+}
+
+message CountTokensWithLanguageModel {
+    string model = 1;
+    repeated LanguageModelRequestMessage messages = 2;
+}
+
+message CountTokensResponse {
+    uint32 token_count = 1;
 }

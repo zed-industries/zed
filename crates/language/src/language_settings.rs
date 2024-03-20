@@ -103,6 +103,8 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    // Controls how the editor handles the autoclosed characters.
+    pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
 }
@@ -231,7 +233,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
-
+    // Controls how the editor handles the autoclosed characters.
+    // When set to `false`(default), skipping over and auto-removing of the closing characters
+    // happen only for auto-inserted characters.
+    // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
+    // no matter how they were inserted.
+    ///
+    /// Default: false
+    pub always_treat_brackets_as_autoclosed: Option<bool>,
     /// Which code actions to run on save
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
@@ -602,6 +611,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(
+        &mut settings.always_treat_brackets_as_autoclosed,
+        src.always_treat_brackets_as_autoclosed,
+    );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
     merge(

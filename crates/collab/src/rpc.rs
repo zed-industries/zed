@@ -3,15 +3,15 @@ mod connection_pool;
 use crate::{
     auth::{self, Impersonator},
     db::{
-        self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
-        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project, ProjectId,
-        RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId, User,
-        UserId,
+        self, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage,
+        Database, InviteMemberResult, MembershipUpdated, MessageId, NotificationId, Project,
+        ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
+        UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
-    AppState, Error, Result,
+    AppState, Error, RateLimit, RateLimiter, Result,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use async_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
@@ -30,6 +30,8 @@ use axum::{
 };
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
+use core::fmt::{self, Debug, Formatter};
+
 use futures::{
     channel::oneshot,
     future::{self, BoxFuture},
@@ -39,15 +41,14 @@ use futures::{
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
-        RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
+        self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LanguageModelRole,
+        LiveKitConnectionInfo, RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
 use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
-    fmt,
     future::Future,
     marker::PhantomData,
     mem,
@@ -64,7 +65,7 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{field, info_span, instrument, Instrument};
-use util::SemanticVersion;
+use util::{http::IsahcHttpClient, SemanticVersion};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -92,6 +93,18 @@ impl<R: RequestMessage> Response<R> {
     }
 }
 
+struct StreamingResponse<R: RequestMessage> {
+    peer: Arc<Peer>,
+    receipt: Receipt<R>,
+}
+
+impl<R: RequestMessage> StreamingResponse<R> {
+    fn send(&self, payload: R::Response) -> Result<()> {
+        self.peer.respond(self.receipt, payload)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 struct Session {
     user_id: UserId,
@@ -100,6 +113,8 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
+    http_client: IsahcHttpClient,
+    rate_limiter: Arc<RateLimiter>,
     _executor: Executor,
 }
 
@@ -124,8 +139,8 @@ impl Session {
     }
 }
 
-impl fmt::Debug for Session {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Debug for Session {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Session")
             .field("user_id", &self.user_id)
             .field("connection_id", &self.connection_id)
@@ -148,7 +163,6 @@ pub struct Server {
     peer: Arc<Peer>,
     pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    executor: Executor,
     handlers: HashMap<TypeId, MessageHandler>,
     teardown: watch::Sender<bool>,
 }
@@ -175,12 +189,11 @@ where
 }
 
 impl Server {
-    pub fn new(id: ServerId, app_state: Arc<AppState>, executor: Executor) -> Arc<Self> {
+    pub fn new(id: ServerId, app_state: Arc<AppState>) -> Arc<Self> {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
-            app_state,
-            executor,
+            app_state: app_state.clone(),
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(false).0,
@@ -270,6 +283,7 @@ impl Server {
             .add_message_handler(leave_channel_chat)
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
+            .add_request_handler(update_channel_message)
             .add_request_handler(get_channel_messages)
             .add_request_handler(get_channel_messages_by_id)
             .add_request_handler(get_notifications)
@@ -280,7 +294,30 @@ impl Server {
             .add_message_handler(update_followers)
             .add_request_handler(get_private_user_info)
             .add_message_handler(acknowledge_channel_message)
-            .add_message_handler(acknowledge_buffer_version);
+            .add_message_handler(acknowledge_buffer_version)
+            .add_streaming_request_handler({
+                let app_state = app_state.clone();
+                move |request, response, session| {
+                    complete_with_language_model(
+                        request,
+                        response,
+                        session,
+                        app_state.config.openai_api_key.clone(),
+                        app_state.config.google_ai_api_key.clone(),
+                    )
+                }
+            })
+            .add_request_handler({
+                let app_state = app_state.clone();
+                move |request, response, session| {
+                    count_tokens_with_language_model(
+                        request,
+                        response,
+                        session,
+                        app_state.config.google_ai_api_key.clone(),
+                    )
+                }
+            });
 
         Arc::new(server)
     }
@@ -289,12 +326,12 @@ impl Server {
         let server_id = *self.id.lock();
         let app_state = self.app_state.clone();
         let peer = self.peer.clone();
-        let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
+        let timeout = self.app_state.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
 
         let span = info_span!("start server");
-        self.executor.spawn_detached(
+        self.app_state.executor.spawn_detached(
             async move {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
@@ -351,14 +388,8 @@ impl Server {
                                 "refreshed room"
                             );
                             room_updated(&refreshed_room.room, &peer);
-                            if let Some(channel_id) = refreshed_room.channel_id {
-                                channel_updated(
-                                    channel_id,
-                                    &refreshed_room.room,
-                                    &refreshed_room.channel_members,
-                                    &peer,
-                                    &pool.lock(),
-                                );
+                            if let Some(channel) = refreshed_room.channel.as_ref() {
+                                channel_updated(channel, &refreshed_room.room, &peer, &pool.lock());
                             }
                             contacts_to_update
                                 .extend(refreshed_room.stale_participant_user_ids.iter().copied());
@@ -542,6 +573,40 @@ impl Server {
         })
     }
 
+    fn add_streaming_request_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
+    where
+        F: 'static + Send + Sync + Fn(M, StreamingResponse<M>, Session) -> Fut,
+        Fut: Send + Future<Output = Result<()>>,
+        M: RequestMessage,
+    {
+        let handler = Arc::new(handler);
+        self.add_handler(move |envelope, session| {
+            let receipt = envelope.receipt();
+            let handler = handler.clone();
+            async move {
+                let peer = session.peer.clone();
+                let response = StreamingResponse {
+                    peer: peer.clone(),
+                    receipt,
+                };
+                match (handler)(envelope.payload, response, session).await {
+                    Ok(()) => {
+                        peer.end_stream(receipt)?;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        let proto_err = match &error {
+                            Error::Internal(err) => err.to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
+                        };
+                        peer.respond_with_error(receipt, proto_err)?;
+                        Err(error)
+                    }
+                }
+            }
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
@@ -575,6 +640,14 @@ impl Server {
             tracing::Span::current().record("connection_id", format!("{}", connection_id));
             tracing::info!("connection opened");
 
+            let http_client = match IsahcHttpClient::new() {
+                Ok(http_client) => http_client,
+                Err(error) => {
+                    tracing::error!(?error, "failed to create HTTP client");
+                    return;
+                }
+            };
+
             let session = Session {
                 user_id,
                 connection_id,
@@ -582,7 +655,9 @@ impl Server {
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
-                _executor: executor.clone()
+                http_client,
+                rate_limiter: this.app_state.rate_limiter.clone(),
+                _executor: executor.clone(),
             };
 
             if let Err(error) = this.send_initial_client_update(connection_id, user, zed_version, send_connection_id, &session).await {
@@ -699,6 +774,9 @@ impl Server {
         {
             let mut pool = self.connection_pool.lock();
             pool.add_connection(connection_id, user.id, user.admin, zed_version);
+            for membership in &channels_for_user.channel_memberships {
+                pool.subscribe_to_channel(user.id, membership.channel_id, membership.role)
+            }
             self.peer.send(
                 connection_id,
                 build_initial_contacts_update(contacts, &pool),
@@ -912,7 +990,7 @@ pub async fn handle_websocket_request(
             .into_response();
     };
 
-    if !version.is_supported() {
+    if !version.can_collaborate() {
         return (
             StatusCode::UPGRADE_REQUIRED,
             "client must be upgraded".to_string(),
@@ -1148,8 +1226,7 @@ async fn rejoin_room(
     session: Session,
 ) -> Result<()> {
     let room;
-    let channel_id;
-    let channel_members;
+    let channel;
     {
         let mut rejoined_room = session
             .db()
@@ -1315,15 +1392,13 @@ async fn rejoin_room(
         let rejoined_room = rejoined_room.into_inner();
 
         room = rejoined_room.room;
-        channel_id = rejoined_room.channel_id;
-        channel_members = rejoined_room.channel_members;
+        channel = rejoined_room.channel;
     }
 
-    if let Some(channel_id) = channel_id {
+    if let Some(channel) = channel {
         channel_updated(
-            channel_id,
+            &channel,
             &room,
-            &channel_members,
             &session.peer,
             &*session.connection_pool().await,
         );
@@ -1352,19 +1427,6 @@ async fn set_room_participant_role(
 ) -> Result<()> {
     let user_id = UserId::from_proto(request.user_id);
     let role = ChannelRole::from(request.role());
-
-    if role == ChannelRole::Talker {
-        let pool = session.connection_pool().await;
-
-        for connection in pool.user_connections(user_id) {
-            if !connection.zed_version.supports_talker_role() {
-                Err(anyhow!(
-                    "This user is on zed {} which does not support unmute",
-                    connection.zed_version
-                ))?;
-            }
-        }
-    }
 
     let (live_kit_room, can_publish) = {
         let room = session
@@ -2427,31 +2489,39 @@ async fn create_channel(
     let db = session.db().await;
 
     let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
-    let (channel, owner, channel_members) = db
+    let (channel, membership) = db
         .create_channel(&request.name, parent_id, session.user_id)
         .await?;
+
+    let root_id = channel.root_id();
+    let channel = Channel::from_model(channel);
 
     response.send(proto::CreateChannelResponse {
         channel: Some(channel.to_proto()),
         parent_id: request.parent_id,
     })?;
 
-    let connection_pool = session.connection_pool().await;
-    if let Some(owner) = owner {
+    let mut connection_pool = session.connection_pool().await;
+    if let Some(membership) = membership {
+        connection_pool.subscribe_to_channel(
+            membership.user_id,
+            membership.channel_id,
+            membership.role,
+        );
         let update = proto::UpdateUserChannels {
             channel_memberships: vec![proto::ChannelMembership {
-                channel_id: owner.channel_id.to_proto(),
-                role: owner.role.into(),
+                channel_id: membership.channel_id.to_proto(),
+                role: membership.role.into(),
             }],
             ..Default::default()
         };
-        for connection_id in connection_pool.user_connection_ids(owner.user_id) {
+        for connection_id in connection_pool.user_connection_ids(membership.user_id) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
 
-    for channel_member in channel_members {
-        if !channel_member.role.can_see_channel(channel.visibility) {
+    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+        if !role.can_see_channel(channel.visibility) {
             continue;
         }
 
@@ -2459,9 +2529,7 @@ async fn create_channel(
             channels: vec![channel.to_proto()],
             ..Default::default()
         };
-        for connection_id in connection_pool.user_connection_ids(channel_member.user_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
+        session.peer.send(connection_id, update.clone())?;
     }
 
     Ok(())
@@ -2476,7 +2544,7 @@ async fn delete_channel(
     let db = session.db().await;
 
     let channel_id = request.channel_id;
-    let (removed_channels, member_ids) = db
+    let (root_channel, removed_channels) = db
         .delete_channel(ChannelId::from_proto(channel_id), session.user_id)
         .await?;
     response.send(proto::Ack {})?;
@@ -2488,10 +2556,8 @@ async fn delete_channel(
         .extend(removed_channels.into_iter().map(|id| id.to_proto()));
 
     let connection_pool = session.connection_pool().await;
-    for member_id in member_ids {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
+    for (connection_id, _) in connection_pool.channel_connection_ids(root_channel) {
+        session.peer.send(connection_id, update.clone())?;
     }
 
     Ok(())
@@ -2551,9 +2617,9 @@ async fn remove_channel_member(
         .remove_channel_member(channel_id, member_id, session.user_id)
         .await?;
 
-    let connection_pool = &session.connection_pool().await;
+    let mut connection_pool = session.connection_pool().await;
     notify_membership_updated(
-        &connection_pool,
+        &mut connection_pool,
         membership_update,
         member_id,
         &session.peer,
@@ -2588,25 +2654,33 @@ async fn set_channel_visibility(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let visibility = request.visibility().into();
 
-    let (channel, channel_members) = db
+    let channel_model = db
         .set_channel_visibility(channel_id, visibility, session.user_id)
         .await?;
+    let root_id = channel_model.root_id();
+    let channel = Channel::from_model(channel_model);
 
-    let connection_pool = session.connection_pool().await;
-    for member in channel_members {
-        let update = if member.role.can_see_channel(channel.visibility) {
+    let mut connection_pool = session.connection_pool().await;
+    for (user_id, role) in connection_pool
+        .channel_user_ids(root_id)
+        .collect::<Vec<_>>()
+        .into_iter()
+    {
+        let update = if role.can_see_channel(channel.visibility) {
+            connection_pool.subscribe_to_channel(user_id, channel_id, role);
             proto::UpdateChannels {
                 channels: vec![channel.to_proto()],
                 ..Default::default()
             }
         } else {
+            connection_pool.unsubscribe_from_channel(&user_id, &channel_id);
             proto::UpdateChannels {
                 delete_channels: vec![channel.id.to_proto()],
                 ..Default::default()
             }
         };
 
-        for connection_id in connection_pool.user_connection_ids(member.user_id) {
+        for connection_id in connection_pool.user_connection_ids(user_id) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2635,9 +2709,9 @@ async fn set_channel_member_role(
 
     match result {
         db::SetMemberRoleResult::MembershipUpdated(membership_update) => {
-            let connection_pool = session.connection_pool().await;
+            let mut connection_pool = session.connection_pool().await;
             notify_membership_updated(
-                &connection_pool,
+                &mut connection_pool,
                 membership_update,
                 member_id,
                 &session.peer,
@@ -2671,24 +2745,23 @@ async fn rename_channel(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let (channel, channel_members) = db
+    let channel_model = db
         .rename_channel(channel_id, session.user_id, &request.name)
         .await?;
+    let root_id = channel_model.root_id();
+    let channel = Channel::from_model(channel_model);
 
     response.send(proto::RenameChannelResponse {
         channel: Some(channel.to_proto()),
     })?;
 
     let connection_pool = session.connection_pool().await;
-    for channel_member in channel_members {
-        if !channel_member.role.can_see_channel(channel.visibility) {
-            continue;
-        }
-        let update = proto::UpdateChannels {
-            channels: vec![channel.to_proto()],
-            ..Default::default()
-        };
-        for connection_id in connection_pool.user_connection_ids(channel_member.user_id) {
+    let update = proto::UpdateChannels {
+        channels: vec![channel.to_proto()],
+        ..Default::default()
+    };
+    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+        if role.can_see_channel(channel.visibility) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2705,18 +2778,18 @@ async fn move_channel(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let to = ChannelId::from_proto(request.to);
 
-    let (channels, channel_members) = session
+    let (root_id, channels) = session
         .db()
         .await
         .move_channel(channel_id, to, session.user_id)
         .await?;
 
     let connection_pool = session.connection_pool().await;
-    for member in channel_members {
+    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
         let channels = channels
             .iter()
             .filter_map(|channel| {
-                if member.role.can_see_channel(channel.visibility) {
+                if role.can_see_channel(channel.visibility) {
                     Some(channel.to_proto())
                 } else {
                     None
@@ -2732,9 +2805,7 @@ async fn move_channel(
             ..Default::default()
         };
 
-        for connection_id in connection_pool.user_connection_ids(member.user_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
+        session.peer.send(connection_id, update.clone())?;
     }
 
     response.send(Ack {})?;
@@ -2771,10 +2842,10 @@ async fn respond_to_channel_invite(
         .respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
 
-    let connection_pool = session.connection_pool().await;
+    let mut connection_pool = session.connection_pool().await;
     if let Some(membership_update) = membership_update {
         notify_membership_updated(
-            &connection_pool,
+            &mut connection_pool,
             membership_update,
             session.user_id,
             &session.peer,
@@ -2866,14 +2937,17 @@ async fn join_channel_internal(
 
         response.send(proto::JoinRoomResponse {
             room: Some(joined_room.room.clone()),
-            channel_id: joined_room.channel_id.map(|id| id.to_proto()),
+            channel_id: joined_room
+                .channel
+                .as_ref()
+                .map(|channel| channel.id.to_proto()),
             live_kit_connection_info,
         })?;
 
-        let connection_pool = session.connection_pool().await;
+        let mut connection_pool = session.connection_pool().await;
         if let Some(membership_updated) = membership_updated {
             notify_membership_updated(
-                &connection_pool,
+                &mut connection_pool,
                 membership_updated,
                 session.user_id,
                 &session.peer,
@@ -2886,9 +2960,10 @@ async fn join_channel_internal(
     };
 
     channel_updated(
-        channel_id,
+        &joined_room
+            .channel
+            .ok_or_else(|| anyhow!("channel not returned"))?,
         &joined_room.room,
-        &joined_room.channel_members,
         &session.peer,
         &*session.connection_pool().await,
     );
@@ -3117,6 +3192,7 @@ async fn send_channel_message(
             },
         )
         .await?;
+
     let message = proto::ChannelMessage {
         sender_id: session.user_id.to_proto(),
         id: message_id.to_proto(),
@@ -3125,6 +3201,7 @@ async fn send_channel_message(
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
         reply_to_message_id: request.reply_to_message_id,
+        edited_at: None,
     };
     broadcast(
         Some(session.connection_id),
@@ -3187,6 +3264,71 @@ async fn remove_channel_message(
     Ok(())
 }
 
+async fn update_channel_message(
+    request: proto::UpdateChannelMessage,
+    response: Response<proto::UpdateChannelMessage>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let message_id = MessageId::from_proto(request.message_id);
+    let updated_at = OffsetDateTime::now_utc();
+    let UpdatedChannelMessage {
+        message_id,
+        participant_connection_ids,
+        notifications,
+        reply_to_message_id,
+        timestamp,
+    } = session
+        .db()
+        .await
+        .update_channel_message(
+            channel_id,
+            message_id,
+            session.user_id,
+            request.body.as_str(),
+            &request.mentions,
+            updated_at,
+        )
+        .await?;
+
+    let nonce = request
+        .nonce
+        .clone()
+        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+
+    let message = proto::ChannelMessage {
+        sender_id: session.user_id.to_proto(),
+        id: message_id.to_proto(),
+        body: request.body.clone(),
+        mentions: request.mentions.clone(),
+        timestamp: timestamp.assume_utc().unix_timestamp() as u64,
+        nonce: Some(nonce),
+        reply_to_message_id: reply_to_message_id.map(|id| id.to_proto()),
+        edited_at: Some(updated_at.unix_timestamp() as u64),
+    };
+
+    response.send(proto::Ack {})?;
+
+    let pool = &*session.connection_pool().await;
+    broadcast(
+        Some(session.connection_id),
+        participant_connection_ids,
+        |connection| {
+            session.peer.send(
+                connection,
+                proto::ChannelMessageUpdate {
+                    channel_id: channel_id.to_proto(),
+                    message: Some(message.clone()),
+                },
+            )
+        },
+    );
+
+    send_notifications(pool, &session.peer, notifications);
+
+    Ok(())
+}
+
 /// Mark a channel message as read
 async fn acknowledge_channel_message(
     request: proto::AckChannelMessage,
@@ -3224,6 +3366,207 @@ async fn acknowledge_buffer_version(
         )
         .await?;
     Ok(())
+}
+
+struct CompleteWithLanguageModelRateLimit;
+
+impl RateLimit for CompleteWithLanguageModelRateLimit {
+    fn capacity() -> usize {
+        std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120) // Picked arbitrarily
+    }
+
+    fn refill_duration() -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name() -> &'static str {
+        "complete-with-language-model"
+    }
+}
+
+async fn complete_with_language_model(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: Session,
+    open_ai_api_key: Option<Arc<str>>,
+    google_ai_api_key: Option<Arc<str>>,
+) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
+    session
+        .rate_limiter
+        .check::<CompleteWithLanguageModelRateLimit>(session.user_id)
+        .await?;
+
+    if request.model.starts_with("gpt") {
+        let api_key =
+            open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
+        complete_with_open_ai(request, response, session, api_key).await?;
+    } else if request.model.starts_with("gemini") {
+        let api_key = google_ai_api_key
+            .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
+        complete_with_google_ai(request, response, session, api_key).await?;
+    }
+
+    Ok(())
+}
+
+async fn complete_with_open_ai(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: Session,
+    api_key: Arc<str>,
+) -> Result<()> {
+    const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
+
+    let mut completion_stream = open_ai::stream_completion(
+        &session.http_client,
+        OPEN_AI_API_URL,
+        &api_key,
+        crate::ai::language_model_request_to_open_ai(request)?,
+    )
+    .await
+    .context("open_ai::stream_completion request failed")?;
+
+    while let Some(event) = completion_stream.next().await {
+        let event = event?;
+        response.send(proto::LanguageModelResponse {
+            choices: event
+                .choices
+                .into_iter()
+                .map(|choice| proto::LanguageModelChoiceDelta {
+                    index: choice.index,
+                    delta: Some(proto::LanguageModelResponseMessage {
+                        role: choice.delta.role.map(|role| match role {
+                            open_ai::Role::User => LanguageModelRole::LanguageModelUser,
+                            open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
+                            open_ai::Role::System => LanguageModelRole::LanguageModelSystem,
+                        } as i32),
+                        content: choice.delta.content,
+                    }),
+                    finish_reason: choice.finish_reason,
+                })
+                .collect(),
+        })?;
+    }
+
+    Ok(())
+}
+
+async fn complete_with_google_ai(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: Session,
+    api_key: Arc<str>,
+) -> Result<()> {
+    let mut stream = google_ai::stream_generate_content(
+        &session.http_client,
+        google_ai::API_URL,
+        api_key.as_ref(),
+        crate::ai::language_model_request_to_google_ai(request)?,
+    )
+    .await
+    .context("google_ai::stream_generate_content request failed")?;
+
+    while let Some(event) = stream.next().await {
+        let event = event?;
+        response.send(proto::LanguageModelResponse {
+            choices: event
+                .candidates
+                .unwrap_or_default()
+                .into_iter()
+                .map(|candidate| proto::LanguageModelChoiceDelta {
+                    index: candidate.index as u32,
+                    delta: Some(proto::LanguageModelResponseMessage {
+                        role: Some(match candidate.content.role {
+                            google_ai::Role::User => LanguageModelRole::LanguageModelUser,
+                            google_ai::Role::Model => LanguageModelRole::LanguageModelAssistant,
+                        } as i32),
+                        content: Some(
+                            candidate
+                                .content
+                                .parts
+                                .into_iter()
+                                .filter_map(|part| match part {
+                                    google_ai::Part::TextPart(part) => Some(part.text),
+                                    google_ai::Part::InlineDataPart(_) => None,
+                                })
+                                .collect(),
+                        ),
+                    }),
+                    finish_reason: candidate.finish_reason.map(|reason| reason.to_string()),
+                })
+                .collect(),
+        })?;
+    }
+
+    Ok(())
+}
+
+struct CountTokensWithLanguageModelRateLimit;
+
+impl RateLimit for CountTokensWithLanguageModelRateLimit {
+    fn capacity() -> usize {
+        std::env::var("COUNT_TOKENS_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(600) // Picked arbitrarily
+    }
+
+    fn refill_duration() -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name() -> &'static str {
+        "count-tokens-with-language-model"
+    }
+}
+
+async fn count_tokens_with_language_model(
+    request: proto::CountTokensWithLanguageModel,
+    response: Response<proto::CountTokensWithLanguageModel>,
+    session: Session,
+    google_ai_api_key: Option<Arc<str>>,
+) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
+
+    if !request.model.starts_with("gemini") {
+        return Err(anyhow!(
+            "counting tokens for model: {:?} is not supported",
+            request.model
+        ))?;
+    }
+
+    session
+        .rate_limiter
+        .check::<CountTokensWithLanguageModelRateLimit>(session.user_id)
+        .await?;
+
+    let api_key = google_ai_api_key
+        .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
+    let tokens_response = google_ai::count_tokens(
+        &session.http_client,
+        google_ai::API_URL,
+        &api_key,
+        crate::ai::count_tokens_request_to_google_ai(request)?,
+    )
+    .await?;
+    response.send(proto::CountTokensResponse {
+        token_count: tokens_response.total_tokens as u32,
+    })?;
+    Ok(())
+}
+
+async fn authorize_access_to_language_models(session: &Session) -> Result<(), Error> {
+    let db = session.db().await;
+    let flags = db.get_user_flags(session.user_id).await?;
+    if flags.iter().any(|flag| flag == "language-models") {
+        Ok(())
+    } else {
+        Err(anyhow!("permission denied"))?
+    }
 }
 
 /// Start receiving chat updates for a channel
@@ -3403,11 +3746,18 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
 }
 
 fn notify_membership_updated(
-    connection_pool: &ConnectionPool,
+    connection_pool: &mut ConnectionPool,
     result: MembershipUpdated,
     user_id: UserId,
     peer: &Peer,
 ) {
+    for membership in &result.new_channels.channel_memberships {
+        connection_pool.subscribe_to_channel(user_id, membership.channel_id, membership.role)
+    }
+    for channel_id in &result.removed_channels {
+        connection_pool.unsubscribe_from_channel(&user_id, channel_id)
+    }
+
     let user_channels_update = proto::UpdateUserChannels {
         channel_memberships: result
             .new_channels
@@ -3420,6 +3770,7 @@ fn notify_membership_updated(
             .collect(),
         ..Default::default()
     };
+
     let mut update = build_channels_update(result.new_channels, vec![]);
     update.delete_channels = result
         .removed_channels
@@ -3533,9 +3884,8 @@ fn room_updated(room: &proto::Room, peer: &Peer) {
 }
 
 fn channel_updated(
-    channel_id: ChannelId,
+    channel: &db::channel::Model,
     room: &proto::Room,
-    channel_members: &[UserId],
     peer: &Peer,
     pool: &ConnectionPool,
 ) {
@@ -3547,15 +3897,16 @@ fn channel_updated(
 
     broadcast(
         None,
-        channel_members
-            .iter()
-            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        pool.channel_connection_ids(channel.root_id())
+            .filter_map(|(channel_id, role)| {
+                role.can_see_channel(channel.visibility).then(|| channel_id)
+            }),
         |peer_id| {
             peer.send(
                 peer_id,
                 proto::UpdateChannels {
                     channel_participants: vec![proto::ChannelParticipants {
-                        channel_id: channel_id.to_proto(),
+                        channel_id: channel.id.to_proto(),
                         participant_user_ids: participants.clone(),
                     }],
                     ..Default::default()
@@ -3608,8 +3959,7 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
     let live_kit_room;
     let delete_live_kit_room;
     let room;
-    let channel_members;
-    let channel_id;
+    let channel;
 
     if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
         contacts_to_update.insert(session.user_id);
@@ -3623,19 +3973,17 @@ async fn leave_room_for_session(session: &Session) -> Result<()> {
         live_kit_room = mem::take(&mut left_room.room.live_kit_room);
         delete_live_kit_room = left_room.deleted;
         room = mem::take(&mut left_room.room);
-        channel_members = mem::take(&mut left_room.channel_members);
-        channel_id = left_room.channel_id;
+        channel = mem::take(&mut left_room.channel);
 
         room_updated(&room, &session.peer);
     } else {
         return Ok(());
     }
 
-    if let Some(channel_id) = channel_id {
+    if let Some(channel) = channel {
         channel_updated(
-            channel_id,
+            &channel,
             &room,
-            &channel_members,
             &session.peer,
             &*session.connection_pool().await,
         );

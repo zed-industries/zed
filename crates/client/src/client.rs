@@ -13,7 +13,7 @@ use async_tungstenite::tungstenite::{
 use clock::SystemClock;
 use collections::HashMap;
 use futures::{
-    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt,
+    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
@@ -36,7 +36,10 @@ use std::{
     future::Future,
     marker::PhantomData,
     path::PathBuf,
-    sync::{atomic::AtomicU64, Arc, Weak},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Weak,
+    },
     time::{Duration, Instant},
 };
 use telemetry::Telemetry;
@@ -442,7 +445,7 @@ impl Client {
     }
 
     pub fn id(&self) -> u64 {
-        self.id.load(std::sync::atomic::Ordering::SeqCst)
+        self.id.load(Ordering::SeqCst)
     }
 
     pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
@@ -450,7 +453,7 @@ impl Client {
     }
 
     pub fn set_id(&self, id: u64) -> &Self {
-        self.id.store(id, std::sync::atomic::Ordering::SeqCst);
+        self.id.store(id, Ordering::SeqCst);
         self
     }
 
@@ -1258,6 +1261,30 @@ impl Client {
     ) -> impl Future<Output = Result<T::Response>> {
         self.request_envelope(request)
             .map_ok(|envelope| envelope.payload)
+    }
+
+    pub fn request_stream<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<T::Response>>>> {
+        let client_id = self.id.load(Ordering::SeqCst);
+        log::debug!(
+            "rpc request start. client_id:{}. name:{}",
+            client_id,
+            T::NAME
+        );
+        let response = self
+            .connection_id()
+            .map(|conn_id| self.peer.request_stream(conn_id, request));
+        async move {
+            let response = response?.await;
+            log::debug!(
+                "rpc request finish. client_id:{}. name:{}",
+                client_id,
+                T::NAME
+            );
+            response
+        }
     }
 
     pub fn request_envelope<T: RequestMessage>(
