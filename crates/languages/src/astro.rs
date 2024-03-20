@@ -101,10 +101,6 @@ impl LspAdapter for AstroLspAdapter {
             }
         })))
     }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-astro"]
-    }
 }
 
 async fn get_cached_server_binary(

@@ -127,10 +127,6 @@ impl LspAdapter for SvelteLspAdapter {
             }
         })))
     }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-svelte"]
-    }
 }
 
 async fn get_cached_server_binary(

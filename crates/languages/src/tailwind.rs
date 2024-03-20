@@ -129,10 +129,6 @@ impl LspAdapter for TailwindLspAdapter {
             ("PHP".to_string(), "php".to_string()),
         ])
     }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-tailwindcss"]
-    }
 }
 
 async fn get_cached_server_binary(

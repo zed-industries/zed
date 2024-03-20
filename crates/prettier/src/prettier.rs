@@ -227,13 +227,8 @@ impl Prettier {
                         let buffer_language = buffer.language();
                         let parser_with_plugins = buffer_language.and_then(|l| {
                             let prettier_parser = l.prettier_parser_name()?;
-                            let mut prettier_plugins = local
-                                .language_registry
-                                .lsp_adapters(l)
-                                .iter()
-                                .flat_map(|adapter| adapter.prettier_plugins())
-                                .copied()
-                                .collect::<Vec<_>>();
+                            let mut prettier_plugins =
+                                local.language_registry.all_prettier_plugins();
                             prettier_plugins.dedup();
                             Some((prettier_parser, prettier_plugins))
                         });
