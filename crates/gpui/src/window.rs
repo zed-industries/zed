@@ -1317,11 +1317,6 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        if let Some(modifiers_changed_event) = event.downcast_ref::<ModifiersChangedEvent>() {
-            self.dispatch_modifiers_changed_event(modifiers_changed_event, &dispatch_path);
-            return;
-        }
-
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             let KeymatchResult { bindings, pending } = self
                 .window
@@ -1387,6 +1382,11 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
+        self.dispatch_modifiers_changed_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
         self.dispatch_keystroke_observers(event, None);
     }
 
@@ -1426,9 +1426,12 @@ impl<'a> WindowContext<'a> {
 
     fn dispatch_modifiers_changed_event(
         &mut self,
-        event: &ModifiersChangedEvent,
+        event: &dyn Any,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) {
+        let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+            return;
+        };
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for listener in node.modifiers_changed_listeners.clone() {
