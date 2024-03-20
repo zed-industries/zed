@@ -10,6 +10,27 @@ pub struct TitleBar {
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
 }
+#[cfg(not(target_os = "windows"))]
+fn title_bar_top_padding(_cx: &WindowContext) -> Pixels {
+    px(0.)
+}
+
+#[cfg(target_os = "windows")]
+fn title_bar_top_padding(cx: &WindowContext) -> Pixels {
+    use windows::Win32::UI::{
+        HiDpi::GetSystemMetricsForDpi,
+        WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
+    };
+
+    // this top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows
+    // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
+    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
+    if cx.is_maximized() {
+        px((padding * 2) as f32)
+    } else {
+        px(0.)
+    }
+}
 
 impl TitleBar {
     #[cfg(not(target_os = "windows"))]
@@ -18,7 +39,7 @@ impl TitleBar {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(cx: &mut WindowContext) -> Pixels {
+    pub fn height(_cx: &mut WindowContext) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
     }
@@ -35,28 +56,6 @@ impl TitleBar {
     pub fn platform_style(mut self, style: PlatformStyle) -> Self {
         self.platform_style = style;
         self
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub fn top_padding(&self, _cx: &WindowContext) -> Pixels {
-        px(0.)
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn top_padding(&self, cx: &WindowContext) -> Pixels {
-        use windows::Win32::UI::{
-            HiDpi::GetSystemMetricsForDpi,
-            WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
-        };
-
-        // this top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows
-        // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
-        if cx.is_maximized() {
-            px((padding * 2) as f32)
-        } else {
-            px(0.)
-        }
     }
 }
 
@@ -80,8 +79,8 @@ impl RenderOnce for TitleBar {
         h_flex()
             .id("titlebar")
             .w_full()
-            .pt(self.top_padding(cx))
-            .h(height + self.top_padding(cx))
+            .pt(title_bar_top_padding(cx))
+            .h(height + title_bar_top_padding(cx))
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
