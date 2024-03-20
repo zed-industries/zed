@@ -1741,7 +1741,6 @@ impl Interactivity {
                                 let mouse_click = ClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
-                                    first_mouse,
                                 };
                                 for listener in &click_listeners {
                                     listener(&mouse_click, cx);

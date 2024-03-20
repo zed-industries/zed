@@ -145,9 +145,6 @@ pub struct ClickEvent {
 
     /// The mouse event when the button was released.
     pub up: MouseUpEvent,
-
-    /// Whether this is the first, focusing click.
-    pub first_mouse: bool,
 }
 
 /// An enum representing the mouse button that was pressed.
