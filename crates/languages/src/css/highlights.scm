@@ -1,4 +1,5 @@
 (comment) @comment
+(stylesheet) @text
 
 [
   (id_name)

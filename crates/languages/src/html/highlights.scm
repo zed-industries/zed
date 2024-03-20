@@ -4,7 +4,7 @@
 (attribute_name) @attribute
 (attribute_value) @string
 (comment) @comment
-(text) @text
+(fragment) @text
 
 "=" @operator
 "\"" @punctuation.delimiter
