@@ -1470,6 +1470,98 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     });
 }
 
+#[gpui::test]
+async fn test_keeps_file_finder_open_after_modifier_keys_release(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "1.txt": "// One",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+
+    cx.simulate_modifiers_change(Modifiers::command());
+    open_file_picker(&workspace, cx);
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    active_file_picker(&workspace, cx);
+}
+
+#[gpui::test]
+async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "1.txt": "// One",
+                "2.txt": "// Two",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+    open_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
+
+    cx.simulate_modifiers_change(Modifiers::command());
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_selection(finder, 0, "2.txt");
+        assert_match_at_position(finder, 1, "1.txt");
+    });
+
+    cx.dispatch_action(SelectNext);
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "1.txt");
+    });
+}
+
+#[gpui::test]
+async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "1.txt": "// One",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+
+    cx.simulate_modifiers_change(Modifiers::command());
+    open_file_picker(&workspace, cx);
+
+    cx.simulate_modifiers_change(Modifiers::command_shift());
+    active_file_picker(&workspace, cx);
+}
+
 async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,
@@ -1582,7 +1674,7 @@ fn active_file_picker(
     workspace.update(cx, |workspace, cx| {
         workspace
             .active_modal::<FileFinder>(cx)
-            .unwrap()
+            .expect("file finder is not open")
             .read(cx)
             .picker
             .clone()
