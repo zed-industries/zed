@@ -4567,6 +4567,105 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.always_treat_brackets_as_autoclosed = Some(true);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            autoclose_before: "})]".to_string(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ));
+
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &"
+            ˇ
+            ˇ
+            ˇ
+        "
+        .unindent(),
+    );
+
+    // ensure only matching closing brackets are skipped over
+    cx.update_editor(|view, cx| {
+        view.handle_input("}", cx);
+        view.move_left(&MoveLeft, cx);
+        view.handle_input(")", cx);
+        view.move_left(&MoveLeft, cx);
+    });
+    cx.assert_editor_state(
+        &"
+            ˇ)}
+            ˇ)}
+            ˇ)}
+        "
+        .unindent(),
+    );
+
+    // skip-over closing brackets at multiple cursors
+    cx.update_editor(|view, cx| {
+        view.handle_input(")", cx);
+        view.handle_input("}", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            )}ˇ
+            )}ˇ
+            )}ˇ
+        "
+        .unindent(),
+    );
+
+    // ignore non-close brackets
+    cx.update_editor(|view, cx| {
+        view.handle_input("]", cx);
+        view.move_left(&MoveLeft, cx);
+        view.handle_input("]", cx);
+    });
+    cx.assert_editor_state(
+        &"
+            )}]ˇ]
+            )}]ˇ]
+            )}]ˇ]
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5161,6 +5260,106 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.always_treat_brackets_as_autoclosed = Some(true);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            autoclose_before: "})]".to_string(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    ));
+
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &"
+            {(ˇ)}
+            [[ˇ]]
+            {(ˇ)}
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|view, cx| {
+        view.backspace(&Default::default(), cx);
+        view.backspace(&Default::default(), cx);
+    });
+
+    cx.assert_editor_state(
+        &"
+            ˇ
+            ˇ]]
+            ˇ
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|view, cx| {
+        view.handle_input("{", cx);
+        view.handle_input("{", cx);
+        view.move_right(&MoveRight, cx);
+        view.move_right(&MoveRight, cx);
+        view.move_left(&MoveLeft, cx);
+        view.move_left(&MoveLeft, cx);
+        view.backspace(&Default::default(), cx);
+    });
+
+    cx.assert_editor_state(
+        &"
+            {ˇ}
+            {ˇ}]]
+            {ˇ}
+        "
+        .unindent(),
+    );
+
+    cx.update_editor(|view, cx| {
+        view.backspace(&Default::default(), cx);
+    });
+
+    cx.assert_editor_state(
+        &"
+            ˇ
+            ˇ]]
+            ˇ
+        "
+        .unindent(),
+    );
 }
 
 #[gpui::test]
