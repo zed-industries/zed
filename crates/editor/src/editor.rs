@@ -1245,9 +1245,8 @@ impl CompletionsMenu {
                     run.0.start = 0;
                     run.0.end = variable_name_end;
                 } else {
-                    run.0.start =
-                        (run.0.start as i32 - variable_name_length_truncated as i32) as usize;
-                    run.0.end = (run.0.end as i32 - variable_name_length_truncated as i32) as usize;
+                    run.0.start = (run.0.start as i32 - variable_name_length_truncated) as usize;
+                    run.0.end = (run.0.end as i32 - variable_name_length_truncated) as usize;
                 }
             }
         }
