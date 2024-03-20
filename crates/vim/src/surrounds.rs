@@ -564,6 +564,23 @@ mod test {
             Mode::Normal,
         );
 
+        // test delete surround forward
+        cx.set_state(
+            indoc! {"
+            The {quick} brˇown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+            The {quick} brˇown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
         // test multi cursor delete surrounds
         cx.set_state(
             indoc! {"
@@ -594,6 +611,22 @@ mod test {
             The ˇquick brown
             fox jumps over
             the ˇlazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The { quick brown
+            fox jumˇps over }
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog."},
             Mode::Normal,
         );
 
@@ -712,6 +745,54 @@ mod test {
             The {quick} brown
             fox jumps over
             the ˇ'lazy' dog."},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_surrounds(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["y", "s", "i", "w", "["]);
+        cx.assert_state(
+            indoc! {"
+            The ˇ[ quick ] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(["c", "s", "[", "}"]);
+        cx.assert_state(
+            indoc! {"
+            The ˇ{quick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(["u"]);
+        cx.assert_state(
+            indoc! {"
+            The ˇ{quick} brown
+            fox jumps over
+            the lazy dog."},
             Mode::Normal,
         );
     }
