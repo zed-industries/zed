@@ -636,6 +636,12 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 pub fn load_default_keymap(cx: &mut AppContext) {
     let base_keymap = *BaseKeymap::get_global(cx);
     if let Some(asset_path) = base_keymap.asset_path() {
+        if base_keymap != BaseKeymap::default() {
+            // all base keymaps assume the default keymap (vscode) is loaded
+            if let Some(default_asset_path) = BaseKeymap::default().asset_path() {
+                KeymapFile::load_asset(default_asset_path).unwrap();
+            }
+        }
         KeymapFile::load_asset(asset_path, cx).unwrap();
     }
     if base_keymap != BaseKeymap::None && VimModeSetting::get_global(cx).0 {
