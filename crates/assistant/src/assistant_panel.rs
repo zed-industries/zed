@@ -23,7 +23,13 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, size, uniform_list, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Length, Model, ModelContext, ParentElement, Pixels, Render, SharedString, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext
+    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
@@ -2003,8 +2009,6 @@ struct ConversationEditor {
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
-
-    lm_contexts: Vec<LanguageModelContextSelection>,
 }
 
 struct LanguageModelContextSelection {
@@ -2012,6 +2016,13 @@ struct LanguageModelContextSelection {
     enabled: bool,
     // TODO: This has to go after the MinimalContext trait instead
     entity: View<Editor>,
+}
+
+impl LanguageModelContextSelection {
+    fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+        // Send event?
+    }
 }
 
 // Take the trait approach forward so we can defer the render and the llm_markdown bits
@@ -2079,7 +2090,6 @@ impl ConversationEditor {
             scroll_position: None,
             fs,
             workspace: workspace.downgrade(),
-            lm_contexts: Self::llm_context(&workspace, cx),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2463,13 +2473,40 @@ impl ConversationEditor {
 
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
+impl ConversationEditor {
+    fn render_llm_context(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        // The context area is a prototype, but the plan is to create this with three distinct sections:
+        //
+        // 1. File Context
+        // 2. Project Diagnostics
+        // 3. Deep Code Context (query tools)
+
+        let conversation = self.conversation.read(cx);
+
+        let llm_context = conversation.language_model_contexts.iter().map(|item| {
+            let element_id = ElementId::Name(format!("llm-context-{}", item.entity_id).into());
+
+            let entity = item.entity.read(cx);
+
+            div().h_flex().child(entity.mini_render(cx)).child(
+                div()
+                    .id(element_id)
+                    .child(Icon::new(IconName::Close))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |_this, _, _cx| {
+                        // item.toggle();
+                        // not sure yet
+                    })),
+            )
+        });
+
+        div().children(llm_context)
+    }
+}
+
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let conversation = self.conversation.read(cx);
-        let llm_context = conversation
-            .language_model_contexts
-            .iter()
-            .map(|item| item.entity.read(cx).mini_render(cx));
 
         div()
             .key_context("ConversationEditor")
@@ -2493,7 +2530,7 @@ impl Render for ConversationEditor {
                 div()
                     .size(DefiniteLength::Fraction(0.20))
                     .w_full()
-                    .children(llm_context),
+                    .child(self.render_llm_context(cx)),
             )
     }
 }

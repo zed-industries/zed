@@ -1008,8 +1008,12 @@ impl MinimalContext for Editor {
         let buffer = self.buffer.read(cx);
         let el = if let Some(singleton) = buffer.as_singleton() {
             let singleton = singleton.read(cx);
+
             EditorLanguageModelContext {
-                icon_path: "".into(),
+                icon_path: singleton
+                    .file()
+                    .map(|file| file.icon_path(cx))
+                    .unwrap_or_default(),
                 path: singleton.file().map(|file| file.full_path(cx)),
                 selection_ranges: vec![],
                 focused: false,
