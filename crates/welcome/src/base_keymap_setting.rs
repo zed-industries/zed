@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, DEFAULT_KEYMAP_PATH};
+use settings::Settings;
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
@@ -32,13 +32,12 @@ impl Display for BaseKeymap {
 }
 
 impl BaseKeymap {
-    pub const OPTIONS: [(&'static str, Self); 6] = [
+    pub const OPTIONS: [(&'static str, Self); 5] = [
         ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
         ("TextMate", Self::TextMate),
-        ("None (not recommended)", Self::None),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {
@@ -47,7 +46,7 @@ impl BaseKeymap {
             BaseKeymap::SublimeText => Some("keymaps/sublime_text.json"),
             BaseKeymap::Atom => Some("keymaps/atom.json"),
             BaseKeymap::TextMate => Some("keymaps/textmate.json"),
-            BaseKeymap::VSCode => Some(DEFAULT_KEYMAP_PATH),
+            BaseKeymap::VSCode => None,
             BaseKeymap::None => None,
         }
     }

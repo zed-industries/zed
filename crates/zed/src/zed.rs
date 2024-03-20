@@ -26,7 +26,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
-    SettingsStore,
+    SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::{oneshot_source::OneshotSource, static_source::StaticSource};
@@ -635,17 +635,17 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 
 pub fn load_default_keymap(cx: &mut AppContext) {
     let base_keymap = *BaseKeymap::get_global(cx);
-    if let Some(asset_path) = base_keymap.asset_path() {
-        if base_keymap != BaseKeymap::default() {
-            // all base keymaps assume the default keymap (vscode) is loaded
-            if let Some(default_asset_path) = BaseKeymap::default().asset_path() {
-                KeymapFile::load_asset(default_asset_path, cx).unwrap();
-            }
-        }
-        KeymapFile::load_asset(asset_path, cx).unwrap();
+    if base_keymap == BaseKeymap::None {
+        return;
     }
-    if base_keymap != BaseKeymap::None && VimModeSetting::get_global(cx).0 {
+
+    KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
+    if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+    }
+
+    if let Some(asset_path) = base_keymap.asset_path() {
+        KeymapFile::load_asset(asset_path, cx).unwrap();
     }
 }
 
