@@ -87,14 +87,16 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use task::static_source::StaticSource;
+use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::HttpClient,
     merge_json_value_into,
-    paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
+    paths::{
+        LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+    },
     post_inc, ResultExt, TryFutureExt as _,
 };
 use worktree::{Snapshot, Traversal};
@@ -7108,7 +7110,37 @@ impl Project {
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
                                     format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    tasks_file_rx,
+                                    TrackedFile::new(tasks_file_rx, cx),
+                                    cx,
+                                )
+                            },
+                            cx,
+                        );
+                    }
+                })
+            } else if abs_path.ends_with(&*LOCAL_VSCODE_TASKS_RELATIVE_PATH) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let task_abs_path = abs_path.clone();
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                            },
+                            |cx| {
+                                let tasks_file_rx =
+                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                                StaticSource::new(
+                                    format!(
+                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
+                                    ),
+                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                        tasks_file_rx,
+                                        cx,
+                                    ),
                                     cx,
                                 )
                             },

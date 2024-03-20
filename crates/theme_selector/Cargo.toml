@@ -20,6 +20,7 @@ fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
 picker.workspace = true
+serde.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true

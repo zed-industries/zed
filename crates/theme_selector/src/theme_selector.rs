@@ -3,10 +3,11 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View, ViewContext,
-    VisualContext, WeakView,
+    actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use serde::Deserialize;
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{
@@ -16,7 +17,14 @@ use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
-actions!(theme_selector, [Toggle, Reload]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+pub struct Toggle {
+    /// A list of theme names to filter the theme selector down to.
+    pub themes_filter: Option<Vec<String>>,
+}
+
+impl_actions!(theme_selector, [Toggle]);
+actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -27,14 +35,18 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, cx: &mut ViewContext<Workspace>) {
     let fs = workspace.app_state().fs.clone();
     let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
-        ThemeSelector::new(
-            ThemeSelectorDelegate::new(cx.view().downgrade(), fs, telemetry, cx),
+        let delegate = ThemeSelectorDelegate::new(
+            cx.view().downgrade(),
+            fs,
+            telemetry,
+            toggle.themes_filter.as_ref(),
             cx,
-        )
+        );
+        ThemeSelector::new(delegate, cx)
     });
 }
 
@@ -81,13 +93,25 @@ impl ThemeSelectorDelegate {
         weak_view: WeakView<ThemeSelector>,
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
+        themes_filter: Option<&Vec<String>>,
         cx: &mut ViewContext<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
 
         let staff_mode = cx.is_staff();
         let registry = ThemeRegistry::global(cx);
-        let mut themes = registry.list(staff_mode);
+        let mut themes = registry
+            .list(staff_mode)
+            .into_iter()
+            .filter(|meta| {
+                if let Some(theme_filter) = themes_filter {
+                    theme_filter.contains(&meta.name.to_string())
+                } else {
+                    true
+                }
+            })
+            .collect::<Vec<_>>();
+
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
@@ -113,6 +137,7 @@ impl ThemeSelectorDelegate {
             telemetry,
             view: weak_view,
         };
+
         this.select_if_matching(&original_theme.name);
         this
     }

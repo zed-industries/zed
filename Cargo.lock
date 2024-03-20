@@ -3530,6 +3530,7 @@ dependencies = [
  "settings",
  "smallvec",
  "theme",
+ "theme_selector",
  "ui",
  "util",
  "workspace",
@@ -9412,6 +9413,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json_lenient",
+ "shellexpand",
  "subst",
  "util",
 ]
@@ -9622,6 +9624,7 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "serde",
  "settings",
  "theme",
  "ui",
@@ -12541,7 +12544,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.128.0"
+version = "0.129.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
