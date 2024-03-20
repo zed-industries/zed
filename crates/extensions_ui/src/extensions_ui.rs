@@ -15,7 +15,7 @@ use settings::Settings;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
-use theme::{Appearance, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{prelude::*, ToggleButton, Tooltip};
 use util::ResultExt as _;
 use workspace::{
@@ -147,41 +147,18 @@ impl ExtensionsPage {
         // if installed extension is theme, show theme selector.
         let themes = extension_store
             .extension_themes(extension_id)
-            .collect::<Vec<&Arc<str>>>();
+            .map(|name| name.to_string())
+            .collect::<Vec<String>>();
         if themes.len() > 0 {
-            let theme_registry = ThemeRegistry::global(cx);
-            let system_appearance = SystemAppearance::global(cx);
-
-            let mut matched = None;
-            for name in themes.clone() {
-                let theme = theme_registry.get(name).log_err();
-                if let Some(theme) = theme {
-                    match theme.appearance {
-                        Appearance::Light => {
-                            if system_appearance.is_light() {
-                                matched = Some(name);
-                                break;
-                            }
-                        }
-                        Appearance::Dark => {
-                            if !system_appearance.is_light() {
-                                matched = Some(name);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // if no theme matched in current appearance, use first one.
-            let theme_name = match matched {
-                Some(name) => Some(name.to_string()),
-                None => themes.first().map(|s| s.to_string()),
-            };
-
             workspace
                 .update(cx, |workspace, cx| {
-                    theme_selector::toggle(workspace, &theme_selector::Toggle { theme_name }, cx)
+                    theme_selector::toggle(
+                        workspace,
+                        &theme_selector::Toggle {
+                            match_themes: Some(themes),
+                        },
+                        cx,
+                    )
                 })
                 .ok();
         }

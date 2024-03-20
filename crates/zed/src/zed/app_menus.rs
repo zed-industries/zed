@@ -22,7 +22,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Open Local Settings", super::OpenLocalSettings),
                         MenuItem::action(
                             "Select Theme...",
-                            theme_selector::Toggle { theme_name: None },
+                            theme_selector::Toggle { match_themes: None },
                         ),
                     ],
                 }),

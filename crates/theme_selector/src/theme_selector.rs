@@ -19,7 +19,7 @@ use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
 pub struct Toggle {
-    pub theme_name: Option<String>,
+    pub match_themes: Option<Vec<String>>,
 }
 
 impl_actions!(theme_selector, [Toggle]);
@@ -42,7 +42,7 @@ pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, cx: &mut ViewContext<W
             cx.view().downgrade(),
             fs,
             telemetry,
-            toggle.theme_name.as_ref(),
+            toggle.match_themes.as_ref(),
             cx,
         );
         ThemeSelector::new(delegate, cx)
@@ -92,14 +92,26 @@ impl ThemeSelectorDelegate {
         weak_view: WeakView<ThemeSelector>,
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
-        theme_name: Option<&String>,
+        match_themes: Option<&Vec<String>>,
         cx: &mut ViewContext<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
 
         let staff_mode = cx.is_staff();
         let registry = ThemeRegistry::global(cx);
-        let mut themes = registry.list(staff_mode);
+        let mut themes = registry
+            .list(staff_mode)
+            .iter()
+            .filter(|meta| {
+                if let Some(match_themes) = match_themes {
+                    match_themes.contains(&meta.name.to_string())
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect::<Vec<ThemeMeta>>();
+
         themes.sort_unstable_by(|a, b| {
             a.appearance
                 .is_light()
@@ -125,11 +137,8 @@ impl ThemeSelectorDelegate {
             telemetry,
             view: weak_view,
         };
-        if let Some(theme_name) = theme_name {
-            this.select_if_matching(theme_name);
-        } else {
-            this.select_if_matching(&original_theme.name);
-        }
+
+        this.select_if_matching(&original_theme.name);
         this
     }
 
