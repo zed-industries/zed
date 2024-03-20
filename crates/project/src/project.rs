@@ -9517,7 +9517,7 @@ impl ProjectLspAdapterDelegate {
                 format!("failed to determine load login shell environment in {worktree_abs_path:?}")
             })
             .log_err()
-            .unwrap_or_default();
+            .unwrap_or_else(|| HashMap::from_iter(std::env::vars()));
         *self.shell_env.lock() = Some(shell_env);
     }
 }
