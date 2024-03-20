@@ -244,7 +244,7 @@ mod tests {
         vscode_definitions
             .tasks
             .iter()
-            .zip(expected.into_iter())
+            .zip(expected)
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
 
         let expected = vec![
@@ -348,7 +348,7 @@ mod tests {
         vscode_definitions
             .tasks
             .iter()
-            .zip(expected.into_iter())
+            .zip(expected)
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
         let expected = vec![
             Definition {
