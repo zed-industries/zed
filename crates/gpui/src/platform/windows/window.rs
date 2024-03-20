@@ -189,7 +189,9 @@ impl WindowsWindowInner {
     }
 
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
+        if msg != WM_PAINT {
+            log::trace!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
+        }
         match msg {
             WM_ACTIVATE => self.handle_activate_msg(msg, wparam, lparam),
             WM_CREATE => self.handle_create_msg(lparam),
