@@ -60,13 +60,6 @@ impl ThemeSettings {
             }
         }
     }
-
-    pub fn set_current_theme(theme_name: &str, cx: &mut AppContext) {
-        let mut theme_settings = ThemeSettings::get_global(cx).clone();
-        if let Some(_theme) = theme_settings.switch_theme(theme_name, cx) {
-            ThemeSettings::override_global(theme_settings, cx);
-        }
-    }
 }
 
 /// The appearance of the system.
