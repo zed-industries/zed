@@ -100,6 +100,9 @@ pub struct MouseDownEvent {
 
     /// The number of times the button has been clicked.
     pub click_count: usize,
+
+    /// Whether this is the first, focusing click.
+    pub first_mouse: bool,
 }
 
 impl Sealed for MouseDownEvent {}
@@ -142,6 +145,9 @@ pub struct ClickEvent {
 
     /// The mouse event when the button was released.
     pub up: MouseUpEvent,
+
+    /// Whether this is the first, focusing click.
+    pub first_mouse: bool,
 }
 
 /// An enum representing the mouse button that was pressed.

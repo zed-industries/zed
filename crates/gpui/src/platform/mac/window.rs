@@ -9,7 +9,7 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSEvent, NSEventModifierFlags, NSEventType,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -1244,7 +1244,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
-
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
@@ -1726,16 +1725,32 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     }
 }
 
-extern "C" fn accepts_first_mouse(this: &Object, _: Sel, event: id) -> BOOL {
-    unsafe {
-        let state = get_window_state(this);
-        let lock = state.as_ref().lock();
-        if lock.kind == WindowKind::PopUp || event.eventType() == NSEventType::NSLeftMouseDown {
-            YES
-        } else {
-            NO
+extern "C" fn accepts_first_mouse(this: &Object, _: Sel, native_event: id) -> BOOL {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    let window_height = lock.content_size().height;
+    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
+    if let Some(mut event) = event {
+        if let PlatformInput::MouseDown(
+            event @ MouseDownEvent {
+                button: MouseButton::Left,
+                ..
+            },
+        ) = event
+        {
+            let event = PlatformInput::MouseDown(MouseDownEvent {
+                first_mouse: true,
+                ..event
+            });
+            if let Some(mut callback) = lock.event_callback.take() {
+                drop(lock);
+                callback(event);
+                window_state.lock().event_callback = Some(callback);
+            }
         }
     }
+    // We handle this case ourselves, so we don't want AppKit to do anything with it.
+    NO
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
