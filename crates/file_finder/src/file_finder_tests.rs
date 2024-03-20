@@ -872,7 +872,6 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 
     // generate some history to select from
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
-    cx.executor().run_until_parked();
     open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
     open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
     let current_history = open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
@@ -1125,12 +1124,12 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
-        assert_match_at_position(finder, 0, "main.rs");
-        assert_match_selection(finder, 1, "lib.rs");
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
     });
 
-    // all files match, main.rs is still on top
+    // all files match, main.rs is still on top, but the second item is selected
     picker
         .update(cx, |finder, cx| {
             finder.delegate.update_matches(".rs".to_string(), cx)
@@ -1173,8 +1172,8 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         .await;
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
-        assert_match_at_position(finder, 0, "main.rs");
-        assert_match_selection(finder, 1, "lib.rs");
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
     });
 }
 
@@ -1207,29 +1206,31 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
-        assert_match_at_position(finder, 0, "3.txt");
-        assert_match_selection(finder, 1, "2.txt");
+        assert_match_selection(finder, 0, "3.txt");
+        assert_match_at_position(finder, 1, "2.txt");
         assert_match_at_position(finder, 2, "1.txt");
     });
 
+    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm); // Open 2.txt
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
-        assert_match_at_position(finder, 0, "2.txt");
-        assert_match_selection(finder, 1, "3.txt");
+        assert_match_selection(finder, 0, "2.txt");
+        assert_match_at_position(finder, 1, "3.txt");
         assert_match_at_position(finder, 2, "1.txt");
     });
 
+    cx.dispatch_action(SelectNext);
     cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm); // Open 1.txt
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
-        assert_match_at_position(finder, 0, "1.txt");
-        assert_match_selection(finder, 1, "2.txt");
+        assert_match_selection(finder, 0, "1.txt");
+        assert_match_at_position(finder, 1, "2.txt");
         assert_match_at_position(finder, 2, "3.txt");
     });
 }
