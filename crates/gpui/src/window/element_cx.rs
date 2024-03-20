@@ -35,9 +35,9 @@ use crate::{
     GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
     LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels,
     PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext, StackingOrder,
-    StrikethroughStyle, Style, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
+    RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window, WindowContext,
+    SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =

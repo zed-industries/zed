@@ -599,12 +599,6 @@
     }
   },
   {
-    "context": "ChatPanel > MessageEditor",
-    "bindings": {
-      "escape": "chat_panel::CloseReplyPreview"
-    }
-  },
-  {
     "context": "FileFinder",
     "bindings": { "cmd-shift-p": "menu::SelectPrev" }
   },
