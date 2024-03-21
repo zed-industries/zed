@@ -68,7 +68,7 @@ impl TabSwitcher {
         let Some(init_modifiers) = self.init_modifiers else {
             return;
         };
-        if !event.modified() || !init_modifiers.is_subset_of(&event) {
+        if !event.modified() || !init_modifiers.is_subset_of(event) {
             self.init_modifiers = None;
             cx.dispatch_action(menu::Confirm.boxed_clone());
         }
@@ -150,7 +150,13 @@ impl TabSwitcherDelegate {
         let mut history_indices = HashMap::default();
         pane.activation_history().iter().rev().enumerate().for_each(
             |(history_index, entity_id)| {
-                history_indices.insert(entity_id, history_index);
+                // Move the currently selected tab to the very end
+                let index = if history_index == 0 {
+                    usize::max_value()
+                } else {
+                    history_index
+                };
+                history_indices.insert(entity_id, index);
             },
         );
 
