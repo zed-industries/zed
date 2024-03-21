@@ -1,18 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::SupermavenStateId;
+// Outbound messages
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StateUpdateKind {
-    StateUpdate,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OutboundMessage {
+    StateUpdate(StateUpdateMessage),
+    UseFreeVersion,
 }
 
-// Outbound messages
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StateUpdateMessage {
-    pub kind: StateUpdateKind,
     pub new_id: String,
     pub updates: Vec<StateUpdate>,
 }
@@ -78,7 +77,7 @@ pub enum TaskStatus {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SupermavenActiveRepoMessage {
-    pub repo_simple_name: String,
+    pub repo_simple_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,7 +97,7 @@ pub struct SupermavenPopupMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub struct ActivationRequest {
-    pub activate_url: String,
+    pub activate_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

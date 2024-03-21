@@ -18,10 +18,7 @@ use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use std::{
-    path::{Path, PathBuf},
-    process::Stdio,
-};
+use std::{path::PathBuf, process::Stdio};
 use ui::prelude::*;
 use util::ResultExt;
 
@@ -30,7 +27,7 @@ pub struct Supermaven {
     next_state_id: SupermavenStateId,
     states: HashMap<SupermavenStateId, CompletionState>,
     update_txs: Vec<oneshot::Sender<()>>,
-    outgoing_tx: mpsc::UnboundedSender<StateUpdateMessage>,
+    outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
     _handle_outgoing_messages: Task<Result<()>>,
     _handle_incoming_messages: Task<Result<()>>,
     _maintain_editors: Subscription,
@@ -40,12 +37,10 @@ pub struct Supermaven {
 impl Supermaven {
     pub fn launch(cx: &mut AppContext) -> Task<Result<()>> {
         cx.spawn(|cx| async move {
-            let binary_path = &std::env::var("SUPERMAVEN_AGENT_BINARY")
-                .unwrap_or_else(|_| "/Users/as-cii/Downloads/sm-agent".to_string());
-            let binary_path = Path::new(binary_path);
-            let mut process = Command::new(binary_path)
+            let binary_path = std::env::var("SUPERMAVEN_AGENT_BINARY")
+                .expect("set SUPERMAVEN_AGENT_BINARY env variable");
+            let mut process = Command::new(&binary_path)
                 .arg("stdio")
-                // .env("SM_LOG_PATH", "/Users/as-cii/dev/test-python/log.txt")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -70,6 +65,10 @@ impl Supermaven {
 
     fn new(process: Child, stdin: ChildStdin, stdout: ChildStdout, cx: &mut AppContext) -> Self {
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
+        outgoing_tx
+            .unbounded_send(OutboundMessage::UseFreeVersion)
+            .unwrap();
+
         Self {
             _process: process,
             next_state_id: SupermavenStateId::default(),
@@ -134,28 +133,28 @@ impl Supermaven {
                         completion: Vec::new(),
                     },
                 );
-                let _ = self.outgoing_tx.unbounded_send(StateUpdateMessage {
-                    kind: StateUpdateKind::StateUpdate,
-                    new_id: state_id.0.to_string(),
-                    updates: vec![
-                        StateUpdate::FileUpdate(FileUpdateMessage {
-                            path: path.clone(),
-                            content,
-                        }),
-                        StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
-                    ],
-                });
+                let _ = self
+                    .outgoing_tx
+                    .unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
+                        new_id: state_id.0.to_string(),
+                        updates: vec![
+                            StateUpdate::FileUpdate(FileUpdateMessage {
+                                path: path.clone(),
+                                content,
+                            }),
+                            StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
+                        ],
+                    }));
             }
             _ => {}
         }
     }
 
     async fn handle_outgoing_messages(
-        mut outgoing: mpsc::UnboundedReceiver<StateUpdateMessage>,
+        mut outgoing: mpsc::UnboundedReceiver<OutboundMessage>,
         mut stdin: ChildStdin,
     ) -> Result<()> {
         while let Some(message) = outgoing.next().await {
-            dbg!(&message);
             let bytes = serde_json::to_vec(&message)?;
             stdin.write_all(&bytes).await?;
             stdin.write_all(&[b'\n']).await?;
@@ -175,9 +174,8 @@ impl Supermaven {
             let Some(line) = line.strip_prefix(MESSAGE_PREFIX) else {
                 continue;
             };
-            dbg!(&line);
             let Some(message) = serde_json::from_str::<SupermavenMessage>(&line)
-                .context("failed to deserialize line from stdout")
+                .with_context(|| format!("failed to deserialize line from stdout: {:?}", line))
                 .log_err()
             else {
                 continue;
@@ -191,7 +189,11 @@ impl Supermaven {
 
     fn handle_message(&mut self, message: SupermavenMessage, cx: &mut AppContext) {
         match message {
-            SupermavenMessage::ActivationRequest { activate_url } => {
+            SupermavenMessage::ActivationRequest(request) => {
+                let Some(activate_url) = request.activate_url else {
+                    return;
+                };
+
                 cx.open_window(
                     gpui::WindowOptions {
                         bounds: Some(Bounds::new(
@@ -249,7 +251,7 @@ impl ActivationRequestPrompt {
 }
 
 impl Render for ActivationRequestPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         InteractiveText::new(
             "activation_prompt",
             StyledText::new(self.activate_url.clone()),
@@ -267,10 +269,7 @@ mod tests {
 
     use super::*;
     use gpui::{Context, TestAppContext};
-    use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        Buffer, BufferId, LanguageRegistry,
-    };
+    use language::{language_settings::AllLanguageSettings, Buffer, BufferId, LanguageRegistry};
     use project::Project;
     use settings::SettingsStore;
 
@@ -302,7 +301,6 @@ mod tests {
             buffer
         });
 
-        // let buffer = dbg!(cx.new_model(|_cx| Buffer::new(0, BufferId::new(1).unwrap(), "Hello ")));
         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
         editor
             .update(cx, |editor, cx| editor.insert("import numpy as ", cx))
