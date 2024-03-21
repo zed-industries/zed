@@ -1,25 +1,37 @@
-use std::{arch::x86_64::CpuidResult, borrow::Cow, cell::Cell, sync::Arc};
+use std::{arch::x86_64::CpuidResult, borrow::Cow, cell::Cell, mem::ManuallyDrop, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
+use util::ResultExt;
 use windows::{
     core::{implement, HRESULT, HSTRING, PCWSTR},
-    Win32::{Foundation::BOOL, Globalization::GetUserDefaultLocaleName, Graphics::DirectWrite::*},
+    Win32::{
+        Foundation::{BOOL, RECT},
+        Globalization::GetUserDefaultLocaleName,
+        Graphics::DirectWrite::*,
+    },
 };
 
 use crate::{
-    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
-    Pixels, PlatformTextSystem, RenderGlyphParams, ShapedGlyph, ShapedRun, SharedString, Size,
+    px, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlobalPixels,
+    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, ShapedGlyph,
+    ShapedRun, SharedString, Size,
 };
 
 struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
     font_set_index: usize,
+    // features: FontFeatures,
+    features: Vec<*const DWRITE_TYPOGRAPHIC_FEATURES>,
+    raw_features: FontFeatures,
 }
+
+unsafe impl Send for FontInfo {}
+unsafe impl Sync for FontInfo {}
 
 pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 
@@ -111,26 +123,26 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        todo!()
+        self.0.read().font_metrics(font_id)
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        todo!()
+        self.0.read().get_typographic_bounds(font_id, glyph_id)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
-        todo!()
+        self.0.read().get_advance(font_id, glyph_id)
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        todo!()
+        self.0.read().glyph_for_char(font_id, ch)
     }
 
     fn glyph_raster_bounds(
         &self,
         params: &RenderGlyphParams,
     ) -> anyhow::Result<Bounds<DevicePixels>> {
-        todo!()
+        self.0.read().raster_bounds(params)
     }
 
     fn rasterize_glyph(
@@ -138,7 +150,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
-        todo!()
+        self.0.read().rasterize_glyph(params, raster_bounds)
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
@@ -216,7 +228,6 @@ impl DirectWriteState {
                 let total_number = font.GetFontCount();
                 for sub_index in 0..total_number {
                     println!("   Checking sub fonts: {}/{}", sub_index + 1, total_number);
-                    let font_id = FontId(self.fonts.len());
                     let font_face_ref = font.GetFontFaceReference(0).unwrap();
                     let Ok(font_face) = font_face_ref
                         .CreateFontFace()
@@ -228,7 +239,10 @@ impl DirectWriteState {
                         font_family: target_font.family.to_string(),
                         font_face,
                         font_set_index: fontset_index,
+                        features: direct_write_features(&target_font.features),
+                        raw_features: target_font.features,
                     };
+                    let font_id = FontId(self.fonts.len());
                     self.fonts.push(font_info);
                     return Some(font_id);
                 }
@@ -239,60 +253,79 @@ impl DirectWriteState {
 
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         unsafe {
-            let string = text.encode_utf16().collect_vec();
+            let locale_wide = self
+                .components
+                .locale
+                .encode_utf16()
+                .chain(Some(0))
+                .collect_vec();
+            let locale_string = PCWSTR::from_raw(locale_wide.as_ptr());
+
             let mut offset = 0usize;
-            // let mut shaped_runs_vec = Vec::new();
+            let mut shaped_runs_vec = Vec::new();
+            let mut glyph_position = 0.0f32;
+            let text_wide = text.encode_utf16().collect_vec();
+            println!(
+                "==> text: {}, raw: {:?}, raw_wide: {:?}",
+                text,
+                text.as_bytes(),
+                text_wide
+            );
             for run in font_runs {
+                println!("fontrun: {:?}", run);
                 let run_len = run.len;
+                if run_len == 0 {
+                    continue;
+                }
                 let font_info = &self.fonts[run.font_id.0];
-                let locale_wide = self
-                    .components
-                    .locale
-                    .encode_utf16()
-                    .chain(Some(0))
-                    .collect_vec();
-                let locale_string = PCWSTR::from_raw(locale_wide.as_ptr());
-                let cur_str_wide = &string[offset..(offset + run_len)];
-                let cur_string = PCWSTR::from_raw(cur_str_wide.as_ptr());
+                let local_str = &text[offset..(offset + run_len)];
+                println!("text: {}", local_str);
+                let local_wide = local_str.encode_utf16().collect_vec();
+                // let local_wide = text_wide[offset..(offset + run_len)].to_vec();
+                let local_length = local_wide.len();
+                let local_wstring = PCWSTR::from_raw(local_wide.as_ptr());
                 let analysis = Analysis::new(
                     PCWSTR::from_raw(locale_wide.as_ptr()),
-                    cur_str_wide.to_vec(),
-                    run_len as u32,
+                    local_wide,
+                    local_length as u32,
                 );
-                println!("Generating res");
-                let x = analysis.generate_result(&self.components.analyzer);
-                println!("Generated res");
-                // let mut res = std::mem::zeroed();
-                // self.components.analyzer.AnalyzeScript(
-                //     PCWSTR::from_raw(cur_str.as_ptr()),
-                //     offset as _,
-                //     run_len as _,
-                //     &mut res,
-                // );
-                let list_capacity = run_len * 2;
-                let mut cluster_map = 0u16;
+
+                let Some(analysis_result) = analysis.generate_result(&self.components.analyzer)
+                else {
+                    println!("None analysis result");
+                    continue;
+                };
+                let list_capacity = local_length * 2;
+                let mut cluster_map = vec![0u16; list_capacity];
                 let mut text_props = vec![DWRITE_SHAPING_TEXT_PROPERTIES::default(); list_capacity];
                 let mut glyph_indeices = vec![0u16; list_capacity];
                 let mut glyph_props =
                     vec![DWRITE_SHAPING_GLYPH_PROPERTIES::default(); list_capacity];
                 let mut glyph_count = 0u32;
+                let featurelenght = [local_length as u32];
                 println!("Getting glyphs");
+                // let features = direct_write_features(&font_info.raw_features);
+                let features = temp_features(&font_info.raw_features);
                 self.components
                     .analyzer
                     .GetGlyphs(
-                        cur_string,
-                        run_len as _,
+                        local_wstring,
+                        local_length as _,
                         &font_info.font_face,
                         false,
                         false,
-                        &x as _,
+                        &analysis_result as _,
                         locale_string,
                         None,
-                        None,
-                        None,
-                        0,
-                        100,
-                        &mut cluster_map as _,
+                        // Some(font_info.features.as_ptr()),
+                        Some(features.as_ptr()),
+                        Some(featurelenght.as_ptr()),
+                        1,
+                        // None,
+                        // None,
+                        // 0,
+                        list_capacity as u32, // TODO:
+                        cluster_map.as_mut_ptr(),
                         text_props.as_mut_ptr(),
                         glyph_indeices.as_mut_ptr(),
                         glyph_props.as_mut_ptr(),
@@ -300,25 +333,276 @@ impl DirectWriteState {
                     )
                     .unwrap();
 
-                println!(
-                    "Res: len: {}, {} glyphs, indices: {:?}",
-                    run_len, glyph_count, glyph_indeices
-                );
+                cluster_map.truncate(glyph_count as usize);
+                text_props.truncate(glyph_count as usize);
+                glyph_indeices.truncate(glyph_count as usize);
+                glyph_props.truncate(glyph_count as usize);
+                let mut glyph_advances = vec![0.0f32; glyph_count as usize];
+                let mut glyph_offsets = vec![DWRITE_GLYPH_OFFSET::default(); glyph_count as usize];
+                // let mut glyph_advances = vec![0.0f32; list_capacity as usize];
+                // let mut glyph_offsets =
+                //     vec![DWRITE_GLYPH_OFFSET::default(); list_capacity as usize];
+                println!("Getting glyphs placement");
+                self.components
+                    .analyzer
+                    .GetGlyphPlacements(
+                        local_wstring,
+                        cluster_map.as_ptr(),
+                        text_props.as_mut_ptr(),
+                        local_length as _,
+                        glyph_indeices.as_ptr(),
+                        glyph_props.as_ptr(),
+                        glyph_count,
+                        &font_info.font_face,
+                        font_size.0,
+                        false,
+                        false,
+                        &analysis_result,
+                        locale_string,
+                        // Some(font_info.features.as_ptr()),
+                        Some(features.as_ptr()),
+                        Some(featurelenght.as_ptr()),
+                        1,
+                        // None,
+                        // None,
+                        // 0,
+                        glyph_advances.as_mut_ptr(),
+                        glyph_offsets.as_mut_ptr(),
+                    )
+                    .unwrap();
 
-                let shaped_gylph = ShapedGlyph {
-                    id: todo!(),
-                    position: todo!(),
-                    index: todo!(),
-                    is_emoji: todo!(),
-                };
+                let mut glyphs = SmallVec::new();
+                for (pos, glyph) in glyph_indeices.iter().enumerate() {
+                    let shaped_gylph = ShapedGlyph {
+                        id: GlyphId(*glyph as u32),
+                        // TODO:
+                        position: Point {
+                            x: px(glyph_position),
+                            y: px(0.),
+                        },
+                        index: offset + pos,
+                        // TODO:
+                        is_emoji: false,
+                    };
+                    glyph_position += glyph_advances[pos];
+                    glyphs.push(shaped_gylph);
+                }
+                // println!("runs: {:#?}", glyphs);
                 let shaped_run = ShapedRun {
                     font_id: run.font_id,
-                    glyphs: todo!(),
+                    glyphs,
                 };
+                offset += run_len;
+                shaped_runs_vec.push(shaped_run);
+            }
+            // TODO:
+            LineLayout {
+                font_size,
+                width: px(glyph_position),
+                ascent: px(0.),
+                descent: px(0.),
+                runs: shaped_runs_vec,
+                len: text.len(),
             }
         }
-        unimplemented!();
-        LineLayout::default()
+    }
+
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+        unsafe {
+            let font_info = &self.fonts[font_id.0];
+            let mut metrics = std::mem::zeroed();
+            font_info.font_face.GetMetrics2(&mut metrics);
+
+            let res = FontMetrics {
+                units_per_em: metrics.Base.designUnitsPerEm as _,
+                ascent: metrics.Base.ascent as _,
+                descent: -(metrics.Base.descent as f32),
+                line_gap: metrics.Base.lineGap as _,
+                underline_position: metrics.Base.underlinePosition as _,
+                underline_thickness: metrics.Base.underlineThickness as _,
+                cap_height: metrics.Base.capHeight as _,
+                x_height: metrics.Base.xHeight as _,
+                bounding_box: Bounds {
+                    origin: Point {
+                        x: metrics.glyphBoxLeft as _,
+                        y: metrics.glyphBoxBottom as _,
+                    },
+                    size: Size {
+                        width: (metrics.glyphBoxRight - metrics.glyphBoxLeft) as _,
+                        height: (metrics.glyphBoxTop - metrics.glyphBoxBottom) as _,
+                    },
+                },
+            };
+            println!("Font metrics: {:#?}", res);
+            res
+        }
+    }
+
+    unsafe fn get_glyphrun_analysis(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> windows::core::Result<IDWriteGlyphRunAnalysis> {
+        let font = &self.fonts[params.font_id.0];
+        let glyph_id = [params.glyph_id.0 as u16];
+        let advance = [0.0f32];
+        let offset = [DWRITE_GLYPH_OFFSET::default()];
+        let glyph_run = DWRITE_GLYPH_RUN {
+            fontFace: ManuallyDrop::new(Some(
+                // TODO: remove this clone
+                <IDWriteFontFace3 as Clone>::clone(&font.font_face).into(),
+            )),
+            fontEmSize: params.font_size.0,
+            glyphCount: 1,
+            glyphIndices: glyph_id.as_ptr(),
+            glyphAdvances: advance.as_ptr(),
+            glyphOffsets: offset.as_ptr(),
+            isSideways: BOOL(0),
+            bidiLevel: 0,
+        };
+        // TODO: is this right?
+        let transform = DWRITE_MATRIX {
+            m11: params.scale_factor,
+            m12: 0.0,
+            m21: 0.0,
+            m22: params.scale_factor,
+            dx: 0.0,
+            dy: 0.0,
+        };
+        self.components.factory.CreateGlyphRunAnalysis(
+            &glyph_run as _,
+            1.0,
+            Some(&transform as _),
+            // None,
+            DWRITE_RENDERING_MODE_NATURAL,
+            DWRITE_MEASURING_MODE_NATURAL,
+            0.0,
+            0.0,
+        )
+    }
+
+    fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        unsafe {
+            let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
+            let bounds = glyph_run_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)?;
+
+            Ok(Bounds {
+                origin: Point {
+                    x: DevicePixels(bounds.left),
+                    y: DevicePixels(bounds.top),
+                },
+                size: Size {
+                    width: DevicePixels(bounds.right - bounds.left),
+                    height: DevicePixels(bounds.bottom - bounds.top),
+                },
+            })
+        }
+    }
+
+    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+        let font_info = &self.fonts[font_id.0];
+        let codepoints = [ch as u32];
+        let mut glyph_indices = vec![0u16; 1];
+        unsafe {
+            font_info
+                .font_face
+                .GetGlyphIndices(codepoints.as_ptr(), 1, glyph_indices.as_mut_ptr())
+                .log_err()
+        }
+        .map(|_| GlyphId(glyph_indices[0] as u32))
+    }
+
+    fn rasterize_glyph(
+        &self,
+        params: &RenderGlyphParams,
+        glyph_bounds: Bounds<DevicePixels>,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
+            return Err(anyhow!("glyph bounds are empty"));
+        }
+        unsafe {
+            // TODO:
+            // let mut bitmap_size = glyph_bounds.size;
+            // if params.subpixel_variant.x > 0 {
+            //     bitmap_size.width += DevicePixels(1);
+            // }
+            // if params.subpixel_variant.y > 0 {
+            //     bitmap_size.height += DevicePixels(1);
+            // }
+            // let bitmap_size = bitmap_size;
+            let bitmap_size = glyph_bounds.size;
+
+            let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
+            let total_bytes = bitmap_size.height.0 * bitmap_size.width.0 * 3;
+            // let total_bytes = bitmap_size.height.0 * bitmap_size.width.0;
+            let texture_bounds = RECT {
+                left: glyph_bounds.left().0,
+                top: glyph_bounds.top().0,
+                right: glyph_bounds.left().0 + bitmap_size.width.0,
+                bottom: glyph_bounds.top().0 + bitmap_size.height.0,
+            };
+            let mut result = vec![0u8; total_bytes as usize];
+            glyph_run_analysis.CreateAlphaTexture(
+                DWRITE_TEXTURE_CLEARTYPE_3x1,
+                &texture_bounds as _,
+                &mut result,
+            )?;
+            let mut bitmap_rawdata =
+                vec![0u8; (bitmap_size.height.0 * bitmap_size.width.0) as usize];
+            for (chunk, num) in result.chunks_exact(3).zip(bitmap_rawdata.iter_mut()) {
+                let sum: u32 = chunk.iter().map(|&x| x as u32).sum();
+                *num = (sum / 3) as u8;
+            }
+            Ok((bitmap_size, bitmap_rawdata))
+        }
+    }
+
+    fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
+        unsafe {
+            let font = &self.fonts[font_id.0].font_face;
+            let glyph_indices = [glyph_id.0 as u16];
+            let mut metrics = [DWRITE_GLYPH_METRICS::default()];
+            font.GetDesignGlyphMetrics(glyph_indices.as_ptr(), 1, metrics.as_mut_ptr(), false)?;
+
+            let metrics = &metrics[0];
+            let advance_width = metrics.advanceWidth as i32;
+            let advance_height = metrics.advanceHeight as i32;
+            let left_side_bearing = metrics.leftSideBearing as i32;
+            let right_side_bearing = metrics.rightSideBearing as i32;
+            let top_side_bearing = metrics.topSideBearing as i32;
+            let bottom_side_bearing = metrics.bottomSideBearing as i32;
+            let vertical_origin_y = metrics.verticalOriginY as i32;
+
+            let y_offset = vertical_origin_y + bottom_side_bearing - advance_height;
+            let width = advance_width - (left_side_bearing + right_side_bearing);
+            let height = advance_height - (top_side_bearing + bottom_side_bearing);
+
+            Ok(Bounds {
+                origin: Point {
+                    x: left_side_bearing as f32,
+                    y: y_offset as f32,
+                },
+                size: Size {
+                    width: width as f32,
+                    height: height as f32,
+                },
+            })
+        }
+    }
+
+    fn get_advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+        unsafe {
+            let font = &self.fonts[font_id.0].font_face;
+            let glyph_indices = [glyph_id.0 as u16];
+            let mut metrics = [DWRITE_GLYPH_METRICS::default()];
+            font.GetDesignGlyphMetrics(glyph_indices.as_ptr(), 1, metrics.as_mut_ptr(), false)?;
+
+            let metrics = &metrics[0];
+
+            Ok(Size {
+                width: metrics.advanceWidth as f32,
+                height: 0.0,
+            })
+        }
     }
 }
 
@@ -386,8 +670,8 @@ impl AnalysisInner {
         }
     }
 
-    pub fn get_result(&self) -> DWRITE_SCRIPT_ANALYSIS {
-        self.script_analysis.unwrap()
+    pub fn get_result(&self) -> Option<DWRITE_SCRIPT_ANALYSIS> {
+        self.script_analysis.clone()
     }
 }
 
@@ -407,7 +691,10 @@ impl Analysis {
     }
 
     // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwritetextanalyzer-getglyphs
-    pub unsafe fn generate_result(&self, analyzer: &IDWriteTextAnalyzer) -> DWRITE_SCRIPT_ANALYSIS {
+    pub unsafe fn generate_result(
+        &self,
+        analyzer: &IDWriteTextAnalyzer,
+    ) -> Option<DWRITE_SCRIPT_ANALYSIS> {
         analyzer
             .AnalyzeScript(&self.source, 0, self.length, &self.sink)
             .unwrap();
@@ -547,4 +834,117 @@ impl IDWriteTextAnalysisSink_Impl for AnalysisSink {
             "SetNumberSubstitution",
         ))
     }
+}
+
+// https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
+fn direct_write_features(features: &FontFeatures) -> Vec<*const DWRITE_TYPOGRAPHIC_FEATURES> {
+    let mut result = Vec::new();
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES,
+        features.calt(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_CASE_SENSITIVE_FORMS,
+        features.case(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_CAPITAL_SPACING,
+        features.cpsp(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_FRACTIONS,
+        features.frac(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES,
+        features.liga(),
+    );
+    result
+}
+
+fn add_feature(
+    feature_list: &mut Vec<*const DWRITE_TYPOGRAPHIC_FEATURES>,
+    feature: DWRITE_FONT_FEATURE_TAG,
+    enable: Option<bool>,
+) {
+    let Some(enable) = enable else {
+        return;
+    };
+    let font_feature = if enable {
+        Arc::new(DWRITE_FONT_FEATURE {
+            nameTag: feature,
+            parameter: 1,
+        })
+    } else {
+        Arc::new(DWRITE_FONT_FEATURE {
+            nameTag: feature,
+            parameter: 0,
+        })
+    };
+    let result = Arc::new(DWRITE_TYPOGRAPHIC_FEATURES {
+        features: Arc::into_raw(font_feature) as _,
+        featureCount: 1,
+    });
+    feature_list.push(Arc::into_raw(result));
+}
+
+fn temp_features(features: &FontFeatures) -> Vec<*const DWRITE_TYPOGRAPHIC_FEATURES> {
+    let mut result = Vec::new();
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES,
+        features.calt(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_CASE_SENSITIVE_FORMS,
+        features.case(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_CAPITAL_SPACING,
+        features.cpsp(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_FRACTIONS,
+        features.frac(),
+    );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES,
+        features.liga(),
+    );
+    result
+}
+
+fn temp_add_feature(
+    feature_list: &mut Vec<*const DWRITE_TYPOGRAPHIC_FEATURES>,
+    feature: DWRITE_FONT_FEATURE_TAG,
+    enable: Option<bool>,
+) {
+    let Some(enable) = enable else {
+        return;
+    };
+    let font_feature = if enable {
+        Box::new(DWRITE_FONT_FEATURE {
+            nameTag: feature,
+            parameter: 1,
+        })
+    } else {
+        Box::new(DWRITE_FONT_FEATURE {
+            nameTag: feature,
+            parameter: 0,
+        })
+    };
+    let result = Box::new(DWRITE_TYPOGRAPHIC_FEATURES {
+        features: Box::into_raw(font_feature),
+        featureCount: 1,
+    });
+    feature_list.push(Box::into_raw(result) as *const _);
 }
