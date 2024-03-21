@@ -87,10 +87,11 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.22.1-dev"
-source = "git+https://github.com/alacritty/alacritty?rev=992011a4cd9a35f197acc0a0bd430d89a0d01013#992011a4cd9a35f197acc0a0bd430d89a0d01013"
+version = "0.23.0-rc1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc2c16faa5425a10be102dda76f73d76049b44746e18ddeefc44d78bbe76cbce"
 dependencies = [
- "base64 0.21.4",
+ "base64 0.22.0",
  "bitflags 2.4.2",
  "home",
  "libc",
@@ -1291,6 +1292,12 @@ name = "base64"
 version = "0.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ba43ea6f343b788c8764558649e08df62f86c6ef251fdaeb1ffd010a9ae50a2"
+
+[[package]]
+name = "base64"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9475866fec1451be56a3c2400fd081ff546538961565ccb5b7142cbd22bc7a51"
 
 [[package]]
 name = "base64-simd"
