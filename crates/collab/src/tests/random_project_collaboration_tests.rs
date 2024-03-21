@@ -1347,11 +1347,13 @@ impl RandomizedTest for ProjectCollaborationTest {
                             client.username
                         );
 
-                    let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
-                    let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
+                    let host_saved_version_fingerprint =
+                        host_buffer.read_with(host_cx, |b, _| b.saved_version_fingerprint());
+                    let guest_saved_version_fingerprint =
+                        guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
                     assert_eq!(
-                            guest_is_dirty, host_is_dirty,
-                            "guest {} dirty state does not match host's for path {path:?} in project {project_id}",
+                            guest_saved_version_fingerprint, host_saved_version_fingerprint,
+                            "guest {} saved fingerprint does not match host's for path {path:?} in project {project_id}",
                             client.username
                         );
 
