@@ -138,7 +138,11 @@ impl ExtensionBuilder {
             "target",
             RUST_TARGET,
             if options.release { "release" } else { "debug" },
-            cargo_toml.package.name.as_str(),
+            &cargo_toml
+                .package
+                .name
+                // The wasm32-wasi target normalizes `-` in package names to `_` in the resulting `.wasm` file.
+                .replace('-', "_"),
         ]);
         wasm_path.set_extension("wasm");
 
