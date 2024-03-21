@@ -3,10 +3,10 @@ mod connection_pool;
 use crate::{
     auth::{self, Impersonator},
     db::{
-        self, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage,
-        Database, DevServerId, InviteMemberResult, MembershipUpdated, MessageId, NotificationId,
-        Project, ProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId,
-        ServerId, UpdatedChannelMessage, User, UserId,
+        self, devserver, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser,
+        CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
+        MessageId, NotificationId, Project, ProjectId, RemoveChannelMemberResult, ReplicaId,
+        RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
@@ -64,7 +64,10 @@ use std::{
 use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
-use tracing::{field, info_span, instrument, Instrument};
+use tracing::{
+    field::{self, ValueSet},
+    info_span, instrument, Instrument,
+};
 use util::{http::IsahcHttpClient, SemanticVersion};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -107,8 +110,20 @@ impl<R: RequestMessage> StreamingResponse<R> {
 
 #[derive(Clone, Debug)]
 enum Principal {
-    User(UserId),
-    DevServer(DevServerId),
+    User(User),
+    DevServer(devserver::Model),
+}
+
+impl Principal {
+    fn update_span<'a>(&self, span: &tracing::Span) {
+        match &self {
+            Principal::User(user) => {
+                span.record("user_id", &user.id.0);
+                span.record("login", &user.github_login);
+            }
+            Principal::DevServer(devserver) => span.record("devserver_id", &devserver.id.0),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -150,7 +165,7 @@ impl Session {
 
     fn user_id(&self) -> Option<UserId> {
         match &self.principal {
-            Principal::User(user_id) => Some(*user_id),
+            Principal::User(user) => Some(user.id),
             _ => None,
         }
     }
@@ -160,11 +175,11 @@ impl Debug for Session {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut result = f.debug_struct("Session");
         match &self.principal {
-            Principal::User(user_id) => {
-                result.field("user_id", user_id);
+            Principal::User(user) => {
+                result.field("user_id", &user.id);
             }
-            Principal::DevServer(dev_server_id) => {
-                result.field("dev_server_id", dev_server_id);
+            Principal::DevServer(dev_server) => {
+                result.field("dev_server_id", &dev_server.id);
             }
         }
         result.field("connection_id", &self.connection_id).finish()
@@ -697,19 +712,19 @@ impl Server {
         self: &Arc<Self>,
         connection: Connection,
         address: String,
-        user: User,
+        principal: Principal,
         zed_version: ZedVersion,
         impersonator: Option<User>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
     ) -> impl Future<Output = ()> {
         let this = self.clone();
-        let user_id = user.id;
-        let login = user.github_login.clone();
-        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty, connection_id = field::Empty);
+        let span = info_span!("handle connection", %address, impersonator = field::Empty, connection_id = field::Empty);
+        principal.update_span(&span);
         if let Some(impersonator) = impersonator {
             span.record("impersonator", &impersonator.github_login);
         }
+
         let mut teardown = self.teardown.subscribe();
         async move {
             if *teardown.borrow() {
@@ -734,7 +749,7 @@ impl Server {
             };
 
             let session = Session {
-                principal: Principal::User(user_id),
+                principal: principal.clone(),
                 connection_id,
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
                 peer: this.peer.clone(),
@@ -745,7 +760,7 @@ impl Server {
                 _executor: executor.clone(),
             };
 
-            if let Err(error) = this.send_initial_client_update(connection_id, user, zed_version, send_connection_id, &session).await {
+            if let Err(error) = this.send_initial_client_update(connection_id, &principal, zed_version, send_connection_id, &session).await {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
@@ -785,7 +800,8 @@ impl Server {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %user_id, %login, %connection_id, %address, type_name);
+                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name);
+                            principal.update_span(&span);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
                                 let is_background = message.is_background();
@@ -824,7 +840,7 @@ impl Server {
     async fn send_initial_client_update(
         &self,
         connection_id: ConnectionId,
-        user: User,
+        principal: &Principal,
         zed_version: ZedVersion,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         session: &Session,
@@ -836,6 +852,10 @@ impl Server {
             },
         )?;
         tracing::info!("sent hello message");
+
+        let Principal::User(user) = principal else {
+            return Ok(());
+        };
 
         if let Some(send_connection_id) = send_connection_id.take() {
             let _ = send_connection_id.send(connection_id);
@@ -1055,7 +1075,8 @@ pub async fn handle_websocket_request(
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
-    Extension(user): Extension<User>,
+    Extension(user): Option<Extension<User>>,
+    Extension(dev_server): Option<Extension<User>>,
     Extension(impersonator): Extension<Impersonator>,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {

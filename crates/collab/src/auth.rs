@@ -22,8 +22,11 @@ use subtle::ConstantTimeEq;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Impersonator(pub Option<db::User>);
 
-/// Validates the authorization header. This has two mechanisms, one for the ADMIN_TOKEN
-/// and one for the access tokens that we issue.
+/// Validates the authorization header.
+/// Authorization: <user-id> <token>
+///   <token> can be an access_token attached to that user, or an access token of an admin
+///   or (in development) the string ADMIN:<config.api_token>.
+/// Authorization: "dev-server-token" <token>
 pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let mut auth_header = req
         .headers()
