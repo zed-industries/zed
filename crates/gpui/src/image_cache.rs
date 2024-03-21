@@ -15,19 +15,27 @@ pub(crate) struct RenderImageParams {
     pub(crate) image_id: ImageId,
 }
 
+/// An error that can occur when interacting with the image cache.
 #[derive(Debug, Error, Clone)]
 pub enum ImageCacheError {
+    /// An error that occurred while fetching an image from a remote source.
     #[error("http error: {0}")]
     Client(#[from] http::Error),
+    /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),
+    /// An error that occurred while processing an image.
     #[error("unexpected http status: {status}, body: {body}")]
     BadStatus {
+        /// The HTTP status code.
         status: http::StatusCode,
+        /// The HTTP response body.
         body: String,
     },
+    /// An error that occurred while processing an image.
     #[error("image error: {0}")]
     Image(Arc<ImageError>),
+    /// An error that occurred while processing an SVG.
     #[error("svg error: {0}")]
     Usvg(Arc<resvg::usvg::Error>),
 }
@@ -73,6 +81,7 @@ impl From<Arc<PathBuf>> for UriOrPath {
     }
 }
 
+/// A task to complete fetching an image.
 pub type FetchImageTask = Shared<Task<Result<Arc<ImageData>, ImageCacheError>>>;
 
 impl ImageCache {
@@ -133,6 +142,7 @@ impl ImageCache {
     }
 }
 
+/// Returns the global SVG font database.
 pub fn svg_fontdb() -> &'static resvg::usvg::fontdb::Database {
     static FONTDB: OnceLock<resvg::usvg::fontdb::Database> = OnceLock::new();
     FONTDB.get_or_init(|| {

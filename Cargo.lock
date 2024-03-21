@@ -4776,7 +4776,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "image_viewer"
 version = "0.1.0"
 dependencies = [
@@ -4788,12 +4787,12 @@ dependencies = [
  "util",
  "workspace",
 ]
-=======
+
+[[package]]
 name = "imagesize"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "029d73f573d8e8d63e6d5020011d3255b28c3ba85d6cf870a07184ed23de9284"
->>>>>>> ec2647a64 (gpui: Add SVG rendering to img element)
 
 [[package]]
 name = "indexmap"
