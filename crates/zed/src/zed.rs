@@ -28,6 +28,7 @@ use settings::{
     initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
+use theme::ActiveTheme;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::{
     oneshot_source::OneshotSource,
@@ -102,6 +103,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         is_movable: true,
         display_id: display.map(|display| display.id()),
         fullscreen: false,
+        window_background: Some(cx.theme().window_background()) 
     }
 }
 

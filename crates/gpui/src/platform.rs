@@ -531,6 +531,9 @@ pub struct WindowOptions {
 
     /// The display to create the window on
     pub display_id: Option<DisplayId>,
+
+    /// The background type of the window
+    pub window_background: Option<WindowBackground>
 }
 
 /// The variables that can be configured when creating a new window
@@ -554,6 +557,8 @@ pub(crate) struct WindowParams {
 
     /// The display to create the window on
     pub display_id: Option<DisplayId>,
+
+    pub window_background: Option<WindowBackground>
 }
 
 impl Default for WindowOptions {
@@ -571,6 +576,7 @@ impl Default for WindowOptions {
             is_movable: true,
             display_id: None,
             fullscreen: false,
+            window_background: Some(WindowBackground::default()),
         }
     }
 }
