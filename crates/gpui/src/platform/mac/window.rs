@@ -352,7 +352,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    mimized: bool,
+    minimized: bool,
 }
 
 impl MacWindowState {
@@ -431,7 +431,7 @@ impl MacWindowState {
     }
 
     fn is_minimized(&self) -> bool {
-        self.mimized
+        self.minimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -610,7 +610,7 @@ impl MacWindow {
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                mimized: false,
+                minimized: false,
             })));
 
             (*native_window).set_ivar(
@@ -1841,13 +1841,13 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
 
-    window_state.lock().mimized = true;
+    window_state.lock().minimized = true;
 }
 
 extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
 
-    window_state.lock().mimized = false;
+    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(
