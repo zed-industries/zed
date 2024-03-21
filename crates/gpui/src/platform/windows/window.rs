@@ -189,7 +189,6 @@ impl WindowsWindowInner {
     }
 
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         let handled = match msg {
             WM_ACTIVATE => self.handle_activate_msg(),
             WM_CREATE => self.handle_create_msg(lparam),
