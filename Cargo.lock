@@ -12591,7 +12591,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "wit-bindgen",
 ]
