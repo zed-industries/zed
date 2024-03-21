@@ -350,7 +350,7 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
-    mimized: bool,
+    minimized: bool,
 }
 
 impl MacWindowState {
@@ -429,7 +429,7 @@ impl MacWindowState {
     }
 
     fn is_minimized(&self) -> bool {
-        self.mimized
+        self.minimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -607,7 +607,7 @@ impl MacWindow {
                 input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
-                mimized: false,
+                minimized: false,
             })));
 
             (*native_window).set_ivar(
@@ -1830,13 +1830,13 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
 
-    window_state.lock().mimized = true;
+    window_state.lock().minimized = true;
 }
 
 extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
 
-    window_state.lock().mimized = false;
+    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(
