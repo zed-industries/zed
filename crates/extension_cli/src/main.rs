@@ -54,9 +54,11 @@ async fn main() -> Result<()> {
         args.output_dir
     };
 
+    log::info!("loading extension manifest");
     let mut manifest = ExtensionStore::load_extension_manifest(fs.clone(), &extension_path).await?;
     populate_default_paths(&mut manifest, &extension_path)?;
 
+    log::info!("compiling extension");
     let builder = ExtensionBuilder::new(scratch_dir);
     builder
         .compile_extension(
@@ -257,7 +259,7 @@ fn test_languages(
             Some(
                 grammars
                     .get(name.as_ref())
-                    .ok_or_else(|| anyhow!("language"))?,
+                    .ok_or_else(|| anyhow!("grammar not found: '{name}'"))?,
             )
         } else {
             None
