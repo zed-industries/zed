@@ -80,8 +80,11 @@ struct AvailableLanguage {
 
 enum AvailableGrammar {
     Native(tree_sitter::Language),
-    Loaded(#[allow(dead_code)] PathBuf, tree_sitter::Language),
-    Loading(PathBuf, Vec<oneshot::Sender<Result<tree_sitter::Language>>>),
+    Loaded(#[allow(unused)] PathBuf, tree_sitter::Language),
+    Loading(
+        #[allow(unused)] PathBuf,
+        Vec<oneshot::Sender<Result<tree_sitter::Language>>>,
+    ),
     Unloaded(PathBuf),
 }
 

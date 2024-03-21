@@ -94,6 +94,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&entry_path)?;
         Ok::<_, std::io::Error>((journal_dir, entry_path))
