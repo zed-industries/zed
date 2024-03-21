@@ -3,7 +3,7 @@ use collections::HashMap;
 use futures::{future::Shared, AsyncReadExt, FutureExt, TryFutureExt};
 use image::ImageError;
 use parking_lot::Mutex;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::{fs, path::PathBuf};
 use thiserror::Error;
 use util::http::{self, HttpClient};
@@ -131,4 +131,13 @@ impl ImageCache {
             }
         }
     }
+}
+
+pub fn svg_fontdb() -> &'static resvg::usvg::fontdb::Database {
+    static FONTDB: OnceLock<resvg::usvg::fontdb::Database> = OnceLock::new();
+    FONTDB.get_or_init(|| {
+        let mut fontdb = resvg::usvg::fontdb::Database::new();
+        fontdb.load_system_fonts();
+        fontdb
+    })
 }

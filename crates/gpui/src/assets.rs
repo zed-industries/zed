@@ -1,5 +1,6 @@
 use crate::{
-    size, AppContext, DevicePixels, FetchImageTask, ImageCacheError, Result, SharedString, Size,
+    size, svg_fontdb, AppContext, DevicePixels, FetchImageTask, ImageCacheError, Result,
+    SharedString, Size,
 };
 use anyhow::anyhow;
 use collections::HashMap;
@@ -84,7 +85,7 @@ impl ImageData {
             let data = resvg::usvg::Tree::from_data(
                 bytes,
                 &resvg::usvg::Options::default(),
-                &resvg::usvg::fontdb::Database::default(),
+                svg_fontdb(),
             )?;
             Ok(Self::Vector {
                 id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),

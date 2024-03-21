@@ -1,4 +1,4 @@
-use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
+use crate::{svg_fontdb, AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
 use anyhow::anyhow;
 use std::{hash::Hash, sync::Arc};
 
@@ -24,11 +24,8 @@ impl SvgRenderer {
 
         // Load the tree.
         let bytes = self.asset_source.load(&params.path)?;
-        let tree = resvg::usvg::Tree::from_data(
-            &bytes,
-            &resvg::usvg::Options::default(),
-            &resvg::usvg::fontdb::Database::default(),
-        )?;
+        let tree =
+            resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default(), svg_fontdb())?;
 
         // Render the SVG to a pixmap with the specified width and height.
         let mut pixmap =
