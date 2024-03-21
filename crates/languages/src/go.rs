@@ -189,8 +189,11 @@ impl super::LspAdapter for GoLspAdapter {
             })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "usePlaceholders": true,
             "hints": {
                 "assignVariableTypes": true,
@@ -201,7 +204,7 @@ impl super::LspAdapter for GoLspAdapter {
                 "parameterNames": true,
                 "rangeVariableTypes": true
             }
-        }))
+        })))
     }
 
     async fn label_for_completion(

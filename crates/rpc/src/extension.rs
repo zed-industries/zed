@@ -7,4 +7,5 @@ pub struct ExtensionApiManifest {
     pub description: Option<String>,
     pub authors: Vec<String>,
     pub repository: String,
+    pub schema_version: Option<i32>,
 }

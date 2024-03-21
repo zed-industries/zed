@@ -29,7 +29,10 @@ use settings::{
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::{oneshot_source::OneshotSource, static_source::StaticSource};
+use task::{
+    oneshot_source::OneshotSource,
+    static_source::{StaticSource, TrackedFile},
+};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -166,7 +169,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                                 fs,
                                 paths::TASKS.clone(),
                             );
-                            StaticSource::new("global_tasks", tasks_file_rx, cx)
+                            StaticSource::new(
+                                "global_tasks",
+                                TrackedFile::new(tasks_file_rx, cx),
+                                cx,
+                            )
                         },
                         cx,
                     );
@@ -634,12 +641,17 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {
+    let base_keymap = *BaseKeymap::get_global(cx);
+    if base_keymap == BaseKeymap::None {
+        return;
+    }
+
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
     }
 
-    if let Some(asset_path) = BaseKeymap::get_global(cx).asset_path() {
+    if let Some(asset_path) = base_keymap.asset_path() {
         KeymapFile::load_asset(asset_path, cx).unwrap();
     }
 }

@@ -15,6 +15,10 @@
     "JSON": {
       "tab_size": 2,
       "formatter": "prettier"
+    },
+    "JavaScript": {
+      "tab_size": 2,
+      "formatter": "prettier"
     }
   },
   "formatter": "auto"

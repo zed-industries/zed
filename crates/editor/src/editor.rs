@@ -2432,16 +2432,23 @@ impl Editor {
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
+                let mut is_bracket_pair_end = false;
                 if !text.is_empty() {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
-                        if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
+                        if !pair.close {
+                            continue;
+                        }
+
+                        if enabled && pair.start.ends_with(text.as_ref()) {
                             bracket_pair = Some(pair.clone());
                             is_bracket_pair_start = true;
                             break;
-                        } else if pair.end.as_str() == text.as_ref() {
+                        }
+                        if pair.end.as_str() == text.as_ref() {
                             bracket_pair = Some(pair.clone());
+                            is_bracket_pair_end = true;
                             break;
                         }
                     }
@@ -2503,6 +2510,21 @@ impl Editor {
                                     .push((selection.map(|_| anchor), region.pair.end.len()));
                                 continue;
                             }
+                        }
+
+                        let always_treat_brackets_as_autoclosed = snapshot
+                            .settings_at(selection.start, cx)
+                            .always_treat_brackets_as_autoclosed;
+                        if always_treat_brackets_as_autoclosed
+                            && is_bracket_pair_end
+                            && snapshot.contains_str_at(selection.end, text.as_ref())
+                        {
+                            // Otherwise, when `always_treat_brackets_as_autoclosed` is set to `true
+                            // and the inserted text is a closing bracket and the selection is followed
+                            // by the closing bracket then move the selection past the closing bracket.
+                            let anchor = snapshot.anchor_after(selection.end);
+                            new_selections.push((selection.map(|_| anchor), text.len()));
+                            continue;
                         }
                     }
                     // If an opening bracket is 1 character long and is typed while
@@ -3024,25 +3046,59 @@ impl Editor {
     fn select_autoclose_pair(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx).read(cx);
-        let mut new_selections = Vec::new();
-        for (mut selection, region) in self.selections_with_autoclose_regions(selections, &buffer) {
-            if let (Some(region), true) = (region, selection.is_empty()) {
-                let mut range = region.range.to_offset(&buffer);
-                if selection.start == range.start {
-                    if range.start >= region.pair.start.len() {
+        let new_selections = self
+            .selections_with_autoclose_regions(selections, &buffer)
+            .map(|(mut selection, region)| {
+                if !selection.is_empty() {
+                    return selection;
+                }
+
+                if let Some(region) = region {
+                    let mut range = region.range.to_offset(&buffer);
+                    if selection.start == range.start && range.start >= region.pair.start.len() {
                         range.start -= region.pair.start.len();
-                        if buffer.contains_str_at(range.start, &region.pair.start) {
-                            if buffer.contains_str_at(range.end, &region.pair.end) {
-                                range.end += region.pair.end.len();
-                                selection.start = range.start;
-                                selection.end = range.end;
+                        if buffer.contains_str_at(range.start, &region.pair.start)
+                            && buffer.contains_str_at(range.end, &region.pair.end)
+                        {
+                            range.end += region.pair.end.len();
+                            selection.start = range.start;
+                            selection.end = range.end;
+
+                            return selection;
+                        }
+                    }
+                }
+
+                let always_treat_brackets_as_autoclosed = buffer
+                    .settings_at(selection.start, cx)
+                    .always_treat_brackets_as_autoclosed;
+
+                if !always_treat_brackets_as_autoclosed {
+                    return selection;
+                }
+
+                if let Some(scope) = buffer.language_scope_at(selection.start) {
+                    for (pair, enabled) in scope.brackets() {
+                        if !enabled || !pair.close {
+                            continue;
+                        }
+
+                        if buffer.contains_str_at(selection.start, &pair.end) {
+                            let pair_start_len = pair.start.len();
+                            if buffer.contains_str_at(selection.start - pair_start_len, &pair.start)
+                            {
+                                selection.start -= pair_start_len;
+                                selection.end += pair.end.len();
+
+                                return selection;
                             }
                         }
                     }
                 }
-            }
-            new_selections.push(selection);
-        }
+
+                selection
+            })
+            .collect();
 
         drop(buffer);
         self.change_selections(None, cx, |selections| selections.select(new_selections));

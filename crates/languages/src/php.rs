@@ -97,23 +97,8 @@ impl LspAdapter for IntelephenseLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn label_for_completion(
-        &self,
-        _item: &lsp::CompletionItem,
-        _language: &Arc<language::Language>,
-    ) -> Option<language::CodeLabel> {
-        None
-    }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        None
-    }
     fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["@prettier/plugin-php"]
     }
 }
 

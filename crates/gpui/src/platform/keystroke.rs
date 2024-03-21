@@ -229,4 +229,13 @@ impl Modifiers {
             ..Default::default()
         }
     }
+
+    /// Checks if this Modifiers is a subset of another Modifiers
+    pub fn is_subset_of(&self, other: &Modifiers) -> bool {
+        (other.control || !self.control)
+            && (other.alt || !self.alt)
+            && (other.shift || !self.shift)
+            && (other.command || !self.command)
+            && (other.function || !self.function)
+    }
 }

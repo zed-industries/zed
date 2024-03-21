@@ -91,10 +91,13 @@ impl LspAdapter for HtmlLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true
-        }))
+        })))
     }
 }
 

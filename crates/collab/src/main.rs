@@ -7,7 +7,7 @@ use axum::{
 };
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
-    Config, MigrateConfig, RateLimiter, Result,
+    Config, RateLimiter, Result,
 };
 use db::Database;
 use std::{
@@ -43,7 +43,16 @@ async fn main() -> Result<()> {
             println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
         }
         Some("migrate") => {
-            run_migrations().await?;
+            let config = envy::from_env::<Config>().expect("error loading config");
+            run_migrations(&config).await?;
+        }
+        Some("seed") => {
+            let config = envy::from_env::<Config>().expect("error loading config");
+            let db_options = db::ConnectOptions::new(config.database_url.clone());
+            let mut db = Database::new(db_options, Executor::Production).await?;
+            db.initialize_notification_kinds().await?;
+
+            collab::seed::seed(&config, &db, true).await?;
         }
         Some("serve") => {
             let (is_api, is_collab) = if let Some(next) = args.next() {
@@ -53,14 +62,14 @@ async fn main() -> Result<()> {
             };
             if !is_api && !is_collab {
                 Err(anyhow!(
-                    "usage: collab <version | migrate | serve [api|collab]>"
+                    "usage: collab <version | migrate | seed | serve [api|collab]>"
                 ))?;
             }
 
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
 
-            run_migrations().await?;
+            run_migrations(&config).await?;
 
             let state = AppState::new(config, Executor::Production).await?;
 
@@ -155,22 +164,25 @@ async fn main() -> Result<()> {
         }
         _ => {
             Err(anyhow!(
-                "usage: collab <version | migrate | serve [api|collab]>"
+                "usage: collab <version | migrate | seed | serve [api|collab]>"
             ))?;
         }
     }
     Ok(())
 }
 
-async fn run_migrations() -> Result<()> {
-    let config = envy::from_env::<MigrateConfig>().expect("error loading config");
+async fn run_migrations(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
-    let db = Database::new(db_options, Executor::Production).await?;
+    let mut db = Database::new(db_options, Executor::Production).await?;
 
-    let migrations_path = config
-        .migrations_path
-        .as_deref()
-        .unwrap_or_else(|| Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")));
+    let migrations_path = config.migrations_path.as_deref().unwrap_or_else(|| {
+        #[cfg(feature = "sqlite")]
+        let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
+        #[cfg(not(feature = "sqlite"))]
+        let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
+
+        Path::new(default_migrations)
+    });
 
     let migrations = db.migrate(&migrations_path, false).await?;
     for (migration, duration) in migrations {
@@ -180,6 +192,12 @@ async fn run_migrations() -> Result<()> {
             migration.description,
             duration
         );
+    }
+
+    db.initialize_notification_kinds().await?;
+
+    if config.seed_path.is_some() {
+        collab::seed::seed(&config, &db, false).await?;
     }
 
     return Ok(());

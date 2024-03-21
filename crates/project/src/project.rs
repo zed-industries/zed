@@ -87,14 +87,16 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use task::static_source::StaticSource;
+use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::HttpClient,
     merge_json_value_into,
-    paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
+    paths::{
+        LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+    },
     post_inc, ResultExt, TryFutureExt as _,
 };
 use worktree::{Snapshot, Traversal};
@@ -992,19 +994,17 @@ impl Project {
 
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language, settings) in language_formatters_to_check {
-            if let Some(plugins) = prettier_support::prettier_plugins_for_language(
-                &self.languages,
-                &language,
-                &settings,
-            ) {
+            if let Some(plugins) =
+                prettier_support::prettier_plugins_for_language(&language, &settings)
+            {
                 prettier_plugins_by_worktree
                     .entry(worktree)
                     .or_insert_with(|| HashSet::default())
-                    .extend(plugins);
+                    .extend(plugins.iter().cloned());
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(worktree, prettier_plugins, cx);
+            self.install_default_prettier(worktree, prettier_plugins.into_iter(), cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -2843,12 +2843,10 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(
-            &self.languages,
-            &new_language,
-            &settings,
-        ) {
-            self.install_default_prettier(worktree, prettier_plugins, cx);
+        if let Some(prettier_plugins) =
+            prettier_support::prettier_plugins_for_language(&new_language, &settings)
+        {
+            self.install_default_prettier(worktree, prettier_plugins.iter().cloned(), cx);
         };
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
@@ -3102,7 +3100,7 @@ impl Project {
     ) -> Result<Arc<LanguageServer>> {
         let workspace_config =
             cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
-        let language_server = pending_server.task.await?;
+        let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
         language_server
@@ -3342,7 +3340,6 @@ impl Project {
             })
             .detach();
 
-        let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
                 merge_json_value_into(override_options, initialization_options);
@@ -7108,7 +7105,37 @@ impl Project {
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
                                     format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    tasks_file_rx,
+                                    TrackedFile::new(tasks_file_rx, cx),
+                                    cx,
+                                )
+                            },
+                            cx,
+                        );
+                    }
+                })
+            } else if abs_path.ends_with(&*LOCAL_VSCODE_TASKS_RELATIVE_PATH) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let task_abs_path = abs_path.clone();
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                            },
+                            |cx| {
+                                let tasks_file_rx =
+                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                                StaticSource::new(
+                                    format!(
+                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
+                                    ),
+                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                        tasks_file_rx,
+                                        cx,
+                                    ),
                                     cx,
                                 )
                             },

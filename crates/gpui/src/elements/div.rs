@@ -18,10 +18,10 @@
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
     ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -387,6 +387,18 @@ impl Interactivity {
                     listener(event, cx)
                 }
             }));
+    }
+
+    /// Bind the given callback to modifiers changing events.
+    /// The imperative API equivalent to [`InteractiveElement::on_modifiers_changed`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    pub fn on_modifiers_changed(
+        &mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static,
+    ) {
+        self.modifiers_changed_listeners
+            .push(Box::new(move |event, cx| listener(event, cx)));
     }
 
     /// Bind the given callback to drop events of the given type, whether or not the drag started on this element
@@ -775,6 +787,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to modifiers changing events.
+    /// The fluent API equivalent to [`Interactivity::on_modifiers_changed`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn on_modifiers_changed(
+        mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().on_modifiers_changed(listener);
+        self
+    }
+
     /// Apply the given style when the given data type is dragged over this element
     fn drag_over<S: 'static>(
         mut self,
@@ -999,6 +1023,9 @@ pub(crate) type KeyDownListener =
 pub(crate) type KeyUpListener =
     Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + 'static>;
 
+pub(crate) type ModifiersChangedListener =
+    Box<dyn Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static>;
+
 pub(crate) type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 
 /// Construct a new [`Div`] element
@@ -1188,6 +1215,7 @@ pub struct Interactivity {
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
+    pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
     pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
@@ -1873,6 +1901,7 @@ impl Interactivity {
     fn paint_keyboard_listeners(&mut self, cx: &mut ElementContext) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
+        let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
         let action_listeners = mem::take(&mut self.action_listeners);
         if let Some(context) = self.key_context.clone() {
             cx.set_key_context(context);
@@ -1890,6 +1919,12 @@ impl Interactivity {
         for listener in key_up_listeners {
             cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
                 listener(event, phase, cx);
+            })
+        }
+
+        for listener in modifiers_changed_listeners {
+            cx.on_modifiers_changed(move |event: &ModifiersChangedEvent, cx| {
+                listener(event, cx);
             })
         }
 

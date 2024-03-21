@@ -3482,6 +3482,7 @@ dependencies = [
  "settings",
  "theme",
  "toml 0.8.10",
+ "url",
  "util",
  "wasm-encoder",
  "wasmparser",
@@ -3528,6 +3529,7 @@ dependencies = [
  "settings",
  "smallvec",
  "theme",
+ "theme_selector",
  "ui",
  "util",
  "workspace",
@@ -9409,6 +9411,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json_lenient",
+ "shellexpand",
  "subst",
  "util",
 ]
@@ -9619,6 +9622,7 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "serde",
  "settings",
  "theme",
  "ui",
@@ -12538,7 +12542,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.128.0"
+version = "0.129.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -12627,7 +12631,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "wit-bindgen",
 ]
