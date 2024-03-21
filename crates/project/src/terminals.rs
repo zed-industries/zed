@@ -1,4 +1,5 @@
 use crate::Project;
+use collections::HashMap;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings::Settings;
 use smol::channel::bounded;
@@ -7,6 +8,7 @@ use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
     SpawnTask, TaskState, Terminal, TerminalBuilder,
 };
+use util::ResultExt;
 
 // #[cfg(target_os = "macos")]
 // use std::os::unix::ffi::OsStrExt;
@@ -129,10 +131,10 @@ impl Project {
         };
 
         for virtual_environment_name in settings.directories {
-            let mut path = working_directory.join(virtual_environment_name);
-            path.push("bin/");
-            path.push(activate_script_name);
-
+            let path = working_directory
+                .join(virtual_environment_name)
+                .join("bin")
+                .join(activate_script_name);
             if path.exists() {
                 return Some(path);
             }
@@ -145,7 +147,7 @@ impl Project {
         &mut self,
         settings: &VenvSettingsContent,
         working_directory: Option<PathBuf>,
-        env: &mut collections::HashMap<String, String>,
+        env: &mut HashMap<String, String>,
     ) {
         let working_directory = working_directory.unwrap_or_else(|| Path::new("/").to_path_buf());
         for virtual_environment_name in settings.directories {
@@ -161,8 +163,9 @@ impl Project {
                 // We need to set the PATH to include the virtual environment's bin directory
                 if let Some(paths) = std::env::var_os("PATH") {
                     let paths = std::iter::once(path_bin).chain(std::env::split_paths(&paths));
-                    let new_path = std::env::join_paths(paths).unwrap();
-                    env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
+                    if let Some(new_path) = std::env::join_paths(paths).log_err() {
+                        env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
+                    }
                 } else {
                     env.insert(
                         "PATH".to_string(),
