@@ -25,4 +25,7 @@ smol.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
