@@ -30,7 +30,6 @@ pub mod movement;
 mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
-// mod scrollbar_markers;
 mod selections_collection;
 
 #[cfg(test)]
