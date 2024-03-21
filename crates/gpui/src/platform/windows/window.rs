@@ -211,25 +211,11 @@ impl WindowsWindowInner {
             WM_LBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Left, lparam),
             WM_RBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Right, lparam),
             WM_MBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Middle, lparam),
-            WM_XBUTTONDOWN => {
-                let nav_dir = match wparam.hiword() {
-                    XBUTTON1 => NavigationDirection::Forward,
-                    XBUTTON2 => NavigationDirection::Back,
-                    _ => return LRESULT(1),
-                };
-                self.handle_mouse_down_msg(MouseButton::Navigate(nav_dir), lparam)
-            }
+            WM_XBUTTONDOWN => self.handle_xbutton_msg(wparam, lparam, Self::handle_mouse_down_msg),
             WM_LBUTTONUP => self.handle_mouse_up_msg(MouseButton::Left, lparam),
             WM_RBUTTONUP => self.handle_mouse_up_msg(MouseButton::Right, lparam),
             WM_MBUTTONUP => self.handle_mouse_up_msg(MouseButton::Middle, lparam),
-            WM_XBUTTONUP => {
-                let nav_dir = match wparam.hiword() {
-                    XBUTTON1 => NavigationDirection::Back,
-                    XBUTTON2 => NavigationDirection::Forward,
-                    _ => return LRESULT(1),
-                };
-                self.handle_mouse_up_msg(MouseButton::Navigate(nav_dir), lparam)
-            }
+            WM_XBUTTONUP => self.handle_xbutton_msg(wparam, lparam, Self::handle_mouse_up_msg),
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(wparam, lparam),
             WM_SYSKEYDOWN => self.handle_syskeydown_msg(wparam, lparam),
@@ -630,6 +616,20 @@ impl WindowsWindowInner {
             }
         }
         Some(1)
+    }
+
+    fn handle_xbutton_msg(
+        &self,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        handler: impl Fn(&Self, MouseButton, LPARAM) -> Option<isize>,
+    ) -> Option<isize> {
+        let nav_dir = match wparam.hiword() {
+            XBUTTON1 => NavigationDirection::Back,
+            XBUTTON2 => NavigationDirection::Forward,
+            _ => return Some(1),
+        };
+        handler(self, MouseButton::Navigate(nav_dir), lparam)
     }
 
     fn handle_mouse_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
