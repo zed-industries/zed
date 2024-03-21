@@ -4,10 +4,11 @@ use crate::{
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, Global, GlobalElementId, GlobalPixels, Hsla, KeyBinding, KeyDownEvent,
     KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers,
-    MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, View,
-    VisualContext, WeakView, WindowAppearance, WindowOptions, WindowParams, WindowTextSystem,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
+    WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -1381,6 +1382,11 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
+        self.dispatch_modifiers_changed_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
         self.dispatch_keystroke_observers(event, None);
     }
 
@@ -1410,6 +1416,27 @@ impl<'a> WindowContext<'a> {
             for key_listener in node.key_listeners.clone() {
                 self.with_element_context(|cx| {
                     key_listener(event, DispatchPhase::Bubble, cx);
+                });
+                if !self.propagate_event {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn dispatch_modifiers_changed_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
+        let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+            return;
+        };
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            for listener in node.modifiers_changed_listeners.clone() {
+                self.with_element_context(|cx| {
+                    listener(event, cx);
                 });
                 if !self.propagate_event {
                     return;
