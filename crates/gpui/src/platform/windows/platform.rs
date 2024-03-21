@@ -14,7 +14,7 @@ use std::{
 };
 
 use ::util::{ResultExt, SemanticVersion};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
@@ -62,6 +62,7 @@ pub(crate) struct WindowsPlatformInner {
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+    pub icon: HICON,
 }
 
 impl WindowsPlatformInner {
@@ -156,6 +157,7 @@ impl WindowsPlatform {
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
+        let icon = load_icon().unwrap_or_default();
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -165,6 +167,7 @@ impl WindowsPlatform {
             raw_window_handles,
             dispatch_event,
             settings,
+            icon,
         });
         Self { inner }
     }
@@ -880,4 +883,20 @@ fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
         let _ = (&period,);
         (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
     }
+}
+
+fn load_icon() -> Result<HICON> {
+    let module = unsafe { GetModuleHandleW(None).context("unable to get module handle")? };
+    let handle = unsafe {
+        LoadImageW(
+            module,
+            IDI_APPLICATION,
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_SHARED,
+        )
+        .context("unable to load icon file")?
+    };
+    Ok(HICON(handle.0))
 }

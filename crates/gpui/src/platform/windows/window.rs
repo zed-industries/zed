@@ -1097,7 +1097,7 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Self {
-        let classname = register_wnd_class();
+        let classname = register_wnd_class(platform_inner.icon);
         let hide_title_bar = options
             .titlebar
             .as_ref()
@@ -1556,13 +1556,14 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 }
 
-fn register_wnd_class() -> PCWSTR {
+fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
+            hIcon: icon_handle,
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
