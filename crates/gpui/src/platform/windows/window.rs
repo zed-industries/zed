@@ -733,6 +733,15 @@ impl WindowsWindowInner {
         }
     }
 
+    fn retrieve_composition_cursor_position(&self) -> usize {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
+            ImmReleaseContext(self.hwnd, ctx);
+            ret as usize
+        }
+    }
+
     fn handle_ime_composition(&self, lparam: LPARAM) -> Option<isize> {
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = self.parse_ime_compostion_string() else {
@@ -746,6 +755,17 @@ impl WindowsWindowInner {
                 string.as_str(),
                 Some(0..string_len),
             );
+            self.input_handler.set(Some(input_handler));
+            None
+        } else if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
+            let Some((string, _)) = self.parse_ime_compostion_string() else {
+                return None;
+            };
+            let caret_pos = self.retrieve_composition_cursor_position();
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return None;
+            };
+            input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..caret_pos));
             self.input_handler.set(Some(input_handler));
             None
         } else {
