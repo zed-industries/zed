@@ -722,6 +722,12 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
+    /// Check if the platform window is minimized
+    /// On some platforms (namely Windows) the position is incorrect when minimized
+    pub fn is_minimized(&self) -> bool {
+        self.window.platform_window.is_minimized()
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();

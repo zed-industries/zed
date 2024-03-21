@@ -126,12 +126,11 @@ impl WindowsWindowInner {
     }
 
     fn is_maximized(&self) -> bool {
-        let mut placement = WINDOWPLACEMENT::default();
-        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-        if unsafe { GetWindowPlacement(self.hwnd, &mut placement) }.is_ok() {
-            return placement.showCmd == SW_SHOWMAXIMIZED.0 as u32;
-        }
-        return false;
+        unsafe { IsZoomed(self.hwnd) }.as_bool()
+    }
+
+    fn is_minimized(&self) -> bool {
+        unsafe { IsIconic(self.hwnd) }.as_bool()
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
@@ -1168,10 +1167,6 @@ impl WindowsWindow {
         unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         wnd
     }
-
-    fn maximize(&self) {
-        unsafe { ShowWindowAsync(self.inner.hwnd, SW_MAXIMIZE) };
-    }
 }
 
 impl HasWindowHandle for WindowsWindow {
@@ -1213,6 +1208,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_maximized(&self) -> bool {
         self.inner.is_maximized()
+    }
+
+    fn is_minimized(&self) -> bool {
+        self.inner.is_minimized()
     }
 
     /// get the logical size of the app's drawable area.

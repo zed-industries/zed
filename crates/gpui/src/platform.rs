@@ -170,6 +170,7 @@ unsafe impl Send for DisplayId {}
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<GlobalPixels>;
     fn is_maximized(&self) -> bool;
+    fn is_minimized(&self) -> bool;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
