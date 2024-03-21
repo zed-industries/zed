@@ -98,15 +98,16 @@ impl Project {
             // if the terminal is not a task, activate full Python virtual environment
             if is_terminal {
                 if let Some(python_settings) = &python_settings.as_option() {
-                    let activate_command = Project::get_activate_command(python_settings);
-                    let activate_script_path =
-                        self.find_activate_script_path(python_settings, venv_base_directory);
-                    self.activate_python_virtual_environment(
-                        activate_command,
-                        activate_script_path,
-                        &terminal_handle,
-                        cx,
-                    );
+                    if let Some(activate_script_path) =
+                        self.find_activate_script_path(python_settings, venv_base_directory)
+                    {
+                        self.activate_python_virtual_environment(
+                            Project::get_activate_command(python_settings),
+                            activate_script_path,
+                            &terminal_handle,
+                            cx,
+                        );
+                    }
                 }
             }
             terminal_handle
@@ -182,22 +183,20 @@ impl Project {
     fn activate_python_virtual_environment(
         &mut self,
         activate_command: &'static str,
-        activate_script: Option<PathBuf>,
+        activate_script: PathBuf,
         terminal_handle: &Model<Terminal>,
         cx: &mut ModelContext<Project>,
     ) {
-        if let Some(activate_script) = activate_script {
-            // Paths are not strings so we need to jump through some hoops to format the command without `format!`
-            let mut command = Vec::from(activate_command.as_bytes());
-            command.push(b' ');
-            // Wrapping path in double quotes to catch spaces in folder name
-            command.extend_from_slice(b"\"");
-            command.extend_from_slice(activate_script.as_os_str().as_encoded_bytes());
-            command.extend_from_slice(b"\"");
-            command.push(b'\n');
+        // Paths are not strings so we need to jump through some hoops to format the command without `format!`
+        let mut command = Vec::from(activate_command.as_bytes());
+        command.push(b' ');
+        // Wrapping path in double quotes to catch spaces in folder name
+        command.extend_from_slice(b"\"");
+        command.extend_from_slice(activate_script.as_os_str().as_encoded_bytes());
+        command.extend_from_slice(b"\"");
+        command.push(b'\n');
 
-            terminal_handle.update(cx, |this, _| this.input_bytes(command));
-        }
+        terminal_handle.update(cx, |this, _| this.input_bytes(command));
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal::Terminal>> {
