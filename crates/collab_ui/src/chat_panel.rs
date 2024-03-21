@@ -762,7 +762,7 @@ impl ChatPanel {
 
         if message.edited_at.is_some() {
             rich_text.highlights.push((
-                message.body.len()..(message.body.len() + MESSAGE_UPDATED.len()),
+                (rich_text.text.len() - MESSAGE_UPDATED.len())..rich_text.text.len(),
                 Highlight::Highlight(HighlightStyle {
                     fade_out: Some(0.8),
                     ..Default::default()
