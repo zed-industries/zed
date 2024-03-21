@@ -9540,6 +9540,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.shell_env.lock().as_ref().cloned().unwrap_or_default()
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         self.load_shell_env().await;
@@ -9549,6 +9550,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
             .as_ref()
             .and_then(|shell_env| shell_env.get("PATH").cloned());
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
+        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
+        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
+        which::which(command).ok()
     }
 
     fn update_status(
