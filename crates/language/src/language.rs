@@ -334,7 +334,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
                         self.name(),
@@ -505,7 +504,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
         .await;
 
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
     binary
 }
 

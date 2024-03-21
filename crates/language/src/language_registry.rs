@@ -54,10 +54,9 @@ struct LanguageRegistryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LanguageServerBinaryStatus {
+    None,
     CheckingForUpdate,
     Downloading,
-    Downloaded,
-    Cached,
     Failed { error: String },
 }
 
@@ -700,7 +699,7 @@ impl LanguageRegistry {
                 // the login shell to be set on our process.
                 login_shell_env_loaded.await;
 
-                let binary = adapter
+                let binary_result = adapter
                     .clone()
                     .get_language_server_command(
                         language.clone(),
@@ -708,8 +707,11 @@ impl LanguageRegistry {
                         delegate.clone(),
                         &mut cx,
                     )
-                    .await?;
+                    .await;
 
+                delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+
+                let binary = binary_result?;
                 let options = adapter
                     .adapter
                     .clone()

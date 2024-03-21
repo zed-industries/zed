@@ -403,10 +403,7 @@ impl wit::ExtensionImports for WasmState {
             wit::LanguageServerInstallationStatus::Downloading => {
                 LanguageServerBinaryStatus::Downloading
             }
-            wit::LanguageServerInstallationStatus::Downloaded => {
-                LanguageServerBinaryStatus::Downloaded
-            }
-            wit::LanguageServerInstallationStatus::Cached => LanguageServerBinaryStatus::Cached,
+            wit::LanguageServerInstallationStatus::None => LanguageServerBinaryStatus::None,
             wit::LanguageServerInstallationStatus::Failed(error) => {
                 LanguageServerBinaryStatus::Failed { error }
             }

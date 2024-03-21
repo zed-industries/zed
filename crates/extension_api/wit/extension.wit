@@ -38,10 +38,9 @@ world extension {
     }
 
     variant language-server-installation-status {
-        checking-for-update,
-        downloaded,
+        none,
         downloading,
-        cached,
+        checking-for-update,
         failed(string),
     }
 

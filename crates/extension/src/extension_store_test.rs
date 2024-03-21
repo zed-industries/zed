@@ -602,7 +602,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             ),
             (
                 LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloaded
+                LanguageServerBinaryStatus::None
             )
         ]
     );
