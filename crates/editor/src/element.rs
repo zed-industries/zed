@@ -44,7 +44,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter, mem,
-    ops::{Range, RangeBounds},
+    ops::Range,
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -2188,88 +2188,18 @@ impl EditorElement {
                 let right = scrollbar_layout.hitbox.right();
                 let column_width =
                     px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
-                // if is_singleton && scrollbar_settings.selections {
-                //     let start_anchor = Anchor::min();
-                //     let end_anchor = Anchor::max();
-                //     let background_ranges = self
-                //         .editor
-                //         .read(cx)
-                //         .background_highlight_row_ranges::<BufferSearchHighlights>(
-                //             start_anchor..end_anchor,
-                //             &layout.position_map.snapshot,
-                //             50000,
-                //         );
-                //     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                //     let right_x = left_x + column_width;
-                //     let mut y_range: Option<(Pixels, Pixels)> = None;
-                //     for range in background_ranges {
-                //         let (start_y, end_y) =
-                //             scrollbar_layout.ys_for_marker(range.start().row(), range.end().row());
-                //         let Some(group_y_range) = y_range else {
-                //             y_range = Some((start_y, end_y));
-                //             continue;
-                //         };
-                //         if start_y <= group_y_range.1 {
-                //             y_range = Some((group_y_range.0, end_y));
-                //             continue;
-                //         }
-                //         let bounds = Bounds::from_corners(
-                //             point(left_x, group_y_range.0),
-                //             point(right_x, group_y_range.1),
-                //         );
-                //         cx.paint_quad(quad(
-                //             bounds,
-                //             Corners::default(),
-                //             cx.theme().status().info,
-                //             Edges::default(),
-                //             cx.theme().colors().scrollbar_thumb_border,
-                //         ));
-                //         y_range = Some((start_y, end_y));
-                //     }
-                //     if let Some(group_y_range) = y_range {
-                //         let bounds = Bounds::from_corners(
-                //             point(left_x, group_y_range.0),
-                //             point(right_x, group_y_range.1),
-                //         );
-                //         cx.paint_quad(quad(
-                //             bounds,
-                //             Corners::default(),
-                //             cx.theme().status().info,
-                //             Edges::default(),
-                //             cx.theme().colors().scrollbar_thumb_border,
-                //         ));
-                //     }
-                // }
 
-                if is_singleton && scrollbar_settings.symbols_selections {
-                    let selection_ranges = self
-                        .editor
-                        .read(cx)
-                        .background_highlight_hunks(&layout.position_map.snapshot);
+                if is_singleton && scrollbar_settings.selections {
+                    let hunks = self.retrieve_marker_hunks::<BufferSearchHighlights>(
+                        layout,
+                        scrollbar_layout,
+                        cx,
+                    );
                     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
                     let right_x = left_x + column_width;
-                    let mut y_range: Option<(Pixels, Pixels)> = None;
-                    for hunk in selection_ranges {
-                        let start_display = Point::new(hunk.start, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = Point::new(hunk.end, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
-                        let Some(group_y_range) = y_range else {
-                            y_range = Some((start_y, end_y));
-                            continue;
-                        };
-                        if start_y >= group_y_range.0 && start_y <= group_y_range.1 {
-                            if end_y > group_y_range.1 {
-                                y_range = Some((group_y_range.0, end_y));
-                            }
-                            continue;
-                        }
-                        let bounds = Bounds::from_corners(
-                            point(left_x, group_y_range.0),
-                            point(right_x, group_y_range.1),
-                        );
+                    for hunk in hunks {
+                        let bounds =
+                            Bounds::from_corners(point(left_x, hunk.0), point(right_x, hunk.1));
                         cx.paint_quad(quad(
                             bounds,
                             Corners::default(),
@@ -2277,13 +2207,25 @@ impl EditorElement {
                             Edges::default(),
                             cx.theme().colors().scrollbar_thumb_border,
                         ));
-                        y_range = Some((start_y, end_y));
                     }
-                    if let Some(group_y_range) = y_range {
-                        let bounds = Bounds::from_corners(
-                            point(left_x, group_y_range.0),
-                            point(right_x, group_y_range.1),
-                        );
+                }
+
+                if is_singleton && scrollbar_settings.symbols_selections {
+                    let mut hunks = self.retrieve_marker_hunks::<DocumentHighlightRead>(
+                        layout,
+                        scrollbar_layout,
+                        cx,
+                    );
+                    hunks.extend(self.retrieve_marker_hunks::<DocumentHighlightWrite>(
+                        layout,
+                        scrollbar_layout,
+                        cx,
+                    ));
+                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
+                    let right_x = left_x + column_width;
+                    for hunk in hunks {
+                        let bounds =
+                            Bounds::from_corners(point(left_x, hunk.0), point(right_x, hunk.1));
                         cx.paint_quad(quad(
                             bounds,
                             Corners::default(),
@@ -2731,6 +2673,101 @@ impl EditorElement {
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
+    }
+
+    fn retrieve_marker_hunks<T: 'static>(
+        &self,
+        layout: &EditorLayout,
+        scrollbar_layout: &ScrollbarLayout,
+        cx: &mut ElementContext<'_>,
+    ) -> Vec<(Pixels, Pixels)> {
+        self.editor.update(cx, |editor, _cx| {
+            let Some(mut highlights) = editor.background_highlights.remove(&TypeId::of::<T>())
+            else {
+                return vec![];
+            };
+            let hunks_clone = if let Some(ref hunks) = highlights.marker_hunks {
+                hunks.clone()
+            } else {
+                let ranges = Self::group_ranges(&highlights.ranges, &layout.position_map.snapshot);
+                let mut marker_hunks = vec![];
+                let mut hunk: Option<(Pixels, Pixels)> = None;
+                for range in ranges {
+                    let start_display = Point::new(range.start, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(range.end, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let (start_y, end_y) =
+                        scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
+                    let Some(current_hunk) = hunk else {
+                        hunk = Some((start_y, end_y));
+                        continue;
+                    };
+                    if start_y >= current_hunk.0 && start_y <= current_hunk.1 {
+                        if end_y > current_hunk.1 {
+                            hunk = Some((current_hunk.0, end_y));
+                        }
+                        continue;
+                    }
+                    marker_hunks.push(current_hunk);
+                    hunk = Some((start_y, end_y));
+                }
+                if let Some(hunk) = hunk {
+                    marker_hunks.push(hunk);
+                }
+
+                let hunks_clone = marker_hunks.clone();
+                highlights.marker_hunks = Some(marker_hunks);
+                hunks_clone
+            };
+            editor
+                .background_highlights
+                .insert(TypeId::of::<T>(), highlights);
+            hunks_clone
+        })
+    }
+
+    pub fn group_ranges(
+        ranges: &Vec<Range<Anchor>>,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<Range<u32>> {
+        let mut results = Vec::new();
+        let mut current_hunk = None;
+        for range in ranges {
+            let start_row = range.start.to_display_point(&display_snapshot).row();
+            let end_row = range.end.to_display_point(&display_snapshot).row();
+            let Some(mut hunk) = current_hunk.take() else {
+                current_hunk = Some(Range {
+                    start: start_row,
+                    end: end_row,
+                });
+                continue;
+            };
+            if start_row < hunk.start {
+                results.push(hunk);
+                current_hunk = Some(Range {
+                    start: start_row,
+                    end: end_row,
+                });
+                continue;
+            }
+            if start_row <= hunk.end + 1 {
+                if end_row > hunk.end {
+                    hunk.end = end_row;
+                }
+                current_hunk = Some(hunk);
+                continue;
+            }
+            results.push(hunk);
+            current_hunk = Some(Range {
+                start: start_row,
+                end: end_row,
+            });
+        }
+        if let Some(hunk) = current_hunk.take() {
+            results.push(hunk);
+        }
+        results
     }
 }
 

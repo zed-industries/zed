@@ -108,7 +108,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -354,7 +354,11 @@ type CompletionId = usize;
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
+pub struct BackgroundHighlight {
+    ranges: Vec<Range<Anchor>>,
+    color_fetcher: fn(&ThemeColors) -> Hsla,
+    marker_hunks: Option<Vec<(Pixels, Pixels)>>,
+}
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -8249,11 +8253,11 @@ impl Editor {
                     let ranges = this
                         .clear_background_highlights::<DocumentHighlightWrite>(cx)
                         .into_iter()
-                        .flat_map(|(_, ranges)| ranges.into_iter())
+                        .flat_map(|h| h.ranges.into_iter())
                         .chain(
                             this.clear_background_highlights::<DocumentHighlightRead>(cx)
                                 .into_iter()
-                                .flat_map(|(_, ranges)| ranges.into_iter()),
+                                .flat_map(|h| h.ranges.into_iter()),
                         )
                         .collect();
 
@@ -9178,8 +9182,14 @@ impl Editor {
                 .summary_for_anchor::<usize>(&range.end);
         }
 
-        self.background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
+        self.background_highlights.insert(
+            TypeId::of::<T>(),
+            BackgroundHighlight {
+                ranges,
+                color_fetcher,
+                marker_hunks: None,
+            },
+        );
         cx.notify();
     }
 
@@ -9212,11 +9222,11 @@ impl Editor {
         let read_highlights = self
             .background_highlights
             .get(&TypeId::of::<DocumentHighlightRead>())
-            .map(|h| &h.1);
+            .map(|h| &h.ranges);
         let write_highlights = self
             .background_highlights
             .get(&TypeId::of::<DocumentHighlightWrite>())
-            .map(|h| &h.1);
+            .map(|h| &h.ranges);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
         read_highlights
@@ -9243,7 +9253,7 @@ impl Editor {
     pub fn has_background_highlights<T: 'static>(&self) -> bool {
         self.background_highlights
             .get(&TypeId::of::<T>())
-            .map_or(false, |(_, highlights)| !highlights.is_empty())
+            .map_or(false, |h| !h.ranges.is_empty())
     }
 
     pub fn background_highlights_in_range(
@@ -9253,7 +9263,12 @@ impl Editor {
         theme: &ThemeColors,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
-        for (color_fetcher, ranges) in self.background_highlights.values() {
+        for BackgroundHighlight {
+            color_fetcher,
+            ranges,
+            ..
+        } in self.background_highlights.values()
+        {
             let color = color_fetcher(theme);
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe
@@ -9281,126 +9296,6 @@ impl Editor {
                 results.push((start..end, color))
             }
         }
-        results
-    }
-
-    pub fn background_highlight_hunks(
-        &self,
-        display_snapshot: &DisplaySnapshot,
-    ) -> Vec<Range<u32>> {
-        let mut results = Vec::new();
-        let mut current_hunk = None;
-        for (_, ranges) in self.background_highlights.values() {
-            for range in ranges {
-                let start_row = range.start.to_display_point(&display_snapshot).row();
-                let end_row = range.end.to_display_point(&display_snapshot).row();
-                let Some(mut hunk) = current_hunk.take() else {
-                    current_hunk = Some(Range {
-                        start: start_row,
-                        end: end_row,
-                    });
-                    continue;
-                };
-                if start_row < hunk.start {
-                    results.push(hunk);
-                    current_hunk = Some(Range {
-                        start: start_row,
-                        end: end_row,
-                    });
-                    continue;
-                }
-                if start_row <= hunk.end + 1 {
-                    if end_row > hunk.end {
-                        hunk.end = end_row;
-                    }
-                    current_hunk = Some(hunk);
-                    continue;
-                }
-                results.push(hunk);
-                current_hunk = Some(Range {
-                    start: start_row,
-                    end: end_row,
-                });
-            }
-        }
-        if let Some(hunk) = current_hunk.take() {
-            results.push(hunk);
-        }
-        results
-    }
-
-    pub fn background_highlight_row_ranges<T: 'static>(
-        &self,
-        search_range: Range<Anchor>,
-        display_snapshot: &DisplaySnapshot,
-        count: usize,
-    ) -> Vec<RangeInclusive<DisplayPoint>> {
-        let mut results = Vec::new();
-        let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
-            return vec![];
-        };
-
-        let start_ix = match ranges.binary_search_by(|probe| {
-            let cmp = probe
-                .end
-                .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
-            if cmp.is_gt() {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        }) {
-            Ok(i) | Err(i) => i,
-        };
-        let mut push_region = |start: Option<Point>, end: Option<Point>| {
-            if let (Some(start_display), Some(end_display)) = (start, end) {
-                results.push(
-                    start_display.to_display_point(display_snapshot)
-                        ..=end_display.to_display_point(display_snapshot),
-                );
-            }
-        };
-        let mut start_row: Option<Point> = None;
-        let mut end_row: Option<Point> = None;
-        if ranges.len() > count {
-            return Vec::new();
-        }
-        for range in &ranges[start_ix..] {
-            if range
-                .start
-                .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
-                .is_ge()
-            {
-                break;
-            }
-            let end = range.end.to_point(&display_snapshot.buffer_snapshot);
-            if let Some(current_row) = &end_row {
-                if end.row == current_row.row {
-                    continue;
-                }
-            }
-            let start = range.start.to_point(&display_snapshot.buffer_snapshot);
-            if start_row.is_none() {
-                assert_eq!(end_row, None);
-                start_row = Some(start);
-                end_row = Some(end);
-                continue;
-            }
-            if let Some(current_end) = end_row.as_mut() {
-                if start.row > current_end.row + 1 {
-                    push_region(start_row, end_row);
-                    start_row = Some(start);
-                    end_row = Some(end);
-                } else {
-                    // Merge two hunks.
-                    *current_end = end;
-                }
-            } else {
-                unreachable!();
-            }
-        }
-        // We might still have a hunk that was not rendered (if there was a search hit on the last line)
-        push_region(start_row, end_row);
         results
     }
 
