@@ -51,6 +51,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
+    last_ime_input: RefCell<Option<String>>,
 }
 
 impl WindowsWindowInner {
@@ -110,6 +111,7 @@ impl WindowsWindowInner {
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
+        let last_ime_input = RefCell::new(None);
         Self {
             hwnd,
             origin,
@@ -122,6 +124,7 @@ impl WindowsWindowInner {
             handle,
             hide_title_bar,
             display,
+            last_ime_input,
         }
     }
 
@@ -756,22 +759,21 @@ impl WindowsWindowInner {
                 Some(0..string_len),
             );
             self.input_handler.set(Some(input_handler));
-            None
-        } else if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-            let Some((string, _)) = self.parse_ime_compostion_string() else {
+            *self.last_ime_input.borrow_mut() = Some(string);
+        }
+        if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
+            let Some(ref comp_string) = *self.last_ime_input.borrow() else {
                 return None;
             };
             let caret_pos = self.retrieve_composition_cursor_position();
             let Some(mut input_handler) = self.input_handler.take() else {
                 return None;
             };
-            input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..caret_pos));
+            input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
             self.input_handler.set(Some(input_handler));
-            None
-        } else {
-            // currently, we don't care other stuff
-            None
         }
+        // currently, we don't care other stuff
+        None
     }
 
     fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
@@ -791,6 +793,7 @@ impl WindowsWindowInner {
         };
         input_handler.replace_text_in_range(None, &ime_char);
         self.input_handler.set(Some(input_handler));
+        *self.last_ime_input.borrow_mut() = None;
         self.invalidate_client_area();
         Some(0)
     }
