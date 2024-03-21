@@ -1,2 +1,2 @@
-((glsl_content) @content
- (#set! "language" "glsl"))
+((glsl_content) @injection.content
+ (#set! injection.language "glsl"))

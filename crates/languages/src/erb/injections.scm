@@ -1,7 +1,7 @@
-((code) @content
- (#set! "language" "ruby")
- (#set! "combined"))
+((code) @injection.content
+ (#set! injection.language "ruby")
+ (#set! injection.combined))
 
-((content) @content
- (#set! "language" "html")
- (#set! "combined"))
+((content) @injection.content
+ (#set! injection.language "html")
+ (#set! injection.combined))

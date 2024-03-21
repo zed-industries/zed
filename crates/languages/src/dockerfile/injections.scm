@@ -2,5 +2,5 @@
 ; ((comment) @injection.content
 ;  (#set! injection.language "comment"))
 
-((shell_command) @content
- (#set! "language" "bash"))
+((shell_command) @injection.content
+ (#set! injection.language "bash"))
