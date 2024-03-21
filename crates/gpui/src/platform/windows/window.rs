@@ -192,9 +192,8 @@ impl WindowsWindowInner {
 
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let handled = match msg {
-            WM_ACTIVATE => self.handle_activate_msg(),
+            WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(lparam),
-            WM_SETFOCUS => self.handle_set_focus_msg(msg, wparam, lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
@@ -833,11 +832,16 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_activate_msg(&self) -> Option<isize> {
+    fn handle_activate_msg(&self, wparam: WPARAM) -> Option<isize> {
         if self.hide_title_bar {
             if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
                 unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
             }
+        }
+        let activated = wparam.loword() > 0;
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+            cb(activated);
         }
         None
     }
@@ -1066,28 +1070,6 @@ impl WindowsWindowInner {
         }
 
         None
-    }
-
-    fn handle_set_focus_msg(&self, _msg: u32, wparam: WPARAM, _lparam: LPARAM) -> Option<isize> {
-        // wparam is the window that just lost focus (may be null)
-        // SEE: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
-        let lost_focus_hwnd = HWND(wparam.0 as isize);
-        if let Some(lost_focus_window) = self
-            .platform_inner
-            .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
-        {
-            let mut callbacks = lost_focus_window.callbacks.borrow_mut();
-            if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-                cb(false);
-            }
-        }
-
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-            cb(true);
-        }
-
-        Some(0)
     }
 }
 

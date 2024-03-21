@@ -10,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, OnceLock},
-    time::Duration,
 };
 
 use ::util::{ResultExt, SemanticVersion};
