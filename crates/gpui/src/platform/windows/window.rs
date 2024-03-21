@@ -583,7 +583,12 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> Option<isize> {
+    fn handle_mouse_down_msg(
+        &self,
+        button: MouseButton,
+        lparam: LPARAM,
+        click_count: usize,
+    ) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
@@ -593,9 +598,12 @@ impl WindowsWindowInner {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
                 first_mouse: false,
             };
+            if click_count == 2 {
+                println!("Dclick: {:#?}", event);
+            }
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
             }
@@ -603,7 +611,12 @@ impl WindowsWindowInner {
         Some(1)
     }
 
-    fn handle_mouse_up_msg(&self, button: MouseButton, lparam: LPARAM) -> Option<isize> {
+    fn handle_mouse_up_msg(
+        &self,
+        button: MouseButton,
+        lparam: LPARAM,
+        click_count: usize,
+    ) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
@@ -613,7 +626,7 @@ impl WindowsWindowInner {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
             };
             if callback(PlatformInput::MouseUp(event)).default_prevented {
                 return Some(0);
@@ -1604,7 +1617,7 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
             lpfnWndProc: Some(wnd_proc),
             hIcon: icon_handle,
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };
