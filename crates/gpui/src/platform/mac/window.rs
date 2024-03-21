@@ -342,6 +342,7 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
+    first_mouse: bool,
 }
 
 impl MacWindowState {
@@ -594,6 +595,7 @@ impl MacWindow {
                 input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
+                first_mouse: false,
             })));
 
             (*native_window).set_ivar(
@@ -1267,7 +1269,18 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ..*event
                 };
             }
-
+            PlatformInput::MouseDown(
+                event @ MouseDownEvent {
+                    button: MouseButton::Left,
+                    ..
+                },
+            ) if (lock.first_mouse) => {
+                *event = MouseDownEvent {
+                    first_mouse: true,
+                    ..*event
+                };
+                lock.first_mouse = false;
+            }
             // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
             // the ctrl-left_up to avoid having a mismatch in button down/up events if the
             // user is still holding ctrl when releasing the left mouse button
@@ -1725,32 +1738,11 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     }
 }
 
-extern "C" fn accepts_first_mouse(this: &Object, _: Sel, native_event: id) -> BOOL {
+extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    let window_height = lock.content_size().height;
-    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
-    if let Some(mut event) = event {
-        if let PlatformInput::MouseDown(
-            event @ MouseDownEvent {
-                button: MouseButton::Left,
-                ..
-            },
-        ) = event
-        {
-            let event = PlatformInput::MouseDown(MouseDownEvent {
-                first_mouse: true,
-                ..event
-            });
-            if let Some(mut callback) = lock.event_callback.take() {
-                drop(lock);
-                callback(event);
-                window_state.lock().event_callback = Some(callback);
-            }
-        }
-    }
-    // We handle this case ourselves, so we don't want AppKit to do anything with it.
-    NO
+    lock.first_mouse = true;
+    YES
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
