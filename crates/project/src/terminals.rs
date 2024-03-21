@@ -34,12 +34,16 @@ impl Project {
         let settings = TerminalSettings::get_global(cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
+
         let mut env = settings.env.clone();
-        // Alacritty uses parent project's working directory when no working directory is provided, so we can use the relative path when detecting venv directories.
+        // Alacritty uses parent project's working directory when no working directory is provided
         // https://github.com/alacritty/alacritty/blob/fd1a3cc79192d1d03839f0fd8c72e1f8d0fce42e/extra/man/alacritty.5.scd?plain=1#L47-L52
+
+        let current_directory = std::env::current_dir().ok();
         let venv_base_directory = working_directory
             .as_deref()
-            .unwrap_or_else(|| Path::new(""));
+            .or(current_directory.as_deref())
+            .unwrap_or_else(|| Path::new("")); // if everything fails, use relative path
 
         let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
             env.extend(spawn_task.env);
@@ -128,17 +132,16 @@ impl Project {
             terminal_settings::ActivateScript::Nushell => "activate.nu",
         };
 
-        for virtual_environment_name in settings.directories {
-            let path = venv_base_directory
-                .join(virtual_environment_name)
-                .join("bin")
-                .join(activate_script_name);
-            if path.exists() {
-                return Some(path);
-            }
-        }
-
-        None
+        settings
+            .directories
+            .into_iter()
+            .find_map(|virtual_environment_name| {
+                let path = venv_base_directory
+                    .join(virtual_environment_name)
+                    .join("bin")
+                    .join(activate_script_name);
+                path.exists().then_some(path)
+            })
     }
 
     pub fn set_python_venv_path_for_tasks(
@@ -147,28 +150,33 @@ impl Project {
         venv_base_directory: &Path,
         env: &mut HashMap<String, String>,
     ) {
-        for virtual_environment_name in settings.directories {
-            let path = venv_base_directory.join(virtual_environment_name);
-            if path.exists() {
-                // Some tools use VIRTUAL_ENV to detect the virtual environment
-                env.insert(
-                    "VIRTUAL_ENV".to_string(),
-                    path.to_string_lossy().to_string(),
-                );
+        let activate_path = settings
+            .directories
+            .into_iter()
+            .find_map(|virtual_environment_name| {
+                let path = venv_base_directory.join(virtual_environment_name);
+                path.exists().then_some(path)
+            });
 
-                let path_bin = path.join("bin");
-                // We need to set the PATH to include the virtual environment's bin directory
-                if let Some(paths) = std::env::var_os("PATH") {
-                    let paths = std::iter::once(path_bin).chain(std::env::split_paths(&paths));
-                    if let Some(new_path) = std::env::join_paths(paths).log_err() {
-                        env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
-                    }
-                } else {
-                    env.insert(
-                        "PATH".to_string(),
-                        path.join("bin").to_string_lossy().to_string(),
-                    );
+        if let Some(path) = activate_path {
+            // Some tools use VIRTUAL_ENV to detect the virtual environment
+            env.insert(
+                "VIRTUAL_ENV".to_string(),
+                path.to_string_lossy().to_string(),
+            );
+
+            let path_bin = path.join("bin");
+            // We need to set the PATH to include the virtual environment's bin directory
+            if let Some(paths) = std::env::var_os("PATH") {
+                let paths = std::iter::once(path_bin).chain(std::env::split_paths(&paths));
+                if let Some(new_path) = std::env::join_paths(paths).log_err() {
+                    env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
                 }
+            } else {
+                env.insert(
+                    "PATH".to_string(),
+                    path.join("bin").to_string_lossy().to_string(),
+                );
             }
         }
     }
