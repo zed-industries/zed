@@ -858,7 +858,7 @@ impl WindowsWindowInner {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         // this will emit `WM_SIZE` and `WM_MOVE` right here
-        // even before this funtion returns
+        // even before this function returns
         // the new size is handled in `WM_SIZE`
         unsafe {
             SetWindowPos(
