@@ -1,11 +1,12 @@
 use collections::HashMap;
 use gpui::{
-    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    impl_actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use std::sync::{atomic::AtomicBool, Arc};
+use serde::Deserialize;
+use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{
@@ -16,7 +17,13 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
-actions!(tab_switcher, [Toggle]);
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct Toggle {
+    #[serde(default)]
+    pub select_last: bool,
+}
+
+impl_actions!(tab_switcher, [Toggle]);
 
 pub struct TabSwitcher {
     picker: View<Picker<TabSwitcherDelegate>>,
@@ -31,9 +38,9 @@ pub fn init(cx: &mut AppContext) {
 
 impl TabSwitcher {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &Toggle, cx| {
+        workspace.register_action(|workspace, action: &Toggle, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, cx);
+                Self::open(action, workspace, cx);
                 return;
             };
 
@@ -45,10 +52,10 @@ impl TabSwitcher {
         });
     }
 
-    fn open(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    fn open(action: &Toggle, workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         let weak_pane = workspace.active_pane().downgrade();
         workspace.toggle_modal(cx, |cx| {
-            let delegate = TabSwitcherDelegate::new(cx.view().downgrade(), weak_pane, cx);
+            let delegate = TabSwitcherDelegate::new(action, cx.view().downgrade(), weak_pane, cx);
             TabSwitcher::new(delegate, cx)
         });
     }
@@ -70,7 +77,11 @@ impl TabSwitcher {
         };
         if !event.modified() || !init_modifiers.is_subset_of(event) {
             self.init_modifiers = None;
-            cx.dispatch_action(menu::Confirm.boxed_clone());
+            if self.picker.read(cx).delegate.matches.is_empty() {
+                cx.emit(DismissEvent)
+            } else {
+                cx.dispatch_action(menu::Confirm.boxed_clone());
+            }
         }
     }
 }
@@ -100,24 +111,25 @@ struct TabMatch {
 }
 
 pub struct TabSwitcherDelegate {
+    select_last: bool,
     tab_switcher: WeakView<TabSwitcher>,
     selected_index: usize,
-    _cancel_flag: Arc<AtomicBool>,
     pane: WeakView<Pane>,
     matches: Vec<TabMatch>,
 }
 
 impl TabSwitcherDelegate {
     fn new(
+        action: &Toggle,
         tab_switcher: WeakView<TabSwitcher>,
         pane: WeakView<Pane>,
         cx: &mut ViewContext<TabSwitcher>,
     ) -> Self {
         Self::subscribe_to_updates(&pane, cx);
         Self {
+            select_last: action.select_last,
             tab_switcher,
             selected_index: 0,
-            _cancel_flag: Arc::new(AtomicBool::new(false)),
             pane,
             matches: Vec::new(),
         }
@@ -150,13 +162,7 @@ impl TabSwitcherDelegate {
         let mut history_indices = HashMap::default();
         pane.activation_history().iter().rev().enumerate().for_each(
             |(history_index, entity_id)| {
-                // Move the currently selected tab to the very end
-                let index = if history_index == 0 {
-                    usize::max_value()
-                } else {
-                    history_index
-                };
-                history_indices.insert(entity_id, index);
+                history_indices.insert(entity_id, history_index);
             },
         );
 
@@ -182,6 +188,14 @@ impl TabSwitcherDelegate {
                 .unwrap_or(&(b.item_index + non_history_base));
             a_score.cmp(&b_score)
         });
+
+        if self.matches.len() > 1 {
+            if self.select_last {
+                self.selected_index = self.matches.len() - 1;
+            } else {
+                self.selected_index = 1;
+            }
+        }
     }
 }
 

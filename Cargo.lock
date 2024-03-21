@@ -9361,6 +9361,8 @@ dependencies = [
  "gpui",
  "menu",
  "picker",
+ "serde",
+ "serde_derive",
  "ui",
  "util",
  "workspace",
