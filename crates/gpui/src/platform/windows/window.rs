@@ -689,11 +689,14 @@ impl WindowsWindowInner {
             let caret_range = input_handler.selected_text_range().unwrap();
             let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
             self.input_handler.set(Some(input_handler));
+            let scale_factor = self.scale_factor.get();
             let config = CANDIDATEFORM {
                 dwStyle: CFS_CANDIDATEPOS,
+                // logical to physical
                 ptCurrentPos: POINT {
-                    x: caret_position.origin.x.0 as i32,
-                    y: caret_position.origin.y.0 as i32 + (caret_position.size.height.0 as i32 / 2),
+                    x: (caret_position.origin.x.0 * scale_factor) as i32,
+                    y: (caret_position.origin.y.0 * scale_factor) as i32
+                        + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
                 },
                 ..Default::default()
             };
