@@ -4,7 +4,7 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
+    git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -18,12 +18,12 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::diff::DiffHunkStatus;
+use git::{blame::Oid, diff::DiffHunkStatus};
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
-    InteractiveElement, IntoElement, Model, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
     SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
     TextStyleRefinement, View, ViewContext, WindowContext,
@@ -1082,19 +1082,103 @@ impl EditorElement {
             .collect()
     }
 
-    fn layout_git_blame_gutters(
+    fn blame_display_rows(
         &self,
-        blame: &Model<GitBlame>,
         display_rows: Range<u32>,
+        em_width: Pixels,
         snapshot: &EditorSnapshot,
-        cx: &mut ViewContext<Editor>,
-    ) -> Vec<Option<git::blame::BlameEntry>> {
-        let buffer_rows = snapshot
-            .buffer_rows(display_rows.start)
-            .take(display_rows.len());
+        cx: &mut ElementContext,
+    ) -> (Option<Vec<Option<ShapedLine>>>, Option<Pixels>) {
+        self.editor.update(cx, |editor, cx| {
+            let Some(blame) = editor.blame.as_ref() else {
+                return (None, None);
+            };
 
-        blame.update(cx, |this, cx| {
-            this.blame_for_rows(buffer_rows, cx).collect()
+            let buffer_rows = snapshot
+                .buffer_rows(display_rows.start)
+                .take(display_rows.len());
+
+            let blamed_rows: Vec<_> = blame.update(cx, |this, cx| {
+                this.blame_for_rows(buffer_rows, cx).collect()
+            });
+
+            let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+            let font = self.style.text.font();
+
+            let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+            let shaped_lines = blamed_rows
+                .into_iter()
+                .map(|blame_entry| {
+                    if let Some(blame_entry) = blame_entry {
+                        // If the last color we used is the same as the one we get for this line, but
+                        // the commit SHAs are different, then we try again to get a different color.
+                        let sha_color = match last_used_color {
+                            Some((color, sha)) if sha == blame_entry.sha => color,
+                            Some((color, _)) => {
+                                let participant: u32 = blame_entry.sha.into();
+                                let new_color =
+                                    cx.theme().players().color_for_participant(participant);
+                                if new_color.cursor == color.cursor {
+                                    cx.theme().players().color_for_participant(participant + 1)
+                                } else {
+                                    new_color
+                                }
+                            }
+                            None => cx
+                                .theme()
+                                .players()
+                                .color_for_participant(blame_entry.sha.into()),
+                        };
+                        last_used_color = Some((sha_color, blame_entry.sha));
+
+                        let commit_sha_run = TextRun {
+                            len: 6,
+                            font: font.clone(),
+                            color: sha_color.cursor,
+                            background_color: None,
+                            underline: Default::default(),
+                            strikethrough: None,
+                        };
+
+                        let datetime = match blame_entry.committer_datetime() {
+                            Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+                            Err(_) => "Error parsing date".to_string(),
+                        };
+                        let pretty_commit_id = format!("{}", blame_entry.sha);
+                        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+
+                        let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
+                        let name = if name.len() > 20 {
+                            format!("{}...", &name[..16])
+                        } else {
+                            name.to_string()
+                        };
+
+                        let blame_line =
+                            format!("{:6} {:20} ({})", short_commit_id, name, datetime);
+
+                        let info_run = TextRun {
+                            len: blame_line.len() - 6,
+                            font: font.clone(),
+                            color: cx.theme().status().hint,
+                            background_color: None,
+                            underline: Default::default(),
+                            strikethrough: None,
+                        };
+                        let runs = [commit_sha_run, info_run];
+
+                        cx.text_system()
+                            .shape_line(blame_line.clone().into(), font_size, &runs)
+                            .log_err()
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let blame_width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+
+            (Some(shaped_lines), Some(blame_width))
         })
     }
 
@@ -2147,68 +2231,24 @@ impl EditorElement {
         let Some(blamed_display_rows) = &layout.blamed_display_rows else {
             return;
         };
+
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
-        // TODO: We need to change this so we pass in the viewport rows and render only those
+        let start_x = layout.position_map.em_width * 1;
+
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for (ix, blame) in blamed_display_rows.iter().enumerate() {
-                if let Some(blame_entry) = blame.as_ref() {
-                    let sha_color = cx
-                        .theme()
-                        .players()
-                        .color_for_participant(blame_entry.sha.into());
-                    let commit_sha_run = TextRun {
-                        len: 6,
-                        font: self.style.text.font(),
-                        color: sha_color.cursor,
-                        background_color: None,
-                        underline: Default::default(),
-                        strikethrough: None,
-                    };
+            for (ix, shaped_line) in blamed_display_rows.iter().enumerate() {
+                let Some(shaped_line) = shaped_line else {
+                    continue;
+                };
 
-                    let datetime = match blame_entry.committer_datetime() {
-                        Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
-                        Err(_) => "Error parsing date".to_string(),
-                    };
-                    let pretty_commit_id = format!("{}", blame_entry.sha);
-                    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+                let start_y = ix as f32 * line_height - (scroll_top % line_height);
+                let origin = layout.gutter_hitbox.origin + point(start_x, start_y);
 
-                    let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
-                    let name = if name.len() > 20 {
-                        format!("{}...", &name[..16])
-                    } else {
-                        name.to_string()
-                    };
-
-                    let blame_line = format!("{:6} {:20} ({})", short_commit_id, name, datetime);
-
-                    let info_run = TextRun {
-                        len: blame_line.len() - 6,
-                        font: self.style.text.font(),
-                        color: cx.theme().status().hint,
-                        background_color: None,
-                        underline: Default::default(),
-                        strikethrough: None,
-                    };
-                    let runs = [commit_sha_run, info_run];
-
-                    let start_x = layout.position_map.em_width * 1;
-                    let start_y = ix as f32 * line_height - (scroll_top % line_height);
-                    let origin = layout.gutter_hitbox.origin + point(start_x, start_y);
-
-                    let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-                    // TODO: Shape before and only paint here
-                    if let Some(line) = cx
-                        .text_system()
-                        .shape_line(blame_line.clone().into(), font_size, &runs)
-                        .log_err()
-                    {
-                        line.paint(origin, line_height, cx).log_err();
-                    }
-                }
+                shaped_line.paint(origin, line_height, cx).log_err();
             }
         })
     }
@@ -3267,20 +3307,8 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let mut blame_width = None;
-                let mut display_blame_entries = None;
-
-                self.editor.update(cx, |editor, cx| {
-                    if let Some(blame) = editor.blame.as_ref() {
-                        display_blame_entries = Some(self.layout_git_blame_gutters(
-                            blame,
-                            start_row..end_row,
-                            &snapshot,
-                            cx,
-                        ));
-                        blame_width = Some(GIT_BLAME_GUTTER_WIDTH_CHARS * em_width);
-                    };
-                });
+                let (blamed_display_rows, blame_width) =
+                    self.blame_display_rows(start_row..end_row, em_width, &snapshot, cx);
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3510,7 +3538,7 @@ impl Element for EditorElement {
                     redacted_ranges,
                     line_numbers,
                     display_hunks,
-                    blamed_display_rows: display_blame_entries,
+                    blamed_display_rows,
                     folds,
                     blocks,
                     cursors,
@@ -3597,7 +3625,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    blamed_display_rows: Option<Vec<Option<git::blame::BlameEntry>>>,
+    blamed_display_rows: Option<Vec<Option<ShapedLine>>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

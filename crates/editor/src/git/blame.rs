@@ -16,7 +16,6 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
     pub rows: u32,
-    // TODO: Do we want to remove rows from BlameEntry?
     pub blame: Option<BlameEntry>,
 }
 
