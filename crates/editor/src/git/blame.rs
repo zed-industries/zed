@@ -9,6 +9,8 @@ use git::blame::BlameEntry;
 use gpui::{Model, ModelContext, Subscription, Task};
 use project::{Item, Project};
 use smallvec::SmallVec;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Default)]
@@ -44,12 +46,6 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
         *self += summary.rows;
     }
 }
-
-// - As edits trickle in, call `GitBlame::interpolate()`
-// Save detected:
-// - Call `MultiBuffer::subscribe`, store that somewhere. Grab a snapshot
-// - In the background, recalculate the entire blame for the snapshot
-// - Finally, when the background task is done, come back to the main thread, see if theere have been any edits since the task was started, and interpolate those
 
 pub struct GitBlame {
     blame_runner: Arc<dyn GitBlameRunner>,
@@ -87,16 +83,12 @@ impl GitBlame {
                     .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
                 {
                     log::debug!("Updated buffers. Regenerating blame data...",);
-                    if let Err(error) = this.generate(cx) {
-                        log::error!("Failed to update git blame information: {}", error);
-                    }
+                    this.generate(cx);
                 }
             }
             project::Event::WorktreeUpdatedGitRepositories(_) => {
                 log::debug!("Status of git repositories updated. Regenerating blame data...",);
-                if let Err(error) = this.generate(cx) {
-                    log::error!("Failed to update git blame information: {}", error);
-                }
+                this.generate(cx);
             }
             _ => {}
         });
@@ -173,7 +165,6 @@ impl GitBlame {
         let mut cursor = self.entries.cursor::<u32>();
 
         while let Some(mut edit) = row_edits.next() {
-            // Coalesce contiguous edits.
             while let Some(next_edit) = row_edits.peek() {
                 if edit.old.end >= next_edit.old.start {
                     edit.old.end = next_edit.old.end;
@@ -228,44 +219,22 @@ impl GitBlame {
         self.entries = new_entries;
     }
 
-    fn generate(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
-        let buffer = self.buffer.read(cx);
-
-        // Collab version: move this to the project, check `if is_local()`.
-
-        let buffer_snapshot = buffer.snapshot();
-
-        let buffer_project_path = buffer
-            .project_path(cx)
-            .context("failed to get buffer project path")?;
-
-        let working_directory = self
-            .project
-            .read(cx)
-            .get_workspace_root(&buffer_project_path, cx)
-            .context("failed to get workspace root")?;
-
-        let file = buffer.file().context("failed to get buffer file")?;
-
-        let local_file = file
-            .as_local()
-            .context("failed to turn file into local file")?;
-
-        let path = local_file.path().clone();
-        let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
-
+    fn generate(&mut self, cx: &mut ModelContext<Self>) {
+        let options = self.generate_blame_options(cx);
+        // Collab version: ask the project for `blame_runner`, move this to the project, check `if is_local()`.
         let blame_runner = self.blame_runner.clone();
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let background_buffer_snapshot = buffer_snapshot.clone();
+            let options = options?;
+            let background_buffer_snapshot = options.snapshot.clone();
 
             let task: Task<Result<SumTree<GitBlameEntry>>> =
                 cx.background_executor().spawn(async move {
                     // In your code, you would use `git_blame_runner` which is an instance of a type that implements `GitBlameRunner`.
                     // For example, in tests, you can provide a mock implementation of `GitBlameRunner`.
                     let parsed_git_blame = blame_runner.run(
-                        &working_directory,
-                        &path,
+                        &options.working_directory,
+                        &options.path,
                         &background_buffer_snapshot.as_rope().to_string(),
                     )?;
 
@@ -309,15 +278,52 @@ impl GitBlame {
             let entries = task.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.buffer_edits = buffer_edits;
-                this.buffer_snapshot = buffer_snapshot;
+                this.buffer_edits = options.buffer_edits;
+                this.buffer_snapshot = options.snapshot;
                 this.entries = entries;
                 cx.notify();
             })
         });
-
-        Ok(())
     }
+
+    fn generate_blame_options(&mut self, cx: &mut ModelContext<Self>) -> Result<BlameOptions> {
+        let buffer = self.buffer.read(cx);
+
+        let snapshot = buffer.snapshot();
+
+        let buffer_project_path = buffer
+            .project_path(cx)
+            .context("failed to get buffer project path")?;
+
+        let working_directory = self
+            .project
+            .read(cx)
+            .get_workspace_root(&buffer_project_path, cx)
+            .context("failed to get workspace root")?;
+
+        let file = buffer.file().context("failed to get buffer file")?;
+
+        let local_file = file
+            .as_local()
+            .context("failed to turn file into local file")?;
+
+        let path = local_file.path().clone();
+        let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
+
+        Ok(BlameOptions {
+            snapshot,
+            buffer_edits,
+            working_directory,
+            path,
+        })
+    }
+}
+
+struct BlameOptions {
+    snapshot: BufferSnapshot,
+    buffer_edits: text::Subscription,
+    working_directory: PathBuf,
+    path: Arc<Path>,
 }
 
 pub trait GitBlameRunner: Send + Sync {
