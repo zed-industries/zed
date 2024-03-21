@@ -194,9 +194,8 @@ impl Render for CopilotCodeVerification {
             .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
                 cx.emit(DismissEvent);
             }))
-            .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
                 cx.focus(&this.focus_handle);
-                cx.stop_propagation();
             }))
             .child(
                 svg()
