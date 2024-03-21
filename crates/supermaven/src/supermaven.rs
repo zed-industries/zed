@@ -80,6 +80,7 @@ impl Supermaven {
             _handle_incoming_messages: cx.spawn(|cx| Self::handle_incoming_messages(stdout, cx)),
             _maintain_editors: cx.observe_new_views({
                 |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+                    dbg!("GIMME EDITOR");
                     if editor.mode() == EditorMode::Full {
                         Self::update(cx, |this, cx| this.register_editor(editor, cx))
                     }
@@ -111,6 +112,7 @@ impl Supermaven {
         event: &EditorEvent,
         cx: &mut WindowContext,
     ) {
+        dbg!("!!!!!!!!!!");
         match event {
             EditorEvent::Edited | EditorEvent::SelectionsChanged { local: true } => {
                 // todo!("address multi-buffers")
@@ -158,6 +160,7 @@ impl Supermaven {
         mut stdin: ChildStdin,
     ) -> Result<()> {
         while let Some(message) = outgoing.next().await {
+            dbg!(&message);
             let bytes = serde_json::to_vec(&message)?;
             stdin.write_all(&bytes).await?;
             stdin.write_all(&[b'\n']).await?;
@@ -265,8 +268,11 @@ mod tests {
             buffer
         });
 
+        dbg!("!!!!");
         // let buffer = dbg!(cx.new_model(|_cx| Buffer::new(0, BufferId::new(1).unwrap(), "Hello ")));
         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
+
+        editor.update(cx, |editor, cx| editor.insert("HEY", cx));
 
         // let state_update = StateUpdateMessage {
         //     kind: StateUpdateKind::StateUpdate,
