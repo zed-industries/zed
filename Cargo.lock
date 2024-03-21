@@ -9359,6 +9359,7 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "gpui",
+ "menu",
  "picker",
  "ui",
  "util",

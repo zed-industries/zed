@@ -116,7 +116,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn nonsearchable_uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let head = Head::empty(cx);
+        let head = Head::empty(Self::on_empty_head_blur, cx);
 
         Self::new(delegate, ContainerKind::UniformList, head, cx)
     }
@@ -311,6 +311,13 @@ impl<D: PickerDelegate> Picker<D> {
             }
             _ => {}
         }
+    }
+
+    fn on_empty_head_blur(&mut self, cx: &mut ViewContext<Self>) {
+        let Head::Empty(_) = &self.head else {
+            panic!("unexpected call");
+        };
+        self.cancel(&menu::Cancel, cx);
     }
 
     pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {

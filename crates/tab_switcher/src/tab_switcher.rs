@@ -1,7 +1,8 @@
 use collections::HashMap;
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -19,6 +20,7 @@ actions!(tab_switcher, [Toggle]);
 
 pub struct TabSwitcher {
     picker: View<Picker<TabSwitcherDelegate>>,
+    init_modifiers: Option<Modifiers>,
 }
 
 impl ModalView for TabSwitcher {}
@@ -53,7 +55,22 @@ impl TabSwitcher {
 
     fn new(delegate: TabSwitcherDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
+            picker: cx.new_view(|cx| Picker::nonsearchable_uniform_list(delegate, cx)),
+            init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
+        }
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(init_modifiers) = self.init_modifiers else {
+            return;
+        };
+        if !event.modified() || !init_modifiers.is_subset_of(&event) {
+            self.init_modifiers = None;
+            cx.dispatch_action(menu::Confirm.boxed_clone());
         }
     }
 }
@@ -67,9 +84,10 @@ impl FocusableView for TabSwitcher {
 }
 
 impl Render for TabSwitcher {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(PANEL_WIDTH_REMS))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
     }
 }
