@@ -98,6 +98,7 @@ members = [
 
     "extensions/gleam",
     "extensions/uiua",
+    "extensions/svelte",
 
     "tooling/xtask",
 ]
