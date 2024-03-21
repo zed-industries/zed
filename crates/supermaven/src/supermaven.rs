@@ -39,7 +39,9 @@ pub struct Supermaven {
 impl Supermaven {
     pub fn launch(cx: &mut AppContext) -> Task<Result<Self>> {
         cx.spawn(|cx| async move {
-            let binary_path = Path::new("/Users/as-cii/Downloads/sm-agent");
+            let binary_path = &std::env::var("SUPERMAVEN_AGENT_BINARY")
+                .unwrap_or_else(|_| "/Users/as-cii/Downloads/sm-agent".to_string());
+            let binary_path = Path::new(binary_path);
             let mut process = Command::new(binary_path)
                 .arg("stdio")
                 .stdin(Stdio::piped())
