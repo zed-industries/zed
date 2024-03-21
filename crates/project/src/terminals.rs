@@ -35,16 +35,17 @@ impl Project {
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
         let mut env = settings.env.clone();
+        // Alacritty uses parent project's working directory when no working directory is provided, so we can use the relative path when detecting venv directories.
+        // https://github.com/alacritty/alacritty/blob/fd1a3cc79192d1d03839f0fd8c72e1f8d0fce42e/extra/man/alacritty.5.scd?plain=1#L47-L52
+        let venv_base_directory = working_directory
+            .as_deref()
+            .unwrap_or_else(|| Path::new(""));
 
         let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
             env.extend(spawn_task.env);
-            // Activate minimal python virtual environment
+            // Activate minimal Python virtual environment
             if let Some(python_settings) = &python_settings.as_option() {
-                self.set_python_venv_path_for_tasks(
-                    python_settings,
-                    working_directory.clone(),
-                    &mut env,
-                );
+                self.set_python_venv_path_for_tasks(python_settings, venv_base_directory, &mut env);
             }
             (
                 Some(TaskState {
@@ -94,12 +95,12 @@ impl Project {
             })
             .detach();
 
-            // if the terminal is not a task, activate full python virtual environment
+            // if the terminal is not a task, activate full Python virtual environment
             if is_terminal {
                 if let Some(python_settings) = &python_settings.as_option() {
                     let activate_command = Project::get_activate_command(python_settings);
                     let activate_script_path =
-                        self.find_activate_script_path(python_settings, working_directory);
+                        self.find_activate_script_path(python_settings, venv_base_directory);
                     self.activate_python_virtual_environment(
                         activate_command,
                         activate_script_path,
@@ -117,12 +118,8 @@ impl Project {
     pub fn find_activate_script_path(
         &mut self,
         settings: &VenvSettingsContent,
-        working_directory: Option<PathBuf>,
+        venv_base_directory: &Path,
     ) -> Option<PathBuf> {
-        // When we are unable to resolve the working directory, the terminal builder
-        // defaults to '/'. We should probably encode this directly somewhere, but for
-        // now, let's just hard code it here.
-        let working_directory = working_directory.unwrap_or_else(|| Path::new("/").to_path_buf());
         let activate_script_name = match settings.activate_script {
             terminal_settings::ActivateScript::Default => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
@@ -131,7 +128,7 @@ impl Project {
         };
 
         for virtual_environment_name in settings.directories {
-            let path = working_directory
+            let path = venv_base_directory
                 .join(virtual_environment_name)
                 .join("bin")
                 .join(activate_script_name);
@@ -146,12 +143,11 @@ impl Project {
     pub fn set_python_venv_path_for_tasks(
         &mut self,
         settings: &VenvSettingsContent,
-        working_directory: Option<PathBuf>,
+        venv_base_directory: &Path,
         env: &mut HashMap<String, String>,
     ) {
-        let working_directory = working_directory.unwrap_or_else(|| Path::new("/").to_path_buf());
         for virtual_environment_name in settings.directories {
-            let path = working_directory.join(virtual_environment_name);
+            let path = venv_base_directory.join(virtual_environment_name);
             if path.exists() {
                 // Some tools use VIRTUAL_ENV to detect the virtual environment
                 env.insert(
