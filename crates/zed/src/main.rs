@@ -966,7 +966,7 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
             } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())
             } else {
-                Err(anyhow!("error parsing path argument"))
+                Err(anyhow!("error parsing path argument: {}", error))
             }
         }
     }

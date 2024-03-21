@@ -399,3 +399,11 @@ CREATE TABLE hosted_projects (
 );
 CREATE INDEX idx_hosted_projects_on_channel_id ON hosted_projects (channel_id);
 CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_projects (channel_id, name) WHERE (deleted_at IS NULL);
+
+CREATE TABLE devservers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    name TEXT NOT NULL,
+    hashed_token TEXT NOT NULL
+)
+CREATE INDEX idx_devservers_on_channel_id ON devservers (channel_id);

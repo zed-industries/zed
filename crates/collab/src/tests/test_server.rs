@@ -197,7 +197,7 @@ impl TestServer {
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
-                    Ok(Credentials {
+                    Ok(Credentials::User {
                         user_id: user_id.to_proto(),
                         access_token,
                     })
@@ -206,9 +206,9 @@ impl TestServer {
             .override_establish_connection(move |credentials, cx| {
                 assert_eq!(
                     credentials,
-                    Credentials::User {
+                    &Credentials::User {
                         user_id: user_id.0 as u64,
-                        access_token: "the-token"
+                        access_token: "the-token".into()
                     }
                 );
 

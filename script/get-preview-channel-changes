@@ -36,7 +36,7 @@ async function main() {
 
   if (hasProtocolChanges) {
     console.warn(
-      "\033[31;1;4mRPC protocol changes, server should be re-deployed\033[0m\n",
+      "\x1b[31;1;4mRPC protocol changes, server should be re-deployed\x1b[0m\n",
     );
   } else {
     console.log("No RPC protocol changes\n");
