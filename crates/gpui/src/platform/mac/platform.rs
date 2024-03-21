@@ -48,7 +48,6 @@ use std::{
     rc::Rc,
     slice, str,
     sync::Arc,
-    time::Duration,
 };
 use time::UtcOffset;
 
