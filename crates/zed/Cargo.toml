@@ -26,6 +26,7 @@ breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
 chrono.workspace = true
+clap.workspace = true
 cli.workspace = true
 client.workspace = true
 clock.workspace = true

@@ -204,8 +204,13 @@ impl TestServer {
                 })
             })
             .override_establish_connection(move |credentials, cx| {
-                assert_eq!(credentials.user_id, user_id.0 as u64);
-                assert_eq!(credentials.access_token, "the-token");
+                assert_eq!(
+                    credentials,
+                    Credentials::User {
+                        user_id: user_id.0 as u64,
+                        access_token: "the-token"
+                    }
+                );
 
                 let server = server.clone();
                 let db = db.clone();

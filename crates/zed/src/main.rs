@@ -6,8 +6,9 @@ mod zed;
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
+use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, Client, UserStore};
+use client::{parse_zed_link, Client, ClientSettings, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -270,9 +271,28 @@ fn main() {
 
         cx.activate(true);
 
-        let urls = collect_url_args(cx);
-        if !urls.is_empty() {
-            listener.open_urls(urls)
+        let mut args = Args::parse();
+        if let Some(dev_server_token) = args.dev_server_token.take() {
+            let dev_server_token = DevServerToken(dev_server_token);
+            let server_url = ClientSettings::get_global(&cx).server_url.clone();
+            let client = client.clone();
+            client.set_dev_server_token(dev_server_token);
+            cx.spawn(|cx| async move {
+                client.authenticate_and_connect(false, &cx).await?;
+                log::info!("Connected to {}", server_url);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        } else {
+            let urls: Vec<_> = args
+                .urls
+                .iter()
+                .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+                .collect();
+
+            if !urls.is_empty() {
+                listener.open_urls(urls)
+            }
         }
 
         let mut triggered_authentication = false;
@@ -898,23 +918,58 @@ fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
-fn collect_url_args(cx: &AppContext) -> Vec<String> {
-    env::args()
-        .skip(1)
-        .filter_map(|arg| match std::fs::canonicalize(Path::new(&arg)) {
-            Ok(path) => Some(format!("file://{}", path.to_string_lossy())),
-            Err(error) => {
-                if arg.starts_with("file://") || arg.starts_with("zed-cli://") {
-                    Some(arg)
-                } else if let Some(_) = parse_zed_link(&arg, cx) {
-                    Some(arg)
-                } else {
-                    log::error!("error parsing path argument: {}", error);
-                    None
-                }
+/// zed --host=abc
+
+/// ... registers itself as a host environment
+
+/// Create a new remote project named zed-conrad
+/// Create an empty directory under ./projects/zed-conrad
+/// Open a shell inside that directory
+
+// [[
+
+//     Which server:
+//         [new server]
+//             > token
+//             > name?
+//             > Ok
+//             `ssh zed --daemon <token>`
+//     Which server:
+//         local or conrads-cloud-mac
+//         directory:
+//         Remote project otken: abc
+//         ssh into your box and run:
+//         zed --headless abc
+// ]]
+// PROJECT_TOKEN=abc
+
+#[derive(Parser, Debug)]
+#[command(name = "zed", disable_version_flag = true)]
+struct Args {
+    /// A sequence of space-separated paths that you want to open.
+    ///
+    /// Use `path:line:row` syntax to open a file at a specific location.
+    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    urls: Vec<String>,
+
+    /// --dev_server_token <token>
+    #[arg(long)]
+    dev_server_token: Option<String>,
+}
+
+fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
+    match std::fs::canonicalize(Path::new(&arg)) {
+        Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
+        Err(error) => {
+            if arg.starts_with("file://") || arg.starts_with("zed-cli://") {
+                Ok(arg.into())
+            } else if let Some(_) = parse_zed_link(&arg, cx) {
+                Ok(arg.into())
+            } else {
+                Err(anyhow!("error parsing path argument"))
             }
-        })
-        .collect()
+        }
+    }
 }
 
 fn load_embedded_fonts(cx: &AppContext) {

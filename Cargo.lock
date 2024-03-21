@@ -12554,6 +12554,7 @@ dependencies = [
  "call",
  "channel",
  "chrono",
+ "clap 4.4.4",
  "cli",
  "client",
  "clock",
