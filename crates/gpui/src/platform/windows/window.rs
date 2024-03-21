@@ -601,9 +601,6 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             };
-            if click_count == 2 {
-                println!("Dclick: {:#?}", event);
-            }
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
             }
