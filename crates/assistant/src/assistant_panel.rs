@@ -2015,7 +2015,7 @@ struct LanguageModelContextSelection {
     entity_id: EntityId,
     enabled: bool,
     // TODO: This has to go after the MinimalContext trait instead
-    entity: View<Editor>,
+    context: Box<dyn MinimalContext>,
 }
 
 impl LanguageModelContextSelection {

@@ -963,7 +963,7 @@ impl Item for Editor {
 
 pub trait MinimalContext {
     fn markdown(&self, cx: &AppContext) -> String;
-    fn mini_render(&self, cx: &AppContext) -> gpui::AnyElement;
+    fn mini_render(&self, cx: &AppContext) -> AnyElement;
 }
 
 pub struct TestMinimalContext {}
@@ -973,12 +973,12 @@ impl MinimalContext for TestMinimalContext {
         "test".into()
     }
 
-    fn mini_render(&self, _cx: &AppContext) -> gpui::AnyElement {
+    fn mini_render(&self, _cx: &AppContext) -> AnyElement {
         "test".into_any_element()
     }
 }
 
-impl MinimalContext for Editor {
+impl MinimalContext for View<Editor> {
     fn markdown(&self, cx: &AppContext) -> String {
         let buffer = self.buffer.read(cx);
 
@@ -1004,7 +1004,7 @@ impl MinimalContext for Editor {
         return "".into();
     }
 
-    fn mini_render(&self, cx: &AppContext) -> gpui::AnyElement {
+    fn mini_render(&self, cx: &AppContext) -> AnyElement {
         let buffer = self.buffer.read(cx);
         let el = if let Some(singleton) = buffer.as_singleton() {
             let singleton = singleton.read(cx);
