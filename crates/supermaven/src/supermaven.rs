@@ -233,7 +233,7 @@ mod tests {
         let buffer = cx.new_model(|_cx| Buffer::new(0, BufferId::new(1).unwrap(), "Hello "));
         let mut editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
 
-        // let state_update = S            tateUpdateMessage {
+        // let state_update = StateUpdateMessage {
         //     kind: StateUpdateKind::StateUpdate,
         //     new_id: "123".into(),
         //     updates: vec![],
