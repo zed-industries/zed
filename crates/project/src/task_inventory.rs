@@ -590,7 +590,7 @@ mod tests {
             (TaskSourceKind::UserInput, common_name.to_string()),
             (TaskSourceKind::UserInput, "user_input".to_string()),
         ];
-        let worktree_1_tasks = [
+        let worktree_1_tasks = vec![
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
@@ -606,7 +606,7 @@ mod tests {
                 "worktree_1".to_string(),
             ),
         ];
-        let worktree_2_tasks = [
+        let worktree_2_tasks = vec![
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
