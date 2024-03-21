@@ -249,6 +249,12 @@ impl WasmExtension {
     }
 }
 
+impl WasmState {
+    fn work_dir(&self) -> PathBuf {
+        self.host.work_dir.join(self.manifest.id.as_ref())
+    }
+}
+
 #[async_trait]
 impl wit::HostWorktree for WasmState {
     async fn read_text_file(
@@ -317,7 +323,7 @@ impl wit::ExtensionImports for WasmState {
         ) -> anyhow::Result<Option<String>> {
             this.host
                 .node_runtime
-                .npm_package_installed_version(&this.host.work_dir, &package_name)
+                .npm_package_installed_version(&this.work_dir(), &package_name)
                 .await
         }
 
@@ -338,7 +344,7 @@ impl wit::ExtensionImports for WasmState {
         ) -> anyhow::Result<()> {
             this.host
                 .node_runtime
-                .npm_install_packages(&this.host.work_dir, &[(&package_name, &version)])
+                .npm_install_packages(&this.work_dir(), &[(&package_name, &version)])
                 .await
         }
 
