@@ -2191,6 +2191,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "cody"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-std",
+ "async-tar",
+ "clock",
+ "collections",
+ "command_palette_hooks",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lsp",
+ "node_runtime",
+ "parking_lot",
+ "rpc",
+ "serde",
+ "settings",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "collab"
 version = "0.44.0"
 dependencies = [

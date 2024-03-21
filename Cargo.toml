@@ -12,6 +12,7 @@ members = [
     "crates/cli",
     "crates/client",
     "crates/clock",
+    "crates/cody",
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
