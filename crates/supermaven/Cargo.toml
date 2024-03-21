@@ -22,10 +22,12 @@ language.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
+ui.workspace = true
 util.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }

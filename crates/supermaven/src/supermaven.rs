@@ -9,11 +9,10 @@ use futures::{
     AsyncBufReadExt, StreamExt,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Global, Subscription, Task, View, ViewContext, WeakView,
-    WindowContext,
+    AppContext, AsyncAppContext, Bounds, Global, GlobalPixels, InteractiveText, Render, StyledText,
+    Subscription, Task, View, ViewContext, WeakView, WindowContext,
 };
 use messages::*;
-use project::Project;
 use serde::{Deserialize, Serialize};
 use smol::{
     io::AsyncWriteExt,
@@ -23,6 +22,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
+use ui::prelude::*;
 use util::ResultExt;
 
 pub struct Supermaven {
@@ -45,6 +45,7 @@ impl Supermaven {
             let binary_path = Path::new(binary_path);
             let mut process = Command::new(binary_path)
                 .arg("stdio")
+                // .env("SM_LOG_PATH", "/Users/as-cii/dev/test-python/log.txt")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -80,7 +81,6 @@ impl Supermaven {
             _handle_incoming_messages: cx.spawn(|cx| Self::handle_incoming_messages(stdout, cx)),
             _maintain_editors: cx.observe_new_views({
                 |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-                    dbg!("GIMME EDITOR");
                     if editor.mode() == EditorMode::Full {
                         Self::update(cx, |this, cx| this.register_editor(editor, cx))
                     }
@@ -91,7 +91,6 @@ impl Supermaven {
     }
 
     fn register_editor(&mut self, _editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-        dbg!("!!!!!!!!!!!!!!");
         let editor_handle = cx.view().clone();
         self.registered_editors.insert(
             editor_handle.downgrade(),
@@ -112,9 +111,8 @@ impl Supermaven {
         event: &EditorEvent,
         cx: &mut WindowContext,
     ) {
-        dbg!("!!!!!!!!!!");
         match event {
-            EditorEvent::Edited | EditorEvent::SelectionsChanged { local: true } => {
+            EditorEvent::Edited => {
                 // todo!("address multi-buffers")
                 let offset = editor.read(cx).selections.newest::<usize>(cx).head();
                 let path = editor
@@ -144,10 +142,7 @@ impl Supermaven {
                             path: path.clone(),
                             content,
                         }),
-                        StateUpdate::CursorPositionUpdate(CursorPositionUpdateMessage {
-                            path,
-                            offset,
-                        }),
+                        StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
                     ],
                 });
             }
@@ -180,6 +175,7 @@ impl Supermaven {
             let Some(line) = line.strip_prefix(MESSAGE_PREFIX) else {
                 continue;
             };
+            dbg!(&line);
             let Some(message) = serde_json::from_str::<SupermavenMessage>(&line)
                 .context("failed to deserialize line from stdout")
                 .log_err()
@@ -193,16 +189,32 @@ impl Supermaven {
         Ok(())
     }
 
-    fn handle_message(&mut self, message: SupermavenMessage, _cx: &mut AppContext) {
+    fn handle_message(&mut self, message: SupermavenMessage, cx: &mut AppContext) {
         match message {
+            SupermavenMessage::ActivationRequest { activate_url } => {
+                cx.open_window(
+                    gpui::WindowOptions {
+                        bounds: Some(Bounds::new(
+                            gpui::point(GlobalPixels::from(0.), GlobalPixels::from(0.)),
+                            gpui::size(GlobalPixels::from(800.), GlobalPixels::from(600.)),
+                        )),
+                        titlebar: None,
+                        focus: false,
+                        ..Default::default()
+                    },
+                    |cx| cx.new_view(|_cx| ActivationRequestPrompt::new(activate_url.into())),
+                );
+            }
             SupermavenMessage::Response(response) => {
-                if let Some(state) = self.states.get_mut(&response.state_id) {
+                let state_id = SupermavenStateId(response.state_id.parse().unwrap());
+                if let Some(state) = self.states.get_mut(&state_id) {
                     state.completion.extend(response.items);
                     for update_tx in self.update_txs.drain(..) {
                         let _ = update_tx.send(());
                     }
                 }
             }
+            SupermavenMessage::Passthrough { passthrough } => self.handle_message(*passthrough, cx),
             _ => {
                 dbg!(&message);
             }
@@ -226,6 +238,29 @@ struct RegisteredEditor {
     _subscription: Subscription,
 }
 
+struct ActivationRequestPrompt {
+    activate_url: SharedString,
+}
+
+impl ActivationRequestPrompt {
+    fn new(activate_url: SharedString) -> Self {
+        Self { activate_url }
+    }
+}
+
+impl Render for ActivationRequestPrompt {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+        InteractiveText::new(
+            "activation_prompt",
+            StyledText::new(self.activate_url.clone()),
+        )
+        .on_click(vec![0..self.activate_url.len()], {
+            let activate_url = self.activate_url.clone();
+            move |_, cx| cx.open_url(&activate_url)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -236,10 +271,13 @@ mod tests {
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, BufferId, LanguageRegistry,
     };
+    use project::Project;
     use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_exploratory(cx: &mut TestAppContext) {
+        env_logger::init();
+
         init_test(cx);
         let background_executor = cx.executor();
         background_executor.allow_parking();
@@ -248,19 +286,15 @@ mod tests {
 
         let language_registry = Arc::new(LanguageRegistry::test(background_executor.clone()));
 
-        let markdown = language_registry.language_for_name("Markdown");
+        let python = language_registry.language_for_name("Python");
 
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                "import this",
-            );
+            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
             buffer.set_language_registry(language_registry);
             cx.spawn(|buffer, mut cx| async move {
-                let markdown = markdown.await?;
+                let python = python.await?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
-                    buffer.set_language(Some(markdown), cx);
+                    buffer.set_language(Some(python), cx);
                 })?;
                 anyhow::Ok(())
             })
@@ -268,35 +302,15 @@ mod tests {
             buffer
         });
 
-        dbg!("!!!!");
         // let buffer = dbg!(cx.new_model(|_cx| Buffer::new(0, BufferId::new(1).unwrap(), "Hello ")));
         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
-
-        editor.update(cx, |editor, cx| editor.insert("HEY", cx));
-
-        // let state_update = StateUpdateMessage {
-        //     kind: StateUpdateKind::StateUpdate,
-        //     new_id: "123".into(),
-        //     updates: vec![],
-        // };
-        //
+        editor
+            .update(cx, |editor, cx| editor.insert("import numpy as ", cx))
+            .unwrap();
 
         cx.executor()
             .timer(std::time::Duration::from_secs(60))
             .await;
-
-        // supermaven.kill();
-    }
-
-    pub(crate) fn update_test_language_settings(
-        cx: &mut TestAppContext,
-        f: impl Fn(&mut AllLanguageSettingsContent),
-    ) {
-        _ = cx.update(|cx| {
-            SettingsStore::update(cx, |store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, f);
-            });
-        });
     }
 
     pub fn init_test(cx: &mut TestAppContext) {
@@ -304,14 +318,12 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            // release_channel::init("0.0.0", cx);
-            // client::init_settings(cx);
             language::init(cx);
             Project::init_settings(cx);
-            // workspace::init_settings(cx);
             editor::init(cx);
+            SettingsStore::update(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
+            });
         });
-
-        update_test_language_settings(cx, |_| {});
     }
 }

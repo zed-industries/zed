@@ -10,8 +10,8 @@ pub enum StateUpdateKind {
 
 // Outbound messages
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StateUpdateMessage {
-    // pub kind: "state_update",
     pub kind: StateUpdateKind,
     pub new_id: String,
     pub updates: Vec<StateUpdate>,
@@ -21,7 +21,7 @@ pub struct StateUpdateMessage {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StateUpdate {
     FileUpdate(FileUpdateMessage),
-    CursorPositionUpdate(CursorPositionUpdateMessage),
+    CursorUpdate(CursorPositionUpdateMessage),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,17 +41,19 @@ pub struct CursorPositionUpdateMessage {
 // Inbound messages coming in on stdout
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResponseItem {
-    Text(String),
-    Del(String),
-    Dedent(String),
+    Text { text: String },
+    Del { text: String },
+    Dedent { text: String },
     End,
     Barrier,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SupermavenResponse {
-    pub state_id: SupermavenStateId,
+    pub state_id: String,
     pub items: Vec<ResponseItem>,
 }
 
@@ -68,6 +70,7 @@ pub struct SupermavenTaskUpdateMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     InProgress,
     Complete,
@@ -79,15 +82,23 @@ pub struct SupermavenActiveRepoMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SupermavenPopupAction {
     OpenUrl { label: String, url: String },
     NoOp { label: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct SupermavenPopupMessage {
     pub message: String,
     pub actions: Vec<SupermavenPopupAction>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub struct ActivationRequest {
+    pub activate_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,10 +107,11 @@ pub enum SupermavenMessage {
     Response(SupermavenResponse),
     Metadata(SupermavenMetadataMessage),
     Apology { message: Option<String> },
-    ActivationRequest { activate_url: String },
+    ActivationRequest(ActivationRequest),
     ActivationSuccess,
-    Passthrough(Box<SupermavenMessage>),
+    Passthrough { passthrough: Box<SupermavenMessage> },
     Popup(SupermavenPopupMessage),
     TaskStatus(SupermavenTaskUpdateMessage),
     ActiveRepo(SupermavenActiveRepoMessage),
+    ServiceTier { service_tier: String },
 }
