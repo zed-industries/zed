@@ -398,6 +398,7 @@ impl Window {
             is_movable,
             display_id,
             fullscreen,
+            window_background
         } = options;
 
         let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
@@ -411,6 +412,7 @@ impl Window {
                 focus,
                 show,
                 display_id,
+                window_background
             },
         );
         let display_id = platform_window.display().id();

@@ -519,6 +519,7 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         WindowParams {
+            window_background,
             bounds,
             titlebar,
             kind,
@@ -530,6 +531,7 @@ impl MacWindow {
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
     ) -> Self {
+
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -616,7 +618,7 @@ impl MacWindow {
                 )
             };
 
-            let window = Self(Arc::new(Mutex::new(MacWindowState {
+            let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
@@ -694,6 +696,11 @@ impl MacWindow {
 
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
+
+
+            if window_background.is_some() {
+                window.set_background(window_background.unwrap());
+            }
 
             match kind {
                 WindowKind::Normal => {
