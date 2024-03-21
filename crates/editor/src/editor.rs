@@ -37,6 +37,7 @@ mod selections_collection;
 
 #[cfg(test)]
 mod editor_tests;
+mod inline_completion;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
