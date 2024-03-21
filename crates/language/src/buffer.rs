@@ -577,7 +577,6 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
         Ok(this)
     }
