@@ -27,7 +27,7 @@ pub use schema::*;
 pub use settings::*;
 pub use styles::*;
 
-use gpui::{AppContext, AssetSource, Hsla, SharedString, WindowAppearance};
+use gpui::{AppContext, AssetSource, Hsla, SharedString, WindowAppearance, WindowBackground};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
@@ -113,6 +113,7 @@ pub struct Theme {
     pub id: String,
     pub name: SharedString,
     pub appearance: Appearance,
+    pub window_background: WindowBackground,
     pub styles: ThemeStyles,
 }
 
@@ -157,6 +158,12 @@ impl Theme {
     #[inline(always)]
     pub fn appearance(&self) -> Appearance {
         self.appearance
+    }
+
+    /// Returns the window background for the theme.
+    #[inline(always)]
+    pub fn window_background(&self) -> WindowBackground {
+       self.window_background
     }
 }
 

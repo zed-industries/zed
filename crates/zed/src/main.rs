@@ -208,12 +208,25 @@ fn main() {
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
+        cx.windows().iter_mut().for_each(|&mut w| {
+            let bg = cx.theme().window_background();
+            w.update(cx, |_, wcx| {
+                wcx.set_background(bg)
+            }).ok();
+        });
+
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
             let http = http.clone();
             let client = client.clone();
 
             move |cx| {
+                cx.windows().iter_mut().for_each(|&mut w| {
+                    let bg = cx.theme().window_background();
+                    w.update(cx, |_, wcx| {
+                        wcx.set_background(bg)
+                    }).ok();
+                });
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {

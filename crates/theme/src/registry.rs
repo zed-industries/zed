@@ -12,8 +12,9 @@ use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    try_parse_color, try_parse_window_background, Appearance, AppearanceContent, PlayerColors,
+    StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily,
+    ThemeFamilyContent, ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -122,6 +123,8 @@ impl ThemeRegistry {
                 AppearanceContent::Light => SyntaxTheme::light(),
                 AppearanceContent::Dark => SyntaxTheme::dark(),
             };
+            let window_background =
+                try_parse_window_background(&user_theme.window_background).unwrap();
             if !user_theme.style.syntax.is_empty() {
                 syntax_colors.highlights = user_theme
                     .style
@@ -151,6 +154,7 @@ impl ThemeRegistry {
                     AppearanceContent::Light => Appearance::Light,
                     AppearanceContent::Dark => Appearance::Dark,
                 },
+                window_background,
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     colors: theme_colors,

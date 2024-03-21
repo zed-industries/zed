@@ -4,12 +4,12 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackground, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -21,6 +21,16 @@ use cocoa::{
     },
 };
 use core_graphics::display::{CGDirectDisplayID, CGRect};
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    // Wildly used private APIs; Apple uses them for their Terminal.app.
+    fn CGSMainConnectionID() -> id;
+    fn CGSSetWindowBackgroundBlurRadius(
+        connection_id: id,
+        window_id: NSInteger,
+        radius: i64,
+    ) -> i32;
+}
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -976,6 +986,31 @@ impl PlatformWindow for MacWindow {
         // Changing the document edited state resets the traffic light position,
         // so we have to move it again.
         self.0.lock().move_traffic_light();
+    }
+
+    fn set_background(&mut self, background: WindowBackground) {
+        let this = self.0.as_ref().lock();
+        let blur_radius = if background == WindowBackground::Blurred {
+            80
+        } else {
+            0
+        };
+        let opaque = if background == WindowBackground::Opaque {
+            YES
+        } else {
+            NO
+        };
+        unsafe {
+            this.native_window.setOpaque_(opaque);
+            let clear_color = if opaque == YES {
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
+            } else {
+                NSColor::clearColor(nil)
+            };
+            this.native_window.setBackgroundColor_(clear_color);
+            let window_number = this.native_window.windowNumber();
+            CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
+        }
     }
 
     fn show_character_palette(&self) {

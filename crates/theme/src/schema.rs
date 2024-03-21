@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackground};
 use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::gen::SchemaGenerator;
@@ -26,6 +26,19 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(hsla)
 }
 
+pub(crate) fn try_parse_window_background(background: &Option<String>) -> Result<WindowBackground> {
+    if let Some(bg) = background {
+        match bg.as_str() {
+            "opaque" => Ok(WindowBackground::Opaque),
+            "transparent" => Ok(WindowBackground::Transparent),
+            "blurred" => Ok(WindowBackground::Blurred),
+            _ => Ok(WindowBackground::default())
+        }
+    } else {
+        Ok(WindowBackground::default())
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceContent {
@@ -47,6 +60,9 @@ pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
     pub style: ThemeStyleContent,
+    /// Background style ("opaque", "transparent" or "blurred").
+    #[serde(default, rename = "window.background")]
+    pub window_background: Option<String>,
 }
 
 /// The content of a serialized theme.

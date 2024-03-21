@@ -7,8 +7,8 @@ use crate::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render,
     ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
-    WindowParams, WindowTextSystem,
+    TextStyle, TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance,
+    WindowBackground, WindowOptions, WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -872,7 +872,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.bounds()
     }
 
-    /// Retusn whether or not the window is currently fullscreen
+    /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.window.platform_window.is_fullscreen()
     }
@@ -889,6 +889,11 @@ impl<'a> WindowContext<'a> {
     /// Returns the appearance of the current window.
     pub fn appearance(&self) -> WindowAppearance {
         self.window.appearance
+    }
+
+    /// Sets the window background style
+    pub fn set_background(&mut self, background: WindowBackground) {
+        self.window.platform_window.set_background(background);
     }
 
     /// Returns the size of the drawable area within the window.
