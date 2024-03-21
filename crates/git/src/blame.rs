@@ -246,7 +246,6 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     for line in output.lines() {
         let mut done = false;
 
-        // TODO: remove is_zero()
         match &mut current_entry {
             None => {
                 let mut new_entry = BlameEntry::new_from_blame_line(line)?;
@@ -302,7 +301,11 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
         if done {
             if let Some(entry) = current_entry.take() {
                 index.insert(entry.sha, entries.len());
-                entries.push(entry);
+
+                // We only want annotations that have a commit.
+                if !entry.sha.is_zero() {
+                    entries.push(entry);
+                }
             }
         }
     }

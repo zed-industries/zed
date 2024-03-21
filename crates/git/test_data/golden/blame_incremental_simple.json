@@ -1,43 +1,5 @@
 [
   {
-    "sha": "0000000000000000000000000000000000000000",
-    "range": {
-      "start": 2,
-      "end": 3
-    },
-    "original_line_number": 3,
-    "author": null,
-    "author_mail": null,
-    "author_time": null,
-    "author_tz": null,
-    "committer": null,
-    "committer_mail": null,
-    "committer_time": null,
-    "committer_tz": null,
-    "summary": null,
-    "previous": "a7037b4567dd171bfe563c761354ec9236c803b3 index.js",
-    "filename": "index.js"
-  },
-  {
-    "sha": "0000000000000000000000000000000000000000",
-    "range": {
-      "start": 6,
-      "end": 8
-    },
-    "original_line_number": 7,
-    "author": null,
-    "author_mail": null,
-    "author_time": null,
-    "author_tz": null,
-    "committer": null,
-    "committer_mail": null,
-    "committer_time": null,
-    "committer_tz": null,
-    "summary": null,
-    "previous": "a7037b4567dd171bfe563c761354ec9236c803b3 index.js",
-    "filename": "index.js"
-  },
-  {
     "sha": "c8d34ae30c87e59aaa5eb65f6c64d6206f525d7c",
     "range": {
       "start": 5,
