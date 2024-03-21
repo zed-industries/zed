@@ -106,7 +106,6 @@ impl ExtensionBuilder {
     ) -> Result<(), anyhow::Error> {
         self.install_rust_wasm_target_if_needed()?;
         let adapter_bytes = self.install_wasi_preview1_adapter_if_needed().await?;
-
         let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
@@ -126,14 +125,15 @@ impl ExtensionBuilder {
             );
         }
 
+        // cargo build output wasm32-wasi, the filename is use underscore instead of dash.
+        let wasm_name = format!("{}.wasm", cargo_toml.package.name.replace('-', "_"));
         let mut wasm_path = PathBuf::from(extension_dir);
         wasm_path.extend([
             "target",
             RUST_TARGET,
             if options.release { "release" } else { "debug" },
-            cargo_toml.package.name.as_str(),
+            &wasm_name,
         ]);
-        wasm_path.set_extension("wasm");
 
         let wasm_bytes = fs::read(&wasm_path)
             .with_context(|| format!("failed to read output module `{}`", wasm_path.display()))?;

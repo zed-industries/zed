@@ -257,7 +257,7 @@ fn test_languages(
             Some(
                 grammars
                     .get(name.as_ref())
-                    .ok_or_else(|| anyhow!("language"))?,
+                    .ok_or_else(|| anyhow!("failed to find grammar {}", name))?,
             )
         } else {
             None
