@@ -405,22 +405,22 @@ mod tests {
 
         // What we want (output of `git blame --contents - file.txt`)
         //
-        // 2fd52548 (Thorsten Ball              2024-03-20 14:28:27 +0100 1) AAA Line 1
-        // 116b493a (Thorsten Ball              2024-03-20 14:28:51 +0100 2) BBB Line 2 - Modified 1
-        // 0a851b8c (Thorsten Ball              2024-03-20 14:29:19 +0100 3) CCC Line 3 - Modified 2
-        // 00000000 (External file (--contents) 2024-03-20 14:32:09 +0100 4) modified in memory 1
-        // 00000000 (External file (--contents) 2024-03-20 14:32:09 +0100 5) modified in memory 1
-        // 0a851b8c (Thorsten Ball              2024-03-20 14:29:19 +0100 6) DDD Line 4 - Modified 2
-        // 116b493a (Thorsten Ball              2024-03-20 14:28:51 +0100 7) EEE Line 5 - Modified 1
-        // 0a851b8c (Thorsten Ball              2024-03-20 14:29:19 +0100 8) FFF Line 6 - Modified 2
+        // 1b1b1b (Thorsten Ball              2024-03-20 14:28:27 +0100 1) AAA Line 1
+        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 2) BBB Line 2 - Modified 1
+        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 3) CCC Line 3 - Modified 2
+        // 000000                             2024-03-20 14:32:09 +0100 4) modified in memory 1
+        // 000000                             2024-03-20 14:32:09 +0100 5) modified in memory 1
+        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 6) DDD Line 4 - Modified 2
+        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 7) EEE Line 5 - Modified 1
+        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 8) FFF Line 6 - Modified 2
 
         let blame_entries = vec![
-            blame_entry("2fd52548c580d5895e99d1a0b70244612ea7e0ee", 0..1),
-            blame_entry("116b493ab5349020da89547c9417a1d26cdbf337", 1..2),
-            blame_entry("0a851b8c934ddfd3c463da9cf767c544403b1a2e", 2..3),
-            blame_entry("0a851b8c934ddfd3c463da9cf767c544403b1a2e", 5..6),
-            blame_entry("116b493ab5349020da89547c9417a1d26cdbf337", 6..7),
-            blame_entry("0a851b8c934ddfd3c463da9cf767c544403b1a2e", 7..8),
+            blame_entry("1b1b1b", 0..1),
+            blame_entry("0d0d0d", 1..2),
+            blame_entry("3a3a3a", 2..3),
+            blame_entry("3a3a3a", 5..6),
+            blame_entry("0d0d0d", 6..7),
+            blame_entry("3a3a3a", 7..8),
         ];
 
         let blame_runner = Arc::from(FakeGitBlameRunner {
@@ -457,21 +457,39 @@ mod tests {
         cx.executor().run_until_parked();
 
         git_blame.update(cx, |blame, cx| {
+            // All lines
+            assert_eq!(
+                blame
+                    .blame_for_rows((0..8).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![
+                    Some(blame_entry("1b1b1b", 0..1)),
+                    Some(blame_entry("0d0d0d", 1..2)),
+                    Some(blame_entry("3a3a3a", 2..3)),
+                    None,
+                    None,
+                    Some(blame_entry("3a3a3a", 5..6)),
+                    Some(blame_entry("0d0d0d", 6..7)),
+                    Some(blame_entry("3a3a3a", 7..8)),
+                ]
+            );
+            // Subset of lines
             assert_eq!(
                 blame
                     .blame_for_rows((1..4).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
-                    Some(blame_entry(
-                        "116b493ab5349020da89547c9417a1d26cdbf337",
-                        1..2
-                    )),
-                    Some(blame_entry(
-                        "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
-                        2..3
-                    )),
+                    Some(blame_entry("0d0d0d", 1..2)),
+                    Some(blame_entry("3a3a3a", 2..3)),
                     None
                 ]
+            );
+            // Subset of lines, with some not displayed
+            assert_eq!(
+                blame
+                    .blame_for_rows(vec![Some(1), None, None], cx)
+                    .collect::<Vec<_>>(),
+                vec![Some(blame_entry("0d0d0d", 1..2)), None, None]
             );
         });
 
@@ -484,14 +502,7 @@ mod tests {
                 blame
                     .blame_for_rows((1..4).map(Some), cx)
                     .collect::<Vec<_>>(),
-                vec![
-                    None,
-                    Some(blame_entry(
-                        "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
-                        2..3
-                    )),
-                    None
-                ]
+                vec![None, Some(blame_entry("3a3a3a", 2..3)), None]
             );
         });
 
@@ -501,10 +512,7 @@ mod tests {
                 blame
                     .blame_for_rows((7..8).map(Some), cx)
                     .collect::<Vec<_>>(),
-                vec![Some(blame_entry(
-                    "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
-                    7..8
-                )),]
+                vec![Some(blame_entry("3a3a3a", 7..8)),]
             );
         });
         // Insert a newline at the end
@@ -517,13 +525,7 @@ mod tests {
                 blame
                     .blame_for_rows((7..9).map(Some), cx)
                     .collect::<Vec<_>>(),
-                vec![
-                    Some(blame_entry(
-                        "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
-                        7..8
-                    )),
-                    None
-                ]
+                vec![Some(blame_entry("3a3a3a", 7..8)), None]
             );
         });
 
@@ -533,10 +535,7 @@ mod tests {
                 blame
                     .blame_for_rows((2..3).map(Some), cx)
                     .collect::<Vec<_>>(),
-                vec![Some(blame_entry(
-                    "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
-                    2..3
-                )),]
+                vec![Some(blame_entry("3a3a3a", 2..3)),]
             );
         });
         // Insert a newline at the start of the row
@@ -549,18 +548,10 @@ mod tests {
                 blame
                     .blame_for_rows((2..4).map(Some), cx)
                     .collect::<Vec<_>>(),
-                vec![
-                    None,
-                    Some(blame_entry(
-                        "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
-                        2..3
-                    )),
-                ]
+                vec![None, Some(blame_entry("3a3a3a", 2..3)),]
             );
         });
     }
-
-    // TODO: randomized tests
 
     fn blame_entry(sha: &str, range: Range<u32>) -> BlameEntry {
         BlameEntry {
