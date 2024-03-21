@@ -342,6 +342,7 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
+    // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
 }
 
@@ -1269,6 +1270,8 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ..*event
                 };
             }
+
+            // Handles focusing click.
             PlatformInput::MouseDown(
                 event @ MouseDownEvent {
                     button: MouseButton::Left,
@@ -1281,6 +1284,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 };
                 lock.first_mouse = false;
             }
+
             // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
             // the ctrl-left_up to avoid having a mismatch in button down/up events if the
             // user is still holding ctrl when releasing the left mouse button
