@@ -1110,24 +1110,20 @@ impl EditorElement {
                 .into_iter()
                 .map(|blame_entry| {
                     if let Some(blame_entry) = blame_entry {
+                        let mut sha_color = cx
+                            .theme()
+                            .players()
+                            .color_for_participant(blame_entry.sha.into());
                         // If the last color we used is the same as the one we get for this line, but
                         // the commit SHAs are different, then we try again to get a different color.
-                        let sha_color = match last_used_color {
-                            Some((color, sha)) if sha == blame_entry.sha => color,
-                            Some((color, _)) => {
-                                let participant: u32 = blame_entry.sha.into();
-                                let new_color =
-                                    cx.theme().players().color_for_participant(participant);
-                                if new_color.cursor == color.cursor {
-                                    cx.theme().players().color_for_participant(participant + 1)
-                                } else {
-                                    new_color
-                                }
+                        match last_used_color {
+                            Some((color, sha))
+                                if sha != blame_entry.sha && color.cursor == sha_color.cursor =>
+                            {
+                                let index: u32 = blame_entry.sha.into();
+                                sha_color = cx.theme().players().color_for_participant(index + 1);
                             }
-                            None => cx
-                                .theme()
-                                .players()
-                                .color_for_participant(blame_entry.sha.into()),
+                            _ => {}
                         };
                         last_used_color = Some((sha_color, blame_entry.sha));
 
