@@ -204,9 +204,22 @@ impl WindowsWindowInner {
             WM_DESTROY => self.handle_destroy_msg(),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(lparam, wparam),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(lparam),
-            WM_NCLBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Left, wparam, lparam),
-            WM_NCRBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Right, wparam, lparam),
-            WM_NCMBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Middle, wparam, lparam),
+            WM_NCLBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Left, wparam, lparam, 1),
+            WM_NCLBUTTONDBLCLK => {
+                self.handle_nc_mouse_down_msg(MouseButton::Left, wparam, lparam, 2)
+            }
+            WM_NCRBUTTONDOWN => {
+                self.handle_nc_mouse_down_msg(MouseButton::Right, wparam, lparam, 1)
+            }
+            WM_NCRBUTTONDBLCLK => {
+                self.handle_nc_mouse_down_msg(MouseButton::Right, wparam, lparam, 2)
+            }
+            WM_NCMBUTTONDOWN => {
+                self.handle_nc_mouse_down_msg(MouseButton::Middle, wparam, lparam, 1)
+            }
+            WM_NCMBUTTONDBLCLK => {
+                self.handle_nc_mouse_down_msg(MouseButton::Middle, wparam, lparam, 2)
+            }
             WM_NCLBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Left, wparam, lparam),
             WM_NCRBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Right, wparam, lparam),
             WM_NCMBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Middle, wparam, lparam),
@@ -608,12 +621,7 @@ impl WindowsWindowInner {
         Some(1)
     }
 
-    fn handle_mouse_up_msg(
-        &self,
-        button: MouseButton,
-        lparam: LPARAM,
-        click_count: usize,
-    ) -> Option<isize> {
+    fn handle_mouse_up_msg(&self, button: MouseButton, lparam: LPARAM) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
@@ -623,7 +631,7 @@ impl WindowsWindowInner {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count,
+                click_count: 1,
             };
             if callback(PlatformInput::MouseUp(event)).default_prevented {
                 return Some(0);
@@ -1008,6 +1016,7 @@ impl WindowsWindowInner {
         button: MouseButton,
         wparam: WPARAM,
         lparam: LPARAM,
+        click_count: usize,
     ) -> Option<isize> {
         if !self.hide_title_bar {
             return None;
@@ -1025,7 +1034,7 @@ impl WindowsWindowInner {
                 button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
                 first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
