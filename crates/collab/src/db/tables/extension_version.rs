@@ -13,6 +13,7 @@ pub struct Model {
     pub authors: String,
     pub repository: String,
     pub description: String,
+    pub schema_version: i32,
     pub download_count: i64,
 }
 

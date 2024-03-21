@@ -4,10 +4,11 @@ use crate::{
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, Global, GlobalElementId, GlobalPixels, Hsla, KeyBinding, KeyDownEvent,
     KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers,
-    MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, View,
-    VisualContext, WeakView, WindowAppearance, WindowOptions, WindowParams, WindowTextSystem,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
+    WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -631,6 +632,28 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
+    /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
+    pub fn notify(&mut self, view_id: EntityId) {
+        for view_id in self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .view_path(view_id)
+            .into_iter()
+            .rev()
+        {
+            if !self.window.dirty_views.insert(view_id) {
+                break;
+            }
+        }
+
+        if self.window.draw_phase == DrawPhase::None {
+            self.window.dirty.set(true);
+            self.app.push_effect(Effect::Notify { emitter: view_id });
+        }
+    }
+
     /// Close this window.
     pub fn remove_window(&mut self) {
         self.window.removed = true;
@@ -699,13 +722,18 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
+    /// Check if the platform window is minimized
+    /// On some platforms (namely Windows) the position is incorrect when minimized
+    pub fn is_minimized(&self) -> bool {
+        self.window.platform_window.is_minimized()
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();
 
         let window = self.window.handle;
         self.app.defer(move |cx| {
-            cx.propagate_event = true;
             window
                 .update(cx, |_, cx| {
                     let node_id = focus_handle
@@ -720,9 +748,6 @@ impl<'a> WindowContext<'a> {
                     cx.dispatch_action_on_node(node_id, action.as_ref());
                 })
                 .log_err();
-            if cx.propagate_event {
-                cx.dispatch_global_action(action.as_ref());
-            }
         })
     }
 
@@ -1363,6 +1388,11 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
+        self.dispatch_modifiers_changed_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
         self.dispatch_keystroke_observers(event, None);
     }
 
@@ -1392,6 +1422,27 @@ impl<'a> WindowContext<'a> {
             for key_listener in node.key_listeners.clone() {
                 self.with_element_context(|cx| {
                     key_listener(event, DispatchPhase::Bubble, cx);
+                });
+                if !self.propagate_event {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn dispatch_modifiers_changed_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
+        let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+            return;
+        };
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            for listener in node.modifiers_changed_listeners.clone() {
+                self.with_element_context(|cx| {
+                    listener(event, cx);
                 });
                 if !self.propagate_event {
                     return;
@@ -1467,7 +1518,34 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        // Capture phase
+        // Capture phase for global actions.
+        self.propagate_event = true;
+        if let Some(mut global_listeners) = self
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in &global_listeners {
+                listener(action.as_any(), DispatchPhase::Capture, self);
+                if !self.propagate_event {
+                    break;
+                }
+            }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
+
+        if !self.propagate_event {
+            return;
+        }
+
+        // Capture phase for window actions.
         for node_id in &dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
@@ -1487,7 +1565,8 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-        // Bubble phase
+
+        // Bubble phase for window actions.
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
@@ -1508,6 +1587,30 @@ impl<'a> WindowContext<'a> {
                     }
                 }
             }
+        }
+
+        // Bubble phase for global actions.
+        if let Some(mut global_listeners) = self
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in global_listeners.iter().rev() {
+                self.propagate_event = false; // Actions stop propagation by default during the bubble phase
+
+                listener(action.as_any(), DispatchPhase::Bubble, self);
+                if !self.propagate_event {
+                    break;
+                }
+            }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
         }
     }
 
@@ -2111,25 +2214,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
-        for view_id in self
-            .window
-            .rendered_frame
-            .dispatch_tree
-            .view_path(self.view.entity_id())
-            .into_iter()
-            .rev()
-        {
-            if !self.window.dirty_views.insert(view_id) {
-                break;
-            }
-        }
-
-        if self.window.draw_phase == DrawPhase::None {
-            self.window_cx.window.dirty.set(true);
-            self.window_cx.app.push_effect(Effect::Notify {
-                emitter: self.view.model.entity_id,
-            });
-        }
+        self.window_cx.notify(self.view.entity_id());
     }
 
     /// Register a callback to be invoked when the window is resized.

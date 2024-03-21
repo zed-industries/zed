@@ -15,6 +15,7 @@
       "shift-f10": "menu::ShowContextMenu",
       "ctrl-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
+      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "shift-enter": "menu::UseSelectedQuery",
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -74,24 +75,23 @@
       "ctrl-b": "editor::MoveLeft",
       "ctrl-f": "editor::MoveRight",
       "ctrl-shift-l": "editor::NextScreen", // todo(linux): What is this
-      "alt-left": "editor::MoveToPreviousWordStart",
+      "ctrl-left": "editor::MoveToPreviousWordStart",
       "alt-b": "editor::MoveToPreviousWordStart",
-      "alt-right": "editor::MoveToNextWordEnd",
+      "ctrl-right": "editor::MoveToNextWordEnd",
       "alt-f": "editor::MoveToNextWordEnd",
       "ctrl-e": "editor::MoveToEndOfLine",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-=end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
-      "ctrl-shift-p": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
       "ctrl-shift-n": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
       "ctrl-shift-b": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
       "ctrl-shift-f": "editor::SelectRight",
-      "alt-shift-left": "editor::SelectToPreviousWordStart",
+      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
       "alt-shift-b": "editor::SelectToPreviousWordStart",
-      "alt-shift-right": "editor::SelectToNextWordEnd",
+      "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "alt-shift-f": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
@@ -515,6 +515,9 @@
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
       "backspace": "project_panel::Delete",
+      "delete": "project_panel::Delete",
+      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
+      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-alt-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
@@ -555,6 +558,10 @@
     "bindings": {
       "escape": "chat_panel::CloseReplyPreview"
     }
+  },
+  {
+    "context": "FileFinder",
+    "bindings": { "ctrl-shift-p": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",

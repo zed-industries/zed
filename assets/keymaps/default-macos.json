@@ -16,6 +16,7 @@
       "ctrl-enter": "menu::ShowContextMenu",
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
+      "cmd-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "shift-enter": "menu::UseSelectedQuery",
       "cmd-shift-w": "workspace::CloseWindow",
@@ -251,7 +252,6 @@
       "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -276,7 +276,6 @@
       "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -302,7 +301,6 @@
       "alt-tab": "search::CycleMode",
       "alt-cmd-f": "project_search::ToggleFilters",
       "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-s": "search::ActivateSemanticMode",
       "alt-cmd-x": "search::ActivateTextMode"
     }
   },
@@ -561,8 +559,10 @@
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
+      "backspace": "project_panel::Delete",
       "delete": "project_panel::Delete",
-      "cmd-backspace": "project_panel::Delete",
+      "cmd-backspace": ["project_panel::Delete", { "skip_prompt": true }],
+      "cmd-delete": ["project_panel::Delete", { "skip_prompt": true }],
       "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
@@ -599,10 +599,8 @@
     }
   },
   {
-    "context": "ChatPanel > MessageEditor",
-    "bindings": {
-      "escape": "chat_panel::CloseReplyPreview"
-    }
+    "context": "FileFinder",
+    "bindings": { "cmd-shift-p": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",

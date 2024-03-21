@@ -261,7 +261,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &str,
+        model: String,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
@@ -470,7 +470,11 @@ impl Telemetry {
 
                     let request = http::Request::builder()
                         .method(Method::POST)
-                        .uri(this.http_client.build_zed_api_url("/telemetry/events"))
+                        .uri(
+                            this.http_client
+                                .build_zed_api_url("/telemetry/events", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "text/plain")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());

@@ -92,4 +92,37 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         None
     }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let delegate = delegate.clone();
+        let json_options = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        let resource = store.data_mut().table().push(delegate)?;
+                        let options = extension
+                            .call_language_server_initialization_options(
+                                store,
+                                &this.config,
+                                resource,
+                            )
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))?;
+                        anyhow::Ok(options)
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options)?
+        } else {
+            None
+        })
+    }
 }

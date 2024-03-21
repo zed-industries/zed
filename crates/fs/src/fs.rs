@@ -120,11 +120,15 @@ impl Fs for RealFs {
     }
 
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
-        #[cfg(target_family = "unix")]
+        #[cfg(unix)]
         smol::fs::unix::symlink(target, path).await?;
 
-        #[cfg(target_family = "windows")]
-        Err(anyhow!("not supported yet on windows"))?;
+        #[cfg(windows)]
+        if smol::fs::metadata(&target).await?.is_dir() {
+            smol::fs::windows::symlink_dir(target, path).await?
+        } else {
+            smol::fs::windows::symlink_file(target, path).await?
+        }
 
         Ok(())
     }
@@ -202,6 +206,21 @@ impl Fs for RealFs {
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        #[cfg(windows)]
+        if let Ok(Some(metadata)) = self.metadata(path).await {
+            if metadata.is_symlink && metadata.is_dir {
+                self.remove_dir(
+                    path,
+                    RemoveOptions {
+                        recursive: false,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
         match smol::fs::remove_file(path).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {

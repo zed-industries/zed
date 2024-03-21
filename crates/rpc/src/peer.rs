@@ -9,19 +9,21 @@ use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
     stream::BoxStream,
-    FutureExt, SinkExt, StreamExt, TryFutureExt,
+    FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
 };
 use parking_lot::{Mutex, RwLock};
 use serde::{ser::SerializeStruct, Serialize};
-use std::{fmt, sync::atomic::Ordering::SeqCst, time::Instant};
 use std::{
+    fmt, future,
     future::Future,
     marker::PhantomData,
+    sync::atomic::Ordering::SeqCst,
     sync::{
         atomic::{self, AtomicU32},
         Arc,
     },
     time::Duration,
+    time::Instant,
 };
 use tracing::instrument;
 
@@ -118,6 +120,15 @@ pub struct ConnectionState {
             >,
         >,
     >,
+    #[allow(clippy::type_complexity)]
+    #[serde(skip)]
+    stream_response_channels: Arc<
+        Mutex<
+            Option<
+                HashMap<u32, mpsc::UnboundedSender<(Result<proto::Envelope>, oneshot::Sender<()>)>>,
+            >,
+        >,
+    >,
 }
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
@@ -171,17 +182,28 @@ impl Peer {
             outgoing_tx,
             next_message_id: Default::default(),
             response_channels: Arc::new(Mutex::new(Some(Default::default()))),
+            stream_response_channels: Arc::new(Mutex::new(Some(Default::default()))),
         };
         let mut writer = MessageStream::new(connection.tx);
         let mut reader = MessageStream::new(connection.rx);
 
         let this = self.clone();
         let response_channels = connection_state.response_channels.clone();
+        let stream_response_channels = connection_state.stream_response_channels.clone();
+
         let handle_io = async move {
             tracing::trace!(%connection_id, "handle io future: start");
 
             let _end_connection = util::defer(|| {
                 response_channels.lock().take();
+                if let Some(channels) = stream_response_channels.lock().take() {
+                    for channel in channels.values() {
+                        let _ = channel.unbounded_send((
+                            Err(anyhow!("connection closed")),
+                            oneshot::channel().0,
+                        ));
+                    }
+                }
                 this.connections.write().remove(&connection_id);
                 tracing::trace!(%connection_id, "handle io future: end");
             });
@@ -273,12 +295,14 @@ impl Peer {
         };
 
         let response_channels = connection_state.response_channels.clone();
+        let stream_response_channels = connection_state.stream_response_channels.clone();
         self.connections
             .write()
             .insert(connection_id, connection_state);
 
         let incoming_rx = incoming_rx.filter_map(move |(incoming, received_at)| {
             let response_channels = response_channels.clone();
+            let stream_response_channels = stream_response_channels.clone();
             async move {
                 let message_id = incoming.id;
                 tracing::trace!(?incoming, "incoming message future: start");
@@ -293,8 +317,15 @@ impl Peer {
                         responding_to,
                         "incoming response: received"
                     );
-                    let channel = response_channels.lock().as_mut()?.remove(&responding_to);
-                    if let Some(tx) = channel {
+                    let response_channel =
+                        response_channels.lock().as_mut()?.remove(&responding_to);
+                    let stream_response_channel = stream_response_channels
+                        .lock()
+                        .as_ref()?
+                        .get(&responding_to)
+                        .cloned();
+
+                    if let Some(tx) = response_channel {
                         let requester_resumed = oneshot::channel();
                         if let Err(error) = tx.send((incoming, received_at, requester_resumed.0)) {
                             tracing::trace!(
@@ -318,6 +349,31 @@ impl Peer {
                             message_id,
                             responding_to,
                             "incoming response: requester resumed"
+                        );
+                    } else if let Some(tx) = stream_response_channel {
+                        let requester_resumed = oneshot::channel();
+                        if let Err(error) = tx.unbounded_send((Ok(incoming), requester_resumed.0)) {
+                            tracing::debug!(
+                                %connection_id,
+                                message_id,
+                                responding_to = responding_to,
+                                ?error,
+                                "incoming stream response: request future dropped",
+                            );
+                        }
+
+                        tracing::debug!(
+                            %connection_id,
+                            message_id,
+                            responding_to,
+                            "incoming stream response: waiting to resume requester"
+                        );
+                        let _ = requester_resumed.1.await;
+                        tracing::debug!(
+                            %connection_id,
+                            message_id,
+                            responding_to,
+                            "incoming stream response: requester resumed"
                         );
                     } else {
                         let message_type =
@@ -451,6 +507,66 @@ impl Peer {
         }
     }
 
+    pub fn request_stream<T: RequestMessage>(
+        &self,
+        receiver_id: ConnectionId,
+        request: T,
+    ) -> impl Future<Output = Result<impl Unpin + Stream<Item = Result<T::Response>>>> {
+        let (tx, rx) = mpsc::unbounded();
+        let send = self.connection_state(receiver_id).and_then(|connection| {
+            let message_id = connection.next_message_id.fetch_add(1, SeqCst);
+            let stream_response_channels = connection.stream_response_channels.clone();
+            stream_response_channels
+                .lock()
+                .as_mut()
+                .ok_or_else(|| anyhow!("connection was closed"))?
+                .insert(message_id, tx);
+            connection
+                .outgoing_tx
+                .unbounded_send(proto::Message::Envelope(
+                    request.into_envelope(message_id, None, None),
+                ))
+                .map_err(|_| anyhow!("connection was closed"))?;
+            Ok((message_id, stream_response_channels))
+        });
+
+        async move {
+            let (message_id, stream_response_channels) = send?;
+            let stream_response_channels = Arc::downgrade(&stream_response_channels);
+
+            Ok(rx.filter_map(move |(response, _barrier)| {
+                let stream_response_channels = stream_response_channels.clone();
+                future::ready(match response {
+                    Ok(response) => {
+                        if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
+                            Some(Err(anyhow!(
+                                "RPC request {} failed - {}",
+                                T::NAME,
+                                error.message
+                            )))
+                        } else if let Some(proto::envelope::Payload::EndStream(_)) =
+                            &response.payload
+                        {
+                            // Remove the transmitting end of the response channel to end the stream.
+                            if let Some(channels) = stream_response_channels.upgrade() {
+                                if let Some(channels) = channels.lock().as_mut() {
+                                    channels.remove(&message_id);
+                                }
+                            }
+                            None
+                        } else {
+                            Some(
+                                T::Response::from_envelope(response)
+                                    .ok_or_else(|| anyhow!("received response of the wrong type")),
+                            )
+                        }
+                    }
+                    Err(error) => Some(Err(error)),
+                })
+            }))
+        }
+    }
+
     pub fn send<T: EnvelopedMessage>(&self, receiver_id: ConnectionId, message: T) -> Result<()> {
         let connection = self.connection_state(receiver_id)?;
         let message_id = connection
@@ -496,6 +612,24 @@ impl Peer {
         connection
             .outgoing_tx
             .unbounded_send(proto::Message::Envelope(response.into_envelope(
+                message_id,
+                Some(receipt.message_id),
+                None,
+            )))?;
+        Ok(())
+    }
+
+    pub fn end_stream<T: RequestMessage>(&self, receipt: Receipt<T>) -> Result<()> {
+        let connection = self.connection_state(receipt.sender_id)?;
+        let message_id = connection
+            .next_message_id
+            .fetch_add(1, atomic::Ordering::SeqCst);
+
+        let message = proto::EndStream {};
+
+        connection
+            .outgoing_tx
+            .unbounded_send(proto::Message::Envelope(message.into_envelope(
                 message_id,
                 Some(receipt.message_id),
                 None,

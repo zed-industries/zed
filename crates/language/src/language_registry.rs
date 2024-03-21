@@ -63,7 +63,7 @@ pub enum LanguageServerBinaryStatus {
 
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
-    pub task: Task<Result<lsp::LanguageServer>>,
+    pub task: Task<Result<(lsp::LanguageServer, Option<serde_json::Value>)>>,
     pub container_dir: Option<Arc<Path>>,
 }
 
@@ -83,6 +83,15 @@ enum AvailableGrammar {
     Loaded(#[allow(dead_code)] PathBuf, tree_sitter::Language),
     Loading(PathBuf, Vec<oneshot::Sender<Result<tree_sitter::Language>>>),
     Unloaded(PathBuf),
+}
+
+#[derive(Debug)]
+pub struct LanguageNotFound;
+
+impl std::fmt::Display for LanguageNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "language not found")
+    }
 }
 
 pub const QUERY_FILENAME_PREFIXES: &[(
@@ -471,7 +480,7 @@ impl LanguageRegistry {
             .max_by_key(|e| e.1)
             .clone()
         else {
-            let _ = tx.send(Err(anyhow!("language not found")));
+            let _ = tx.send(Err(anyhow!(LanguageNotFound)));
             return rx;
         };
 
@@ -499,15 +508,15 @@ impl LanguageRegistry {
                         let language = async {
                             let (config, queries) = (language.load)()?;
 
-                            let grammar = if let Some(grammar) = config.grammar.clone() {
-                                Some(this.get_or_load_grammar(grammar).await?)
+                            if let Some(grammar) = config.grammar.clone() {
+                                let grammar = Some(this.get_or_load_grammar(grammar).await?);
+                                Language::new_with_id(id, config, grammar)
+                                    .with_context_provider(provider)
+                                    .with_queries(queries)
                             } else {
-                                None
-                            };
-
-                            Language::new_with_id(id, config, grammar)
-                                .with_context_provider(provider)
-                                .with_queries(queries)
+                                Ok(Language::new_with_id(id, config, None)
+                                    .with_context_provider(provider))
+                            }
                         }
                         .await;
 
@@ -620,6 +629,15 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn all_prettier_plugins(&self) -> Vec<Arc<str>> {
+        let state = self.state.read();
+        state
+            .languages
+            .iter()
+            .flat_map(|language| language.config.prettier_plugins.iter().cloned())
+            .collect()
+    }
+
     pub fn update_lsp_status(
         &self,
         server_name: LanguageServerName,
@@ -671,6 +689,12 @@ impl LanguageRegistry {
                     )
                     .await?;
 
+                let options = adapter
+                    .adapter
+                    .clone()
+                    .initialization_options(&delegate)
+                    .await?;
+
                 if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
                     task.await?;
                 }
@@ -718,18 +742,21 @@ impl LanguageRegistry {
                         })
                         .detach();
 
-                    return Ok(server);
+                    return Ok((server, options));
                 }
 
                 drop(this);
-                lsp::LanguageServer::new(
-                    stderr_capture,
-                    server_id,
-                    binary,
-                    &root_path,
-                    adapter.code_action_kinds(),
-                    cx,
-                )
+                Ok((
+                    lsp::LanguageServer::new(
+                        stderr_capture,
+                        server_id,
+                        binary,
+                        &root_path,
+                        adapter.code_action_kinds(),
+                        cx,
+                    )?,
+                    options,
+                ))
             }
         });
 

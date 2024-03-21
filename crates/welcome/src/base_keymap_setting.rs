@@ -15,6 +15,7 @@ pub enum BaseKeymap {
     SublimeText,
     Atom,
     TextMate,
+    None,
 }
 
 impl Display for BaseKeymap {
@@ -25,6 +26,7 @@ impl Display for BaseKeymap {
             BaseKeymap::SublimeText => write!(f, "Sublime Text"),
             BaseKeymap::Atom => write!(f, "Atom"),
             BaseKeymap::TextMate => write!(f, "TextMate"),
+            BaseKeymap::None => write!(f, "None"),
         }
     }
 }
@@ -45,6 +47,7 @@ impl BaseKeymap {
             BaseKeymap::Atom => Some("keymaps/atom.json"),
             BaseKeymap::TextMate => Some("keymaps/textmate.json"),
             BaseKeymap::VSCode => None,
+            BaseKeymap::None => None,
         }
     }
 

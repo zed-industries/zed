@@ -3,7 +3,7 @@
 
 use crate::{
     bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, ScaledPixels,
+    Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -504,6 +504,109 @@ impl From<Shadow> for Primitive {
     }
 }
 
+/// A data type representing a 2 dimensional transformation that can be applied to an element.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct TransformationMatrix {
+    /// 2x2 matrix containing rotation and scale,
+    /// stored row-major
+    pub rotation_scale: [[f32; 2]; 2],
+    /// translation vector
+    pub translation: [f32; 2],
+}
+
+impl Eq for TransformationMatrix {}
+
+impl TransformationMatrix {
+    /// The unit matrix, has no effect.
+    pub fn unit() -> Self {
+        Self {
+            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
+            translation: [0.0, 0.0],
+        }
+    }
+
+    /// Move the origin by a given point
+    pub fn translate(mut self, point: Point<ScaledPixels>) -> Self {
+        self.compose(Self {
+            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
+            translation: [point.x.0, point.y.0],
+        })
+    }
+
+    /// Clockwise rotation in radians around the origin
+    pub fn rotate(self, angle: Radians) -> Self {
+        self.compose(Self {
+            rotation_scale: [
+                [angle.0.cos(), -angle.0.sin()],
+                [angle.0.sin(), angle.0.cos()],
+            ],
+            translation: [0.0, 0.0],
+        })
+    }
+
+    /// Scale around the origin
+    pub fn scale(self, size: Size<f32>) -> Self {
+        self.compose(Self {
+            rotation_scale: [[size.width, 0.0], [0.0, size.height]],
+            translation: [0.0, 0.0],
+        })
+    }
+
+    /// Perform matrix multiplication with another transformation
+    /// to produce a new transformation that is the result of
+    /// applying both transformations: first, `other`, then `self`.
+    #[inline]
+    pub fn compose(self, other: TransformationMatrix) -> TransformationMatrix {
+        if other == Self::unit() {
+            return self;
+        }
+        // Perform matrix multiplication
+        TransformationMatrix {
+            rotation_scale: [
+                [
+                    self.rotation_scale[0][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[0][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][1],
+                ],
+                [
+                    self.rotation_scale[1][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[1][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][1],
+                ],
+            ],
+            translation: [
+                self.translation[0]
+                    + self.rotation_scale[0][0] * other.translation[0]
+                    + self.rotation_scale[0][1] * other.translation[1],
+                self.translation[1]
+                    + self.rotation_scale[1][0] * other.translation[0]
+                    + self.rotation_scale[1][1] * other.translation[1],
+            ],
+        }
+    }
+
+    /// Apply transformation to a point, mainly useful for debugging
+    pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
+        let input = [point.x.0, point.y.0];
+        let mut output = self.translation;
+        for i in 0..2 {
+            for k in 0..2 {
+                output[i] += self.rotation_scale[i][k] * input[k];
+            }
+        }
+        Point::new(output[0].into(), output[1].into())
+    }
+}
+
+impl Default for TransformationMatrix {
+    fn default() -> Self {
+        Self::unit()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
@@ -513,6 +616,7 @@ pub(crate) struct MonochromeSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
+    pub transformation: TransformationMatrix,
 }
 
 impl Ord for MonochromeSprite {

@@ -307,6 +307,46 @@ impl wit::ExtensionImports for WasmState {
             .map_err(|err| err.to_string()))
     }
 
+    async fn npm_package_installed_version(
+        &mut self,
+        package_name: String,
+    ) -> wasmtime::Result<Result<Option<String>, String>> {
+        async fn inner(
+            this: &mut WasmState,
+            package_name: String,
+        ) -> anyhow::Result<Option<String>> {
+            this.host
+                .node_runtime
+                .npm_package_installed_version(&this.host.work_dir, &package_name)
+                .await
+        }
+
+        Ok(inner(self, package_name)
+            .await
+            .map_err(|err| err.to_string()))
+    }
+
+    async fn npm_install_package(
+        &mut self,
+        package_name: String,
+        version: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        async fn inner(
+            this: &mut WasmState,
+            package_name: String,
+            version: String,
+        ) -> anyhow::Result<()> {
+            this.host
+                .node_runtime
+                .npm_install_packages(&this.host.work_dir, &[(&package_name, &version)])
+                .await
+        }
+
+        Ok(inner(self, package_name, version)
+            .await
+            .map_err(|err| err.to_string()))
+    }
+
     async fn latest_github_release(
         &mut self,
         repo: String,

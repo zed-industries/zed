@@ -21,7 +21,10 @@ use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use fs::repository::GitRepository;
 use futures::{
-    channel::mpsc::{self, UnboundedReceiver},
+    channel::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
     future::{try_join_all, Shared},
     select,
     stream::FuturesUnordered,
@@ -87,14 +90,16 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use task::static_source::StaticSource;
+use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::HttpClient,
-    merge_json_value_into,
-    paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
+    maybe, merge_json_value_into,
+    paths::{
+        LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+    },
     post_inc, ResultExt, TryFutureExt as _,
 };
 use worktree::{Snapshot, Traversal};
@@ -129,6 +134,13 @@ pub trait Item {
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
+#[derive(Clone)]
+pub enum OpenedBufferEvent {
+    Disconnected,
+    Ok(BufferId),
+    Err(BufferId, Arc<anyhow::Error>),
+}
+
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
@@ -156,7 +168,8 @@ pub struct Project {
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
     next_buffer_id: BufferId,
-    opened_buffer: (watch::Sender<()>, watch::Receiver<()>),
+    loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
+    incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
     #[allow(clippy::type_complexity)]
     loading_buffers_by_path: HashMap<
@@ -169,9 +182,6 @@ pub struct Project {
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
-    /// A mapping from a buffer ID to None means that we've started waiting for an ID but haven't finished loading it.
-    /// Used for re-issuing buffer requests when peers temporarily disconnect
-    incomplete_remote_buffers: HashMap<BufferId, Option<Model<Buffer>>>,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<BufferId>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
@@ -283,6 +293,7 @@ pub enum Event {
     LanguageServerLog(LanguageServerId, String),
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageNotFound(Model<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -479,6 +490,7 @@ impl FormatTrigger {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 enum SearchMatchCandidate {
     OpenBuffer {
@@ -493,7 +505,6 @@ enum SearchMatchCandidate {
     },
 }
 
-type SearchMatchCandidateIndex = usize;
 impl SearchMatchCandidate {
     fn path(&self) -> Option<Arc<Path>> {
         match self {
@@ -501,6 +512,24 @@ impl SearchMatchCandidate {
             SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
         }
     }
+
+    fn is_ignored(&self) -> bool {
+        matches!(
+            self,
+            SearchMatchCandidate::Path {
+                is_ignored: true,
+                ..
+            }
+        )
+    }
+}
+
+pub enum SearchResult {
+    Buffer {
+        buffer: Model<Buffer>,
+        ranges: Vec<Range<Anchor>>,
+    },
+    LimitReached,
 }
 
 impl Project {
@@ -586,7 +615,6 @@ impl Project {
                 next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
-                incomplete_remote_buffers: Default::default(),
                 loading_buffers_by_path: Default::default(),
                 loading_local_worktrees: Default::default(),
                 local_buffer_ids_by_path: Default::default(),
@@ -594,7 +622,8 @@ impl Project {
                 buffer_snapshots: Default::default(),
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                opened_buffer: watch::channel(),
+                loading_buffers: HashMap::default(),
+                incomplete_remote_buffers: HashMap::default(),
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.observe_global::<SettingsStore>(Self::on_settings_changed),
@@ -700,7 +729,7 @@ impl Project {
                 flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
                 next_buffer_id: BufferId::new(1).unwrap(),
-                opened_buffer: watch::channel(),
+                loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
                 loading_local_worktrees: Default::default(),
@@ -973,19 +1002,17 @@ impl Project {
 
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language, settings) in language_formatters_to_check {
-            if let Some(plugins) = prettier_support::prettier_plugins_for_language(
-                &self.languages,
-                &language,
-                &settings,
-            ) {
+            if let Some(plugins) =
+                prettier_support::prettier_plugins_for_language(&language, &settings)
+            {
                 prettier_plugins_by_worktree
                     .entry(worktree)
                     .or_insert_with(|| HashSet::default())
-                    .extend(plugins);
+                    .extend(plugins.iter().cloned());
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(worktree, prettier_plugins, cx);
+            self.install_default_prettier(worktree, prettier_plugins.into_iter(), cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -1692,7 +1719,8 @@ impl Project {
 
             // Wake up all futures currently waiting on a buffer to get opened,
             // to give them a chance to fail now that we've disconnected.
-            *self.opened_buffer.0.borrow_mut() = ();
+            self.loading_buffers.clear();
+            // self.opened_buffer.send(OpenedBufferEvent::Disconnected);
         }
     }
 
@@ -2125,7 +2153,11 @@ impl Project {
         })
         .detach();
 
-        *self.opened_buffer.0.borrow_mut() = ();
+        if let Some(senders) = self.loading_buffers.remove(&remote_id) {
+            for sender in senders {
+                sender.send(Ok(buffer.clone())).ok();
+            }
+        }
         Ok(())
     }
 
@@ -2779,18 +2811,31 @@ impl Project {
         &mut self,
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let file = buffer.file()?;
+        let Some(file) = buffer.file() else {
+            return;
+        };
         let content = buffer.as_rope();
-        let new_language = self
+        let Some(new_language_result) = self
             .languages
             .language_for_file(file, Some(content), cx)
-            .now_or_never()?
-            .ok()?;
-        self.set_language_for_buffer(buffer_handle, new_language, cx);
-        None
+            .now_or_never()
+        else {
+            return;
+        };
+
+        match new_language_result {
+            Err(e) => {
+                if e.is::<language::LanguageNotFound>() {
+                    cx.emit(Event::LanguageNotFound(buffer_handle.clone()))
+                }
+            }
+            Ok(new_language) => {
+                self.set_language_for_buffer(buffer_handle, new_language, cx);
+            }
+        };
     }
 
     pub fn set_language_for_buffer(
@@ -2811,12 +2856,10 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(
-            &self.languages,
-            &new_language,
-            &settings,
-        ) {
-            self.install_default_prettier(worktree, prettier_plugins, cx);
+        if let Some(prettier_plugins) =
+            prettier_support::prettier_plugins_for_language(&new_language, &settings)
+        {
+            self.install_default_prettier(worktree, prettier_plugins.iter().cloned(), cx);
         };
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
@@ -3070,7 +3113,7 @@ impl Project {
     ) -> Result<Arc<LanguageServer>> {
         let workspace_config =
             cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
-        let language_server = pending_server.task.await?;
+        let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
         language_server
@@ -3310,7 +3353,6 @@ impl Project {
             })
             .detach();
 
-        let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
                 merge_json_value_into(override_options, initialization_options);
@@ -6098,7 +6140,7 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Receiver<(Model<Buffer>, Vec<Range<Anchor>>)> {
+    ) -> Receiver<SearchResult> {
         if self.is_local() {
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
@@ -6128,8 +6170,13 @@ impl Project {
                         .push(start..end)
                 }
                 for (buffer, ranges) in result {
-                    let _ = tx.send((buffer, ranges)).await;
+                    let _ = tx.send(SearchResult::Buffer { buffer, ranges }).await;
                 }
+
+                if response.limit_reached {
+                    let _ = tx.send(SearchResult::LimitReached).await;
+                }
+
                 Result::<(), anyhow::Error>::Ok(())
             })
             .detach_and_log_err(cx);
@@ -6143,7 +6190,7 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Receiver<(Model<Buffer>, Vec<Range<Anchor>>)> {
+    ) -> Receiver<SearchResult> {
         // Local search is split into several phases.
         // TL;DR is that we do 2 passes; initial pass to pick files which contain at least one match
         // and the second phase that finds positions of all the matches found in the candidate files.
@@ -6246,104 +6293,90 @@ impl Project {
             ))
             .detach();
 
-        let (buffers, buffers_rx) = Self::sort_candidates_and_open_buffers(matching_paths_rx, cx);
-        let background = cx.background_executor().clone();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
-        cx.background_executor()
-            .spawn(async move {
-                let Ok(buffers) = buffers.await else {
-                    return;
-                };
 
-                let buffers_len = buffers.len();
-                if buffers_len == 0 {
-                    return;
+        cx.spawn(|this, mut cx| async move {
+            const MAX_SEARCH_RESULT_FILES: usize = 5_000;
+            const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+
+            let mut matching_paths = matching_paths_rx
+                .take(MAX_SEARCH_RESULT_FILES + 1)
+                .collect::<Vec<_>>()
+                .await;
+            let mut limit_reached = if matching_paths.len() > MAX_SEARCH_RESULT_FILES {
+                matching_paths.pop();
+                true
+            } else {
+                false
+            };
+            matching_paths.sort_by_key(|candidate| (candidate.is_ignored(), candidate.path()));
+
+            let mut range_count = 0;
+            let query = Arc::new(query);
+
+            // Now that we know what paths match the query, we will load at most
+            // 64 buffers at a time to avoid overwhelming the main thread. For each
+            // opened buffer, we will spawn a background task that retrieves all the
+            // ranges in the buffer matched by the query.
+            'outer: for matching_paths_chunk in matching_paths.chunks(64) {
+                let mut chunk_results = Vec::new();
+                for matching_path in matching_paths_chunk {
+                    let query = query.clone();
+                    let buffer = match matching_path {
+                        SearchMatchCandidate::OpenBuffer { buffer, .. } => {
+                            Task::ready(Ok(buffer.clone()))
+                        }
+                        SearchMatchCandidate::Path {
+                            worktree_id, path, ..
+                        } => this.update(&mut cx, |this, cx| {
+                            this.open_buffer((*worktree_id, path.clone()), cx)
+                        })?,
+                    };
+
+                    chunk_results.push(cx.spawn(|cx| async move {
+                        let buffer = buffer.await?;
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                        let ranges = cx
+                            .background_executor()
+                            .spawn(async move {
+                                query
+                                    .search(&snapshot, None)
+                                    .await
+                                    .iter()
+                                    .map(|range| {
+                                        snapshot.anchor_before(range.start)
+                                            ..snapshot.anchor_after(range.end)
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .await;
+                        anyhow::Ok((buffer, ranges))
+                    }));
                 }
-                let query = &query;
-                let (finished_tx, mut finished_rx) = smol::channel::unbounded();
-                background
-                    .scoped(|scope| {
-                        #[derive(Clone)]
-                        struct FinishedStatus {
-                            entry: Option<(Model<Buffer>, Vec<Range<Anchor>>)>,
-                            buffer_index: SearchMatchCandidateIndex,
-                        }
 
-                        for _ in 0..workers {
-                            let finished_tx = finished_tx.clone();
-                            let mut buffers_rx = buffers_rx.clone();
-                            scope.spawn(async move {
-                                while let Some((entry, buffer_index)) = buffers_rx.next().await {
-                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref()
-                                    {
-                                        query
-                                            .search(snapshot, None)
-                                            .await
-                                            .iter()
-                                            .map(|range| {
-                                                snapshot.anchor_before(range.start)
-                                                    ..snapshot.anchor_after(range.end)
-                                            })
-                                            .collect()
-                                    } else {
-                                        Vec::new()
-                                    };
-
-                                    let status = if !buffer_matches.is_empty() {
-                                        let entry = if let Some((buffer, _)) = entry.as_ref() {
-                                            Some((buffer.clone(), buffer_matches))
-                                        } else {
-                                            None
-                                        };
-                                        FinishedStatus {
-                                            entry,
-                                            buffer_index,
-                                        }
-                                    } else {
-                                        FinishedStatus {
-                                            entry: None,
-                                            buffer_index,
-                                        }
-                                    };
-                                    if finished_tx.send(status).await.is_err() {
-                                        break;
-                                    }
-                                }
-                            });
+                let chunk_results = futures::future::join_all(chunk_results).await;
+                for result in chunk_results {
+                    if let Some((buffer, ranges)) = result.log_err() {
+                        range_count += ranges.len();
+                        result_tx
+                            .send(SearchResult::Buffer { buffer, ranges })
+                            .await?;
+                        if range_count > MAX_SEARCH_RESULT_RANGES {
+                            limit_reached = true;
+                            break 'outer;
                         }
-                        // Report sorted matches
-                        scope.spawn(async move {
-                            let mut current_index = 0;
-                            let mut scratch = vec![None; buffers_len];
-                            while let Some(status) = finished_rx.next().await {
-                                debug_assert!(
-                                    scratch[status.buffer_index].is_none(),
-                                    "Got match status of position {} twice",
-                                    status.buffer_index
-                                );
-                                let index = status.buffer_index;
-                                scratch[index] = Some(status);
-                                while current_index < buffers_len {
-                                    let Some(current_entry) = scratch[current_index].take() else {
-                                        // We intentionally **do not** increment `current_index` here. When next element arrives
-                                        // from `finished_rx`, we will inspect the same position again, hoping for it to be Some(_)
-                                        // this time.
-                                        break;
-                                    };
-                                    if let Some(entry) = current_entry.entry {
-                                        result_tx.send(entry).await.log_err();
-                                    }
-                                    current_index += 1;
-                                }
-                                if current_index == buffers_len {
-                                    break;
-                                }
-                            }
-                        });
-                    })
-                    .await;
-            })
-            .detach();
+                    }
+                }
+            }
+
+            if limit_reached {
+                result_tx.send(SearchResult::LimitReached).await?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach();
+
         result_rx
     }
 
@@ -6365,7 +6398,6 @@ impl Project {
         let query = &query;
         let matching_paths_tx = &matching_paths_tx;
         let snapshots = &snapshots;
-        let paths_per_worker = (path_count + workers - 1) / workers;
         for buffer in unnamed_buffers {
             matching_paths_tx
                 .send(SearchMatchCandidate::OpenBuffer {
@@ -6384,6 +6416,9 @@ impl Project {
                 .await
                 .log_err();
         }
+
+        let paths_per_worker = (path_count + workers - 1) / workers;
+
         executor
             .scoped(|scope| {
                 let max_concurrent_workers = Arc::new(Semaphore::new(workers));
@@ -6391,166 +6426,40 @@ impl Project {
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
                     let worker_end_ix = worker_start_ix + paths_per_worker;
-                    let unnamed_buffers = opened_buffers.clone();
+                    let opened_buffers = opened_buffers.clone();
                     let limiter = Arc::clone(&max_concurrent_workers);
-                    scope.spawn(async move {
-                        let _guard = limiter.acquire().await;
-                        let mut snapshot_start_ix = 0;
-                        let mut abs_path = PathBuf::new();
-                        for snapshot in snapshots {
-                            let snapshot_end_ix = snapshot_start_ix
-                                + if query.include_ignored() {
-                                    snapshot.file_count()
-                                } else {
-                                    snapshot.visible_file_count()
-                                };
-                            if worker_end_ix <= snapshot_start_ix {
-                                break;
-                            } else if worker_start_ix > snapshot_end_ix {
-                                snapshot_start_ix = snapshot_end_ix;
-                                continue;
-                            } else {
-                                let start_in_snapshot =
-                                    worker_start_ix.saturating_sub(snapshot_start_ix);
-                                let end_in_snapshot =
-                                    cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
-
-                                for entry in snapshot
-                                    .files(query.include_ignored(), start_in_snapshot)
-                                    .take(end_in_snapshot - start_in_snapshot)
-                                {
-                                    if matching_paths_tx.is_closed() {
-                                        break;
-                                    }
-                                    if unnamed_buffers.contains_key(&entry.path) {
-                                        continue;
-                                    }
-
-                                    let matched_path = if include_root {
-                                        let mut full_path = PathBuf::from(snapshot.root_name());
-                                        full_path.push(&entry.path);
-                                        query.file_matches(Some(&full_path))
-                                    } else {
-                                        query.file_matches(Some(&entry.path))
-                                    };
-
-                                    let matches = if matched_path {
-                                        abs_path.clear();
-                                        abs_path.push(&snapshot.abs_path());
-                                        abs_path.push(&entry.path);
-                                        if let Some(file) = fs.open_sync(&abs_path).await.log_err()
-                                        {
-                                            query.detect(file).unwrap_or(false)
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        false
-                                    };
-
-                                    if matches {
-                                        let project_path = SearchMatchCandidate::Path {
-                                            worktree_id: snapshot.id(),
-                                            path: entry.path.clone(),
-                                            is_ignored: entry.is_ignored,
-                                        };
-                                        if matching_paths_tx.send(project_path).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                snapshot_start_ix = snapshot_end_ix;
-                            }
+                    scope.spawn({
+                        async move {
+                            let _guard = limiter.acquire().await;
+                            search_snapshots(
+                                snapshots,
+                                worker_start_ix,
+                                worker_end_ix,
+                                query,
+                                matching_paths_tx,
+                                &opened_buffers,
+                                include_root,
+                                fs,
+                            )
+                            .await;
                         }
                     });
                 }
 
                 if query.include_ignored() {
                     for snapshot in snapshots {
-                        for ignored_entry in snapshot
-                            .entries(query.include_ignored())
-                            .filter(|e| e.is_ignored)
-                        {
+                        for ignored_entry in snapshot.entries(true).filter(|e| e.is_ignored) {
                             let limiter = Arc::clone(&max_concurrent_workers);
                             scope.spawn(async move {
                                 let _guard = limiter.acquire().await;
-                                let mut ignored_paths_to_process =
-                                    VecDeque::from([snapshot.abs_path().join(&ignored_entry.path)]);
-                                while let Some(ignored_abs_path) =
-                                    ignored_paths_to_process.pop_front()
-                                {
-                                    if let Some(fs_metadata) = fs
-                                        .metadata(&ignored_abs_path)
-                                        .await
-                                        .with_context(|| {
-                                            format!("fetching fs metadata for {ignored_abs_path:?}")
-                                        })
-                                        .log_err()
-                                        .flatten()
-                                    {
-                                        if fs_metadata.is_dir {
-                                            if let Some(mut subfiles) = fs
-                                                .read_dir(&ignored_abs_path)
-                                                .await
-                                                .with_context(|| {
-                                                    format!(
-                                                        "listing ignored path {ignored_abs_path:?}"
-                                                    )
-                                                })
-                                                .log_err()
-                                            {
-                                                while let Some(subfile) = subfiles.next().await {
-                                                    if let Some(subfile) = subfile.log_err() {
-                                                        ignored_paths_to_process.push_back(subfile);
-                                                    }
-                                                }
-                                            }
-                                        } else if !fs_metadata.is_symlink {
-                                            if !query.file_matches(Some(&ignored_abs_path))
-                                                || snapshot.is_path_excluded(
-                                                    ignored_entry.path.to_path_buf(),
-                                                )
-                                            {
-                                                continue;
-                                            }
-                                            let matches = if let Some(file) = fs
-                                                .open_sync(&ignored_abs_path)
-                                                .await
-                                                .with_context(|| {
-                                                    format!(
-                                                        "Opening ignored path {ignored_abs_path:?}"
-                                                    )
-                                                })
-                                                .log_err()
-                                            {
-                                                query.detect(file).unwrap_or(false)
-                                            } else {
-                                                false
-                                            };
-                                            if matches {
-                                                let project_path = SearchMatchCandidate::Path {
-                                                    worktree_id: snapshot.id(),
-                                                    path: Arc::from(
-                                                        ignored_abs_path
-                                                            .strip_prefix(snapshot.abs_path())
-                                                            .expect(
-                                                                "scanning worktree-related files",
-                                                            ),
-                                                    ),
-                                                    is_ignored: true,
-                                                };
-                                                if matching_paths_tx
-                                                    .send(project_path)
-                                                    .await
-                                                    .is_err()
-                                                {
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                search_ignored_entry(
+                                    snapshot,
+                                    ignored_entry,
+                                    fs,
+                                    query,
+                                    matching_paths_tx,
+                                )
+                                .await;
                             });
                         }
                     }
@@ -6646,76 +6555,6 @@ impl Project {
                     .await
             }
         })
-    }
-
-    fn sort_candidates_and_open_buffers(
-        mut matching_paths_rx: Receiver<SearchMatchCandidate>,
-        cx: &mut ModelContext<Self>,
-    ) -> (
-        futures::channel::oneshot::Receiver<Vec<SearchMatchCandidate>>,
-        Receiver<(
-            Option<(Model<Buffer>, BufferSnapshot)>,
-            SearchMatchCandidateIndex,
-        )>,
-    ) {
-        let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-        let (sorted_buffers_tx, sorted_buffers_rx) = futures::channel::oneshot::channel();
-        cx.spawn(move |this, cx| async move {
-            let mut buffers = Vec::new();
-            let mut ignored_buffers = Vec::new();
-            while let Some(entry) = matching_paths_rx.next().await {
-                if matches!(
-                    entry,
-                    SearchMatchCandidate::Path {
-                        is_ignored: true,
-                        ..
-                    }
-                ) {
-                    ignored_buffers.push(entry);
-                } else {
-                    buffers.push(entry);
-                }
-            }
-            buffers.sort_by_key(|candidate| candidate.path());
-            ignored_buffers.sort_by_key(|candidate| candidate.path());
-            buffers.extend(ignored_buffers);
-            let matching_paths = buffers.clone();
-            let _ = sorted_buffers_tx.send(buffers);
-            for (index, candidate) in matching_paths.into_iter().enumerate() {
-                if buffers_tx.is_closed() {
-                    break;
-                }
-                let this = this.clone();
-                let buffers_tx = buffers_tx.clone();
-                cx.spawn(move |mut cx| async move {
-                    let buffer = match candidate {
-                        SearchMatchCandidate::OpenBuffer { buffer, .. } => Some(buffer),
-                        SearchMatchCandidate::Path {
-                            worktree_id, path, ..
-                        } => this
-                            .update(&mut cx, |this, cx| {
-                                this.open_buffer((worktree_id, path), cx)
-                            })?
-                            .await
-                            .log_err(),
-                    };
-                    if let Some(buffer) = buffer {
-                        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-                        buffers_tx
-                            .send((Some((buffer, snapshot)), index))
-                            .await
-                            .log_err();
-                    } else {
-                        buffers_tx.send((None, index)).await.log_err();
-                    }
-
-                    Ok::<_, anyhow::Error>(())
-                })
-                .detach();
-            }
-        })
-        .detach();
-        (sorted_buffers_rx, buffers_rx)
     }
 
     pub fn find_or_create_local_worktree(
@@ -7279,7 +7118,37 @@ impl Project {
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
                                     format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    tasks_file_rx,
+                                    TrackedFile::new(tasks_file_rx, cx),
+                                    cx,
+                                )
+                            },
+                            cx,
+                        );
+                    }
+                })
+            } else if abs_path.ends_with(&*LOCAL_VSCODE_TASKS_RELATIVE_PATH) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let task_abs_path = abs_path.clone();
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                            },
+                            |cx| {
+                                let tasks_file_rx =
+                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                                StaticSource::new(
+                                    format!(
+                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
+                                    ),
+                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                        tasks_file_rx,
+                                        cx,
+                                    ),
                                     cx,
                                 )
                             },
@@ -7921,23 +7790,36 @@ impl Project {
                 .ok_or_else(|| anyhow!("missing variant"))?
             {
                 proto::create_buffer_for_peer::Variant::State(mut state) => {
-                    let mut buffer_file = None;
-                    if let Some(file) = state.file.take() {
-                        let worktree_id = WorktreeId::from_proto(file.worktree_id);
-                        let worktree = this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
-                            anyhow!("no worktree found for id {}", file.worktree_id)
-                        })?;
-                        buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
-                            as Arc<dyn language::File>);
-                    }
-
                     let buffer_id = BufferId::new(state.id)?;
-                    let buffer = cx.new_model(|_| {
+
+                    let buffer_result = maybe!({
+                        let mut buffer_file = None;
+                        if let Some(file) = state.file.take() {
+                            let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                            let worktree =
+                                this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
+                                    anyhow!("no worktree found for id {}", file.worktree_id)
+                                })?;
+                            buffer_file =
+                                Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
+                                    as Arc<dyn language::File>);
+                        }
                         Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
-                            .unwrap()
                     });
-                    this.incomplete_remote_buffers
-                        .insert(buffer_id, Some(buffer));
+
+                    match buffer_result {
+                        Ok(buffer) => {
+                            let buffer = cx.new_model(|_| buffer);
+                            this.incomplete_remote_buffers.insert(buffer_id, buffer);
+                        }
+                        Err(error) => {
+                            if let Some(listeners) = this.loading_buffers.remove(&buffer_id) {
+                                for listener in listeners {
+                                    listener.send(Err(anyhow!(error.cloned()))).ok();
+                                }
+                            }
+                        }
+                    };
                 }
                 proto::create_buffer_for_peer::Variant::Chunk(chunk) => {
                     let buffer_id = BufferId::new(chunk.buffer_id)?;
@@ -7945,23 +7827,34 @@ impl Project {
                         .incomplete_remote_buffers
                         .get(&buffer_id)
                         .cloned()
-                        .flatten()
                         .ok_or_else(|| {
                             anyhow!(
                                 "received chunk for buffer {} without initial state",
                                 chunk.buffer_id
                             )
                         })?;
-                    let operations = chunk
-                        .operations
-                        .into_iter()
-                        .map(language::proto::deserialize_operation)
-                        .collect::<Result<Vec<_>>>()?;
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
-                    if chunk.is_last {
+                    let result = maybe!({
+                        let operations = chunk
+                            .operations
+                            .into_iter()
+                            .map(language::proto::deserialize_operation)
+                            .collect::<Result<Vec<_>>>()?;
+                        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))
+                    });
+
+                    if let Err(error) = result {
                         this.incomplete_remote_buffers.remove(&buffer_id);
-                        this.register_buffer(&buffer, cx)?;
+                        if let Some(listeners) = this.loading_buffers.remove(&buffer_id) {
+                            for listener in listeners {
+                                listener.send(Err(error.cloned())).ok();
+                            }
+                        }
+                    } else {
+                        if chunk.is_last {
+                            this.incomplete_remote_buffers.remove(&buffer_id);
+                            this.register_buffer(&buffer, cx)?;
+                        }
                     }
                 }
             }
@@ -7984,12 +7877,7 @@ impl Project {
                 .opened_buffers
                 .get_mut(&buffer_id)
                 .and_then(|b| b.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                })
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned())
             {
                 buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
             }
@@ -8012,12 +7900,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|b| b.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                })
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned())
             {
                 let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
                 let worktree = this
@@ -8549,21 +8432,30 @@ impl Project {
 
         cx.spawn(move |mut cx| async move {
             let mut locations = Vec::new();
-            while let Some((buffer, ranges)) = result.next().await {
-                for range in ranges {
-                    let start = serialize_anchor(&range.start);
-                    let end = serialize_anchor(&range.end);
-                    let buffer_id = this.update(&mut cx, |this, cx| {
-                        this.create_buffer_for_peer(&buffer, peer_id, cx).into()
-                    })?;
-                    locations.push(proto::Location {
-                        buffer_id,
-                        start: Some(start),
-                        end: Some(end),
-                    });
+            let mut limit_reached = false;
+            while let Some(result) = result.next().await {
+                match result {
+                    SearchResult::Buffer { buffer, ranges } => {
+                        for range in ranges {
+                            let start = serialize_anchor(&range.start);
+                            let end = serialize_anchor(&range.end);
+                            let buffer_id = this.update(&mut cx, |this, cx| {
+                                this.create_buffer_for_peer(&buffer, peer_id, cx).into()
+                            })?;
+                            locations.push(proto::Location {
+                                buffer_id,
+                                start: Some(start),
+                                end: Some(end),
+                            });
+                        }
+                    }
+                    SearchResult::LimitReached => limit_reached = true,
                 }
             }
-            Ok(proto::SearchProjectResponse { locations })
+            Ok(proto::SearchProjectResponse {
+                locations,
+                limit_reached,
+            })
         })
         .await
     }
@@ -8755,39 +8647,19 @@ impl Project {
         id: BufferId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let mut opened_buffer_rx = self.opened_buffer.1.clone();
+        let buffer = self
+            .opened_buffers
+            .get(&id)
+            .and_then(|buffer| buffer.upgrade());
 
-        cx.spawn(move |this, mut cx| async move {
-            let buffer = loop {
-                let Some(this) = this.upgrade() else {
-                    return Err(anyhow!("project dropped"));
-                };
+        if let Some(buffer) = buffer {
+            return Task::ready(Ok(buffer));
+        }
 
-                let buffer = this.update(&mut cx, |this, _cx| {
-                    this.opened_buffers
-                        .get(&id)
-                        .and_then(|buffer| buffer.upgrade())
-                })?;
+        let (tx, rx) = oneshot::channel();
+        self.loading_buffers.entry(id).or_default().push(tx);
 
-                if let Some(buffer) = buffer {
-                    break buffer;
-                } else if this.update(&mut cx, |this, _| this.is_disconnected())? {
-                    return Err(anyhow!("disconnected before buffer {} could be opened", id));
-                }
-
-                this.update(&mut cx, |this, _| {
-                    this.incomplete_remote_buffers.entry(id).or_default();
-                })?;
-                drop(this);
-
-                opened_buffer_rx
-                    .next()
-                    .await
-                    .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
-            };
-
-            Ok(buffer)
-        })
+        cx.background_executor().spawn(async move { rx.await? })
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -9036,11 +8908,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .and_then(|b| b.clone())
-                });
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_save(version, fingerprint, mtime, cx);
@@ -9070,12 +8938,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                });
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
@@ -9320,6 +9183,154 @@ impl Project {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn search_snapshots(
+    snapshots: &Vec<LocalSnapshot>,
+    worker_start_ix: usize,
+    worker_end_ix: usize,
+    query: &SearchQuery,
+    results_tx: &Sender<SearchMatchCandidate>,
+    opened_buffers: &HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
+    include_root: bool,
+    fs: &Arc<dyn Fs>,
+) {
+    let mut snapshot_start_ix = 0;
+    let mut abs_path = PathBuf::new();
+
+    for snapshot in snapshots {
+        let snapshot_end_ix = snapshot_start_ix
+            + if query.include_ignored() {
+                snapshot.file_count()
+            } else {
+                snapshot.visible_file_count()
+            };
+        if worker_end_ix <= snapshot_start_ix {
+            break;
+        } else if worker_start_ix > snapshot_end_ix {
+            snapshot_start_ix = snapshot_end_ix;
+            continue;
+        } else {
+            let start_in_snapshot = worker_start_ix.saturating_sub(snapshot_start_ix);
+            let end_in_snapshot = cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
+
+            for entry in snapshot
+                .files(false, start_in_snapshot)
+                .take(end_in_snapshot - start_in_snapshot)
+            {
+                if results_tx.is_closed() {
+                    break;
+                }
+                if opened_buffers.contains_key(&entry.path) {
+                    continue;
+                }
+
+                let matched_path = if include_root {
+                    let mut full_path = PathBuf::from(snapshot.root_name());
+                    full_path.push(&entry.path);
+                    query.file_matches(Some(&full_path))
+                } else {
+                    query.file_matches(Some(&entry.path))
+                };
+
+                let matches = if matched_path {
+                    abs_path.clear();
+                    abs_path.push(&snapshot.abs_path());
+                    abs_path.push(&entry.path);
+                    if let Some(file) = fs.open_sync(&abs_path).await.log_err() {
+                        query.detect(file).unwrap_or(false)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if matches {
+                    let project_path = SearchMatchCandidate::Path {
+                        worktree_id: snapshot.id(),
+                        path: entry.path.clone(),
+                        is_ignored: entry.is_ignored,
+                    };
+                    if results_tx.send(project_path).await.is_err() {
+                        return;
+                    }
+                }
+            }
+
+            snapshot_start_ix = snapshot_end_ix;
+        }
+    }
+}
+
+async fn search_ignored_entry(
+    snapshot: &LocalSnapshot,
+    ignored_entry: &Entry,
+    fs: &Arc<dyn Fs>,
+    query: &SearchQuery,
+    counter_tx: &Sender<SearchMatchCandidate>,
+) {
+    let mut ignored_paths_to_process =
+        VecDeque::from([snapshot.abs_path().join(&ignored_entry.path)]);
+
+    while let Some(ignored_abs_path) = ignored_paths_to_process.pop_front() {
+        let metadata = fs
+            .metadata(&ignored_abs_path)
+            .await
+            .with_context(|| format!("fetching fs metadata for {ignored_abs_path:?}"))
+            .log_err()
+            .flatten();
+
+        if let Some(fs_metadata) = metadata {
+            if fs_metadata.is_dir {
+                let files = fs
+                    .read_dir(&ignored_abs_path)
+                    .await
+                    .with_context(|| format!("listing ignored path {ignored_abs_path:?}"))
+                    .log_err();
+
+                if let Some(mut subfiles) = files {
+                    while let Some(subfile) = subfiles.next().await {
+                        if let Some(subfile) = subfile.log_err() {
+                            ignored_paths_to_process.push_back(subfile);
+                        }
+                    }
+                }
+            } else if !fs_metadata.is_symlink {
+                if !query.file_matches(Some(&ignored_abs_path))
+                    || snapshot.is_path_excluded(ignored_entry.path.to_path_buf())
+                {
+                    continue;
+                }
+                let matches = if let Some(file) = fs
+                    .open_sync(&ignored_abs_path)
+                    .await
+                    .with_context(|| format!("Opening ignored path {ignored_abs_path:?}"))
+                    .log_err()
+                {
+                    query.detect(file).unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if matches {
+                    let project_path = SearchMatchCandidate::Path {
+                        worktree_id: snapshot.id(),
+                        path: Arc::from(
+                            ignored_abs_path
+                                .strip_prefix(snapshot.abs_path())
+                                .expect("scanning worktree-related files"),
+                        ),
+                        is_ignored: true,
+                    };
+                    if counter_tx.send(project_path).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn subscribe_for_copilot_events(
     copilot: &Model<Copilot>,
     cx: &mut ModelContext<'_, Project>,
@@ -9529,6 +9540,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.shell_env.lock().as_ref().cloned().unwrap_or_default()
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         self.load_shell_env().await;
@@ -9538,6 +9550,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
             .as_ref()
             .and_then(|shell_env| shell_env.get("PATH").cloned());
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
+        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
+        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
+        which::which(command).ok()
     }
 
     fn update_status(

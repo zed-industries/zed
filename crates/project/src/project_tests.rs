@@ -3897,10 +3897,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
+            ("dir/two.ts".to_string(), vec![14..18]),
             ("dir/one.rs".to_string(), vec![8..12]),
             ("dir/one.ts".to_string(), vec![14..18]),
             ("dir/two.rs".to_string(), vec![8..12]),
-            ("dir/two.ts".to_string(), vec![14..18]),
         ]),
         "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
     );
@@ -4269,6 +4269,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         "Only one non-ignored file should have the query"
     );
 
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
         search(
             &project,
@@ -4297,6 +4298,9 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         "Unrestricted search with ignored directories should find every file with the query"
     );
 
+    let files_to_include = vec![PathMatcher::new("/dir/node_modules/prettier/**").unwrap()];
+    let files_to_exclude = vec![PathMatcher::new("*.ts").unwrap()];
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
         search(
             &project,
@@ -4305,8 +4309,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 false,
                 true,
-                vec![PathMatcher::new("node_modules/prettier/**").unwrap()],
-                vec![PathMatcher::new("*.ts").unwrap()],
+                files_to_include,
+                files_to_exclude,
             )
             .unwrap(),
             cx
@@ -4404,11 +4408,16 @@ async fn search(
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
     let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
-    let mut result = HashMap::default();
-    while let Some((buffer, range)) = search_rx.next().await {
-        result.entry(buffer).or_insert(range);
+    let mut results = HashMap::default();
+    while let Some(search_result) = search_rx.next().await {
+        match search_result {
+            SearchResult::Buffer { buffer, ranges } => {
+                results.entry(buffer).or_insert(ranges);
+            }
+            SearchResult::LimitReached => {}
+        }
     }
-    Ok(result
+    Ok(results
         .into_iter()
         .map(|(buffer, ranges)| {
             buffer.update(cx, |buffer, cx| {

@@ -62,8 +62,8 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
 pub use language_registry::{
-    LanguageQueries, LanguageRegistry, LanguageServerBinaryStatus, PendingLanguageServer,
-    QUERY_FILENAME_PREFIXES,
+    LanguageNotFound, LanguageQueries, LanguageRegistry, LanguageServerBinaryStatus,
+    PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
@@ -259,10 +259,6 @@ impl CachedLspAdapter {
         self.adapter.label_for_symbol(name, kind, language).await
     }
 
-    pub fn prettier_plugins(&self) -> &[&'static str] {
-        self.adapter.prettier_plugins()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Option<&FakeLspAdapter> {
         self.adapter.as_fake()
@@ -326,43 +322,25 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .context("failed to create container directory")?;
             }
 
-            if let Some(task) = self.will_fetch_server(&delegate, cx) {
-                task.await?;
-            }
-
-            let name = self.name();
-            log::info!("fetching latest version of language server {:?}", name.0);
-            delegate.update_status(
-                name.clone(),
-                LanguageServerBinaryStatus::CheckingForUpdate,
-            );
-            let latest_version = self.fetch_latest_server_version(delegate.as_ref()).await?;
-
-            log::info!("downloading language server {:?}", name.0);
-            delegate.update_status(self.name(), LanguageServerBinaryStatus::Downloading);
-            let mut binary = self
-                .fetch_server_binary(latest_version, container_dir.to_path_buf(), delegate.as_ref())
-                .await;
-
-            delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+            let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
 
             if let Err(error) = binary.as_ref() {
                 if let Some(prev_downloaded_binary) = self
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Cached);
+                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
-                        name.clone(),
-                        prev_downloaded_binary.path.display()
+                        self.name(),
+                        prev_downloaded_binary.path
                     );
                     binary = Ok(prev_downloaded_binary);
                 } else {
                     delegate.update_status(
-                        name.clone(),
+                        self.name(),
                         LanguageServerBinaryStatus::Failed {
-                            error: format!("{:?}", error),
+                            error: format!("{error:?}"),
                         },
                     );
                 }
@@ -459,8 +437,11 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
-    fn initialization_options(&self) -> Option<Value> {
-        None
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
     }
 
     fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
@@ -490,14 +471,37 @@ pub trait LspAdapter: 'static + Send + Sync {
         Default::default()
     }
 
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &[]
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Option<&FakeLspAdapter> {
         None
     }
+}
+
+async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
+    adapter: &L,
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    container_dir: PathBuf,
+    cx: &mut AsyncAppContext,
+) -> Result<LanguageServerBinary> {
+    if let Some(task) = adapter.will_fetch_server(delegate, cx) {
+        task.await?;
+    }
+
+    let name = adapter.name();
+    log::info!("fetching latest version of language server {:?}", name.0);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    let latest_version = adapter
+        .fetch_latest_server_version(delegate.as_ref())
+        .await?;
+
+    log::info!("downloading language server {:?}", name.0);
+    delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+    let binary = adapter
+        .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+        .await;
+
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    binary
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -566,6 +570,9 @@ pub struct LanguageConfig {
     /// The name of a Prettier parser that should be used for this language.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
+    /// The names of any Prettier plugins that should be used for this language.
+    #[serde(default)]
+    pub prettier_plugins: Vec<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -647,6 +654,7 @@ impl Default for LanguageConfig {
             overrides: Default::default(),
             word_characters: Default::default(),
             prettier_parser_name: None,
+            prettier_plugins: Default::default(),
             collapsed_placeholder: Default::default(),
         }
     }
@@ -937,13 +945,17 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -971,7 +983,9 @@ impl Language {
     }
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1002,7 +1016,9 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
@@ -1024,7 +1040,9 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
@@ -1052,7 +1070,9 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut content_capture_ix = None;
@@ -1092,7 +1112,13 @@ impl Language {
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = Query::new(&self.grammar_mut().ts_language, source)?;
+        let query = {
+            let grammar = self
+                .grammar
+                .as_ref()
+                .ok_or_else(|| anyhow!("no grammar for language"))?;
+            Query::new(&grammar.ts_language, source)?
+        };
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
@@ -1156,7 +1182,11 @@ impl Language {
         }
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
-        self.grammar_mut().override_config = Some(OverrideConfig {
+
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
         });
@@ -1164,7 +1194,10 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self.grammar_mut();
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+
         let query = Query::new(&grammar.ts_language, source)?;
         let mut redaction_capture_ix = None;
         get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
@@ -1179,8 +1212,8 @@ impl Language {
         Ok(self)
     }
 
-    fn grammar_mut(&mut self) -> &mut Grammar {
-        Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
+    fn grammar_mut(&mut self) -> Option<&mut Grammar> {
+        Arc::get_mut(self.grammar.as_mut()?)
     }
 
     pub fn name(&self) -> Arc<str> {
@@ -1248,6 +1281,10 @@ impl Language {
 
     pub fn prettier_parser_name(&self) -> Option<&str> {
         self.config.prettier_parser_name.as_deref()
+    }
+
+    pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
+        &self.config.prettier_plugins
     }
 }
 
@@ -1513,12 +1550,11 @@ impl LspAdapter for FakeLspAdapter {
         self.disk_based_diagnostics_progress_token.clone()
     }
 
-    fn initialization_options(&self) -> Option<Value> {
-        self.initialization_options.clone()
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &self.prettier_plugins
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(self.initialization_options.clone())
     }
 
     fn as_fake(&self) -> Option<&FakeLspAdapter> {

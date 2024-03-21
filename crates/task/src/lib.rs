@@ -3,6 +3,7 @@
 
 pub mod oneshot_source;
 pub mod static_source;
+mod vscode_format;
 
 use collections::HashMap;
 use gpui::ModelContext;
@@ -10,6 +11,7 @@ use static_source::RevealStrategy;
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.

@@ -1,8 +1,9 @@
 use std::cell::RefCell;
+use std::mem;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::LoopHandle;
@@ -14,7 +15,7 @@ use wayland_backend::protocol::WEnum;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_callback::WlCallback;
 use wayland_client::protocol::wl_output;
-use wayland_client::protocol::wl_pointer::AxisRelativeDirection;
+use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
 use wayland_client::{
     delegate_noop,
     protocol::{
@@ -35,7 +36,9 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
+use super::super::DOUBLE_CLICK_INTERVAL;
 use crate::platform::linux::client::Client;
+use crate::platform::linux::util::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
@@ -46,6 +49,7 @@ use crate::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
+use crate::{point, px};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -61,10 +65,12 @@ pub(crate) struct WaylandClientStateInner {
     outputs: Vec<(wl_output::WlOutput, Rc<RefCell<OutputState>>)>,
     platform_inner: Rc<LinuxPlatformInner>,
     keymap_state: Option<xkb::State>,
+    click_state: ClickState,
     repeat: KeyRepeat,
     modifiers: Modifiers,
     scroll_direction: f64,
-    mouse_location: Option<Point<Pixels>>,
+    axis_source: AxisSource,
+    mouse_location: Point<Pixels>,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<Rc<WaylandWindowState>>,
     keyboard_focused_window: Option<Rc<WaylandWindowState>>,
@@ -84,6 +90,12 @@ pub(crate) struct WaylandClientState {
     primary: Rc<RefCell<Primary>>,
 }
 
+struct ClickState {
+    last_click: Instant,
+    last_location: Point<Pixels>,
+    current_count: usize,
+}
+
 pub(crate) struct KeyRepeat {
     characters_per_second: u32,
     delay: Duration,
@@ -97,8 +109,21 @@ pub(crate) struct WaylandClient {
     qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
-const WL_SEAT_VERSION: u32 = 4;
+const WL_SEAT_MIN_VERSION: u32 = 4;
 const WL_OUTPUT_VERSION: u32 = 2;
+
+fn wl_seat_version(version: u32) -> u32 {
+    if version >= wl_pointer::EVT_AXIS_VALUE120_SINCE {
+        wl_pointer::EVT_AXIS_VALUE120_SINCE
+    } else if version >= WL_SEAT_MIN_VERSION {
+        WL_SEAT_MIN_VERSION
+    } else {
+        panic!(
+            "wl_seat below required version: {} < {}",
+            version, WL_SEAT_MIN_VERSION
+        );
+    }
+}
 
 impl WaylandClient {
     pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
@@ -114,7 +139,7 @@ impl WaylandClient {
                     "wl_seat" => {
                         globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
-                            WL_SEAT_VERSION,
+                            wl_seat_version(global.version),
                             &qh,
                             (),
                         );
@@ -149,6 +174,11 @@ impl WaylandClient {
             windows: Vec::new(),
             platform_inner: Rc::clone(&linux_platform_inner),
             keymap_state: None,
+            click_state: ClickState {
+                last_click: Instant::now(),
+                last_location: Point::new(px(0.0), px(0.0)),
+                current_count: 0,
+            },
             repeat: KeyRepeat {
                 characters_per_second: 16,
                 delay: Duration::from_millis(500),
@@ -163,7 +193,8 @@ impl WaylandClient {
                 command: false,
             },
             scroll_direction: -1.0,
-            mouse_location: None,
+            axis_source: AxisSource::Wheel,
+            mouse_location: point(px(0.0), px(0.0)),
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
@@ -298,8 +329,7 @@ impl Client for WaylandClient {
         }
         .to_string();
 
-        let mut cursor_state = self.state.cursor_state.borrow_mut();
-        cursor_state.cursor_icon_name = cursor_icon_name;
+        self.state.cursor_state.borrow_mut().cursor_icon_name = cursor_icon_name;
     }
 
     fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
@@ -325,10 +355,10 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
             wl_registry::Event::Global {
                 name,
                 interface,
-                version: _,
+                version,
             } => match &interface[..] {
                 "wl_seat" => {
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, WL_SEAT_VERSION, qh, ());
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
                 }
                 "wl_output" => {
                     state.outputs.push((
@@ -425,7 +455,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientState {
             }
             wl_surface::Event::Leave { output } => {
                 // We use `PreferredBufferScale` instead to set the scale if it's available
-                if surface.version() >= 6 {
+                if surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
                     return;
                 }
 
@@ -804,21 +834,21 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
 
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
     fn event(
-        state: &mut Self,
+        self_state: &mut Self,
         wl_pointer: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
         data: &(),
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut cursor_state = state.cursor_state.borrow_mut();
-        let mut state = state.client_state_inner.borrow_mut();
-
-        if cursor_state.cursor.is_none() {
-            cursor_state.cursor = Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
+        let mut state = self_state.client_state_inner.borrow_mut();
+        {
+            let mut cursor_state = self_state.cursor_state.borrow_mut();
+            if cursor_state.cursor.is_none() {
+                cursor_state.cursor =
+                    Some(Cursor::new(&conn, &state.compositor, &qh, &state.shm, 24));
+            }
         }
-        let cursor_icon_name = cursor_state.cursor_icon_name.clone();
-        let mut cursor: &mut Cursor = cursor_state.cursor.as_mut().unwrap();
 
         match event {
             wl_pointer::Event::Enter {
@@ -828,23 +858,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 surface_y,
                 ..
             } => {
-                let mut mouse_focused_window = None;
-                for window in &state.windows {
+                let windows = mem::take(&mut state.windows);
+                for window in windows.iter() {
                     if window.1.surface.id() == surface.id() {
                         window.1.set_focused(true);
-                        mouse_focused_window = Some(Rc::clone(&window.1));
+                        state.mouse_focused_window = Some(window.1.clone());
+                        let mut cursor_state = self_state.cursor_state.borrow_mut();
+                        let cursor_icon_name = cursor_state.cursor_icon_name.clone();
+                        if let Some(mut cursor) = cursor_state.cursor.as_mut() {
+                            cursor.set_serial_id(serial);
+                            cursor.set_icon(&wl_pointer, cursor_icon_name);
+                        }
                     }
                 }
-                if mouse_focused_window.is_some() {
-                    state.mouse_focused_window = mouse_focused_window;
-                    cursor.set_serial_id(serial);
-                    cursor.set_icon(&wl_pointer, cursor_icon_name);
-                }
-
-                state.mouse_location = Some(Point {
-                    x: Pixels::from(surface_x),
-                    y: Pixels::from(surface_y),
-                });
+                state.windows = windows;
+                state.mouse_location = point(px(surface_x as f32), px(surface_y as f32));
             }
             wl_pointer::Event::Motion {
                 time,
@@ -855,18 +883,20 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                 if state.mouse_focused_window.is_none() {
                     return;
                 }
-                state.mouse_location = Some(Point {
-                    x: Pixels::from(surface_x),
-                    y: Pixels::from(surface_y),
-                });
+                state.mouse_location = point(px(surface_x as f32), px(surface_y as f32));
+
                 state.mouse_focused_window.as_ref().unwrap().handle_input(
                     PlatformInput::MouseMove(MouseMoveEvent {
-                        position: state.mouse_location.unwrap(),
+                        position: state.mouse_location,
                         pressed_button: state.button_pressed,
                         modifiers: state.modifiers,
                     }),
                 );
-                cursor.set_icon(&wl_pointer, cursor_icon_name);
+                let mut cursor_state = self_state.cursor_state.borrow_mut();
+                let cursor_icon_name = cursor_state.cursor_icon_name.clone();
+                if let Some(mut cursor) = cursor_state.cursor.as_mut() {
+                    cursor.set_icon(&wl_pointer, cursor_icon_name);
+                }
             }
             wl_pointer::Event::Button {
                 button,
@@ -875,18 +905,34 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
             } => {
                 let button = linux_button_to_gpui(button);
                 let Some(button) = button else { return };
-                if state.mouse_focused_window.is_none() || state.mouse_location.is_none() {
+                if state.mouse_focused_window.is_none() {
                     return;
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
+                        let click_elapsed = state.click_state.last_click.elapsed();
+
+                        if click_elapsed < DOUBLE_CLICK_INTERVAL
+                            && is_within_click_distance(
+                                state.click_state.last_location,
+                                state.mouse_location,
+                            )
+                        {
+                            state.click_state.current_count += 1;
+                        } else {
+                            state.click_state.current_count = 1;
+                        }
+
+                        state.click_state.last_click = Instant::now();
+                        state.click_state.last_location = state.mouse_location;
+
                         state.button_pressed = Some(button);
                         state.mouse_focused_window.as_ref().unwrap().handle_input(
                             PlatformInput::MouseDown(MouseDownEvent {
                                 button,
-                                position: state.mouse_location.unwrap(),
+                                position: state.mouse_location,
                                 modifiers: state.modifiers,
-                                click_count: 1,
+                                click_count: state.click_state.current_count,
                                 first_mouse: false,
                             }),
                         );
@@ -896,9 +942,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                         state.mouse_focused_window.as_ref().unwrap().handle_input(
                             PlatformInput::MouseUp(MouseUpEvent {
                                 button,
-                                position: state.mouse_location.unwrap(),
-                                modifiers: Modifiers::default(),
-                                click_count: 1,
+                                position: state.mouse_location,
+                                modifiers: state.modifiers,
+                                click_count: state.click_state.current_count,
                             }),
                         );
                     }
@@ -915,46 +961,73 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                     _ => -1.0,
                 }
             }
+            wl_pointer::Event::AxisSource {
+                axis_source: WEnum::Value(axis_source),
+            } => {
+                state.axis_source = axis_source;
+            }
+            wl_pointer::Event::AxisValue120 {
+                axis: WEnum::Value(axis),
+                value120,
+            } => {
+                if let Some(focused_window) = &state.mouse_focused_window {
+                    let value = value120 as f64 * state.scroll_direction;
+                    focused_window.handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: state.mouse_location,
+                        delta: match axis {
+                            wl_pointer::Axis::VerticalScroll => {
+                                ScrollDelta::Pixels(point(px(0.0), px(value as f32)))
+                            }
+                            wl_pointer::Axis::HorizontalScroll => {
+                                ScrollDelta::Pixels(point(px(value as f32), px(0.0)))
+                            }
+                            _ => unimplemented!(),
+                        },
+                        modifiers: state.modifiers,
+                        touch_phase: TouchPhase::Moved,
+                    }))
+                }
+            }
             wl_pointer::Event::Axis {
                 time,
                 axis: WEnum::Value(axis),
                 value,
                 ..
             } => {
-                let focused_window = &state.mouse_focused_window;
-                let mouse_location = &state.mouse_location;
-                if let (Some(focused_window), Some(mouse_location)) =
-                    (focused_window, mouse_location)
+                // We handle discrete scroll events with `AxisValue120`.
+                if wl_pointer.version() >= wl_pointer::EVT_AXIS_VALUE120_SINCE
+                    && state.axis_source == AxisSource::Wheel
                 {
+                    return;
+                }
+                if let Some(focused_window) = &state.mouse_focused_window {
                     let value = value * state.scroll_direction;
                     focused_window.handle_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position: *mouse_location,
+                        position: state.mouse_location,
                         delta: match axis {
                             wl_pointer::Axis::VerticalScroll => {
-                                ScrollDelta::Pixels(Point::new(Pixels(0.0), Pixels(value as f32)))
+                                ScrollDelta::Pixels(point(px(0.0), px(value as f32)))
                             }
                             wl_pointer::Axis::HorizontalScroll => {
-                                ScrollDelta::Pixels(Point::new(Pixels(value as f32), Pixels(0.0)))
+                                ScrollDelta::Pixels(point(px(value as f32), px(0.0)))
                             }
                             _ => unimplemented!(),
                         },
                         modifiers: state.modifiers,
-                        touch_phase: TouchPhase::Started,
+                        touch_phase: TouchPhase::Moved,
                     }))
                 }
             }
             wl_pointer::Event::Leave { surface, .. } => {
-                let focused_window = &state.mouse_focused_window;
-                if let Some(focused_window) = focused_window {
+                if let Some(focused_window) = &state.mouse_focused_window {
                     focused_window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
-                        position: Point::<Pixels>::default(),
+                        position: Point::default(),
                         pressed_button: None,
                         modifiers: Modifiers::default(),
                     }));
                     focused_window.set_focused(false);
                 }
                 state.mouse_focused_window = None;
-                state.mouse_location = None;
             }
             _ => {}
         }

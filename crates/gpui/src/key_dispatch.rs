@@ -51,7 +51,8 @@
 ///
 use crate::{
     Action, ActionRegistry, DispatchPhase, ElementContext, EntityId, FocusId, KeyBinding,
-    KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
+    KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, ModifiersChangedEvent,
+    WindowContext,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -82,6 +83,7 @@ pub(crate) struct DispatchTree {
 pub(crate) struct DispatchNode {
     pub key_listeners: Vec<KeyListener>,
     pub action_listeners: Vec<DispatchActionListener>,
+    pub modifiers_changed_listeners: Vec<ModifiersChangedListener>,
     pub context: Option<KeyContext>,
     pub focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
@@ -106,6 +108,7 @@ impl ReusedSubtree {
 }
 
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut ElementContext)>;
+type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut ElementContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
@@ -202,6 +205,10 @@ impl DispatchTree {
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
+    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+        self.view_stack.last().copied()
+    }
+
     pub fn set_view_id(&mut self, view_id: EntityId) {
         if self.view_stack.last().copied() != Some(view_id) {
             let node_id = *self.node_stack.last().unwrap();
@@ -237,6 +244,7 @@ impl DispatchTree {
         let target = self.active_node();
         target.key_listeners = mem::take(&mut source.key_listeners);
         target.action_listeners = mem::take(&mut source.action_listeners);
+        target.modifiers_changed_listeners = mem::take(&mut source.modifiers_changed_listeners);
     }
 
     pub fn reuse_subtree(&mut self, old_range: Range<usize>, source: &mut Self) -> ReusedSubtree {
@@ -304,6 +312,12 @@ impl DispatchTree {
 
     pub fn on_key_event(&mut self, listener: KeyListener) {
         self.active_node().key_listeners.push(listener);
+    }
+
+    pub fn on_modifiers_changed(&mut self, listener: ModifiersChangedListener) {
+        self.active_node()
+            .modifiers_changed_listeners
+            .push(listener);
     }
 
     pub fn on_action(

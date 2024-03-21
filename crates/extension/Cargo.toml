@@ -37,6 +37,7 @@ serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
 toml.workspace = true
+url.workspace = true
 util.workspace = true
 wasm-encoder.workspace = true
 wasmtime.workspace = true

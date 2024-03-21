@@ -22,7 +22,6 @@ gpui.workspace = true
 language.workspace = true
 menu.workspace = true
 project.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

@@ -12,8 +12,37 @@ pub struct TitleBar {
 }
 
 impl TitleBar {
+    #[cfg(not(target_os = "windows"))]
     pub fn height(cx: &mut WindowContext) -> Pixels {
         (1.75 * cx.rem_size()).max(px(32.))
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn height(_cx: &mut WindowContext) -> Pixels {
+        // todo(windows) instead of hard coded size report the actual size to the Windows platform API
+        px(32.)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn top_padding(_cx: &WindowContext) -> Pixels {
+        px(0.)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn top_padding(cx: &WindowContext) -> Pixels {
+        use windows::Win32::UI::{
+            HiDpi::GetSystemMetricsForDpi,
+            WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
+        };
+
+        // This top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows:
+        // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
+        if cx.is_maximized() {
+            px((padding * 2) as f32)
+        } else {
+            px(0.)
+        }
     }
 
     pub fn new(id: impl Into<ElementId>) -> Self {
@@ -28,16 +57,6 @@ impl TitleBar {
     pub fn platform_style(mut self, style: PlatformStyle) -> Self {
         self.platform_style = style;
         self
-    }
-
-    fn top_padding(&self, cx: &WindowContext) -> Pixels {
-        if self.platform_style == PlatformStyle::Windows && cx.is_maximized() {
-            // todo(windows): get padding from win32 api, need HWND from window context somehow
-            // should be GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) * 2
-            px(8.)
-        } else {
-            px(0.)
-        }
     }
 }
 
@@ -58,13 +77,11 @@ impl ParentElement for TitleBar {
 impl RenderOnce for TitleBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let height = Self::height(cx);
-        let top_padding = self.top_padding(cx);
-
         h_flex()
             .id("titlebar")
             .w_full()
-            .pt(top_padding)
-            .h(height)
+            .pt(Self::top_padding(cx))
+            .h(height + Self::top_padding(cx))
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
@@ -88,9 +105,7 @@ impl RenderOnce for TitleBar {
                     .children(self.children),
             )
             .when(self.platform_style == PlatformStyle::Windows, |title_bar| {
-                let button_height = Self::height(cx) - top_padding;
-
-                title_bar.child(WindowsWindowControls::new(button_height))
+                title_bar.child(WindowsWindowControls::new(height))
             })
     }
 }
