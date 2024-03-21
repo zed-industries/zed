@@ -86,6 +86,10 @@ impl Supermaven {
         }
     }
 
+    pub fn kill(&mut self) {
+        self.process.kill().ok();
+    }
+
     fn register_editor(&mut self, _editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         dbg!("!!!!!!!!!!!!!!");
         let editor_handle = cx.view().clone();
@@ -187,7 +191,7 @@ impl Supermaven {
         Ok(())
     }
 
-    fn handle_message(&mut self, message: SupermavenMessage, cx: &mut AppContext) {
+    fn handle_message(&mut self, message: SupermavenMessage, _cx: &mut AppContext) {
         match message {
             SupermavenMessage::Response(response) => {
                 if let Some(state) = self.states.get_mut(&response.state_id) {
@@ -209,6 +213,7 @@ impl Global for Supermaven {}
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 struct SupermavenStateId(usize);
 
+#[allow(dead_code)]
 struct CompletionState {
     prefix: String,
     suffix: String,
@@ -228,19 +233,22 @@ mod tests {
     #[gpui::test]
     async fn test_exploratory(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let supermaven = cx.update(Supermaven::launch).await.unwrap();
+        let mut supermaven = cx.update(Supermaven::launch).await.unwrap();
 
         let buffer = cx.new_model(|_cx| Buffer::new(0, BufferId::new(1).unwrap(), "Hello "));
-        let mut editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
+        let _editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
 
         // let state_update = StateUpdateMessage {
         //     kind: StateUpdateKind::StateUpdate,
         //     new_id: "123".into(),
         //     updates: vec![],
         // };
+        //
 
         cx.executor()
             .timer(std::time::Duration::from_secs(60))
             .await;
+
+        supermaven.kill();
     }
 }
