@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, SemanticVersion};
+use util::{async_maybe, http::HttpClient, SemanticVersion};
 use wasmtime::{
     component::{Component, Linker, Resource, ResourceTable},
     Engine, Store,
@@ -297,39 +297,38 @@ impl wit::HostWorktree for WasmState {
 
 #[async_trait]
 impl wit::ExtensionImports for WasmState {
+    async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        convert_result(
+            self.host
+                .node_runtime
+                .binary_path()
+                .await
+                .map(|path| path.to_string_lossy().to_string()),
+        )
+    }
+
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        async fn inner(this: &mut WasmState, package_name: String) -> anyhow::Result<String> {
-            this.host
+        convert_result(
+            self.host
                 .node_runtime
                 .npm_package_latest_version(&package_name)
-                .await
-        }
-
-        Ok(inner(self, package_name)
-            .await
-            .map_err(|err| err.to_string()))
+                .await,
+        )
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        async fn inner(
-            this: &mut WasmState,
-            package_name: String,
-        ) -> anyhow::Result<Option<String>> {
-            this.host
+        convert_result(
+            self.host
                 .node_runtime
-                .npm_package_installed_version(&this.work_dir(), &package_name)
-                .await
-        }
-
-        Ok(inner(self, package_name)
-            .await
-            .map_err(|err| err.to_string()))
+                .npm_package_installed_version(&self.work_dir(), &package_name)
+                .await,
+        )
     }
 
     async fn npm_install_package(
@@ -337,20 +336,12 @@ impl wit::ExtensionImports for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
-        async fn inner(
-            this: &mut WasmState,
-            package_name: String,
-            version: String,
-        ) -> anyhow::Result<()> {
-            this.host
+        convert_result(
+            self.host
                 .node_runtime
-                .npm_install_packages(&this.work_dir(), &[(&package_name, &version)])
-                .await
-        }
-
-        Ok(inner(self, package_name, version)
-            .await
-            .map_err(|err| err.to_string()))
+                .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
+                .await,
+        )
     }
 
     async fn latest_github_release(
@@ -358,34 +349,29 @@ impl wit::ExtensionImports for WasmState {
         repo: String,
         options: wit::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<wit::GithubRelease, String>> {
-        async fn inner(
-            this: &mut WasmState,
-            repo: String,
-            options: wit::GithubReleaseOptions,
-        ) -> anyhow::Result<wit::GithubRelease> {
-            let release = util::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                this.host.http_client.clone(),
-            )
-            .await?;
-            Ok(wit::GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| wit::GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
+        convert_result(
+            async_maybe!({
+                let release = util::github::latest_github_release(
+                    &repo,
+                    options.require_assets,
+                    options.pre_release,
+                    self.host.http_client.clone(),
+                )
+                .await?;
+                Ok(wit::GithubRelease {
+                    version: release.tag_name,
+                    assets: release
+                        .assets
+                        .into_iter()
+                        .map(|asset| wit::GithubReleaseAsset {
+                            name: asset.name,
+                            download_url: asset.browser_download_url,
+                        })
+                        .collect(),
+                })
             })
-        }
-
-        Ok(inner(self, repo, options)
-            .await
-            .map_err(|err| err.to_string()))
+            .await,
+        )
     }
 
     async fn current_platform(&mut self) -> Result<(wit::Os, wit::Architecture)> {
@@ -438,23 +424,17 @@ impl wit::ExtensionImports for WasmState {
         path: String,
         file_type: wit::DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
-        let path = PathBuf::from(path);
+        let result = async_maybe!({
+            let path = PathBuf::from(path);
+            let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
 
-        async fn inner(
-            this: &mut WasmState,
-            url: String,
-            path: PathBuf,
-            file_type: wit::DownloadedFileType,
-        ) -> anyhow::Result<()> {
-            let extension_work_dir = this.host.work_dir.join(this.manifest.id.as_ref());
+            self.host.fs.create_dir(&extension_work_dir).await?;
 
-            this.host.fs.create_dir(&extension_work_dir).await?;
-
-            let destination_path = this
+            let destination_path = self
                 .host
-                .writeable_path_from_extension(&this.manifest.id, &path)?;
+                .writeable_path_from_extension(&self.manifest.id, &path)?;
 
-            let mut response = this
+            let mut response = self
                 .host
                 .http_client
                 .get(&url, Default::default(), true)
@@ -472,7 +452,7 @@ impl wit::ExtensionImports for WasmState {
             match file_type {
                 wit::DownloadedFileType::Uncompressed => {
                     futures::pin_mut!(body);
-                    this.host
+                    self.host
                         .fs
                         .create_file_with(&destination_path, body)
                         .await?;
@@ -480,7 +460,7 @@ impl wit::ExtensionImports for WasmState {
                 wit::DownloadedFileType::Gzip => {
                     let body = GzipDecoder::new(body);
                     futures::pin_mut!(body);
-                    this.host
+                    self.host
                         .fs
                         .create_file_with(&destination_path, body)
                         .await?;
@@ -488,7 +468,7 @@ impl wit::ExtensionImports for WasmState {
                 wit::DownloadedFileType::GzipTar => {
                     let body = GzipDecoder::new(body);
                     futures::pin_mut!(body);
-                    this.host
+                    self.host
                         .fs
                         .extract_tar_file(&destination_path, Archive::new(body))
                         .await?;
@@ -503,7 +483,7 @@ impl wit::ExtensionImports for WasmState {
                     zip_path.set_file_name(zip_filename);
 
                     futures::pin_mut!(body);
-                    this.host.fs.create_file_with(&zip_path, body).await?;
+                    self.host.fs.create_file_with(&zip_path, body).await?;
 
                     let unzip_status = std::process::Command::new("unzip")
                         .current_dir(&extension_work_dir)
@@ -517,13 +497,14 @@ impl wit::ExtensionImports for WasmState {
             }
 
             Ok(())
-        }
-
-        Ok(inner(self, url, path, file_type)
-            .await
-            .map(|_| ())
-            .map_err(|err| err.to_string()))
+        })
+        .await;
+        convert_result(result)
     }
+}
+
+fn convert_result<T>(result: Result<T>) -> wasmtime::Result<Result<T, String>> {
+    Ok(result.map_err(|error| error.to_string()))
 }
 
 fn wasi_view(state: &mut WasmState) -> &mut WasmState {
