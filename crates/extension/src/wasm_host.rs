@@ -26,7 +26,7 @@ use wasmtime::{
     component::{Component, Linker, Resource, ResourceTable},
     Engine, Store,
 };
-use wasmtime_wasi::preview2::{self as wasi, WasiCtx};
+use wasmtime_wasi as wasi;
 
 pub mod wit {
     wasmtime::component::bindgen!({
@@ -170,7 +170,7 @@ impl WasmHost {
         }
     }
 
-    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<WasiCtx> {
+    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
         use cap_std::{ambient_authority, fs::Dir};
 
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
