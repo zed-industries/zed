@@ -9154,7 +9154,8 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_for_buffer(buffer, cx).next()
+        self.language_servers_for_buffer(buffer, cx)
+            .find(|s| s.0.is_primary)
     }
 
     pub fn language_server_for_buffer(

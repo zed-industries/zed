@@ -36,7 +36,6 @@ mod purescript;
 mod python;
 mod ruby;
 mod rust;
-mod svelte;
 mod tailwind;
 mod terraform;
 mod toml;
@@ -113,7 +112,6 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
-        ("svelte", tree_sitter_svelte::language()),
         ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
@@ -326,13 +324,6 @@ pub fn init(
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
     language!(
-        "svelte",
-        vec![
-            Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
-    language!(
         "php",
         vec![
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
@@ -372,6 +363,11 @@ pub fn init(
         ))]
     );
     language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
+
+    languages.register_secondary_lsp_adapter(
+        "Svelte".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]

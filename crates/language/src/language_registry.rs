@@ -207,7 +207,20 @@ impl LanguageRegistry {
             .lsp_adapters
             .entry(language_name)
             .or_default()
-            .push(CachedLspAdapter::new(adapter));
+            .push(CachedLspAdapter::new(adapter, true));
+    }
+
+    pub fn register_secondary_lsp_adapter(
+        &self,
+        language_name: Arc<str>,
+        adapter: Arc<dyn LspAdapter>,
+    ) {
+        self.state
+            .write()
+            .lsp_adapters
+            .entry(language_name)
+            .or_default()
+            .push(CachedLspAdapter::new(adapter, false));
     }
 
     #[cfg(any(feature = "test-support", test))]
@@ -221,7 +234,7 @@ impl LanguageRegistry {
             .lsp_adapters
             .entry(language_name.into())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+            .push(CachedLspAdapter::new(Arc::new(adapter), true));
         self.fake_language_servers(language_name)
     }
 
