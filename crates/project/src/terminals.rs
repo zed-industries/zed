@@ -39,11 +39,9 @@ impl Project {
         // Alacritty uses parent project's working directory when no working directory is provided
         // https://github.com/alacritty/alacritty/blob/fd1a3cc79192d1d03839f0fd8c72e1f8d0fce42e/extra/man/alacritty.5.scd?plain=1#L47-L52
 
-        let current_directory = std::env::current_dir().ok();
         let venv_base_directory = working_directory
             .as_deref()
-            .or(current_directory.as_deref())
-            .unwrap_or_else(|| Path::new("")); // if everything fails, use relative path
+            .unwrap_or_else(|| Path::new(""));
 
         let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
             env.extend(spawn_task.env);
