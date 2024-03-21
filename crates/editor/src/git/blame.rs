@@ -5,12 +5,10 @@ use sum_tree::SumTree;
 use text::Bias;
 use text::Edit;
 
-use core::fmt;
 use git::blame::BlameEntry;
 use gpui::{Model, ModelContext, Subscription, Task};
 use project::{Item, Project};
 use smallvec::SmallVec;
-use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Default)]
@@ -374,11 +372,10 @@ mod tests {
 
     use git::blame::BlameEntry;
     use gpui::Context;
-    use language::Buffer;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
-    use text::{BufferId, Point};
+    use text::Point;
     use unindent::Unindent as _;
 
     use crate::git::blame::{FakeGitBlameRunner, GitBlame};

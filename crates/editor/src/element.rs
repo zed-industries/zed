@@ -2171,7 +2171,7 @@ impl EditorElement {
 
                     let datetime = match blame_entry.committer_datetime() {
                         Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
-                        Err(error) => "".to_string(),
+                        Err(_) => "Error parsing date".to_string(),
                     };
                     let pretty_commit_id = format!("{}", blame_entry.sha);
                     let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
