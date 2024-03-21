@@ -11,9 +11,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
-    ExtensionLibraryKind, ExtensionManifest, ExtensionStore,
+    ExtensionLibraryKind, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
 };
 use language::LanguageConfig;
+use serde::Deserialize;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -138,6 +139,42 @@ fn populate_default_paths(manifest: &mut ExtensionManifest, extension_path: &Pat
                 let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.themes.contains(&relative_theme_path) {
                     manifest.themes.push(relative_theme_path);
+                }
+            }
+        }
+    }
+
+    // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
+    // the manifest using the contents of the `grammars` directory.
+    if manifest.schema_version == 0 {
+        let grammars_dir = extension_path.join("grammars");
+        if grammars_dir.exists() {
+            for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {
+                let entry = entry?;
+                let grammar_path = entry.path();
+                if grammar_path.extension() == Some("toml".as_ref()) {
+                    #[derive(Deserialize)]
+                    struct GrammarConfigToml {
+                        pub repository: String,
+                        pub commit: String,
+                    }
+
+                    let grammar_config = fs::read_to_string(&grammar_path)?;
+                    let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
+
+                    let grammar_name = grammar_path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .ok_or_else(|| anyhow!("no grammar name"))?;
+                    if !manifest.grammars.contains_key(grammar_name) {
+                        manifest.grammars.insert(
+                            grammar_name.into(),
+                            GrammarManifestEntry {
+                                repository: grammar_config.repository,
+                                rev: grammar_config.commit,
+                            },
+                        );
+                    }
                 }
             }
         }
