@@ -839,12 +839,10 @@ impl WindowsWindowInner {
             }
         }
         let activated = wparam.loword() > 0;
-        println!("Window activated: {}", activated);
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(mut cb) = callbacks.active_status_change.as_mut() {
             cb(activated);
         }
-
         None
     }
 
