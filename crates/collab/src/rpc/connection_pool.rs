@@ -30,7 +30,7 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= semver(0, 127, 3) || (self.0 >= semver(0, 126, 3) && self.0 < semver(0, 127, 0))
+        self.0 >= semver(0, 127, 3)
     }
 }
 
