@@ -4,10 +4,7 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{
-        blame::{DisplayBlameEntry, GitBlame},
-        diff_hunk_to_display, DisplayDiffHunk,
-    },
+    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -26,7 +23,7 @@ use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    InteractiveElement, IntoElement, Model, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
     SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
     TextStyleRefinement, View, ViewContext, WindowContext,
@@ -1087,50 +1084,18 @@ impl EditorElement {
 
     fn layout_git_blame_gutters(
         &self,
-        blame: &mut GitBlame,
+        blame: &Model<GitBlame>,
         display_rows: Range<u32>,
         snapshot: &EditorSnapshot,
-    ) -> Vec<Option<DisplayBlameEntry>> {
+        cx: &mut ViewContext<Editor>,
+    ) -> Vec<Option<git::blame::BlameEntry>> {
         let buffer_rows = snapshot
             .buffer_rows(display_rows.start)
             .take(display_rows.len());
-        // Instead of each entry having a range, return one entry per row
-        // allows unit tests for buffer blame
-        //
-        // return in here: Vec<Option<BlameEntry>>
-        blame
-            .blame_for_rows(buffer_rows)
-            .map(|entry| {
-                entry.map(|entry| DisplayBlameEntry {
-                    display_row: Point::new(entry.row, 0).to_display_point(snapshot).row(),
-                    entry: entry.clone(),
-                })
-            })
-            .collect()
 
-        // let mut entries = Vec::new();
-
-        // for (buffer, buffer_range, excerpt_range) in snapshot
-        //     .buffer_snapshot
-        //     .excerpt_ranges_with_multi_buffer_ranges(display_rows)
-        // {
-        //     if let Some(buffer_blame) = blame.get(buffer.remote_id()) {
-        //         let mut buffer_entries = buffer_blame
-        //             .entries_in_row_range(buffer_range.clone(), &buffer)
-        //             .flat_map(|hunk| {
-        //                 blame_entry_to_display(
-        //                     hunk,
-        //                     buffer_range.clone(),
-        //                     excerpt_range.clone(),
-        //                     snapshot,
-        //                 )
-        //             })
-        //             .collect();
-
-        //         entries.append(&mut buffer_entries);
-        //     }
-        // }
-        // entries
+        blame.update(cx, |this, cx| {
+            this.blame_for_rows(buffer_rows, cx).collect()
+        })
     }
 
     fn layout_code_actions_indicator(
@@ -2041,8 +2006,8 @@ impl EditorElement {
             Self::paint_diff_hunks(layout, cx);
         }
 
-        if layout.display_blame_entries.is_some() {
-            self.paint_blame_entries(layout, cx);
+        if layout.blamed_display_rows.is_some() {
+            self.paint_blamed_display_rows(layout, cx);
         }
 
         for (ix, line) in layout.line_numbers.iter().enumerate() {
@@ -2178,8 +2143,8 @@ impl EditorElement {
         })
     }
 
-    fn paint_blame_entries(&self, layout: &EditorLayout, cx: &mut ElementContext) {
-        let Some(display_blame_entries) = &layout.display_blame_entries else {
+    fn paint_blamed_display_rows(&self, layout: &EditorLayout, cx: &mut ElementContext) {
+        let Some(blamed_display_rows) = &layout.blamed_display_rows else {
             return;
         };
         let line_height = layout.position_map.line_height;
@@ -2187,13 +2152,14 @@ impl EditorElement {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
 
+        // TODO: We need to change this so we pass in the viewport rows and render only those
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for display_blame_entry in display_blame_entries {
-                if let Some(display_blame_entry) = display_blame_entry {
+            for (ix, blame) in blamed_display_rows.iter().enumerate() {
+                if let Some(blame_entry) = blame.as_ref() {
                     let sha_color = cx
                         .theme()
                         .players()
-                        .color_for_participant(display_blame_entry.entry.sha.into());
+                        .color_for_participant(blame_entry.sha.into());
                     let commit_sha_run = TextRun {
                         len: 6,
                         font: self.style.text.font(),
@@ -2203,7 +2169,21 @@ impl EditorElement {
                         strikethrough: None,
                     };
 
-                    let blame_line = format!("{}", display_blame_entry.entry);
+                    let datetime = match blame_entry.committer_datetime() {
+                        Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+                        Err(error) => "".to_string(),
+                    };
+                    let pretty_commit_id = format!("{}", blame_entry.sha);
+                    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+
+                    let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
+                    let name = if name.len() > 20 {
+                        format!("{}...", &name[..16])
+                    } else {
+                        name.to_string()
+                    };
+
+                    let blame_line = format!("{:6} {:20} ({})", short_commit_id, name, datetime);
 
                     let info_run = TextRun {
                         len: blame_line.len() - 6,
@@ -2215,12 +2195,12 @@ impl EditorElement {
                     };
                     let runs = [commit_sha_run, info_run];
 
-                    let start_y = display_blame_entry.display_row as f32 * line_height - scroll_top;
                     let start_x = layout.position_map.em_width * 1;
-
+                    let start_y = ix as f32 * line_height - (scroll_top % line_height);
                     let origin = layout.gutter_hitbox.origin + point(start_x, start_y);
 
                     let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+                    // TODO: Shape before and only paint here
                     if let Some(line) = cx
                         .text_system()
                         .shape_line(blame_line.clone().into(), font_size, &runs)
@@ -2228,8 +2208,6 @@ impl EditorElement {
                     {
                         line.paint(origin, line_height, cx).log_err();
                     }
-                } else {
-                    todo!("print folded duplicatd");
                 }
             }
         })
@@ -3289,18 +3267,19 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let (display_blame_entries, blame_width) = self.editor.update(cx, |editor, cx| {
-                    if let Some(blame) = editor.blame.as_ref() {
-                        blame.update(cx, |blame, _| {
-                            let display_entries =
-                                self.layout_git_blame_gutters(blame, start_row..end_row, &snapshot);
-                            let width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+                let mut blame_width = None;
+                let mut display_blame_entries = None;
 
-                            (Some(display_entries), Some(width))
-                        })
-                    } else {
-                        (None, None)
-                    }
+                self.editor.update(cx, |editor, cx| {
+                    if let Some(blame) = editor.blame.as_ref() {
+                        display_blame_entries = Some(self.layout_git_blame_gutters(
+                            blame,
+                            start_row..end_row,
+                            &snapshot,
+                            cx,
+                        ));
+                        blame_width = Some(GIT_BLAME_GUTTER_WIDTH_CHARS * em_width);
+                    };
                 });
 
                 let mut max_visible_line_width = Pixels::ZERO;
@@ -3531,7 +3510,7 @@ impl Element for EditorElement {
                     redacted_ranges,
                     line_numbers,
                     display_hunks,
-                    display_blame_entries,
+                    blamed_display_rows: display_blame_entries,
                     folds,
                     blocks,
                     cursors,
@@ -3618,7 +3597,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    display_blame_entries: Option<Vec<Option<DisplayBlameEntry>>>,
+    blamed_display_rows: Option<Vec<Option<git::blame::BlameEntry>>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

@@ -1,13 +1,12 @@
 use anyhow::anyhow;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::{fmt, ops::Range, path::Path, sync::Arc};
-use sum_tree::SumTree;
+use std::{fmt, ops::Range, path::Path};
 
 pub use git2 as libgit;
 
@@ -311,112 +310,6 @@ pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     }
 
     Ok(entries)
-}
-
-impl sum_tree::Item for BlameEntry {
-    type Summary = BlameEntrySummary;
-
-    fn summary(&self) -> Self::Summary {
-        BlameEntrySummary {
-            buffer_range: self.range.clone(),
-        }
-    }
-}
-
-impl fmt::Display for BlameEntry {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), std::fmt::Error> {
-        if self.sha.is_zero() {
-            write!(f, "Not committed")
-        } else {
-            let datetime = self.committer_datetime().map_err(|_| std::fmt::Error)?;
-
-            let datetime = datetime.format("%Y-%m-%d %H:%M").to_string();
-
-            let pretty_commit_id = format!("{}", self.sha);
-            let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
-
-            write!(
-                f,
-                "{} - {} <{}> - ({})",
-                short_commit_id,
-                self.committer.as_deref().unwrap_or("<no name>"),
-                self.committer_mail.as_deref().unwrap_or("no email"),
-                datetime
-            )
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct BlameEntrySummary {
-    buffer_range: Range<u32>,
-}
-
-impl sum_tree::Summary for BlameEntrySummary {
-    type Context = text::BufferSnapshot;
-
-    fn add_summary(&mut self, other: &Self, _: &Self::Context) {
-        self.buffer_range.start = self.buffer_range.start.min(other.buffer_range.start);
-        self.buffer_range.end = self.buffer_range.end.max(other.buffer_range.end);
-    }
-}
-
-#[derive(Clone)]
-pub struct BufferBlame {
-    tree: SumTree<BlameEntry>,
-}
-
-impl BufferBlame {
-    pub fn new_with_cli(
-        working_directory: &Path,
-        path: &Arc<Path>,
-        buffer: &text::BufferSnapshot,
-    ) -> Result<BufferBlame> {
-        let buffer_text = buffer.as_rope().to_string();
-
-        let output = run_git_blame(working_directory, path, &buffer_text)
-            .context("failed to run 'git blame'")?;
-
-        let entries = parse_git_blame(&output)?;
-
-        Ok(Self::new_with_entries(entries, buffer))
-    }
-
-    pub fn new_with_entries(mut entries: Vec<BlameEntry>, buffer: &text::BufferSnapshot) -> Self {
-        entries.sort_by(|a, b| a.range.start.cmp(&b.range.start));
-
-        let mut tree = SumTree::new();
-        for entry in entries {
-            tree.push(entry, buffer);
-        }
-
-        Self { tree }
-    }
-
-    // pub fn entries_for_rows(
-    //     &self,
-    //     rows: impl IntoIterator<Item = Option<u32>>,
-    // ) -> impl Iterator<Item = Option<BlameEntry>> {
-    //     todo!()
-    // }
-
-    pub fn entries_in_row_range<'a>(
-        &'a self,
-        range: Range<u32>,
-        buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = &BlameEntry> {
-        // TODO: don't need filter, can use seek
-        let mut cursor = self.tree.filter::<_, BlameEntrySummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&range.start).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&range.end).is_gt();
-            !before_start && !after_end
-        });
-
-        std::iter::from_fn(move || {
-            cursor.next(buffer);
-            cursor.item()
-        })
-    }
 }
 
 #[cfg(test)]
