@@ -140,22 +140,34 @@ impl GitBlame {
         let edits = self.buffer_edits.consume();
         let new_snapshot = self.buffer.read(cx).snapshot();
 
-        /*
-                A
-                B
-                C
-                D
-
-
-        */
-
         let mut row_edits = edits
             .into_iter()
-            .map(|edit| Edit {
-                old: self.buffer_snapshot.offset_to_point(edit.old.start).row
-                    ..self.buffer_snapshot.offset_to_point(edit.old.end).row + 1,
-                new: new_snapshot.offset_to_point(edit.new.start).row
-                    ..new_snapshot.offset_to_point(edit.new.end).row + 1,
+            .map(|edit| {
+                let old_point_range = self.buffer_snapshot.offset_to_point(edit.old.start)
+                    ..self.buffer_snapshot.offset_to_point(edit.old.end);
+                let new_point_range = new_snapshot.offset_to_point(edit.new.start)
+                    ..new_snapshot.offset_to_point(edit.new.end);
+
+                if edit.old.is_empty()
+                    && old_point_range.start.column
+                        == self.buffer_snapshot.line_len(old_point_range.start.row)
+                    && new_snapshot.chars_at(edit.new.start).next() == Some('\n')
+                {
+                    Edit {
+                        old: old_point_range.start.row + 1..old_point_range.end.row + 1,
+                        new: new_point_range.start.row + 1..new_point_range.end.row + 1,
+                    }
+                } else if old_point_range.start.column == 0 && old_point_range.end.column == 0 {
+                    Edit {
+                        old: old_point_range.start.row..old_point_range.end.row,
+                        new: new_point_range.start.row..new_point_range.end.row,
+                    }
+                } else {
+                    Edit {
+                        old: old_point_range.start.row..old_point_range.end.row + 1,
+                        new: new_point_range.start.row..new_point_range.end.row + 1,
+                    }
+                }
             })
             .peekable();
 
@@ -180,7 +192,7 @@ impl GitBlame {
                 new_entries.push(
                     GitBlameEntry {
                         rows: edit.new.start - new_entries.summary().rows,
-                        blame: cursor.item().unwrap().blame.clone(),
+                        blame: cursor.item().and_then(|entry| entry.blame.clone()),
                     },
                     &(),
                 );
@@ -219,7 +231,6 @@ impl GitBlame {
     }
 
     fn generate(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
-        println!("--------------------------------");
         let buffer = self.buffer.read(cx);
 
         // Collab version: move this to the project, check `if is_local()`.
@@ -247,11 +258,9 @@ impl GitBlame {
 
         let blame_runner = self.blame_runner.clone();
 
-        println!("spawning task!!!!!!!!!!!!!!!!!");
         self.task = cx.spawn(|this, mut cx| async move {
             let background_buffer_snapshot = buffer_snapshot.clone();
 
-            dbg!("!!!!!!!!!");
             let task: Task<Result<SumTree<GitBlameEntry>>> =
                 cx.background_executor().spawn(async move {
                     // In your code, you would use `git_blame_runner` which is an instance of a type that implements `GitBlameRunner`.
@@ -262,7 +271,6 @@ impl GitBlame {
                         &background_buffer_snapshot.as_rope().to_string(),
                     )?;
 
-                    dbg!("!!!!!!!!!");
                     let mut current_row = 0;
                     let mut entries = SumTree::from_iter(
                         parsed_git_blame.into_iter().flat_map(|entry| {
@@ -286,7 +294,6 @@ impl GitBlame {
                         &(),
                     );
 
-                    dbg!("!!!!!!!!!");
                     let max_row = background_buffer_snapshot.max_point().row;
                     if max_row > current_row {
                         entries.push(
@@ -298,19 +305,15 @@ impl GitBlame {
                         );
                     }
 
-                    dbg!("done");
                     Ok(entries)
                 });
 
-            dbg!("!!!!!!!!!");
             let entries = task.await?;
 
-            dbg!("!!!!!!!!!");
             this.update(&mut cx, |this, cx| {
                 this.buffer_edits = buffer_edits;
                 this.buffer_snapshot = buffer_snapshot;
                 this.entries = entries;
-                dbg!("!!!!!!!!!");
                 cx.notify();
             })
         });
@@ -472,6 +475,7 @@ mod tests {
             );
         });
 
+        // Modify a single line
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(1, 2)..Point::new(1, 2), "X")], None, cx);
         });
@@ -491,7 +495,7 @@ mod tests {
             );
         });
 
-        // Before we insert a newline, sanity check:
+        // Before we insert a newline at the end, sanity check:
         git_blame.update(cx, |blame, cx| {
             assert_eq!(
                 blame
@@ -519,6 +523,38 @@ mod tests {
                         7..8
                     )),
                     None
+                ]
+            );
+        });
+
+        // Before we insert a newline at the start, sanity check:
+        git_blame.update(cx, |blame, cx| {
+            assert_eq!(
+                blame
+                    .blame_for_rows((2..3).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![Some(blame_entry(
+                    "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
+                    2..3
+                )),]
+            );
+        });
+        // Insert a newline at the start of the row
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "\n")], None, cx);
+        });
+        // Only the new line is marked as edited:
+        git_blame.update(cx, |blame, cx| {
+            assert_eq!(
+                blame
+                    .blame_for_rows((2..4).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![
+                    None,
+                    Some(blame_entry(
+                        "0a851b8c934ddfd3c463da9cf767c544403b1a2e",
+                        2..3
+                    )),
                 ]
             );
         });
