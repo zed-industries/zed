@@ -303,6 +303,14 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
+    decl.add_method(
+        sel!(windowDidMiniaturize:),
+        window_did_miniaturize as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidDeminiaturize:),
+        window_did_deminiaturize as extern "C" fn(&Object, Sel, id),
+    );
 
     decl.register()
 }
@@ -342,6 +350,7 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
+    mimized: bool,
 }
 
 impl MacWindowState {
@@ -419,9 +428,8 @@ impl MacWindowState {
         }
     }
 
-    // todo(macos)
     fn is_minimized(&self) -> bool {
-        false
+        self.mimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -599,6 +607,7 @@ impl MacWindow {
                 input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
+                mimized: false,
             })));
 
             (*native_window).set_ivar(
@@ -1816,6 +1825,18 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
+}
+
+extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+
+    window_state.lock().mimized = true;
+}
+
+extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+
+    window_state.lock().mimized = false;
 }
 
 async fn synthetic_drag(
