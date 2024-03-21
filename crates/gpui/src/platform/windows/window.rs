@@ -697,7 +697,8 @@ impl WindowsWindowInner {
                 // logical to physical
                 ptCurrentPos: POINT {
                     x: (caret_position.origin.x.0 * scale_factor) as i32,
-                    y: (caret_position.origin.y.0 * scale_factor) as i32 + ((caret_position.size.height.0 * scale_factor)as i32 / 2),
+                    y: (caret_position.origin.y.0 * scale_factor) as i32
+                        + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
                 },
                 ..Default::default()
             };
