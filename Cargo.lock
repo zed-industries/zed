@@ -9604,9 +9604,12 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
+ "project",
  "serde",
  "serde_json",
+ "settings",
  "smol",
+ "theme",
  "util",
 ]
 
