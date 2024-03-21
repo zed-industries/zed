@@ -389,6 +389,7 @@ cranelift-codegen = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
+wasmtime = { opt-level = 3 }
 
 [profile.release]
 debug = "limited"
