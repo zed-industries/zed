@@ -788,12 +788,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ConversationEditorEvent::TabContentChanged => {
-                println!("TabContentChanged");
-                // println!("{:#?}", event);
-                // println!("{:*<30}", "");
-                cx.notify()
-            }
+            ConversationEditorEvent::TabContentChanged => cx.notify(),
         }
     }
 
@@ -1441,12 +1436,6 @@ impl Conversation {
         })
     }
 
-    fn read_url_content(url: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let client = Client::new();
-        let response = client.get(url).send()?;
-        let text = from_read(response, 80);
-        Ok(text)
-    }
     fn handle_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
@@ -1509,9 +1498,6 @@ impl Conversation {
             return Default::default();
         };
 
-        println!("{:?}", selected_messages);
-        println!("{}", "-".repeat(30));
-
         let mut should_assist = false;
         for selected_message_id in selected_messages {
             let selected_message_role =
@@ -1540,43 +1526,6 @@ impl Conversation {
                 log::info!("completion provider has no credentials");
                 return Default::default();
             }
-            // Make change here
-
-            let original_messages: Vec<_> = self
-                .messages(cx)
-                .filter(|message| matches!(message.status, MessageStatus::Done))
-                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                .collect();
-            let url_contents: Vec<RequestMessage> = original_messages
-                .iter()
-                .flat_map(|message| find_urls(&message.content))
-                .filter(|url| !url.is_empty())
-                .filter_map(|url| match read_url_content(url) {
-                    Ok(content) => Some(RequestMessage {
-                        role: Role::User,
-                        content,
-                    }),
-                    Err(e) => {
-                        log::error!("Failed to read URL content: {}", e);
-                        None
-                    }
-                })
-                .collect();
-
-            println!("{:.40}", format!("{:?}", url_contents));
-            println!("{}", "-".repeat(30));
-
-            let messages: Vec<_> = url_contents
-                .into_iter()
-                .chain(
-                    self.messages(cx)
-                        .into_iter()
-                        .filter(|message| matches!(message.status, MessageStatus::Done))
-                        .map(|message| message.to_open_ai_message(self.buffer.read(cx))),
-                )
-                .collect();
-            println!("{:?}", messages);
-            println!("{}", "-".repeat(30));
 
             let request = self.to_completion_request(cx);
             let stream = CompletionProvider::global(cx).complete(request);
@@ -1662,13 +1611,38 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
+        let original_messages: Vec<_> = self
+            .messages(cx)
+            .filter(|message| matches!(message.status, MessageStatus::Done))
+            .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+            .collect();
+
+        let url_contents: Vec<LanguageModelRequestMessage> = original_messages
+            .iter()
+            .flat_map(|message| find_urls(&message.content))
+            .filter(|url| !url.is_empty())
+            .filter_map(|url| match read_url_content(url) {
+                Ok(content) => Some(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content,
+                }),
+                Err(e) => {
+                    log::error!("Failed to read URL content: {}", e);
+                    None
+                }
+            })
+            .collect();
+
+        println!("{:.40}", format!("{:?}", url_contents));
+        println!("{}", "-".repeat(30));
+
+        let messages: Vec<_> = url_contents.into_iter().chain(original_messages).collect();
+        println!("{:?}", messages);
+        println!("{}", "-".repeat(30));
+
         let request = LanguageModelRequest {
             model: self.model.clone(),
-            messages: self
-                .messages(cx)
-                .filter(|message| matches!(message.status, MessageStatus::Done))
-                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                .collect(),
+            messages,
             stop: vec![],
             temperature: 1.0,
         };
@@ -2188,7 +2162,6 @@ impl ConversationEditor {
             }
             ConversationEvent::SummaryChanged => {
                 cx.emit(ConversationEditorEvent::TabContentChanged);
-                println!("ConversationEvent::SummaryChanged");
                 self.conversation.update(cx, |conversation, cx| {
                     conversation.save(None, self.fs.clone(), cx);
                 });
