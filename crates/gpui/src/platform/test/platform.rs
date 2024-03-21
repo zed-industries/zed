@@ -12,7 +12,6 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     sync::Arc,
-    time::Duration,
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
