@@ -440,6 +440,7 @@
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
+      "ctrl-tab": "tab_switcher::Toggle",
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -601,6 +602,10 @@
   {
     "context": "FileFinder",
     "bindings": { "cmd-shift-p": "menu::SelectPrev" }
+  },
+  {
+    "context": "TabSwitcher",
+    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",

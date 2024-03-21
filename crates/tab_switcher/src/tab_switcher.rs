@@ -86,6 +86,7 @@ impl FocusableView for TabSwitcher {
 impl Render for TabSwitcher {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
@@ -146,7 +147,7 @@ impl TabSwitcherDelegate {
         };
 
         let pane = pane.read(cx);
-        let mut history_indices = HashMap::new();
+        let mut history_indices = HashMap::default();
         pane.activation_history().iter().rev().enumerate().for_each(
             |(history_index, entity_id)| {
                 history_indices.insert(entity_id, history_index);
