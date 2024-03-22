@@ -338,6 +338,11 @@ impl PlatformWindow for X11Window {
         false
     }
 
+    // todo(linux)
+    fn is_minimized(&self) -> bool {
+        false
+    }
+
     fn content_size(&self) -> Size<Pixels> {
         self.0.inner.borrow_mut().content_size()
     }

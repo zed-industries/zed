@@ -5,8 +5,9 @@ use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -30,6 +31,7 @@ impl ModalView for FileFinder {}
 
 pub struct FileFinder {
     picker: View<Picker<FileFinderDelegate>>,
+    init_modifiers: Option<Modifiers>,
 }
 
 pub fn init(cx: &mut AppContext) {
@@ -94,6 +96,23 @@ impl FileFinder {
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
             picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
+            init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
+        }
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(init_modifiers) = self.init_modifiers else {
+            return;
+        };
+        if self.picker.read(cx).delegate.has_changed_selected_index {
+            if !event.modified() || !init_modifiers.is_subset_of(&event) {
+                self.init_modifiers = None;
+                cx.dispatch_action(menu::Confirm.boxed_clone());
+            }
         }
     }
 }
@@ -107,8 +126,12 @@ impl FocusableView for FileFinder {
 }
 
 impl Render for FileFinder {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("FileFinder")
+            .w(rems(34.))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .child(self.picker.clone())
     }
 }
 
@@ -123,6 +146,7 @@ pub struct FileFinderDelegate {
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
     selected_index: usize,
+    has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
 }
@@ -376,6 +400,7 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
+            has_changed_selected_index: false,
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
@@ -683,6 +708,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+        self.has_changed_selected_index = true;
         self.selected_index = ix;
         cx.notify();
     }
@@ -721,7 +747,7 @@ impl PickerDelegate for FileFinderDelegate {
                 }),
             );
 
-            self.selected_index = self.calculate_selected_index();
+            self.selected_index = 0;
             cx.notify();
             Task::ready(())
         } else {

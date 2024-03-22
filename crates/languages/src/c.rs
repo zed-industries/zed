@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::AsyncAppContext;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
@@ -29,6 +30,7 @@ impl super::LspAdapter for CLspAdapter {
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
+            "windows" => "windows",
             other => bail!("Running on unsupported os: {other}"),
         };
         let asset_name = format!("clangd-{}-{}.zip", os_suffix, release.tag_name);
@@ -42,6 +44,20 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let env = delegate.shell_env().await;
+        let path = delegate.which("clangd".as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(

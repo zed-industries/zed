@@ -1,5 +1,6 @@
 use crate::{
-    db::{self, AccessTokenId, Database, UserId},
+    db::{self, dev_server, AccessTokenId, Database, DevServerId, UserId},
+    rpc::Principal,
     AppState, Error, Result,
 };
 use anyhow::{anyhow, Context};
@@ -19,11 +20,11 @@ use std::sync::OnceLock;
 use std::{sync::Arc, time::Instant};
 use subtle::ConstantTimeEq;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Impersonator(pub Option<db::User>);
-
-/// Validates the authorization header. This has two mechanisms, one for the ADMIN_TOKEN
-/// and one for the access tokens that we issue.
+/// Validates the authorization header and adds an Extension<Principal> to the request.
+/// Authorization: <user-id> <token>
+///   <token> can be an access_token attached to that user, or an access token of an admin
+///   or (in development) the string ADMIN:<config.api_token>.
+/// Authorization: "dev-server-token" <token>
 pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let mut auth_header = req
         .headers()
@@ -37,7 +38,26 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         })?
         .split_whitespace();
 
-    let user_id = UserId(auth_header.next().unwrap_or("").parse().map_err(|_| {
+    let state = req.extensions().get::<Arc<AppState>>().unwrap();
+
+    let first = auth_header.next().unwrap_or("");
+    if first == "dev-server-token" {
+        let dev_server_token = auth_header.next().ok_or_else(|| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "missing dev-server-token token in authorization header".to_string(),
+            )
+        })?;
+        let dev_server = verify_dev_server_token(dev_server_token, &state.db)
+            .await
+            .map_err(|e| Error::Http(StatusCode::UNAUTHORIZED, format!("{}", e)))?;
+
+        req.extensions_mut()
+            .insert(Principal::DevServer(dev_server));
+        return Ok::<_, Error>(next.run(req).await);
+    }
+
+    let user_id = UserId(first.parse().map_err(|_| {
         Error::Http(
             StatusCode::BAD_REQUEST,
             "missing user id in authorization header".to_string(),
@@ -50,8 +70,6 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
             "missing access token in authorization header".to_string(),
         )
     })?;
-
-    let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
     // In development, allow impersonation using the admin API token.
     // Don't allow this in production because we can't tell who is doing
@@ -76,18 +94,17 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
                 .await?
                 .ok_or_else(|| anyhow!("user {} not found", user_id))?;
 
-            let impersonator = if let Some(impersonator_id) = validate_result.impersonator_id {
-                let impersonator = state
+            if let Some(impersonator_id) = validate_result.impersonator_id {
+                let admin = state
                     .db
                     .get_user_by_id(impersonator_id)
                     .await?
                     .ok_or_else(|| anyhow!("user {} not found", impersonator_id))?;
-                Some(impersonator)
+                req.extensions_mut()
+                    .insert(Principal::Impersonated { user, admin });
             } else {
-                None
+                req.extensions_mut().insert(Principal::User(user));
             };
-            req.extensions_mut().insert(user);
-            req.extensions_mut().insert(Impersonator(impersonator));
             return Ok::<_, Error>(next.run(req).await);
         }
     }
@@ -211,6 +228,33 @@ pub async fn verify_access_token(
             None
         },
     })
+}
+
+// a dev_server_token has the format <id>.<base64>. This is to make them
+// relatively easy to copy/paste around.
+pub async fn verify_dev_server_token(
+    dev_server_token: &str,
+    db: &Arc<Database>,
+) -> anyhow::Result<dev_server::Model> {
+    let mut parts = dev_server_token.splitn(2, '.');
+    let id = DevServerId(parts.next().unwrap_or_default().parse()?);
+    let token = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid dev server token format"))?;
+
+    let token_hash = hash_access_token(&token);
+    let server = db.get_dev_server(id).await?;
+
+    if server
+        .hashed_token
+        .as_bytes()
+        .ct_eq(token_hash.as_ref())
+        .into()
+    {
+        Ok(server)
+    } else {
+        Err(anyhow!("wrong token for dev server"))
+    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use settings::Settings;
 use std::{str, sync::Arc};
 use util::asset_str;
 
-use crate::rust::RustContextProvider;
+use crate::{elixir::elixir_task_context, rust::RustContextProvider};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
@@ -128,8 +128,13 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new(language::DefaultContextProvider)),
-                move || Ok((config.clone(), load_queries($name))),
+                move || {
+                    Ok((
+                        config.clone(),
+                        load_queries($name),
+                        Some(Arc::new(language::SymbolContextProvider)),
+                    ))
+                },
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -143,8 +148,13 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new(language::DefaultContextProvider)),
-                move || Ok((config.clone(), load_queries($name))),
+                move || {
+                    Ok((
+                        config.clone(),
+                        load_queries($name),
+                        Some(Arc::new(language::SymbolContextProvider)),
+                    ))
+                },
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -158,8 +168,13 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                Some(Arc::new($context_provider)),
-                move || Ok((config.clone(), load_queries($name))),
+                move || {
+                    Ok((
+                        config.clone(),
+                        load_queries($name),
+                        Some(Arc::new($context_provider)),
+                    ))
+                },
             );
         };
     }
@@ -197,11 +212,16 @@ pub fn init(
                 vec![
                     Arc::new(elixir::ElixirLspAdapter),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ]
+                ],
+                elixir_task_context()
             );
         }
         elixir::ElixirLspSetting::NextLs => {
-            language!("elixir", vec![Arc::new(elixir::NextLspAdapter)]);
+            language!(
+                "elixir",
+                vec![Arc::new(elixir::NextLspAdapter)],
+                elixir_task_context()
+            );
         }
         elixir::ElixirLspSetting::Local { path, arguments } => {
             language!(
@@ -209,7 +229,8 @@ pub fn init(
                 vec![Arc::new(elixir::LocalLspAdapter {
                     path: path.clone(),
                     arguments: arguments.clone(),
-                })]
+                })],
+                elixir_task_context()
             );
         }
     }

@@ -125,6 +125,11 @@ spec:
                 secretKeyRef:
                   name: livekit
                   key: secret
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai
+                  key: api_key
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

@@ -51,6 +51,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
+    last_ime_input: RefCell<Option<String>>,
 }
 
 impl WindowsWindowInner {
@@ -110,6 +111,7 @@ impl WindowsWindowInner {
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
+        let last_ime_input = RefCell::new(None);
         Self {
             hwnd,
             origin,
@@ -122,16 +124,16 @@ impl WindowsWindowInner {
             handle,
             hide_title_bar,
             display,
+            last_ime_input,
         }
     }
 
     fn is_maximized(&self) -> bool {
-        let mut placement = WINDOWPLACEMENT::default();
-        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-        if unsafe { GetWindowPlacement(self.hwnd, &mut placement) }.is_ok() {
-            return placement.showCmd == SW_SHOWMAXIMIZED.0 as u32;
-        }
-        return false;
+        unsafe { IsZoomed(self.hwnd) }.as_bool()
+    }
+
+    fn is_minimized(&self) -> bool {
+        unsafe { IsIconic(self.hwnd) }.as_bool()
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
@@ -189,11 +191,9 @@ impl WindowsWindowInner {
     }
 
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        log::debug!("msg: {msg}, wparam: {}, lparam: {}", wparam.0, lparam.0);
         let handled = match msg {
-            WM_ACTIVATE => self.handle_activate_msg(),
+            WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(lparam),
-            WM_SETFOCUS => self.handle_set_focus_msg(msg, wparam, lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
@@ -213,25 +213,11 @@ impl WindowsWindowInner {
             WM_LBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Left, lparam),
             WM_RBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Right, lparam),
             WM_MBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Middle, lparam),
-            WM_XBUTTONDOWN => {
-                let nav_dir = match wparam.hiword() {
-                    XBUTTON1 => NavigationDirection::Forward,
-                    XBUTTON2 => NavigationDirection::Back,
-                    _ => return LRESULT(1),
-                };
-                self.handle_mouse_down_msg(MouseButton::Navigate(nav_dir), lparam)
-            }
+            WM_XBUTTONDOWN => self.handle_xbutton_msg(wparam, lparam, Self::handle_mouse_down_msg),
             WM_LBUTTONUP => self.handle_mouse_up_msg(MouseButton::Left, lparam),
             WM_RBUTTONUP => self.handle_mouse_up_msg(MouseButton::Right, lparam),
             WM_MBUTTONUP => self.handle_mouse_up_msg(MouseButton::Middle, lparam),
-            WM_XBUTTONUP => {
-                let nav_dir = match wparam.hiword() {
-                    XBUTTON1 => NavigationDirection::Back,
-                    XBUTTON2 => NavigationDirection::Forward,
-                    _ => return LRESULT(1),
-                };
-                self.handle_mouse_up_msg(MouseButton::Navigate(nav_dir), lparam)
-            }
+            WM_XBUTTONUP => self.handle_xbutton_msg(wparam, lparam, Self::handle_mouse_up_msg),
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(wparam, lparam),
             WM_SYSKEYDOWN => self.handle_syskeydown_msg(wparam, lparam),
@@ -634,6 +620,20 @@ impl WindowsWindowInner {
         Some(1)
     }
 
+    fn handle_xbutton_msg(
+        &self,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        handler: impl Fn(&Self, MouseButton, LPARAM) -> Option<isize>,
+    ) -> Option<isize> {
+        let nav_dir = match wparam.hiword() {
+            XBUTTON1 => NavigationDirection::Back,
+            XBUTTON2 => NavigationDirection::Forward,
+            _ => return Some(1),
+        };
+        handler(self, MouseButton::Navigate(nav_dir), lparam)
+    }
+
     fn handle_mouse_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
@@ -691,11 +691,14 @@ impl WindowsWindowInner {
             let caret_range = input_handler.selected_text_range().unwrap();
             let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
             self.input_handler.set(Some(input_handler));
+            let scale_factor = self.scale_factor.get();
             let config = CANDIDATEFORM {
                 dwStyle: CFS_CANDIDATEPOS,
+                // logical to physical
                 ptCurrentPos: POINT {
-                    x: caret_position.origin.x.0 as i32,
-                    y: caret_position.origin.y.0 as i32 + (caret_position.size.height.0 as i32 / 2),
+                    x: (caret_position.origin.x.0 * scale_factor) as i32,
+                    y: (caret_position.origin.y.0 * scale_factor) as i32
+                        + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
                 },
                 ..Default::default()
             };
@@ -732,6 +735,15 @@ impl WindowsWindowInner {
         }
     }
 
+    fn retrieve_composition_cursor_position(&self) -> usize {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
+            ImmReleaseContext(self.hwnd, ctx);
+            ret as usize
+        }
+    }
+
     fn handle_ime_composition(&self, lparam: LPARAM) -> Option<isize> {
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = self.parse_ime_compostion_string() else {
@@ -746,11 +758,21 @@ impl WindowsWindowInner {
                 Some(0..string_len),
             );
             self.input_handler.set(Some(input_handler));
-            None
-        } else {
-            // currently, we don't care other stuff
-            None
+            *self.last_ime_input.borrow_mut() = Some(string);
         }
+        if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
+            let Some(ref comp_string) = *self.last_ime_input.borrow() else {
+                return None;
+            };
+            let caret_pos = self.retrieve_composition_cursor_position();
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return None;
+            };
+            input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
+            self.input_handler.set(Some(input_handler));
+        }
+        // currently, we don't care other stuff
+        None
     }
 
     fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
@@ -770,6 +792,7 @@ impl WindowsWindowInner {
         };
         input_handler.replace_text_in_range(None, &ime_char);
         self.input_handler.set(Some(input_handler));
+        *self.last_ime_input.borrow_mut() = None;
         self.invalidate_client_area();
         Some(0)
     }
@@ -809,11 +832,16 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_activate_msg(&self) -> Option<isize> {
+    fn handle_activate_msg(&self, wparam: WPARAM) -> Option<isize> {
         if self.hide_title_bar {
             if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
                 unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
             }
+        }
+        let activated = wparam.loword() > 0;
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+            cb(activated);
         }
         None
     }
@@ -858,7 +886,7 @@ impl WindowsWindowInner {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         // this will emit `WM_SIZE` and `WM_MOVE` right here
-        // even before this funtion returns
+        // even before this function returns
         // the new size is handled in `WM_SIZE`
         unsafe {
             SetWindowPos(
@@ -1043,28 +1071,6 @@ impl WindowsWindowInner {
 
         None
     }
-
-    fn handle_set_focus_msg(&self, _msg: u32, wparam: WPARAM, _lparam: LPARAM) -> Option<isize> {
-        // wparam is the window that just lost focus (may be null)
-        // SEE: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
-        let lost_focus_hwnd = HWND(wparam.0 as isize);
-        if let Some(lost_focus_window) = self
-            .platform_inner
-            .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
-        {
-            let mut callbacks = lost_focus_window.callbacks.borrow_mut();
-            if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-                cb(false);
-            }
-        }
-
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-            cb(true);
-        }
-
-        Some(0)
-    }
 }
 
 #[derive(Default)]
@@ -1099,7 +1105,7 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Self {
-        let classname = register_wnd_class();
+        let classname = register_wnd_class(platform_inner.icon);
         let hide_title_bar = options
             .titlebar
             .as_ref()
@@ -1169,10 +1175,6 @@ impl WindowsWindow {
         unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
         wnd
     }
-
-    fn maximize(&self) {
-        unsafe { ShowWindowAsync(self.inner.hwnd, SW_MAXIMIZE) };
-    }
 }
 
 impl HasWindowHandle for WindowsWindow {
@@ -1214,6 +1216,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_maximized(&self) -> bool {
         self.inner.is_maximized()
+    }
+
+    fn is_minimized(&self) -> bool {
+        self.inner.is_minimized()
     }
 
     /// get the logical size of the app's drawable area.
@@ -1558,13 +1564,14 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 }
 
-fn register_wnd_class() -> PCWSTR {
+fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
+            hIcon: icon_handle,
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,

@@ -22,8 +22,8 @@ use wayland_client::Connection;
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
+    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions, Pixels,
     Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
     SemanticVersion, Task, WindowOptions, WindowParams,
 };
@@ -31,6 +31,11 @@ use crate::{
 use super::x11::X11Client;
 
 pub(super) const SCROLL_LINES: f64 = 3.0;
+
+// Values match the defaults on GTK.
+// Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
+pub(super) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+pub(super) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -308,10 +313,6 @@ impl Platform for LinuxPlatform {
 
     fn os_name(&self) -> &'static str {
         "Linux"
-    }
-
-    fn double_click_interval(&self) -> Duration {
-        Duration::default()
     }
 
     fn os_version(&self) -> Result<SemanticVersion> {

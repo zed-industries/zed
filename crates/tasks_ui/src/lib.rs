@@ -1,11 +1,11 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::Point;
 use modal::{Spawn, TasksModal};
 use project::{Location, WorktreeId};
-use task::{Task, TaskContext};
+use task::{Task, TaskContext, TaskVariables};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -156,40 +156,37 @@ fn task_context(
 
                 let selected_text = buffer.read(cx).chars_for_range(selection_range).collect();
 
-                let mut env = HashMap::from_iter([
+                let mut task_variables = TaskVariables::from_iter([
                     ("ZED_ROW".into(), row.to_string()),
                     ("ZED_COLUMN".into(), column.to_string()),
                     ("ZED_SELECTED_TEXT".into(), selected_text),
                 ]);
                 if let Some(path) = current_file {
-                    env.insert("ZED_FILE".into(), path);
+                    task_variables.0.insert("ZED_FILE".into(), path);
                 }
                 if let Some(worktree_path) = worktree_path {
-                    env.insert("ZED_WORKTREE_ROOT".into(), worktree_path);
+                    task_variables
+                        .0
+                        .insert("ZED_WORKTREE_ROOT".into(), worktree_path);
                 }
                 if let Some(language_context) = context {
-                    if let Some(symbol) = language_context.symbol {
-                        env.insert("ZED_SYMBOL".into(), symbol);
-                    }
-                    if let Some(symbol) = language_context.package {
-                        env.insert("ZED_PACKAGE".into(), symbol);
-                    }
+                    task_variables.0.extend(language_context.0);
                 }
 
                 Some(TaskContext {
                     cwd: cwd.clone(),
-                    env,
+                    task_variables,
                 })
             })
         })()
         .unwrap_or_else(|| TaskContext {
             cwd,
-            env: Default::default(),
+            task_variables: Default::default(),
         })
     } else {
         TaskContext {
             cwd,
-            env: Default::default(),
+            task_variables: Default::default(),
         }
     }
 }
@@ -248,14 +245,14 @@ fn task_cwd(workspace: &Workspace, cx: &mut WindowContext) -> anyhow::Result<Opt
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::sync::Arc;
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
-    use language::{DefaultContextProvider, Language, LanguageConfig};
+    use language::{Language, LanguageConfig, SymbolContextProvider};
     use project::{FakeFs, Project, TaskSourceKind};
     use serde_json::json;
-    use task::{oneshot_source::OneshotSource, TaskContext};
+    use task::{oneshot_source::OneshotSource, TaskContext, TaskVariables};
     use ui::VisualContext;
     use workspace::{AppState, Workspace};
 
@@ -302,7 +299,7 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(DefaultContextProvider))),
+            .with_context_provider(Some(Arc::new(SymbolContextProvider))),
         );
 
         let typescript_language = Arc::new(
@@ -320,7 +317,7 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(DefaultContextProvider))),
+            .with_context_provider(Some(Arc::new(SymbolContextProvider))),
         );
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, cx| {
@@ -362,7 +359,7 @@ mod tests {
                 task_context(this, task_cwd(this, cx).unwrap(), cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
-                    env: HashMap::from_iter([
+                    task_variables: TaskVariables::from_iter([
                         ("ZED_FILE".into(), "/dir/rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_ROW".into(), "1".into()),
@@ -379,7 +376,7 @@ mod tests {
                 task_context(this, task_cwd(this, cx).unwrap(), cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
-                    env: HashMap::from_iter([
+                    task_variables: TaskVariables::from_iter([
                         ("ZED_FILE".into(), "/dir/rust/b.rs".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_SYMBOL".into(), "this_is_a_rust_file".into()),
@@ -396,7 +393,7 @@ mod tests {
                 task_context(this, task_cwd(this, cx).unwrap(), cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
-                    env: HashMap::from_iter([
+                    task_variables: TaskVariables::from_iter([
                         ("ZED_FILE".into(), "/dir/a.ts".into()),
                         ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
                         ("ZED_SYMBOL".into(), "this_is_a_test".into()),

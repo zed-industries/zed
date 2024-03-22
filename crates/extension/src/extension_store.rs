@@ -23,7 +23,8 @@ use futures::{
 };
 use gpui::{actions, AppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -835,12 +836,18 @@ impl ExtensionStore {
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
-                None,
                 move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
-                    Ok((config, queries))
+                    let tasks = std::fs::read_to_string(language_path.join("tasks.json"))
+                        .ok()
+                        .and_then(|contents| {
+                            let definitions = serde_json_lenient::from_str(&contents).log_err()?;
+                            Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
+                        });
+
+                    Ok((config, queries, tasks))
                 },
             );
         }
