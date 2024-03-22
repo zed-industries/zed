@@ -418,7 +418,7 @@ impl Element for InteractiveText {
         cx.with_element_state::<InteractiveTextState, _>(
             Some(self.element_id.clone()),
             |interactive_state, cx| {
-                let mut interactive_state = interactive_state
+                let interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
 
                 if let Some(interactive_state) = interactive_state.as_ref() {
