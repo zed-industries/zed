@@ -1082,107 +1082,103 @@ impl EditorElement {
             .collect()
     }
 
-    fn blame_display_rows(
+    fn layout_blame_entries(
         &self,
         display_rows: Range<u32>,
         em_width: Pixels,
+        scroll_position: gpui::Point<f32>,
+        line_height: Pixels,
+        gutter_hitbox: &Hitbox,
         snapshot: &EditorSnapshot,
         cx: &mut ElementContext,
-    ) -> (Option<Vec<Option<ShapedLine>>>, Option<Pixels>) {
-        self.editor.update(cx, |editor, cx| {
+    ) -> (Option<Vec<AnyElement>>, Option<Pixels>) {
+        let blamed_rows: Option<Vec<_>> = self.editor.update(cx, |editor, cx| {
             let Some(blame) = editor.blame.as_ref() else {
-                return (None, None);
+                return None;
             };
 
             let buffer_rows = snapshot
                 .buffer_rows(display_rows.start)
                 .take(display_rows.len());
 
-            let blamed_rows: Vec<_> = blame.update(cx, |this, cx| {
+            Some(blame.update(cx, |this, cx| {
                 this.blame_for_rows(buffer_rows, cx).collect()
-            });
+            }))
+        });
 
-            let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-            let font = self.style.text.font();
+        let Some(blamed_rows) = blamed_rows else {
+            return (None, None);
+        };
 
-            let mut last_used_color: Option<(PlayerColor, Oid)> = None;
-            let shaped_lines = blamed_rows
-                .into_iter()
-                .map(|blame_entry| {
-                    if let Some(blame_entry) = blame_entry {
-                        let mut sha_color = cx
-                            .theme()
-                            .players()
-                            .color_for_participant(blame_entry.sha.into());
-                        // If the last color we used is the same as the one we get for this line, but
-                        // the commit SHAs are different, then we try again to get a different color.
-                        match last_used_color {
-                            Some((color, sha))
-                                if sha != blame_entry.sha && color.cursor == sha_color.cursor =>
-                            {
-                                let index: u32 = blame_entry.sha.into();
-                                sha_color = cx.theme().players().color_for_participant(index + 1);
-                            }
-                            _ => {}
-                        };
-                        last_used_color = Some((sha_color, blame_entry.sha));
+        let scroll_top = scroll_position.y * line_height;
+        let start_x = em_width * 1;
 
-                        let commit_sha_run = TextRun {
-                            len: 6,
-                            font: font.clone(),
-                            color: sha_color.cursor,
-                            background_color: None,
-                            underline: Default::default(),
-                            strikethrough: None,
-                        };
+        let mut last_used_color: Option<(PlayerColor, Oid)> = None;
 
-                        let datetime = match blame_entry.committer_datetime() {
-                            Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
-                            Err(_) => "Error parsing date".to_string(),
-                        };
-                        let pretty_commit_id = format!("{}", blame_entry.sha);
-                        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+        let shaped_lines = blamed_rows
+            .into_iter()
+            .enumerate()
+            .flat_map(|(ix, blame_entry)| {
+                if let Some(blame_entry) = blame_entry {
+                    let mut sha_color = cx
+                        .theme()
+                        .players()
+                        .color_for_participant(blame_entry.sha.into());
+                    // If the last color we used is the same as the one we get for this line, but
+                    // the commit SHAs are different, then we try again to get a different color.
+                    match last_used_color {
+                        Some((color, sha))
+                            if sha != blame_entry.sha && color.cursor == sha_color.cursor =>
+                        {
+                            let index: u32 = blame_entry.sha.into();
+                            sha_color = cx.theme().players().color_for_participant(index + 1);
+                        }
+                        _ => {}
+                    };
+                    last_used_color = Some((sha_color, blame_entry.sha));
 
-                        let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
-                        let name = if name.len() > 20 {
-                            format!("{}...", &name[..16])
-                        } else {
-                            name.to_string()
-                        };
+                    let datetime = match blame_entry.committer_datetime() {
+                        Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+                        Err(_) => "Error parsing date".to_string(),
+                    };
+                    let pretty_commit_id = format!("{}", blame_entry.sha);
+                    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
 
-                        let blame_line =
-                            format!("{:6} {:20} ({})", short_commit_id, name, datetime);
-
-                        let info_run = TextRun {
-                            len: blame_line.len() - 6,
-                            font: font.clone(),
-                            color: cx.theme().status().hint,
-                            background_color: None,
-                            underline: Default::default(),
-                            strikethrough: None,
-                        };
-                        let runs = [commit_sha_run, info_run];
-
-                        // let mut foo = div().child(blame_line).tooltip().into_any();
-                        // foo.layout(
-                        //     point(),
-                        //     size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-                        //     cx,
-                        // );
-                        // foo
-                        cx.text_system()
-                            .shape_line(blame_line.clone().into(), font_size, &runs)
-                            .log_err()
+                    let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
+                    let name = if name.len() > 20 {
+                        format!("{}...", &name[..16])
                     } else {
-                        None
-                    }
-                })
-                .collect();
+                        name.to_string()
+                    };
 
-            let blame_width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+                    let short_commit_text = format!("{:6}", short_commit_id);
+                    let name_date = format!("{:20} ({})", name, datetime);
 
-            (Some(shaped_lines), Some(blame_width))
-        })
+                    let mut element = div()
+                        .children([
+                            div().text_color(sha_color.cursor).child(short_commit_text),
+                            div().text_color(cx.theme().status().hint).child(name_date),
+                        ])
+                        .into_any();
+
+                    let start_y = ix as f32 * line_height - (scroll_top % line_height);
+                    let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
+
+                    element.layout(
+                        absolute_offset,
+                        size(AvailableSpace::MaxContent, AvailableSpace::MinContent),
+                        cx,
+                    );
+                    Some(element)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let blame_width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
+
+        (Some(shaped_lines), Some(blame_width))
     }
 
     fn layout_code_actions_indicator(
@@ -2230,28 +2226,14 @@ impl EditorElement {
         })
     }
 
-    fn paint_blamed_display_rows(&self, layout: &EditorLayout, cx: &mut ElementContext) {
-        let Some(blamed_display_rows) = &layout.blamed_display_rows else {
+    fn paint_blamed_display_rows(&self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        let Some(blamed_display_rows) = layout.blamed_display_rows.take() else {
             return;
         };
 
-        let line_height = layout.position_map.line_height;
-
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y * line_height;
-
-        let start_x = layout.position_map.em_width * 1;
-
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for (ix, shaped_line) in blamed_display_rows.iter().enumerate() {
-                let Some(shaped_line) = shaped_line else {
-                    continue;
-                };
-
-                let start_y = ix as f32 * line_height - (scroll_top % line_height);
-                let origin = layout.gutter_hitbox.origin + point(start_x, start_y);
-
-                shaped_line.paint(origin, line_height, cx).log_err();
+            for mut blame_element in blamed_display_rows.into_iter() {
+                blame_element.paint(cx);
             }
         })
     }
@@ -3310,8 +3292,15 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let (blamed_display_rows, blame_width) =
-                    self.blame_display_rows(start_row..end_row, em_width, &snapshot, cx);
+                let (blamed_display_rows, blame_width) = self.layout_blame_entries(
+                    start_row..end_row,
+                    em_width,
+                    scroll_position,
+                    line_height,
+                    &gutter_hitbox,
+                    &snapshot,
+                    cx,
+                );
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3628,7 +3617,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    blamed_display_rows: Option<Vec<Option<ShapedLine>>>,
+    blamed_display_rows: Option<Vec<AnyElement>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

@@ -9,7 +9,6 @@ use git::blame::BlameEntry;
 use gpui::{Model, ModelContext, Subscription, Task};
 use project::{Item, Project};
 use smallvec::SmallVec;
-use text::TextSummary;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
