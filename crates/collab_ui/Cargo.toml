@@ -53,6 +53,7 @@ recent_projects.workspace = true
 rich_text.workspace = true
 rpc.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

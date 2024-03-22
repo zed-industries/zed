@@ -6,6 +6,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use head::Head;
+use search::SearchOptions;
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
@@ -38,8 +39,28 @@ pub struct Picker<D: PickerDelegate> {
     is_modal: bool,
 }
 
+#[derive(Copy, Clone)]
+pub struct SupportedSearchOptions {
+    include_ignored: bool,
+}
+
+impl SupportedSearchOptions {
+    pub fn new(include_ignored: bool) -> Self {
+        Self { include_ignored }
+    }
+
+    pub fn default() -> Self {
+        Self::new(false)
+    }
+}
+
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
+
+    fn search_options(&self) -> SearchOptions;
+    fn supported_search_options(&self) -> SupportedSearchOptions;
+
+    fn toggle_include_ignored(&mut self) {}
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
@@ -430,6 +451,25 @@ impl<D: PickerDelegate> Picker<D> {
                 .into_any_element(),
         }
     }
+
+    fn render_search_buttons(&self, cx: &mut ViewContext<Self>) -> Vec<impl IntoElement> {
+        let mut buttons = vec![];
+        if self.delegate.supported_search_options().include_ignored {
+            buttons.push(
+                SearchOptions::INCLUDE_IGNORED.as_button(
+                    self.delegate
+                        .search_options()
+                        .contains(SearchOptions::INCLUDE_IGNORED),
+                    cx.listener(|this, _, cx| {
+                        this.delegate.toggle_include_ignored();
+                        cx.notify();
+                        this.update_matches(this.query(cx).to_string(), cx);
+                    }),
+                ),
+            );
+        }
+        buttons
+    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -463,7 +503,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .flex_none()
                             .h_9()
                             .px_4()
-                            .child(editor.clone()),
+                            .child(editor.clone())
+                            .children(self.render_search_buttons(cx)),
                     )
                     .child(Divider::horizontal()),
                 Head::Empty(empty_head) => div().child(empty_head.clone()),

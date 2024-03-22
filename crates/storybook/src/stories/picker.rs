@@ -1,6 +1,7 @@
 use fuzzy::StringMatchCandidate;
 use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use search::SearchOptions;
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};
@@ -36,6 +37,14 @@ impl Delegate {
 
 impl PickerDelegate for Delegate {
     type ListItem = ListItem;
+
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions::NONE
+    }
+
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        SupportedSearchOptions::default()
+    }
 
     fn match_count(&self) -> usize {
         self.candidates.len()

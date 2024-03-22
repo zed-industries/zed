@@ -9,7 +9,8 @@ use gpui::{
     Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext,
     WeakView,
 };
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use search::SearchOptions;
 use std::sync::Arc;
 use ui::{prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
@@ -265,6 +266,14 @@ pub struct ChannelModalDelegate {
 
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
+
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions::NONE
+    }
+
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        SupportedSearchOptions::default()
+    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search collaborator by username...".into()

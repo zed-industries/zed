@@ -3,7 +3,8 @@ use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ParentElement as _,
     Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use search::SearchOptions;
 use std::sync::Arc;
 use theme::ActiveTheme as _;
 use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
@@ -71,6 +72,14 @@ impl FocusableView for ContactFinder {
 
 impl PickerDelegate for ContactFinderDelegate {
     type ListItem = ListItem;
+
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions::NONE
+    }
+
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        SupportedSearchOptions::default()
+    }
 
     fn match_count(&self) -> usize {
         self.potential_contacts.len()

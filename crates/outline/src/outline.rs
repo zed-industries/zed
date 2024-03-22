@@ -7,7 +7,8 @@ use gpui::{
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use search::SearchOptions;
 use settings::Settings;
 use std::{
     cmp::{self, Reverse},
@@ -157,6 +158,14 @@ impl PickerDelegate for OutlineViewDelegate {
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search buffer symbols...".into()
+    }
+
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions::NONE
+    }
+
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        SupportedSearchOptions::default()
     }
 
     fn match_count(&self) -> usize {

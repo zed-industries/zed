@@ -8,9 +8,10 @@ use gpui::{
 };
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate,
+    Picker, PickerDelegate, SupportedSearchOptions,
 };
 use project::{Inventory, ProjectPath, TaskSourceKind};
+use search::SearchOptions;
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
 use util::{paths::PathExt, ResultExt};
@@ -153,6 +154,14 @@ impl ModalView for TasksModal {}
 
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
+
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions::NONE
+    }
+
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        SupportedSearchOptions::default()
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()

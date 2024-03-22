@@ -9,8 +9,10 @@ use gpui::{
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
+use picker::SupportedSearchOptions;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
+use search::SearchOptions;
 use std::{
     cmp,
     path::{Path, PathBuf},
@@ -125,6 +127,8 @@ pub struct FileFinderDelegate {
     selected_index: usize,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
+    search_options: SearchOptions,
+    supported_search_options: SupportedSearchOptions,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -379,6 +383,8 @@ impl FileFinderDelegate {
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
+            search_options: SearchOptions::NONE,
+            supported_search_options: SupportedSearchOptions::new(true),
         }
     }
 
@@ -417,9 +423,13 @@ impl FileFinderDelegate {
                 let worktree = worktree.read(cx);
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
+                    include_ignored: worktree.root_entry().map_or(false, |entry| {
+                        if self.search_options.contains(SearchOptions::INCLUDE_IGNORED) {
+                            true
+                        } else {
+                            entry.is_ignored
+                        }
+                    }),
                     include_root_name,
                 }
             })
@@ -669,6 +679,18 @@ impl FileFinderDelegate {
 
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
+
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        self.supported_search_options
+    }
+
+    fn search_options(&self) -> SearchOptions {
+        self.search_options
+    }
+
+    fn toggle_include_ignored(&mut self) {
+        self.search_options.toggle(SearchOptions::INCLUDE_IGNORED);
+    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search project files...".into()
