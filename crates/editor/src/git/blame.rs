@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use language::Buffer;
 use language::BufferSnapshot;
 use sum_tree::SumTree;
@@ -9,9 +9,6 @@ use git::blame::BlameEntry;
 use gpui::{Model, ModelContext, Subscription, Task};
 use project::{Item, Project};
 use smallvec::SmallVec;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -47,7 +44,6 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 }
 
 pub struct GitBlame {
-    blame_runner: Arc<dyn GitBlameRunner>,
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
@@ -59,7 +55,6 @@ pub struct GitBlame {
 
 impl GitBlame {
     pub fn new(
-        blame_runner: Arc<dyn GitBlameRunner>,
         buffer: Model<Buffer>,
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
@@ -92,12 +87,10 @@ impl GitBlame {
             _ => {}
         });
 
-        let blame_runner = blame_runner.clone();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
         let mut this = Self {
-            blame_runner,
             project,
             buffer,
             buffer_snapshot,
@@ -219,155 +212,64 @@ impl GitBlame {
     }
 
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
-        let options = self.generate_blame_options(cx);
-        // Collab version: ask the project for `blame_runner`, move this to the project, check `if is_local()`.
-        let blame_runner = self.blame_runner.clone();
+        let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
+        let snapshot = self.buffer.read(cx).snapshot();
+        let blame_entries = self.project.read(cx).blame_buffer(&self.buffer, cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let options = options?;
-            let background_buffer_snapshot = options.snapshot.clone();
+            let entries = cx
+                .background_executor()
+                .spawn({
+                    let snapshot = snapshot.clone();
+                    async move {
+                        let blame_entries = blame_entries.await?;
 
-            let task: Task<Result<SumTree<GitBlameEntry>>> =
-                cx.background_executor().spawn(async move {
-                    // In your code, you would use `git_blame_runner` which is an instance of a type that implements `GitBlameRunner`.
-                    // For example, in tests, you can provide a mock implementation of `GitBlameRunner`.
-                    let parsed_git_blame = blame_runner.run(
-                        &options.working_directory,
-                        &options.path,
-                        &background_buffer_snapshot.as_rope().to_string(),
-                    )?;
+                        let mut current_row = 0;
+                        let mut entries = SumTree::from_iter(
+                            blame_entries.into_iter().flat_map(|entry| {
+                                let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
 
-                    let mut current_row = 0;
-                    let mut entries = SumTree::from_iter(
-                        parsed_git_blame.into_iter().flat_map(|entry| {
-                            let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
-
-                            if entry.range.start > current_row {
-                                let skipped_rows = entry.range.start - current_row;
+                                if entry.range.start > current_row {
+                                    let skipped_rows = entry.range.start - current_row;
+                                    entries.push(GitBlameEntry {
+                                        rows: skipped_rows,
+                                        blame: None,
+                                    });
+                                }
                                 entries.push(GitBlameEntry {
-                                    rows: skipped_rows,
-                                    blame: None,
+                                    rows: entry.range.len() as u32,
+                                    blame: Some(entry.clone()),
                                 });
-                            }
-                            entries.push(GitBlameEntry {
-                                rows: entry.range.len() as u32,
-                                blame: Some(entry.clone()),
-                            });
 
-                            current_row = entry.range.end;
-                            entries
-                        }),
-                        &(),
-                    );
-
-                    let max_row = background_buffer_snapshot.max_point().row;
-                    if max_row > current_row {
-                        entries.push(
-                            GitBlameEntry {
-                                rows: max_row - current_row,
-                                blame: None,
-                            },
+                                current_row = entry.range.end;
+                                entries
+                            }),
                             &(),
                         );
+
+                        let max_row = snapshot.max_point().row;
+                        if max_row > current_row {
+                            entries.push(
+                                GitBlameEntry {
+                                    rows: max_row - current_row,
+                                    blame: None,
+                                },
+                                &(),
+                            );
+                        }
+
+                        anyhow::Ok(entries)
                     }
-
-                    Ok(entries)
-                });
-
-            let entries = task.await?;
+                })
+                .await?;
 
             this.update(&mut cx, |this, cx| {
-                this.buffer_edits = options.buffer_edits;
-                this.buffer_snapshot = options.snapshot;
+                this.buffer_edits = buffer_edits;
+                this.buffer_snapshot = snapshot;
                 this.entries = entries;
                 cx.notify();
             })
         });
-    }
-
-    fn generate_blame_options(&mut self, cx: &mut ModelContext<Self>) -> Result<BlameOptions> {
-        let buffer = self.buffer.read(cx);
-
-        let snapshot = buffer.snapshot();
-
-        let buffer_project_path = buffer
-            .project_path(cx)
-            .context("failed to get buffer project path")?;
-
-        let working_directory = self
-            .project
-            .read(cx)
-            .get_workspace_root(&buffer_project_path, cx)
-            .context("failed to get workspace root")?;
-
-        let file = buffer.file().context("failed to get buffer file")?;
-
-        let local_file = file
-            .as_local()
-            .context("failed to turn file into local file")?;
-
-        let path = local_file.path().clone();
-        let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
-
-        Ok(BlameOptions {
-            snapshot,
-            buffer_edits,
-            working_directory,
-            path,
-        })
-    }
-}
-
-struct BlameOptions {
-    snapshot: BufferSnapshot,
-    buffer_edits: text::Subscription,
-    working_directory: PathBuf,
-    path: Arc<Path>,
-}
-
-pub trait GitBlameRunner: Send + Sync {
-    fn run(
-        &self,
-        working_directory: &std::path::Path,
-        path: &std::path::Path,
-        content: &str,
-    ) -> Result<Vec<git::blame::BlameEntry>>;
-}
-
-pub struct RealGitBlameRunner;
-
-impl RealGitBlameRunner {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {})
-    }
-}
-
-impl GitBlameRunner for RealGitBlameRunner {
-    fn run(
-        &self,
-        working_directory: &std::path::Path,
-        path: &std::path::Path,
-        content: &str,
-    ) -> Result<Vec<git::blame::BlameEntry>> {
-        let output = git::blame::run_git_blame(working_directory, path, content)?;
-        let mut entries = git::blame::parse_git_blame(&output)?;
-        entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
-        Ok(entries)
-    }
-}
-
-struct FakeGitBlameRunner {
-    entries: Vec<git::blame::BlameEntry>,
-}
-
-impl GitBlameRunner for FakeGitBlameRunner {
-    fn run(
-        &self,
-        _: &std::path::Path,
-        _: &std::path::Path,
-        _: &str,
-    ) -> Result<Vec<git::blame::BlameEntry>> {
-        Ok(self.entries.clone())
     }
 }
 
@@ -383,7 +285,7 @@ mod tests {
     use text::Point;
     use unindent::Unindent as _;
 
-    use crate::git::blame::{FakeGitBlameRunner, GitBlame};
+    use crate::git::blame::GitBlame;
 
     macro_rules! assert_blame_rows {
         ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {

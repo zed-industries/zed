@@ -30,6 +30,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
+use git::blame::BlameEntry;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
@@ -7044,9 +7045,9 @@ impl Project {
                         .filter_map(|(buffer, path)| {
                             let (work_directory, repo) =
                                 snapshot.repository_and_work_directory_for_path(&path)?;
-                            let repo = snapshot.get_local_repo(&repo)?;
+                            let repo_entry = snapshot.get_local_repo(&repo)?;
                             let relative_path = path.strip_prefix(&work_directory).ok()?;
-                            let base_text = repo.load_index_text(relative_path);
+                            let base_text = repo_entry.repo().lock().load_index_text(relative_path);
 
                             Some((buffer, base_text))
                         })
@@ -7347,6 +7348,52 @@ impl Project {
             .as_local()?
             .snapshot()
             .local_git_repo(&project_path.path)
+    }
+
+    pub fn blame_buffer(
+        &self,
+        buffer: &Model<Buffer>,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<BlameEntry>>> {
+        if self.is_local() {
+            let blame_params = maybe!({
+                let buffer = buffer.read(cx);
+                let buffer_project_path = buffer
+                    .project_path(cx)
+                    .context("failed to get buffer project path")?;
+
+                let worktree = self
+                    .worktree_for_id(buffer_project_path.worktree_id, cx)
+                    .context("failed to get worktree")?
+                    .read(cx)
+                    .as_local()
+                    .context("worktree was not local")?
+                    .snapshot();
+                let (work_directory, repo) = worktree
+                    .repository_and_work_directory_for_path(&buffer_project_path.path)
+                    .context("failed to get repo for blamed buffer")?;
+
+                let repo_entry = worktree
+                    .get_local_repo(&repo)
+                    .context("failed to get repo for blamed buffer")?;
+
+                let relative_path = buffer_project_path
+                    .path
+                    .strip_prefix(&work_directory)?
+                    .to_path_buf();
+                let content = buffer.as_rope().clone();
+                let repo = repo_entry.repo().clone();
+                anyhow::Ok((repo, relative_path, content))
+            });
+
+            cx.background_executor().spawn(async move {
+                let (repo, relative_path, content) = blame_params?;
+                let lock = repo.lock();
+                lock.blame(&relative_path, content)
+            })
+        } else {
+            todo!("not yet implemented");
+        }
     }
 
     // RPC message handlers

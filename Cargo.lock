@@ -3887,6 +3887,7 @@ dependencies = [
  "collections",
  "fsevent",
  "futures 0.3.28",
+ "git",
  "git2",
  "gpui",
  "lazy_static",
@@ -4187,7 +4188,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "clock",
- "fs",
  "git2",
  "lazy_static",
  "log",
@@ -6079,11 +6079,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
-<<<<<<< HEAD
  "mio",
-=======
- "mio 0.8.8",
->>>>>>> f16f6ac43 (WIP: git blame prototype)
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -7079,6 +7075,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "fuzzy",
+ "git",
  "git2",
  "globset",
  "gpui",
@@ -9837,11 +9834,7 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
-<<<<<<< HEAD
  "mio",
-=======
- "mio 0.8.8",
->>>>>>> f16f6ac43 (WIP: git blame prototype)
  "num_cpus",
  "parking_lot",
  "pin-project-lite",

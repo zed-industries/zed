@@ -1,7 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
+use rope::Rope;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -53,6 +54,8 @@ pub trait GitRepository: Send {
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
+
+    fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -209,6 +212,19 @@ impl GitRepository for LibGitRepository {
 
         Ok(())
     }
+
+    fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
+        let git_dir_path = self.path();
+        let working_directory = git_dir_path
+            .parent()
+            .with_context(|| format!("failed to get git working directory for {:?}", git_dir_path))?;
+
+        // TODO: We don't need to allocate a string, we can just feed the rope to stdin.
+        let output = git::blame::run_git_blame(&working_directory, path, &content.to_string())?;
+        let mut entries = git::blame::parse_git_blame(&output)?;
+        entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+        Ok(entries)
+    }
 }
 
 fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
@@ -316,6 +332,10 @@ impl GitRepository for FakeGitRepository {
         let mut state = self.state.lock();
         state.branch_name = Some(name.to_owned());
         Ok(())
+    }
+
+    fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
+        todo!("not implemented")
     }
 }
 

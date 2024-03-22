@@ -1163,6 +1163,13 @@ impl EditorElement {
                         };
                         let runs = [commit_sha_run, info_run];
 
+                        // let mut foo = div().child(blame_line).tooltip().into_any();
+                        // foo.layout(
+                        //     point(),
+                        //     size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                        //     cx,
+                        // );
+                        // foo
                         cx.text_system()
                             .shape_line(blame_line.clone().into(), font_size, &runs)
                             .log_err()
