@@ -109,6 +109,15 @@ impl ZedDotDevModel {
             Self::Custom(id) => id.as_str(),
         }
     }
+
+    pub fn max_token_count(&self) -> usize {
+        match self {
+            Self::GptThreePointFiveTurbo => 2048,
+            Self::GptFour => 4096,
+            Self::GptFourTurbo => 128000,
+            Self::Custom(_) => 4096, // TODO: Make this configurable
+        }
+    }
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
