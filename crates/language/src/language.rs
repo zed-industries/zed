@@ -14,6 +14,7 @@ pub mod language_settings;
 mod outline;
 pub mod proto;
 mod syntax_map;
+mod task_context;
 
 #[cfg(test)]
 mod buffer_tests;
@@ -54,7 +55,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-use task::static_source::TaskDefinitions;
+pub use task_context::{ContextProvider, DefaultContextProvider};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -119,53 +120,6 @@ pub struct LanguageServerName(pub Arc<str>);
 pub struct Location {
     pub buffer: Model<Buffer>,
     pub range: Range<Anchor>,
-}
-
-#[derive(Default)]
-pub struct LanguageContext {
-    pub package: Option<String>,
-    pub symbol: Option<String>,
-}
-
-/// Language Contexts are used by Zed tasks to extract information about source file.
-pub trait LanguageContextProvider: Send + Sync {
-    fn build_context(&self, _: Location, _: &mut AppContext) -> Result<LanguageContext> {
-        Ok(LanguageContext::default())
-    }
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
-        None
-    }
-}
-
-/// A context provider that fills out LanguageContext without inspecting the contents.
-pub struct DefaultContextProvider;
-
-impl LanguageContextProvider for DefaultContextProvider {
-    fn build_context(
-        &self,
-        location: Location,
-        cx: &mut AppContext,
-    ) -> gpui::Result<LanguageContext> {
-        let symbols = location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .symbols_containing(location.range.start, None);
-        let symbol = symbols.and_then(|symbols| {
-            symbols.last().map(|symbol| {
-                let range = symbol
-                    .name_ranges
-                    .last()
-                    .cloned()
-                    .unwrap_or(0..symbol.text.len());
-                symbol.text[range].to_string()
-            })
-        });
-        Ok(LanguageContext {
-            package: None,
-            symbol,
-        })
-    }
 }
 
 /// Represents a Language Server, with certain cached sync properties.
@@ -785,7 +739,7 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
+    pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -900,10 +854,7 @@ impl Language {
         }
     }
 
-    pub fn with_context_provider(
-        mut self,
-        provider: Option<Arc<dyn LanguageContextProvider>>,
-    ) -> Self {
+    pub fn with_context_provider(mut self, provider: Option<Arc<dyn ContextProvider>>) -> Self {
         self.context_provider = provider;
         self
     }
@@ -1228,7 +1179,7 @@ impl Language {
         self.config.name.clone()
     }
 
-    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+    pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
     }
 

@@ -11,6 +11,7 @@ use regex::Regex;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
+use task::TaskVariables;
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -319,42 +320,35 @@ impl LspAdapter for RustLspAdapter {
 
 pub(crate) struct RustContextProvider;
 
-impl LanguageContextProvider for RustContextProvider {
+impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         location: Location,
         cx: &mut gpui::AppContext,
-    ) -> Result<LanguageContext> {
+    ) -> Result<TaskVariables> {
         let mut context = DefaultContextProvider.build_context(location.clone(), cx)?;
-        if context.package.is_none() {
-            if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
-                let local_file = file.as_local()?.abs_path(cx);
-                local_file.parent().map(PathBuf::from)
-            }) {
-                // src/
-                //  main.rs
-                //  lib.rs
-                //  foo/
-                //      bar/
-                //          baz.rs <|>
-                //  /bin/
-                //     bin_1.rs
-                //
-                let Some(pkgid) = std::process::Command::new("cargo")
-                    .current_dir(path)
-                    .arg("pkgid")
-                    .output()
-                    .log_err()
-                else {
-                    return Ok(context);
-                };
-                let package_name = String::from_utf8(pkgid.stdout)
-                    .map(|name| name.trim().to_owned())
-                    .ok();
 
-                context.package = package_name;
+        if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
+            let local_file = file.as_local()?.abs_path(cx);
+            local_file.parent().map(PathBuf::from)
+        }) {
+            let Some(pkgid) = std::process::Command::new("cargo")
+                .current_dir(path)
+                .arg("pkgid")
+                .output()
+                .log_err()
+            else {
+                return Ok(context);
+            };
+            let package_name = String::from_utf8(pkgid.stdout)
+                .map(|name| name.trim().to_owned())
+                .ok();
+
+            if let Some(package_name) = package_name {
+                context.0.insert("ZED_PACKAGE".to_owned(), package_name);
             }
         }
+
         Ok(context)
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    language_settings::all_language_settings, CachedLspAdapter, File, Language, LanguageConfig,
-    LanguageContextProvider, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
+    language_settings::all_language_settings, task_context::ContextProvider, CachedLspAdapter,
+    File, Language, LanguageConfig, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
     LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -77,7 +77,7 @@ struct AvailableLanguage {
         dyn Fn() -> Result<(
                 LanguageConfig,
                 LanguageQueries,
-                Option<Arc<dyn LanguageContextProvider>>,
+                Option<Arc<dyn ContextProvider>>,
             )>
             + 'static
             + Send
@@ -255,7 +255,7 @@ impl LanguageRegistry {
         load: impl Fn() -> Result<(
                 LanguageConfig,
                 LanguageQueries,
-                Option<Arc<dyn LanguageContextProvider>>,
+                Option<Arc<dyn ContextProvider>>,
             )>
             + 'static
             + Send

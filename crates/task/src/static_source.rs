@@ -43,15 +43,22 @@ pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
 
 impl Task for StaticTask {
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
-        let TaskContext { cwd, env } = cx;
+        let TaskContext {
+            cwd,
+            task_variables,
+        } = cx;
         let cwd = self
             .definition
             .cwd
             .clone()
-            .and_then(|path| subst::substitute(&path, &env).map(Into::into).ok())
+            .and_then(|path| {
+                subst::substitute(&path, &task_variables.0)
+                    .map(Into::into)
+                    .ok()
+            })
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
-        definition_env.extend(env);
+        definition_env.extend(task_variables.0);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
