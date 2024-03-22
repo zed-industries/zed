@@ -3206,6 +3206,7 @@ impl Editor {
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
+                self.invalidate_marked_row_ranges();
                 if enabled {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
@@ -3222,6 +3223,7 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::SettingsChange(new_settings) => {
+                self.invalidate_marked_row_ranges();
                 match self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
