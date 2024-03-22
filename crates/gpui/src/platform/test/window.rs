@@ -1,7 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult,
     GlobalPixels, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowParams,
+    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowBackground,
+    WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -181,6 +182,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().title = Some(title.to_owned());
     }
 
+    fn set_background(&mut self, background: WindowBackground) {
+        unimplemented!()
+    }
+
     fn set_edited(&mut self, edited: bool) {
         self.0.lock().edited = edited;
     }
@@ -204,10 +209,6 @@ impl PlatformWindow for TestWindow {
 
     fn is_fullscreen(&self) -> bool {
         self.0.lock().is_fullscreen
-    }
-
-    fn set_background(&mut self, background: crate::WindowBackground) {
-        unimplemented!()
     }
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut()>) {}
