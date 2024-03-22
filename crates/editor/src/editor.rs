@@ -9895,8 +9895,8 @@ impl Editor {
     }
 
     fn invalidate_marked_row_ranges(&mut self) {
-        for (k, v) in self.background_highlights.iter_mut() {
-            v.marked_row_ranges = None;
+        for (_, highlight) in self.background_highlights.iter_mut() {
+            highlight.marked_row_ranges = None;
         }
     }
 }
