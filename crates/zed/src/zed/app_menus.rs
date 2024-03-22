@@ -100,7 +100,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Move Line Down", editor::actions::MoveLineDown),
                 MenuItem::action(
                     "Duplicate Selection",
-                    editor::actions::DuplicateLine::default(),
+                    editor::actions::DuplicateLineDown::default(),
                 ),
             ],
         },

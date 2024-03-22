@@ -95,10 +95,10 @@ pub struct SelectDownByLines {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct DuplicateLine {
-    #[serde(default)]
-    pub move_upwards: bool,
-}
+pub struct DuplicateLineUp {}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DuplicateLineDown {}
 
 impl_actions!(
     editor,
@@ -119,7 +119,8 @@ impl_actions!(
         MoveDownByLines,
         SelectUpByLines,
         SelectDownByLines,
-        DuplicateLine
+        DuplicateLineUp,
+        DuplicateLineDown,
     ]
 );
 
