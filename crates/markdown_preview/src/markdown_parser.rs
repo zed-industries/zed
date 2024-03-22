@@ -202,7 +202,7 @@ impl<'a> MarkdownParser<'a> {
                 }
 
                 Event::HardBreak => {
-                    break;
+                    text.push('\n');
                 }
 
                 Event::Text(t) => {
