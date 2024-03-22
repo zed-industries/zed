@@ -213,13 +213,13 @@ impl AssistantSettingsContent {
                         default_model: settings.default_open_ai_model.clone().unwrap_or_default(),
                         api_url: open_ai_api_url.clone(),
                     })
-                } else if let Some(open_ai_model) = settings.default_open_ai_model.clone() {
-                    Some(AssistantProvider::OpenAi {
-                        default_model: open_ai_model,
-                        api_url: open_ai_url(),
-                    })
                 } else {
-                    None
+                    settings.default_open_ai_model.clone().map(|open_ai_model| {
+                        AssistantProvider::OpenAi {
+                            default_model: open_ai_model,
+                            api_url: open_ai_url(),
+                        }
+                    })
                 },
             },
         }
