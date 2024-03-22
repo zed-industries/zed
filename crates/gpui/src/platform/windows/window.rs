@@ -204,22 +204,9 @@ impl WindowsWindowInner {
             WM_DESTROY => self.handle_destroy_msg(),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(lparam, wparam),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(lparam),
-            WM_NCLBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Left, wparam, lparam, 1),
-            WM_NCLBUTTONDBLCLK => {
-                self.handle_nc_mouse_down_msg(MouseButton::Left, wparam, lparam, 2)
-            }
-            WM_NCRBUTTONDOWN => {
-                self.handle_nc_mouse_down_msg(MouseButton::Right, wparam, lparam, 1)
-            }
-            WM_NCRBUTTONDBLCLK => {
-                self.handle_nc_mouse_down_msg(MouseButton::Right, wparam, lparam, 2)
-            }
-            WM_NCMBUTTONDOWN => {
-                self.handle_nc_mouse_down_msg(MouseButton::Middle, wparam, lparam, 1)
-            }
-            WM_NCMBUTTONDBLCLK => {
-                self.handle_nc_mouse_down_msg(MouseButton::Middle, wparam, lparam, 2)
-            }
+            WM_NCLBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Left, wparam, lparam),
+            WM_NCRBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Right, wparam, lparam),
+            WM_NCMBUTTONDOWN => self.handle_nc_mouse_down_msg(MouseButton::Middle, wparam, lparam),
             WM_NCLBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Left, wparam, lparam),
             WM_NCRBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Right, wparam, lparam),
             WM_NCMBUTTONUP => self.handle_nc_mouse_up_msg(MouseButton::Middle, wparam, lparam),
@@ -1617,7 +1604,7 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
             lpfnWndProc: Some(wnd_proc),
             hIcon: icon_handle,
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
-            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
+            style: CS_HREDRAW | CS_VREDRAW,
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };
