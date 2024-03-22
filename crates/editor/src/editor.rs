@@ -357,7 +357,7 @@ type CompletionId = usize;
 pub struct BackgroundHighlight {
     ranges: Vec<Range<Anchor>>,
     color_fetcher: fn(&ThemeColors) -> Hsla,
-    marker_hunks: Option<Vec<(Pixels, Pixels)>>,
+    marked_row_ranges: Option<Vec<Range<u32>>>,
 }
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
@@ -9187,7 +9187,7 @@ impl Editor {
             BackgroundHighlight {
                 ranges,
                 color_fetcher,
-                marker_hunks: None,
+                marked_row_ranges: None,
             },
         );
         cx.notify();
