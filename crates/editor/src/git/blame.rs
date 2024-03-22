@@ -275,7 +275,7 @@ impl GitBlame {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, sync::Arc};
+    use std::{ops::Range, path::Path};
 
     use git::blame::BlameEntry;
     use gpui::Context;
@@ -320,54 +320,47 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/",
+            "/my-repo",
             json!({
-                "/file.txt": r#"
-               AAA Line 1
-               BBB Line 2 - Modified 1
-               CCC Line 3 - Modified 2
-               modified in memory 1
-               modified in memory 1
-               DDD Line 4 - Modified 2
-               EEE Line 5 - Modified 1
-               FFF Line 6 - Modified 2
-            "#
+                ".git": {},
+                "file.txt": r#"
+                    AAA Line 1
+                    BBB Line 2 - Modified 1
+                    CCC Line 3 - Modified 2
+                    modified in memory 1
+                    modified in memory 1
+                    DDD Line 4 - Modified 2
+                    EEE Line 5 - Modified 1
+                    FFF Line 6 - Modified 2
+                "#
                 .unindent()
             }),
         )
         .await;
 
-        let project = Project::test(fs, ["/file.txt".as_ref()], cx).await;
+        fs.set_blame_for_repo(
+            Path::new("/my-repo/.git"),
+            vec![(
+                Path::new("file.txt"),
+                vec![
+                    blame_entry("1b1b1b", 0..1),
+                    blame_entry("0d0d0d", 1..2),
+                    blame_entry("3a3a3a", 2..3),
+                    blame_entry("3a3a3a", 5..6),
+                    blame_entry("0d0d0d", 6..7),
+                    blame_entry("3a3a3a", 7..8),
+                ],
+            )],
+        );
+        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
         let buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/file.txt", cx))
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
             .await
             .unwrap();
 
-        // What we want (output of `git blame --contents - file.txt`)
-        //
-        // 1b1b1b (Thorsten Ball              2024-03-20 14:28:27 +0100 1) AAA Line 1
-        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 2) BBB Line 2 - Modified 1
-        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 3) CCC Line 3 - Modified 2
-        // 000000                             2024-03-20 14:32:09 +0100 4) modified in memory 1
-        // 000000                             2024-03-20 14:32:09 +0100 5) modified in memory 1
-        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 6) DDD Line 4 - Modified 2
-        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 7) EEE Line 5 - Modified 1
-        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 8) FFF Line 6 - Modified 2
-
-        let blame_entries = vec![
-            blame_entry("1b1b1b", 0..1),
-            blame_entry("0d0d0d", 1..2),
-            blame_entry("3a3a3a", 2..3),
-            blame_entry("3a3a3a", 5..6),
-            blame_entry("0d0d0d", 6..7),
-            blame_entry("3a3a3a", 7..8),
-        ];
-
-        let blame_runner = Arc::from(FakeGitBlameRunner {
-            entries: blame_entries,
-        });
-
-        let git_blame = cx.new_model(|cx| GitBlame::new(blame_runner, buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
 
         cx.executor().run_until_parked();
 
@@ -415,29 +408,33 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/",
+            "/my-repo",
             json!({
-                "/file.txt": r#"
-               Line 1
-               Line 2
-               Line 3
-            "#
+                ".git": {},
+                "file.txt": r#"
+                    Line 1
+                    Line 2
+                    Line 3
+                "#
                 .unindent()
             }),
         )
         .await;
 
-        let project = Project::test(fs, ["/file.txt".as_ref()], cx).await;
+        fs.set_blame_for_repo(
+            Path::new("/my-repo/.git"),
+            vec![(Path::new("file.txt"), vec![blame_entry("1b1b1b", 0..4)])],
+        );
+
+        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
         let buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/file.txt", cx))
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
             .await
             .unwrap();
 
-        let blame_entries = vec![blame_entry("1b1b1b", 0..4)];
-        let blame_runner = Arc::from(FakeGitBlameRunner {
-            entries: blame_entries,
-        });
-        let git_blame = cx.new_model(|cx| GitBlame::new(blame_runner, buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
 
         cx.executor().run_until_parked();
 

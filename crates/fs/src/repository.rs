@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use collections::HashMap;
+use git::blame::BlameEntry;
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
 use rope::Rope;
@@ -215,9 +216,9 @@ impl GitRepository for LibGitRepository {
 
     fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
         let git_dir_path = self.path();
-        let working_directory = git_dir_path
-            .parent()
-            .with_context(|| format!("failed to get git working directory for {:?}", git_dir_path))?;
+        let working_directory = git_dir_path.parent().with_context(|| {
+            format!("failed to get git working directory for {:?}", git_dir_path)
+        })?;
 
         // TODO: We don't need to allocate a string, we can just feed the rope to stdin.
         let output = git::blame::run_git_blame(&working_directory, path, &content.to_string())?;
@@ -267,6 +268,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone, Default)]
 pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
+    pub blames: HashMap<PathBuf, Vec<BlameEntry>>,
     pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
     pub branch_name: Option<String>,
 }
@@ -334,8 +336,13 @@ impl GitRepository for FakeGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
-        todo!("not implemented")
+    fn blame(&self, path: &Path, _content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
+        let state = self.state.lock();
+        state
+            .blames
+            .get(path)
+            .with_context(|| format!("failed to get blame for {:?}", path))
+            .cloned()
     }
 }
 

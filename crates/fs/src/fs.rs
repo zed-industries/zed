@@ -1,6 +1,7 @@
 pub mod repository;
 
 use anyhow::{anyhow, Result};
+use git::blame::BlameEntry;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -820,6 +821,17 @@ impl FakeFs {
                 head_state
                     .iter()
                     .map(|(path, content)| (path.to_path_buf(), content.clone())),
+            );
+        });
+    }
+
+    pub fn set_blame_for_repo(&self, dot_git: &Path, blame_entries: Vec<(&Path, Vec<BlameEntry>)>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.blames.clear();
+            state.blames.extend(
+                blame_entries
+                    .into_iter()
+                    .map(|(path, entries)| (path.to_path_buf(), entries)),
             );
         });
     }
