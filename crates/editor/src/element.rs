@@ -778,7 +778,7 @@ impl EditorElement {
         content_origin: gpui::Point<Pixels>,
         visible_anchor_range: Range<Anchor>,
         visible_display_row_range: Range<u32>,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         cx: &mut ElementContext,
@@ -799,7 +799,9 @@ impl EditorElement {
                 let start_x = content_origin.x
                     + line_layout.x_for_index(display_range.start.column() as usize)
                     - scroll_pixel_position.x;
-                let start_y = content_origin.y + row as f32 * line_height - scroll_pixel_position.y;
+                let start_y = content_origin.y
+                    + (row - scroll_pixel_position.row) as f32 * line_height
+                    - scroll_pixel_position.y_offset;
                 let end_x = content_origin.x
                     + line_layout.x_for_index(display_range.end.column() as usize)
                     - scroll_pixel_position.x;
@@ -844,7 +846,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         line_height: Pixels,
         em_width: Pixels,
         cx: &mut ElementContext,
@@ -902,7 +904,9 @@ impl EditorElement {
                     };
 
                     let x = cursor_character_x - scroll_pixel_position.x;
-                    let y = cursor_position.row() as f32 * line_height - scroll_pixel_position.y;
+                    let y = (cursor_position.row() - scroll_pixel_position.row) as f32
+                        * line_height
+                        - scroll_pixel_position.y_offset;
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -936,7 +940,7 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: &ScrollPosition,
         line_height: Pixels,
         height_in_lines: f32,
         cx: &mut ElementContext,
@@ -969,8 +973,8 @@ impl EditorElement {
             return None;
         }
 
-        let visible_row_range = scroll_position.y..scroll_position.y + height_in_lines;
-
+        let y_scroll_position = scroll_position.row as f32;
+        let visible_row_range = y_scroll_position..y_scroll_position + height_in_lines;
         // If a drag took place after we started dragging the scrollbar,
         // cancel the scrollbar drag.
         if cx.has_active_drag() {
@@ -1015,7 +1019,7 @@ impl EditorElement {
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         gutter_hitbox: &Hitbox,
         cx: &mut ElementContext,
     ) -> Vec<Option<AnyElement>> {
@@ -1038,10 +1042,9 @@ impl EditorElement {
                     AvailableSpace::Definite(line_height * 0.55),
                 );
                 let fold_indicator_size = fold_indicator.measure(available_space, cx);
-
                 let position = point(
                     gutter_dimensions.width - gutter_dimensions.right_padding,
-                    ix as f32 * line_height - (scroll_pixel_position.y % line_height),
+                    ix as f32 * line_height - scroll_pixel_position.y_offset,
                 );
                 let centering_offset = point(
                     (gutter_dimensions.right_padding + gutter_dimensions.margin
@@ -1084,7 +1087,7 @@ impl EditorElement {
         &self,
         line_height: Pixels,
         newest_selection_head: DisplayPoint,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         cx: &mut ElementContext,
@@ -1107,7 +1110,8 @@ impl EditorElement {
         let indicator_size = button.measure(available_space, cx);
 
         let mut x = Pixels::ZERO;
-        let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
+        let mut y = (newest_selection_head.row() - scroll_pixel_position.row) as f32 * line_height
+            - scroll_pixel_position.y_offset;
         // Center indicator.
         x +=
             (gutter_dimensions.margin + gutter_dimensions.left_padding - indicator_size.width) / 2.;
@@ -1651,14 +1655,15 @@ impl EditorElement {
         blocks: &mut Vec<BlockLayout>,
         hitbox: &Hitbox,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         cx: &mut ElementContext,
     ) {
         for block in blocks {
             let mut origin = hitbox.origin
                 + point(
                     Pixels::ZERO,
-                    block.row as f32 * line_height - scroll_pixel_position.y,
+                    (block.row - scroll_pixel_position.row) as f32 * line_height
+                        - scroll_pixel_position.y_offset,
                 );
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_pixel_position.x, Pixels::ZERO);
@@ -1675,7 +1680,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
         start_row: u32,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         line_layouts: &[LineWithInvisibles],
         newest_selection_head: DisplayPoint,
         cx: &mut ElementContext,
@@ -1699,7 +1704,8 @@ impl EditorElement {
 
         let cursor_row_layout = &line_layouts[(position.row() - start_row) as usize].line;
         let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = (position.row() + 1) as f32 * line_height - scroll_pixel_position.y;
+        let y = (position.row() + 1 - scroll_pixel_position.row) as f32 * line_height
+            - scroll_pixel_position.y_offset;
         let mut list_origin = content_origin + point(x, y);
         let list_width = context_menu_size.width;
         let list_height = context_menu_size.height;
@@ -1738,7 +1744,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         visible_display_row_range: Range<u32>,
         content_origin: gpui::Point<Pixels>,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: &ScrollPosition,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         em_width: Pixels,
@@ -1782,7 +1788,8 @@ impl EditorElement {
         // Compute Hovered Point
         let x =
             hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = position.row() as f32 * line_height - scroll_pixel_position.y;
+        let y = (position.row() - scroll_pixel_position.row) as f32 * line_height
+            - scroll_pixel_position.y_offset;
         let hovered_point = content_origin + point(x, y);
 
         let mut overall_height = Pixels::ZERO;
@@ -1850,8 +1857,7 @@ impl EditorElement {
 
     fn paint_background(&self, layout: &EditorLayout, cx: &mut ElementContext) {
         cx.paint_layer(layout.hitbox.bounds, |cx| {
-            let scroll_top =
-                layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
+            let scroll_top = &layout.position_map.scroll_position;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             cx.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
             cx.paint_quad(fill(layout.text_hitbox.bounds, self.style.background));
@@ -1871,8 +1877,9 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (layout.position_map.line_height * *start_row as f32)
-                                - scroll_top,
+                                + (*start_row - scroll_top.row) as f32
+                                    * layout.position_map.line_height
+                                - scroll_top.y_offset,
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -1888,8 +1895,9 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (layout.position_map.line_height * highlight_row_start as f32)
-                                - scroll_top,
+                                + (highlight_row_start - scroll_top.row) as f32
+                                    * layout.position_map.line_height
+                                - scroll_top.y_offset,
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -1973,8 +1981,7 @@ impl EditorElement {
     fn paint_gutter(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
         let line_height = layout.position_map.line_height;
 
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y * line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_anchor();
 
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
@@ -1994,7 +2001,7 @@ impl EditorElement {
                         layout.gutter_hitbox.size.width
                             - line.width
                             - layout.gutter_dimensions.right_padding,
-                        ix as f32 * line_height - (scroll_top % line_height),
+                        ix as f32 * line_height - scroll_position.offset.y * line_height,
                     );
 
                 line.paint(line_origin, line_height, cx).log_err();
@@ -2539,8 +2546,9 @@ impl EditorElement {
                 line_height: layout.position_map.line_height,
                 corner_radius,
                 start_y: layout.content_origin.y
-                    + row_range.start as f32 * layout.position_map.line_height
-                    - layout.position_map.scroll_pixel_position.y,
+                    + (row_range.start - layout.position_map.scroll_position.row) as f32
+                        * layout.position_map.line_height
+                    - layout.position_map.scroll_position.y_offset,
                 lines: row_range
                     .into_iter()
                     .map(|row| {
@@ -2550,18 +2558,17 @@ impl EditorElement {
                             start_x: if row == range.start.row() {
                                 layout.content_origin.x
                                     + line_layout.x_for_index(range.start.column() as usize)
-                                    - layout.position_map.scroll_pixel_position.x
+                                    - layout.position_map.scroll_position.x
                             } else {
-                                layout.content_origin.x
-                                    - layout.position_map.scroll_pixel_position.x
+                                layout.content_origin.x - layout.position_map.scroll_position.x
                             },
                             end_x: if row == range.end.row() {
                                 layout.content_origin.x
                                     + line_layout.x_for_index(range.end.column() as usize)
-                                    - layout.position_map.scroll_pixel_position.x
+                                    - layout.position_map.scroll_position.x
                             } else {
                                 layout.content_origin.x + line_layout.width + line_end_overshoot
-                                    - layout.position_map.scroll_pixel_position.x
+                                    - layout.position_map.scroll_position.x
                             },
                         }
                     })
@@ -2892,11 +2899,12 @@ impl LineWithInvisibles {
         cx: &mut ElementContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = line_height * row as f32 - layout.position_map.scroll_pixel_position.y;
+        let line_y = line_height * (row - layout.position_map.scroll_position.row) as f32
+            - layout.position_map.scroll_position.y_offset;
 
         self.line
             .paint(
-                content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y),
+                content_origin + gpui::point(-layout.position_map.scroll_position.x, line_y),
                 line_height,
                 cx,
             )
@@ -2943,7 +2951,7 @@ impl LineWithInvisibles {
                 (layout.position_map.em_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
             let origin = content_origin
                 + gpui::point(
-                    x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
+                    x_offset + invisible_offset - layout.position_map.scroll_position.x,
                     line_y,
                 );
 
@@ -3113,16 +3121,15 @@ impl Element for EditorElement {
                     autoscroll_horizontally
                 });
 
-                let mut scroll_position = snapshot.scroll_position();
+                let mut scroll_position = snapshot.scroll_anchor();
                 // The scroll position is a fractional point, the whole number of which represents
                 // the top of the window in terms of display rows.
-                let start_row = scroll_position.y as u32;
+                let start_row = scroll_position.top_row_display(&snapshot.display_snapshot);
                 let height_in_lines = bounds.size.height / line_height;
                 let max_row = snapshot.max_point().row();
 
                 // Add 1 to ensure selections bleed off screen
-                let end_row =
-                    1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+                let end_row = 1 + cmp::min(start_row + height_in_lines.ceil() as u32, max_row);
 
                 let start_anchor = if start_row == 0 {
                     Anchor::min()
@@ -3224,23 +3231,17 @@ impl Element for EditorElement {
 
                     if clamped || autoscrolled {
                         snapshot = editor.snapshot(cx);
-                        scroll_position = snapshot.scroll_position();
+                        scroll_position = snapshot.scroll_anchor();
                     }
                 });
 
-                let scroll_pixel_position = point(
-                    scroll_position.x * em_width,
-                    scroll_position.y * line_height,
-                );
-
+                let scroll_position = ScrollPosition {
+                    x: scroll_position.offset.x * em_width,
+                    row: start_row,
+                    y_offset: scroll_position.offset.y * line_height,
+                };
                 cx.with_element_id(Some("blocks"), |cx| {
-                    self.layout_blocks(
-                        &mut blocks,
-                        &hitbox,
-                        line_height,
-                        scroll_pixel_position,
-                        cx,
-                    );
+                    self.layout_blocks(&mut blocks, &hitbox, line_height, &scroll_position, cx);
                 });
 
                 let cursors = self.layout_cursors(
@@ -3250,7 +3251,7 @@ impl Element for EditorElement {
                     &line_layouts,
                     &text_hitbox,
                     content_origin,
-                    scroll_pixel_position,
+                    &scroll_position,
                     line_height,
                     em_width,
                     cx,
@@ -3259,7 +3260,7 @@ impl Element for EditorElement {
                 let scrollbar_layout = self.layout_scrollbar(
                     &snapshot,
                     bounds,
-                    scroll_position,
+                    &scroll_position,
                     line_height,
                     height_in_lines,
                     cx,
@@ -3271,7 +3272,7 @@ impl Element for EditorElement {
                         content_origin,
                         start_anchor..end_anchor,
                         start_row..end_row,
-                        scroll_pixel_position,
+                        &scroll_position,
                         line_height,
                         &line_layouts,
                         cx,
@@ -3290,7 +3291,7 @@ impl Element for EditorElement {
                             &text_hitbox,
                             content_origin,
                             start_row,
-                            scroll_pixel_position,
+                            &scroll_position,
                             &line_layouts,
                             newest_selection_head,
                             cx,
@@ -3299,7 +3300,7 @@ impl Element for EditorElement {
                             code_actions_indicator = self.layout_code_actions_indicator(
                                 line_height,
                                 newest_selection_head,
-                                scroll_pixel_position,
+                                &scroll_position,
                                 &gutter_dimensions,
                                 &gutter_hitbox,
                                 cx,
@@ -3315,7 +3316,7 @@ impl Element for EditorElement {
                         &text_hitbox,
                         start_row..end_row,
                         content_origin,
-                        scroll_pixel_position,
+                        &scroll_position,
                         &line_layouts,
                         line_height,
                         em_width,
@@ -3332,7 +3333,7 @@ impl Element for EditorElement {
                             line_height,
                             &gutter_dimensions,
                             gutter_settings,
-                            scroll_pixel_position,
+                            &scroll_position,
                             &gutter_hitbox,
                             cx,
                         )
@@ -3377,7 +3378,7 @@ impl Element for EditorElement {
                     mode: snapshot.mode,
                     position_map: Arc::new(PositionMap {
                         size: bounds.size,
-                        scroll_pixel_position,
+                        scroll_position,
                         scroll_max,
                         line_layouts,
                         line_height,
@@ -3548,10 +3549,18 @@ struct FoldLayout {
     hover_element: AnyElement,
 }
 
+struct ScrollPosition {
+    /// 0-based index of the first fully-displayed row.
+    row: u32,
+    /// Pixel height of the non-full line preceding the top row.
+    y_offset: Pixels,
+    x: Pixels,
+}
+
 struct PositionMap {
     size: Size<Pixels>,
     line_height: Pixels,
-    scroll_pixel_position: gpui::Point<Pixels>,
+    scroll_position: ScrollPosition,
     scroll_max: gpui::Point<f32>,
     em_width: Pixels,
     em_advance: Pixels,
@@ -3583,15 +3592,15 @@ impl PositionMap {
         text_bounds: Bounds<Pixels>,
         position: gpui::Point<Pixels>,
     ) -> PointForPosition {
-        let scroll_position = self.snapshot.scroll_position();
+        let scroll_position = self.snapshot.scroll_anchor();
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
-        let x = position.x + (scroll_position.x * self.em_width);
-        let row = ((y / self.line_height) + scroll_position.y) as u32;
-
+        let x = position.x + (scroll_position.offset.x * self.em_width);
+        let top_row = scroll_position.top_row_display(&self.snapshot.display_snapshot);
+        let row = (y / self.line_height) as u32 + top_row;
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
-            .get(row as usize - scroll_position.y as usize)
+            .get((row - top_row) as usize)
             .map(|LineWithInvisibles { line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
