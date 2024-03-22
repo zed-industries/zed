@@ -32,7 +32,7 @@ impl StaticTask {
 }
 
 /// TODO: doc
-pub fn tasks_for(tasks: DefinitionProvider, id_base: &str) -> Vec<Arc<dyn Task>> {
+pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
     tasks
         .0
         .into_iter()
@@ -81,7 +81,7 @@ impl Task for StaticTask {
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
     tasks: Vec<Arc<StaticTask>>,
-    _definitions: Model<TrackedFile<DefinitionProvider>>,
+    _definitions: Model<TrackedFile<TaskDefinitions>>,
     _subscription: Subscription,
 }
 
@@ -128,9 +128,9 @@ pub enum RevealStrategy {
 
 /// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DefinitionProvider(pub(crate) Vec<Definition>);
+pub struct TaskDefinitions(pub(crate) Vec<Definition>);
 
-impl DefinitionProvider {
+impl TaskDefinitions {
     /// Generates JSON schema of Tasks JSON definition format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
         let schema = SchemaSettings::draft07()
@@ -228,7 +228,7 @@ impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
         id_base: impl Into<Cow<'static, str>>,
-        definitions: Model<TrackedFile<DefinitionProvider>>,
+        definitions: Model<TrackedFile<TaskDefinitions>>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn TaskSource>> {
         cx.new_model(|cx| {

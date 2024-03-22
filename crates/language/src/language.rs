@@ -54,7 +54,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-use task::static_source::DefinitionProvider;
+use task::static_source::TaskDefinitions;
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -132,7 +132,7 @@ pub trait LanguageContextProvider: Send + Sync {
     fn build_context(&self, _: Location, _: &mut AppContext) -> Result<LanguageContext> {
         Ok(LanguageContext::default())
     }
-    fn associated_tasks(&self) -> Option<DefinitionProvider> {
+    fn associated_tasks(&self) -> Option<TaskDefinitions> {
         None
     }
 }

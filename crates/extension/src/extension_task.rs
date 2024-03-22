@@ -1,18 +1,18 @@
 use language::LanguageContextProvider;
-use task::static_source::DefinitionProvider;
+use task::static_source::TaskDefinitions;
 
 pub(super) struct ExtensionContextProvider {
-    definitions: DefinitionProvider,
+    definitions: TaskDefinitions,
 }
 
 impl ExtensionContextProvider {
-    pub(super) fn new(definitions: DefinitionProvider) -> Self {
+    pub(super) fn new(definitions: TaskDefinitions) -> Self {
         Self { definitions }
     }
 }
 
 impl LanguageContextProvider for ExtensionContextProvider {
-    fn associated_tasks(&self) -> Option<DefinitionProvider> {
+    fn associated_tasks(&self) -> Option<TaskDefinitions> {
         Some(self.definitions.clone())
     }
 }

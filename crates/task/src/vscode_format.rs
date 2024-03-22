@@ -3,7 +3,7 @@ use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::static_source::{Definition, DefinitionProvider};
+use crate::static_source::{Definition, TaskDefinitions};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -124,7 +124,7 @@ pub struct VsCodeTaskFile {
     tasks: Vec<VsCodeTaskDefinition>,
 }
 
-impl TryFrom<VsCodeTaskFile> for DefinitionProvider {
+impl TryFrom<VsCodeTaskFile> for TaskDefinitions {
     type Error = anyhow::Error;
 
     fn try_from(value: VsCodeTaskFile) -> Result<Self, Self::Error> {
@@ -148,7 +148,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        static_source::{Definition, DefinitionProvider},
+        static_source::{Definition, TaskDefinitions},
         vscode_format::{Command, VsCodeTaskDefinition},
         VsCodeTaskFile,
     };
@@ -279,7 +279,7 @@ mod tests {
             },
         ];
 
-        let tasks: DefinitionProvider = vscode_definitions.try_into().unwrap();
+        let tasks: TaskDefinitions = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 
@@ -380,7 +380,7 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let tasks: DefinitionProvider = vscode_definitions.try_into().unwrap();
+        let tasks: TaskDefinitions = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 }
