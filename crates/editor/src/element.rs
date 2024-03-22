@@ -511,8 +511,8 @@ impl EditorElement {
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.command,
-            MultiCursorModifier::Cmd => event.modifiers.alt,
+            MultiCursorModifier::Alt => event.modifiers.alt,
+            MultiCursorModifier::Cmd => event.modifiers.command,
             MultiCursorModifier::Ctrl => event.modifiers.control,
         };
 
