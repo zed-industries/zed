@@ -87,10 +87,11 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.22.1-dev"
-source = "git+https://github.com/alacritty/alacritty?rev=992011a4cd9a35f197acc0a0bd430d89a0d01013#992011a4cd9a35f197acc0a0bd430d89a0d01013"
+version = "0.23.0-rc1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc2c16faa5425a10be102dda76f73d76049b44746e18ddeefc44d78bbe76cbce"
 dependencies = [
- "base64 0.21.4",
+ "base64 0.22.0",
  "bitflags 2.4.2",
  "home",
  "libc",
@@ -317,6 +318,7 @@ dependencies = [
  "chrono",
  "client",
  "collections",
+ "command_palette_hooks",
  "ctor",
  "editor",
  "env_logger",
@@ -1291,6 +1293,12 @@ name = "base64"
 version = "0.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ba43ea6f343b788c8764558649e08df62f86c6ef251fdaeb1ffd010a9ae50a2"
+
+[[package]]
+name = "base64"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9475866fec1451be56a3c2400fd081ff546538961565ccb5b7142cbd22bc7a51"
 
 [[package]]
 name = "base64-simd"
@@ -3479,9 +3487,12 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
+ "task",
  "theme",
  "toml 0.8.10",
+ "url",
  "util",
  "wasm-encoder",
  "wasmparser",
@@ -3528,6 +3539,7 @@ dependencies = [
  "settings",
  "smallvec",
  "theme",
+ "theme_selector",
  "ui",
  "util",
  "workspace",
@@ -5167,6 +5179,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
+ "task",
  "text",
  "theme",
  "tree-sitter",
@@ -9409,6 +9422,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json_lenient",
+ "shellexpand",
  "subst",
  "util",
 ]
@@ -9619,6 +9633,7 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "serde",
  "settings",
  "theme",
  "ui",
@@ -12538,7 +12553,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.128.0"
+version = "0.129.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -12551,6 +12566,7 @@ dependencies = [
  "call",
  "channel",
  "chrono",
+ "clap 4.4.4",
  "cli",
  "client",
  "clock",
@@ -12627,7 +12643,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "wit-bindgen",
 ]

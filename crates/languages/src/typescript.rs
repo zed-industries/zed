@@ -20,7 +20,7 @@ use std::{
 use util::{
     async_maybe,
     fs::remove_matching,
-    github::{github_release_with_tag, GitHubLspBinaryVersion},
+    github::{build_tarball_url, GitHubLspBinaryVersion},
     ResultExt,
 };
 
@@ -164,8 +164,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true,
             "tsserver": {
                 "path": "node_modules/typescript/lib",
@@ -180,7 +183,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                 "includeInlayFunctionLikeReturnTypeHints": true,
                 "includeInlayEnumMemberValueHints": true,
             }
-        }))
+        })))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -227,8 +230,13 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
+    const CURRENT_VERSION: &'static str = "release/2.4.4";
+
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: &'static str = "eslint";
+
+    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
+        &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
 
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
@@ -266,6 +274,9 @@ impl LspAdapter for EsLintLspAdapter {
         }
 
         let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
+        let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
+            .iter()
+            .any(|file| workspace_root.join(file).is_file());
 
         json!({
             "": {
@@ -282,7 +293,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "problems": {},
                 "codeActionOnSave": code_action_on_save,
                 "experimental": {
-                    "useFlatConfig": workspace_root.join("eslint.config.js").is_file(),
+                    "useFlatConfig": use_flat_config,
                 },
             }
         })
@@ -294,19 +305,13 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        // We're using this hardcoded release tag, because ESLint's API changed with
-        // >= 2.3 and we haven't upgraded yet.
-        let release = github_release_with_tag(
-            "microsoft/vscode-eslint",
-            "release/2.2.20-Insider",
-            delegate.http_client(),
-        )
-        .await?;
+        let url = build_tarball_url("microsoft/vscode-eslint", Self::CURRENT_VERSION)?;
+
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.tag_name,
-            url: release.tarball_url,
+            name: Self::CURRENT_VERSION.into(),
+            url,
         }))
     }
 
@@ -366,18 +371,6 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         get_cached_eslint_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn label_for_completion(
-        &self,
-        _item: &lsp::CompletionItem,
-        _language: &Arc<language::Language>,
-    ) -> Option<language::CodeLabel> {
-        None
-    }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        None
     }
 }
 

@@ -13,8 +13,9 @@ workspace = true
 [[bin]]
 name = "collab"
 
-[[bin]]
-name = "seed"
+[features]
+sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
+test-support = ["sqlite"]
 
 [dependencies]
 anyhow.workspace = true

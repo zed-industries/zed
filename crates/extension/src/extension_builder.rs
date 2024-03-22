@@ -81,18 +81,25 @@ impl ExtensionBuilder {
             );
         }
 
-        fs::create_dir_all(&self.cache_dir)?;
+        fs::create_dir_all(&self.cache_dir).context("failed to create cache dir")?;
 
         let cargo_toml_path = extension_dir.join("Cargo.toml");
         if extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust)
-            || fs::metadata(&cargo_toml_path)?.is_file()
+            || fs::metadata(&cargo_toml_path)
+                .ok()
+                .map(|metadata| metadata.is_file())
+                .unwrap_or(false)
         {
-            self.compile_rust_extension(extension_dir, options).await?;
+            log::info!("compiling Rust extension {}", extension_dir.display());
+            self.compile_rust_extension(extension_dir, options)
+                .await
+                .context("failed to compile Rust extension")?;
         }
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
             self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
-                .await?;
+                .await
+                .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
         }
 
         log::info!("finished compiling extension {}", extension_dir.display());
@@ -131,7 +138,11 @@ impl ExtensionBuilder {
             "target",
             RUST_TARGET,
             if options.release { "release" } else { "debug" },
-            cargo_toml.package.name.as_str(),
+            &cargo_toml
+                .package
+                .name
+                // The wasm32-wasi target normalizes `-` in package names to `_` in the resulting `.wasm` file.
+                .replace('-', "_"),
         ]);
         wasm_path.set_extension("wasm");
 

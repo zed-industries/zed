@@ -16,12 +16,6 @@ git submodule update --init --recursive
   rustup update
   ```
 
-- Install the Rust wasm toolchain:
-
-  ```bash
-  rustup target add wasm32-wasi
-  ```
-
 - Install the necessary system libraries:
 
   ```bash

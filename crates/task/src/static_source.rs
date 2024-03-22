@@ -19,17 +19,46 @@ struct StaticTask {
     definition: Definition,
 }
 
+impl StaticTask {
+    fn new(definition: Definition, (id_base, index_in_file): (&str, usize)) -> Arc<Self> {
+        Arc::new(Self {
+            id: TaskId(format!(
+                "static_{id_base}_{index_in_file}_{}",
+                definition.label
+            )),
+            definition,
+        })
+    }
+}
+
+/// TODO: doc
+pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
+    tasks
+        .0
+        .into_iter()
+        .enumerate()
+        .map(|(index, task)| StaticTask::new(task, (id_base, index)) as Arc<_>)
+        .collect()
+}
+
 impl Task for StaticTask {
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
-        let TaskContext { cwd, env } = cx;
+        let TaskContext {
+            cwd,
+            task_variables,
+        } = cx;
         let cwd = self
             .definition
             .cwd
             .clone()
-            .and_then(|path| subst::substitute(&path, &env).map(Into::into).ok())
+            .and_then(|path| {
+                subst::substitute(&path, &task_variables.0)
+                    .map(Into::into)
+                    .ok()
+            })
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
-        definition_env.extend(env);
+        definition_env.extend(task_variables.0);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
@@ -58,15 +87,15 @@ impl Task for StaticTask {
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: Vec<StaticTask>,
-    _definitions: Model<TrackedFile<DefinitionProvider>>,
+    tasks: Vec<Arc<StaticTask>>,
+    _definitions: Model<TrackedFile<TaskDefinitions>>,
     _subscription: Subscription,
 }
 
 /// Static task definition from the tasks config file.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) struct Definition {
+pub struct Definition {
     /// Human readable name of the task to display in the UI.
     pub label: String,
     /// Executable command to spawn.
@@ -106,9 +135,9 @@ pub enum RevealStrategy {
 
 /// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DefinitionProvider(Vec<Definition>);
+pub struct TaskDefinitions(pub Vec<Definition>);
 
-impl DefinitionProvider {
+impl TaskDefinitions {
     /// Generates JSON schema of Tasks JSON definition format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
         let schema = SchemaSettings::draft07()
@@ -122,20 +151,22 @@ impl DefinitionProvider {
 /// A Wrapper around deserializable T that keeps track of its contents
 /// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
 /// notified.
-struct TrackedFile<T> {
+pub struct TrackedFile<T> {
     parsed_contents: T,
 }
 
-impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
-    fn new(
-        parsed_contents: T,
-        mut tracker: UnboundedReceiver<String>,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
+impl<T: PartialEq + 'static> TrackedFile<T> {
+    /// Initializes new [`TrackedFile`] with a type that's deserializable.
+    pub fn new(mut tracker: UnboundedReceiver<String>, cx: &mut AppContext) -> Model<Self>
+    where
+        T: for<'a> Deserialize<'a> + Default,
+    {
         cx.new_model(move |cx| {
             cx.spawn(|tracked_file, mut cx| async move {
                 while let Some(new_contents) = tracker.next().await {
                     if !new_contents.trim().is_empty() {
+                        // String -> T (ZedTaskFormat)
+                        // String -> U (VsCodeFormat) -> Into::into T
                         let Some(new_contents) =
                             serde_json_lenient::from_str(&new_contents).log_err()
                         else {
@@ -152,7 +183,46 @@ impl<T: for<'a> Deserialize<'a> + PartialEq + 'static> TrackedFile<T> {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
-            Self { parsed_contents }
+            Self {
+                parsed_contents: Default::default(),
+            }
+        })
+    }
+
+    /// Initializes new [`TrackedFile`] with a type that's convertible from another deserializable type.
+    pub fn new_convertible<U: for<'a> Deserialize<'a> + TryInto<T, Error = anyhow::Error>>(
+        mut tracker: UnboundedReceiver<String>,
+        cx: &mut AppContext,
+    ) -> Model<Self>
+    where
+        T: Default,
+    {
+        cx.new_model(move |cx| {
+            cx.spawn(|tracked_file, mut cx| async move {
+                while let Some(new_contents) = tracker.next().await {
+                    if !new_contents.trim().is_empty() {
+                        let Some(new_contents) =
+                            serde_json_lenient::from_str::<U>(&new_contents).log_err()
+                        else {
+                            continue;
+                        };
+                        let Some(new_contents) = new_contents.try_into().log_err() else {
+                            continue;
+                        };
+                        tracked_file.update(&mut cx, |tracked_file: &mut TrackedFile<T>, cx| {
+                            if tracked_file.parsed_contents != new_contents {
+                                tracked_file.parsed_contents = new_contents;
+                                cx.notify();
+                            };
+                        })?;
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+            Self {
+                parsed_contents: Default::default(),
+            }
         })
     }
 
@@ -165,10 +235,9 @@ impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
         id_base: impl Into<Cow<'static, str>>,
-        tasks_file_tracker: UnboundedReceiver<String>,
+        definitions: Model<TrackedFile<TaskDefinitions>>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn TaskSource>> {
-        let definitions = TrackedFile::new(DefinitionProvider::default(), tasks_file_tracker, cx);
         cx.new_model(|cx| {
             let id_base = id_base.into();
             let _subscription = cx.observe(
@@ -182,10 +251,7 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| StaticTask {
-                                id: TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
-                                definition,
-                            })
+                            .map(|(i, definition)| StaticTask::new(definition, (&id_base, i)))
                             .collect();
                         cx.notify();
                     }
@@ -207,9 +273,8 @@ impl TaskSource for StaticSource {
         _: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks
-            .clone()
-            .into_iter()
-            .map(|task| Arc::new(task) as Arc<dyn Task>)
+            .iter()
+            .map(|task| task.clone() as Arc<dyn Task>)
             .collect()
     }
 

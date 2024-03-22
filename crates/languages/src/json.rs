@@ -52,7 +52,7 @@ impl JsonLspAdapter {
             },
             cx,
         );
-        let tasks_schema = task::static_source::DefinitionProvider::generate_json_schema();
+        let tasks_schema = task::static_source::TaskDefinitions::generate_json_schema();
         serde_json::json!({
             "json": {
                 "format": {
@@ -143,10 +143,13 @@ impl LspAdapter for JsonLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true
-        }))
+        })))
     }
 
     fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {

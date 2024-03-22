@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[[bin]]
+name = "zed-extension"
+path = "src/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }

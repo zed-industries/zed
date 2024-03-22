@@ -303,6 +303,14 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
+    decl.add_method(
+        sel!(windowDidMiniaturize:),
+        window_did_miniaturize as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidDeminiaturize:),
+        window_did_deminiaturize as extern "C" fn(&Object, Sel, id),
+    );
 
     decl.register()
 }
@@ -342,6 +350,7 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
+    minimized: bool,
 }
 
 impl MacWindowState {
@@ -417,6 +426,10 @@ impl MacWindowState {
             let screen_size = self.native_window.screen().visibleFrame().into();
             bounds.size == screen_size
         }
+    }
+
+    fn is_minimized(&self) -> bool {
+        self.minimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -594,6 +607,7 @@ impl MacWindow {
                 input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
+                minimized: false,
             })));
 
             (*native_window).set_ivar(
@@ -726,6 +740,10 @@ impl PlatformWindow for MacWindow {
 
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
+    }
+
+    fn is_minimized(&self) -> bool {
+        self.0.as_ref().lock().is_minimized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -1807,6 +1825,18 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
+}
+
+extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+
+    window_state.lock().minimized = true;
+}
+
+extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+
+    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(

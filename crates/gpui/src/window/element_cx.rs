@@ -33,10 +33,11 @@ use crate::{
     ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
     DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
     GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
-    LineLayoutIndex, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler,
-    Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
-    Shadow, SharedString, Size, StrikethroughStyle, Style, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
+    LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels,
+    PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window, WindowContext,
+    SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -1323,5 +1324,23 @@ impl<'a> ElementContext<'a> {
                 }
             },
         ));
+    }
+
+    /// Register a modifiers changed event listener on the window for the next frame.
+    ///
+    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_modifiers_changed(
+        &mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut ElementContext) + 'static,
+    ) {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .on_modifiers_changed(Rc::new(
+                move |event: &ModifiersChangedEvent, cx: &mut ElementContext<'_>| {
+                    listener(event, cx)
+                },
+            ));
     }
 }

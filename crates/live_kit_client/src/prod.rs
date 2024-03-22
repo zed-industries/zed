@@ -684,7 +684,7 @@ impl Drop for RoomDelegate {
     fn drop(&mut self) {
         unsafe {
             CFRelease(self.native_delegate.0);
-            let _ = Weak::from_raw(self.weak_room);
+            let _ = Weak::from_raw(self.weak_room as *mut Room);
         }
     }
 }

@@ -227,13 +227,8 @@ impl Prettier {
                         let buffer_language = buffer.language();
                         let parser_with_plugins = buffer_language.and_then(|l| {
                             let prettier_parser = l.prettier_parser_name()?;
-                            let mut prettier_plugins = local
-                                .language_registry
-                                .lsp_adapters(l)
-                                .iter()
-                                .flat_map(|adapter| adapter.prettier_plugins())
-                                .copied()
-                                .collect::<Vec<_>>();
+                            let mut prettier_plugins =
+                                local.language_registry.all_prettier_plugins();
                             prettier_plugins.dedup();
                             Some((prettier_parser, prettier_plugins))
                         });
@@ -243,8 +238,9 @@ impl Prettier {
                             prettier_node_modules.is_dir(),
                             "Prettier node_modules dir does not exist: {prettier_node_modules:?}"
                         );
-                        let plugin_name_into_path = |plugin_name: &str| {
-                            let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
+                        let plugin_name_into_path = |plugin_name: Arc<str>| {
+                            let prettier_plugin_dir =
+                                prettier_node_modules.join(plugin_name.as_ref());
                             [
                                 prettier_plugin_dir.join("dist").join("index.mjs"),
                                 prettier_plugin_dir.join("dist").join("index.js"),
@@ -267,8 +263,10 @@ impl Prettier {
 
                                 let mut plugins = plugins
                                     .into_iter()
-                                    .filter(|&plugin_name| {
-                                        if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
+                                    .filter(|plugin_name| {
+                                        if plugin_name.as_ref()
+                                            == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME
+                                        {
                                             add_tailwind_back = true;
                                             false
                                         } else {
@@ -276,14 +274,14 @@ impl Prettier {
                                         }
                                     })
                                     .map(|plugin_name| {
-                                        (plugin_name, plugin_name_into_path(plugin_name))
+                                        (plugin_name.clone(), plugin_name_into_path(plugin_name))
                                     })
                                     .collect::<Vec<_>>();
                                 if add_tailwind_back {
                                     plugins.push((
-                                        &TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME,
+                                        TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME.into(),
                                         plugin_name_into_path(
-                                            TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME,
+                                            TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME.into(),
                                         ),
                                     ));
                                 }
