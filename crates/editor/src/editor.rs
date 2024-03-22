@@ -8757,9 +8757,9 @@ impl Editor {
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
             }
-
             cx.notify();
         }
+        self.invalidate_marked_row_ranges();
     }
 
     pub fn unfold_ranges<T: ToOffset + Clone>(
@@ -8779,6 +8779,7 @@ impl Editor {
 
             cx.notify();
         }
+        self.invalidate_marked_row_ranges();
     }
 
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
@@ -8948,6 +8949,7 @@ impl Editor {
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
+        self.invalidate_marked_row_ranges();
         cx.notify();
     }
 
@@ -9890,6 +9892,12 @@ impl Editor {
             })
         }));
         self
+    }
+
+    fn invalidate_marked_row_ranges(&mut self) {
+        for (k, v) in self.background_highlights.iter_mut() {
+            v.marked_row_ranges = None;
+        }
     }
 }
 

@@ -2196,7 +2196,7 @@ impl EditorElement {
                     let right_x = left_x + column_width;
                     let color = cx.theme().status().info;
                     Self::paint_scrollbar_markers(
-                        &row_ranges,
+                        Box::new(row_ranges.into_iter()),
                         left_x,
                         right_x,
                         color,
@@ -2215,7 +2215,7 @@ impl EditorElement {
                     let right_x = left_x + column_width;
                     let color = cx.theme().status().info;
                     Self::paint_scrollbar_markers(
-                        &row_ranges,
+                        Box::new(row_ranges.into_iter()),
                         left_x,
                         right_x,
                         color,
@@ -2621,10 +2621,10 @@ impl EditorElement {
     }
 
     fn paint_scrollbar_markers(
-        row_ranges: &Vec<Range<u32>>,
+        row_ranges: Box<dyn Iterator<Item = Range<u32>>>,
         left_x: Pixels,
         right_x: Pixels,
-        color: impl Into<Hsla> + std::marker::Copy,
+        color: impl Into<Hsla> + Copy,
         scrollbar_layout: &ScrollbarLayout,
         cx: &mut ElementContext,
     ) {
