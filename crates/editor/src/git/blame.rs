@@ -385,6 +385,17 @@ mod tests {
 
     use crate::git::blame::{FakeGitBlameRunner, GitBlame};
 
+    macro_rules! assert_blame_rows {
+        ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
+            assert_eq!(
+                $blame
+                    .blame_for_rows($rows.map(Some), $cx)
+                    .collect::<Vec<_>>(),
+                $expected
+            );
+        };
+    }
+
     fn init_test(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
@@ -404,30 +415,6 @@ mod tests {
     #[gpui::test]
     async fn test_blame_for_rows(cx: &mut gpui::TestAppContext) {
         init_test(cx);
-
-        // What we want (output of `git blame --contents - file.txt`)
-        //
-        // 1b1b1b (Thorsten Ball              2024-03-20 14:28:27 +0100 1) AAA Line 1
-        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 2) BBB Line 2 - Modified 1
-        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 3) CCC Line 3 - Modified 2
-        // 000000                             2024-03-20 14:32:09 +0100 4) modified in memory 1
-        // 000000                             2024-03-20 14:32:09 +0100 5) modified in memory 1
-        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 6) DDD Line 4 - Modified 2
-        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 7) EEE Line 5 - Modified 1
-        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 8) FFF Line 6 - Modified 2
-
-        let blame_entries = vec![
-            blame_entry("1b1b1b", 0..1),
-            blame_entry("0d0d0d", 1..2),
-            blame_entry("3a3a3a", 2..3),
-            blame_entry("3a3a3a", 5..6),
-            blame_entry("0d0d0d", 6..7),
-            blame_entry("3a3a3a", 7..8),
-        ];
-
-        let blame_runner = Arc::from(FakeGitBlameRunner {
-            entries: blame_entries,
-        });
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -453,6 +440,30 @@ mod tests {
             .update(cx, |project, cx| project.open_local_buffer("/file.txt", cx))
             .await
             .unwrap();
+
+        // What we want (output of `git blame --contents - file.txt`)
+        //
+        // 1b1b1b (Thorsten Ball              2024-03-20 14:28:27 +0100 1) AAA Line 1
+        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 2) BBB Line 2 - Modified 1
+        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 3) CCC Line 3 - Modified 2
+        // 000000                             2024-03-20 14:32:09 +0100 4) modified in memory 1
+        // 000000                             2024-03-20 14:32:09 +0100 5) modified in memory 1
+        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 6) DDD Line 4 - Modified 2
+        // 0d0d0d (Thorsten Ball              2024-03-20 14:28:51 +0100 7) EEE Line 5 - Modified 1
+        // 3a3a3a (Thorsten Ball              2024-03-20 14:29:19 +0100 8) FFF Line 6 - Modified 2
+
+        let blame_entries = vec![
+            blame_entry("1b1b1b", 0..1),
+            blame_entry("0d0d0d", 1..2),
+            blame_entry("3a3a3a", 2..3),
+            blame_entry("3a3a3a", 5..6),
+            blame_entry("0d0d0d", 6..7),
+            blame_entry("3a3a3a", 7..8),
+        ];
+
+        let blame_runner = Arc::from(FakeGitBlameRunner {
+            entries: blame_entries,
+        });
 
         let git_blame = cx.new_model(|cx| GitBlame::new(blame_runner, buffer.clone(), project, cx));
 
@@ -494,63 +505,108 @@ mod tests {
                 vec![Some(blame_entry("0d0d0d", 1..2)), None, None]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_blame_for_rows_with_edits(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "/file.txt": r#"
+               Line 1
+               Line 2
+               Line 3
+            "#
+                .unindent()
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/file.txt".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/file.txt", cx))
+            .await
+            .unwrap();
+
+        let blame_entries = vec![blame_entry("1b1b1b", 0..4)];
+        let blame_runner = Arc::from(FakeGitBlameRunner {
+            entries: blame_entries,
+        });
+        let git_blame = cx.new_model(|cx| GitBlame::new(blame_runner, buffer.clone(), project, cx));
+
+        cx.executor().run_until_parked();
+
+        git_blame.update(cx, |blame, cx| {
+            // Sanity check before edits: make sure that we get the same blame entry for all
+            // lines.
+            assert_blame_rows!(
+                blame,
+                (0..4),
+                vec![
+                    Some(blame_entry("1b1b1b", 0..4)),
+                    Some(blame_entry("1b1b1b", 0..4)),
+                    Some(blame_entry("1b1b1b", 0..4)),
+                    Some(blame_entry("1b1b1b", 0..4)),
+                ],
+                cx
+            );
+        });
 
         // Modify a single line
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(1, 2)..Point::new(1, 2), "X")], None, cx);
         });
         git_blame.update(cx, |blame, cx| {
-            assert_eq!(
-                blame
-                    .blame_for_rows((1..4).map(Some), cx)
-                    .collect::<Vec<_>>(),
-                vec![None, Some(blame_entry("3a3a3a", 2..3)), None]
+            assert_blame_rows!(
+                blame,
+                (1..4),
+                vec![
+                    None,
+                    Some(blame_entry("1b1b1b", 0..4)),
+                    Some(blame_entry("1b1b1b", 0..4))
+                ],
+                cx
             );
         });
 
         // Before we insert a newline at the end, sanity check:
         git_blame.update(cx, |blame, cx| {
-            assert_eq!(
-                blame
-                    .blame_for_rows((7..8).map(Some), cx)
-                    .collect::<Vec<_>>(),
-                vec![Some(blame_entry("3a3a3a", 7..8)),]
-            );
+            assert_blame_rows!(blame, (3..4), vec![Some(blame_entry("1b1b1b", 0..4))], cx);
         });
         // Insert a newline at the end
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(7, 23)..Point::new(7, 23), "\n")], None, cx);
+            buffer.edit([(Point::new(3, 6)..Point::new(3, 6), "\n")], None, cx);
         });
         // Only the new line is marked as edited:
         git_blame.update(cx, |blame, cx| {
-            assert_eq!(
-                blame
-                    .blame_for_rows((7..9).map(Some), cx)
-                    .collect::<Vec<_>>(),
-                vec![Some(blame_entry("3a3a3a", 7..8)), None]
+            assert_blame_rows!(
+                blame,
+                (3..5),
+                vec![Some(blame_entry("1b1b1b", 0..4)), None],
+                cx
             );
         });
 
         // Before we insert a newline at the start, sanity check:
         git_blame.update(cx, |blame, cx| {
-            assert_eq!(
-                blame
-                    .blame_for_rows((2..3).map(Some), cx)
-                    .collect::<Vec<_>>(),
-                vec![Some(blame_entry("3a3a3a", 2..3)),]
-            );
+            assert_blame_rows!(blame, (2..3), vec![Some(blame_entry("1b1b1b", 0..4)),], cx);
         });
+
+        // Usage example
         // Insert a newline at the start of the row
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "\n")], None, cx);
         });
         // Only the new line is marked as edited:
         git_blame.update(cx, |blame, cx| {
-            assert_eq!(
-                blame
-                    .blame_for_rows((2..4).map(Some), cx)
-                    .collect::<Vec<_>>(),
-                vec![None, Some(blame_entry("3a3a3a", 2..3)),]
+            assert_blame_rows!(
+                blame,
+                (2..4),
+                vec![None, Some(blame_entry("1b1b1b", 0..4)),],
+                cx
             );
         });
     }
