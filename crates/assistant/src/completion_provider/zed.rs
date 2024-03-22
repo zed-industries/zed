@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::ZedDotDevModel, count_open_ai_tokens, CompletionProvider,
+    assistant_settings::ZedDotDevModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
     LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
@@ -78,13 +78,14 @@ impl ZedDotDevCompletionProvider {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         match request.model {
-            crate::LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
-            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
-            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
-            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
+            LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
+            LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
+            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
+            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {
+            LanguageModel::ZedDotDev(ZedDotDevModel::Claude3) => {}
+            LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
                     model,
                     messages: request
