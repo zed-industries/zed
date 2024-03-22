@@ -208,12 +208,6 @@ fn main() {
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
-        cx.windows().iter_mut().for_each(|&mut w| {
-            let bg = cx.theme().window_background();
-            w.update(cx, |_, wcx| {
-                wcx.set_background(bg)
-            }).ok();
-        });
 
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
@@ -221,10 +215,10 @@ fn main() {
             let client = client.clone();
 
             move |cx| {
-                cx.windows().iter_mut().for_each(|&mut w| {
+                cx.windows().iter_mut().for_each(|&mut window| {
                     let bg = cx.theme().window_background();
-                    w.update(cx, |_, wcx| {
-                        wcx.set_background(bg)
+                    window.update(cx, |_, cx| {
+                        cx.set_background(bg)
                     }).ok();
                 });
                 languages.set_theme(cx.theme().clone());

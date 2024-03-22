@@ -23,7 +23,7 @@ use cocoa::{
 use core_graphics::display::{CGDirectDisplayID, CGRect};
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
-    // Wildly used private APIs; Apple uses them for their Terminal.app.
+    // Widely used private APIs; Apple uses them for their Terminal.app.
     fn CGSMainConnectionID() -> id;
     fn CGSSetWindowBackgroundBlurRadius(
         connection_id: id,
@@ -531,7 +531,6 @@ impl MacWindow {
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
     ) -> Self {
-
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -697,10 +696,7 @@ impl MacWindow {
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
-
-            if window_background.is_some() {
-                window.set_background(window_background.unwrap());
-            }
+            window.set_background(window_background);
 
             match kind {
                 WindowKind::Normal => {

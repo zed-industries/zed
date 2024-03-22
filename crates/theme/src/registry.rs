@@ -6,15 +6,15 @@ use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString, WindowBackground};
 use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, try_parse_window_background, Appearance, AppearanceContent, PlayerColors,
-    StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily,
-    ThemeFamilyContent, ThemeStyles,
+    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
+    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    WindowBackgroundContent,
 };
 
 #[derive(Debug, Clone)]
@@ -123,8 +123,16 @@ impl ThemeRegistry {
                 AppearanceContent::Light => SyntaxTheme::light(),
                 AppearanceContent::Dark => SyntaxTheme::dark(),
             };
-            let window_background =
-                try_parse_window_background(&user_theme.window_background).unwrap();
+
+            let window_background = user_theme
+                .window_background
+                .map(|bg| match bg {
+                    WindowBackgroundContent::Opaque => WindowBackground::Opaque,
+                    WindowBackgroundContent::Transparent => WindowBackground::Transparent,
+                    WindowBackgroundContent::Blurred => WindowBackground::Blurred,
+                })
+                .unwrap_or_default();
+
             if !user_theme.style.syntax.is_empty() {
                 syntax_colors.highlights = user_theme
                     .style
