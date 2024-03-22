@@ -11,7 +11,10 @@ use regex::Regex;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
-use task::TaskVariables;
+use task::{
+    static_source::{Definition, TaskDefinitions},
+    TaskVariables,
+};
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -350,6 +353,46 @@ impl ContextProvider for RustContextProvider {
         }
 
         Ok(context)
+    }
+    fn associated_tasks(&self) -> Option<TaskDefinitions> {
+        Some(TaskDefinitions(vec![
+            Definition {
+                label: "Rust: Test current crate".to_owned(),
+                command: "cargo".into(),
+                args: vec!["test".into(), "-p".into(), "$ZED_PACKAGE".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: Test current function".to_owned(),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    "$ZED_PACKAGE".into(),
+                    "--".into(),
+                    "$ZED_SYMBOL".into(),
+                ],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo run".into(),
+                command: "cargo".into(),
+                args: vec!["run".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo check current crate".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "-p".into(), "$ZED_PACKAGE".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo check workspace".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "--workspace".into()],
+                ..Default::default()
+            },
+        ]))
     }
 }
 

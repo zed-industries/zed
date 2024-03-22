@@ -60,6 +60,10 @@ impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(&self) -> Option<TaskDefinitions> {
         Some(self.definitions.clone())
     }
+
+    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<TaskVariables> {
+        SymbolContextProvider.build_context(location, cx)
+    }
 }
 
 /// A source that pulls in the tasks from language registry.
