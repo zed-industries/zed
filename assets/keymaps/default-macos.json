@@ -166,12 +166,6 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
-      "cmd-f": [
-        "buffer_search::Deploy",
-        {
-          "focus": true
-        }
-      ],
       "cmd-e": [
         "buffer_search::Deploy",
         {
@@ -228,7 +222,9 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "alt-tab": "search::CycleMode",
+      "cmd-f": "buffer_search::FocusSearch",
+      "cmd-alt-f": "search::ToggleReplace"
     }
   },
   {
