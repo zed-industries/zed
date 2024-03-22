@@ -2197,17 +2197,8 @@ impl EditorElement {
                     );
                     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
                     let right_x = left_x + column_width;
-                    for hunk in hunks {
-                        let bounds =
-                            Bounds::from_corners(point(left_x, hunk.0), point(right_x, hunk.1));
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
+                    let color = cx.theme().status().info;
+                    Self::paint_scrollbar_markers(&hunks, left_x, right_x, color, cx);
                 }
 
                 if is_singleton && scrollbar_settings.symbols_selections {
@@ -2223,17 +2214,8 @@ impl EditorElement {
                     ));
                     let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
                     let right_x = left_x + column_width;
-                    for hunk in hunks {
-                        let bounds =
-                            Bounds::from_corners(point(left_x, hunk.0), point(right_x, hunk.1));
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
+                    let color = cx.theme().status().info;
+                    Self::paint_scrollbar_markers(&hunks, left_x, right_x, color, cx);
                 }
 
                 if is_singleton && scrollbar_settings.git_diff {
@@ -2263,13 +2245,7 @@ impl EditorElement {
                             DiffHunkStatus::Modified => cx.theme().status().modified,
                             DiffHunkStatus::Removed => cx.theme().status().deleted,
                         };
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            color,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
+                        cx.paint.paint_quad(fill(bounds, color));
                     }
                 }
 
@@ -2311,13 +2287,7 @@ impl EditorElement {
                             DiagnosticSeverity::INFORMATION => cx.theme().status().info,
                             _ => cx.theme().status().hint,
                         };
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            color,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
+                        cx.paint.paint_quad(fill(bounds, color));
                     }
                 }
 
@@ -2642,6 +2612,19 @@ impl EditorElement {
                 }
             }
         });
+    }
+
+    fn paint_scrollbar_markers(
+        marker_hunks: &Vec<(Pixels, Pixels)>,
+        left_x: Pixels,
+        right_x: Pixels,
+        color: impl Into<Hsla> + std::marker::Copy,
+        cx: &mut ElementContext,
+    ) {
+        for hunk in marker_hunks {
+            let bounds = Bounds::from_corners(point(left_x, hunk.0), point(right_x, hunk.1));
+            cx.paint_quad(fill(bounds, color));
+        }
     }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
