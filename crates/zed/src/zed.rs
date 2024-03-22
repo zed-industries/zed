@@ -3073,6 +3073,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+            command_palette::init(cx);
             language::init(cx);
             editor::init(cx);
             project_panel::init_settings(cx);
