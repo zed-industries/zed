@@ -10,6 +10,7 @@ use std::{
     rc::{Rc, Weak},
     str::FromStr,
     sync::{Arc, Once},
+    time::{Duration, Instant},
 };
 
 use ::util::ResultExt;
@@ -52,6 +53,7 @@ pub(crate) struct WindowsWindowInner {
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
     last_ime_input: RefCell<Option<String>>,
+    click_state: RefCell<ClickState>,
 }
 
 impl WindowsWindowInner {
@@ -112,6 +114,7 @@ impl WindowsWindowInner {
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
         let last_ime_input = RefCell::new(None);
+        let click_state = RefCell::new(ClickState::new());
         Self {
             hwnd,
             origin,
@@ -125,6 +128,7 @@ impl WindowsWindowInner {
             hide_title_bar,
             display,
             last_ime_input,
+            click_state,
         }
     }
 
@@ -588,10 +592,11 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
-            let scale_factor = self.scale_factor.get();
+            let mouse_position = logical_point(x, y, self.scale_factor.get());
+
             let event = MouseDownEvent {
                 button,
-                position: logical_point(x, y, scale_factor),
+                position: mouse_position,
                 modifiers: self.current_modifiers(),
                 click_count: 1,
                 first_mouse: false,
@@ -1595,6 +1600,25 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 }
 
+#[derive(Debug)]
+struct ClickState {
+    button: MouseButton,
+    last_click: Instant,
+    last_locaition: Point<GlobalPixels>,
+    current_count: usize,
+}
+
+impl ClickState {
+    pub fn new() -> Self {
+        ClickState {
+            button: MouseButton::Left,
+            last_click: Instant::now(),
+            last_locaition: Point::default(),
+            current_count: 0,
+        }
+    }
+}
+
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
@@ -1739,3 +1763,7 @@ fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+// https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
+const DOUBLE_CLICK_DISTANCE: GlobalPixels = GlobalPixels(4.0);
