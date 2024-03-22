@@ -18,10 +18,10 @@
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
     ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -387,6 +387,18 @@ impl Interactivity {
                     listener(event, cx)
                 }
             }));
+    }
+
+    /// Bind the given callback to modifiers changing events.
+    /// The imperative API equivalent to [`InteractiveElement::on_modifiers_changed`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    pub fn on_modifiers_changed(
+        &mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static,
+    ) {
+        self.modifiers_changed_listeners
+            .push(Box::new(move |event, cx| listener(event, cx)));
     }
 
     /// Bind the given callback to drop events of the given type, whether or not the drag started on this element
@@ -775,6 +787,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to modifiers changing events.
+    /// The fluent API equivalent to [`Interactivity::on_modifiers_changed`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn on_modifiers_changed(
+        mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().on_modifiers_changed(listener);
+        self
+    }
+
     /// Apply the given style when the given data type is dragged over this element
     fn drag_over<S: 'static>(
         mut self,
@@ -999,6 +1023,9 @@ pub(crate) type KeyDownListener =
 pub(crate) type KeyUpListener =
     Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + 'static>;
 
+pub(crate) type ModifiersChangedListener =
+    Box<dyn Fn(&ModifiersChangedEvent, &mut WindowContext) + 'static>;
+
 pub(crate) type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 
 /// Construct a new [`Div`] element
@@ -1188,6 +1215,7 @@ pub struct Interactivity {
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
+    pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
     pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
@@ -1301,14 +1329,7 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                        let hitbox = if self.occlude_mouse
-                            || style.mouse_cursor.is_some()
-                            || self.group.is_some()
-                            || self.has_hover_styles()
-                            || self.has_mouse_listeners()
-                            || self.scroll_offset.is_some()
-                            || self.tracked_focus_handle.is_some()
-                        {
+                        let hitbox = if self.should_insert_hitbox(&style) {
                             Some(cx.insert_hitbox(bounds, self.occlude_mouse))
                         } else {
                             None
@@ -1323,18 +1344,22 @@ impl Interactivity {
         )
     }
 
-    fn has_hover_styles(&self) -> bool {
-        self.hover_style.is_some() || self.group_hover_style.is_some()
-    }
-
-    fn has_mouse_listeners(&self) -> bool {
-        !self.mouse_up_listeners.is_empty()
+    fn should_insert_hitbox(&self, style: &Style) -> bool {
+        self.occlude_mouse
+            || style.mouse_cursor.is_some()
+            || self.group.is_some()
+            || self.scroll_offset.is_some()
+            || self.tracked_focus_handle.is_some()
+            || self.hover_style.is_some()
+            || self.group_hover_style.is_some()
+            || !self.mouse_up_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
+            || self.tooltip_builder.is_some()
     }
 
     fn clamp_scroll_position(
@@ -1876,6 +1901,7 @@ impl Interactivity {
     fn paint_keyboard_listeners(&mut self, cx: &mut ElementContext) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
+        let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
         let action_listeners = mem::take(&mut self.action_listeners);
         if let Some(context) = self.key_context.clone() {
             cx.set_key_context(context);
@@ -1893,6 +1919,12 @@ impl Interactivity {
         for listener in key_up_listeners {
             cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
                 listener(event, phase, cx);
+            })
+        }
+
+        for listener in modifiers_changed_listeners {
+            cx.on_modifiers_changed(move |event: &ModifiersChangedEvent, cx| {
+                listener(event, cx);
             })
         }
 

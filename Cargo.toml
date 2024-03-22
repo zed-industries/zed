@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/activity_indicator",
-    "crates/ai",
     "crates/assets",
     "crates/assistant",
     "crates/audio",
@@ -24,6 +23,7 @@ members = [
     "crates/editor",
     "crates/extension",
     "crates/extension_api",
+    "crates/extension_cli",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -33,8 +33,10 @@ members = [
     "crates/fuzzy",
     "crates/git",
     "crates/go_to_line",
+    "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
+    "crates/image_viewer",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
@@ -50,6 +52,7 @@ members = [
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/open_ai",
     "crates/outline",
     "crates/picker",
     "crates/prettier",
@@ -67,7 +70,6 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
-    "crates/semantic_index",
     "crates/settings",
     "crates/snippet",
     "crates/sqlez",
@@ -136,9 +138,11 @@ fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
 go_to_line = { path = "crates/go_to_line" }
+google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 install_cli = { path = "crates/install_cli" }
+image_viewer = { path = "crates/image_viewer" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
@@ -153,6 +157,7 @@ menu = { path = "crates/menu" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
@@ -171,7 +176,6 @@ rpc = { path = "crates/rpc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
@@ -208,7 +212,7 @@ blade-macros = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 cap-std = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
-clap = "4.4"
+clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
@@ -238,7 +242,9 @@ parking_lot = "0.12.1"
 profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
-prost = "0.8"
+prost = "0.9"
+prost-build = "0.9"
+prost-types = "0.9"
 pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
@@ -271,6 +277,7 @@ time = { version = "0.3", features = [
     "formatting",
 ] }
 toml = "0.8"
+tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
@@ -349,6 +356,7 @@ features = [
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_DataExchange",
@@ -367,7 +375,7 @@ features = [
 ]
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "4294e59279205f503eb14348dd5128bd5910c8fb" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "30419d07660dc11a21e42ef4a7fa329600cff152" }
 
@@ -386,6 +394,9 @@ wasmtime-cranelift = { opt-level = 3 }
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+[profile.release.package]
+zed = { codegen-units = 16 }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

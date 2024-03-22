@@ -1,0 +1,7 @@
+#!/bin/bash
+
+set -e
+
+git pull --ff-only origin main
+git tag -f extension-cli
+git push -f origin extension-cli

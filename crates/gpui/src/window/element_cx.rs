@@ -33,10 +33,11 @@ use crate::{
     ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
     DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
     GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
-    LineLayoutIndex, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler,
-    Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene,
-    Shadow, SharedString, Size, StrikethroughStyle, Style, TextStyleRefinement, Underline,
-    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
+    LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels,
+    PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window, WindowContext,
+    SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -1007,6 +1008,7 @@ impl<'a> ElementContext<'a> {
                     content_mask,
                     color,
                     tile,
+                    transformation: TransformationMatrix::unit(),
                 });
         }
         Ok(())
@@ -1072,6 +1074,7 @@ impl<'a> ElementContext<'a> {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
+        transformation: TransformationMatrix,
         color: Hsla,
     ) -> Result<()> {
         let scale_factor = self.scale_factor();
@@ -1103,6 +1106,7 @@ impl<'a> ElementContext<'a> {
                 content_mask,
                 color,
                 tile,
+                transformation,
             });
 
         Ok(())
@@ -1266,6 +1270,11 @@ impl<'a> ElementContext<'a> {
         self.window.next_frame.dispatch_tree.set_view_id(view_id);
     }
 
+    /// Get the last view id for the current element
+    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+        self.window.next_frame.dispatch_tree.parent_view_id()
+    }
+
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     /// platform to receive textual input with proper integration with concerns such
     /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
@@ -1315,5 +1324,23 @@ impl<'a> ElementContext<'a> {
                 }
             },
         ));
+    }
+
+    /// Register a modifiers changed event listener on the window for the next frame.
+    ///
+    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_modifiers_changed(
+        &mut self,
+        listener: impl Fn(&ModifiersChangedEvent, &mut ElementContext) + 'static,
+    ) {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .on_modifiers_changed(Rc::new(
+                move |event: &ModifiersChangedEvent, cx: &mut ElementContext<'_>| {
+                    listener(event, cx)
+                },
+            ));
     }
 }

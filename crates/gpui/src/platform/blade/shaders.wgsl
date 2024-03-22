@@ -49,6 +49,11 @@ struct AtlasTile {
     bounds: AtlasBounds,
 }
 
+struct TransformationMatrix {
+    rotation_scale: mat2x2<f32>,
+    translation: vec2<f32>,
+}
+
 fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
     let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
     return vec4<f32>(device_position, 0.0, 1.0);
@@ -57,6 +62,13 @@ fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
 fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
     let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
     return to_device_position_impl(position);
+}
+
+fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
+    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+    //Note: Rust side stores it as row-major, so transposing here
+    let transformed = transpose(transform.rotation_scale) * position + transform.translation;
+    return to_device_position_impl(transformed);
 }
 
 fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
@@ -476,6 +488,7 @@ struct MonochromeSprite {
     content_mask: Bounds,
     color: Hsla,
     tile: AtlasTile,
+    transformation: TransformationMatrix,
 }
 var<storage, read> b_mono_sprites: array<MonochromeSprite>;
 
@@ -492,7 +505,8 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     let sprite = b_mono_sprites[instance_id];
 
     var out = MonoSpriteVarying();
-    out.position = to_device_position(unit_vertex, sprite.bounds);
+    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
     out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);

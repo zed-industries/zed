@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 
-echo "installing foreman..."
-which foreman > /dev/null || brew install foreman
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  echo "Linux dependencies..."
+  script/linux
+else
+  echo "installing foreman..."
+  which foreman > /dev/null || brew install foreman
+fi
 
 echo "creating database..."
 script/sqlx database create
-
-echo "migrating database..."
-cargo run -p collab -- migrate
-
-echo "seeding database..."
-script/seed-db

@@ -1,8 +1,7 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
-const { GITHUB_ACCESS_TOKEN } = process.env;
-const PR_REGEX = /#\d+/; // Ex: matches on #4241
+let { GITHUB_ACCESS_TOKEN } = process.env;
 const FIXES_REGEX = /(fixes|closes|completes) (.+[/#]\d+.*)$/im;
 
 main();
@@ -20,26 +19,14 @@ async function main() {
   // Print the previous release
   console.log(`Changes from ${oldTag} to ${newTag}\n`);
 
-  let hasProtocolChanges = false;
-  try {
-    execFileSync("git", [
-      "diff",
-      oldTag,
-      newTag,
-      "--exit-code",
-      "--",
-      "crates/rpc",
-    ]).status != 0;
-  } catch (error) {
-    hasProtocolChanges = true;
-  }
-
-  if (hasProtocolChanges) {
-    console.warn(
-      "\033[31;1;4mRPC protocol changes, server should be re-deployed\033[0m\n",
-    );
-  } else {
-    console.log("No RPC protocol changes\n");
+  if (!GITHUB_ACCESS_TOKEN) {
+    try {
+      GITHUB_ACCESS_TOKEN = execFileSync("gh", ["auth", "token"]).toString();
+    } catch (error) {
+      console.log(error);
+      console.log("No GITHUB_ACCESS_TOKEN, and no `gh auth token`");
+      process.exit(1);
+    }
   }
 
   // Get the PRs merged between those two tags.
@@ -69,7 +56,7 @@ async function main() {
 
     // Print the pull request title and URL.
     const pullRequest = await response.json();
-    const releaseNotesHeader = /^\s*(?:Release )?Notes\s*:(.+)/ims;
+    const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
     let releaseNotes = pullRequest.body || "";
     const captures = releaseNotesHeader.exec(releaseNotes);

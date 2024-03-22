@@ -1,6 +1,8 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
+mod zed;
+
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
@@ -13,6 +15,7 @@ use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use image_viewer;
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -163,6 +166,7 @@ fn main() {
         command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
+        image_viewer::init(cx);
         diagnostics::init(cx);
         copilot::init(
             copilot_language_server_id,
@@ -170,7 +174,7 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
-        assistant::init(cx);
+        assistant::init(client.clone(), cx);
 
         extension::init(
             fs.clone(),
@@ -243,7 +247,6 @@ fn main() {
         tasks_ui::init(cx);
         channel::init(&client, user_store.clone(), cx);
         search::init(cx);
-        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
 
@@ -780,7 +783,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.build_zed_api_url("/telemetry/crashes");
+    let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -806,7 +809,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = Request::post(&crash_report_url)
+            let mut request = Request::post(&crash_report_url.to_string())
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain");
 

@@ -754,7 +754,7 @@ impl Workspace {
                             cx.background_executor()
                                 .spawn(DB.set_fullscreen(workspace_id, true))
                                 .detach_and_log_err(cx);
-                        } else {
+                        } else if !cx.is_minimized() {
                             cx.background_executor()
                                 .spawn(DB.set_fullscreen(workspace_id, false))
                                 .detach_and_log_err(cx);

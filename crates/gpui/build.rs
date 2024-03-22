@@ -87,6 +87,7 @@ fn generate_shader_bindings() -> PathBuf {
         "PathSprite".into(),
         "SurfaceInputIndex".into(),
         "SurfaceBounds".into(),
+        "TransformationMatrix".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;

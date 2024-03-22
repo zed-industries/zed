@@ -11,6 +11,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
+default = []
 test-support = [
     "backtrace",
     "collections/test-support",

@@ -4,8 +4,8 @@ use async_tar::Archive;
 use futures::AsyncReadExt;
 use semver::Version;
 use serde::Deserialize;
-use serde_json::Value;
 use smol::{fs, io::BufReader, lock::Mutex, process::Command};
+use std::io;
 use std::process::{Output, Stdio};
 use std::{
     env::consts,
@@ -46,6 +46,12 @@ pub trait NodeRuntime: Send + Sync {
     async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
         -> Result<()>;
 
+    async fn npm_package_installed_version(
+        &self,
+        local_package_directory: &PathBuf,
+        name: &str,
+    ) -> Result<Option<String>>;
+
     async fn should_install_npm_package(
         &self,
         package_name: &str,
@@ -60,36 +66,19 @@ pub trait NodeRuntime: Send + Sync {
             return true;
         }
 
-        let package_json_path = local_package_directory.join("package.json");
-
-        let mut contents = String::new();
-
-        let Some(mut file) = fs::File::open(package_json_path).await.log_err() else {
+        let Some(installed_version) = self
+            .npm_package_installed_version(local_package_directory, package_name)
+            .await
+            .log_err()
+            .flatten()
+        else {
             return true;
         };
 
-        file.read_to_string(&mut contents).await.log_err();
-
-        let Some(package_json): Option<Value> = serde_json::from_str(&contents).log_err() else {
+        let Some(installed_version) = Version::parse(&installed_version).log_err() else {
             return true;
         };
-
-        let installed_version = package_json
-            .get("dependencies")
-            .and_then(|deps| deps.get(package_name))
-            .and_then(|server_name| server_name.as_str());
-
-        let Some(installed_version) = installed_version else {
-            return true;
-        };
-
-        let Some(latest_version) = Version::parse(latest_version).log_err() else {
-            return true;
-        };
-
-        let installed_version = installed_version.trim_start_matches(|c: char| !c.is_ascii_digit());
-
-        let Some(installed_version) = Version::parse(installed_version).log_err() else {
+        let Some(latest_version) = Version::parse(&latest_version).log_err() else {
             return true;
         };
 
@@ -281,6 +270,36 @@ impl NodeRuntime for RealNodeRuntime {
             .ok_or_else(|| anyhow!("no version found for npm package {}", name))
     }
 
+    async fn npm_package_installed_version(
+        &self,
+        local_package_directory: &PathBuf,
+        name: &str,
+    ) -> Result<Option<String>> {
+        let mut package_json_path = local_package_directory.clone();
+        package_json_path.extend(["node_modules", name, "package.json"]);
+
+        let mut file = match fs::File::open(package_json_path).await {
+            Ok(file) => file,
+            Err(err) => {
+                if err.kind() == io::ErrorKind::NotFound {
+                    return Ok(None);
+                }
+
+                Err(err)?
+            }
+        };
+
+        #[derive(Deserialize)]
+        struct PackageJson {
+            version: String,
+        }
+
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).await?;
+        let package_json: PackageJson = serde_json::from_str(&contents)?;
+        Ok(Some(package_json.version))
+    }
+
     async fn npm_install_packages(
         &self,
         directory: &Path,
@@ -333,6 +352,14 @@ impl NodeRuntime for FakeNodeRuntime {
 
     async fn npm_package_latest_version(&self, name: &str) -> anyhow::Result<String> {
         unreachable!("Should not query npm package '{name}' for latest version")
+    }
+
+    async fn npm_package_installed_version(
+        &self,
+        _local_package_directory: &PathBuf,
+        name: &str,
+    ) -> Result<Option<String>> {
+        unreachable!("Should not query npm package '{name}' for installed version")
     }
 
     async fn npm_install_packages(

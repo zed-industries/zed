@@ -4,27 +4,28 @@ impl Database {
     pub async fn get_extensions(
         &self,
         filter: Option<&str>,
+        max_schema_version: i32,
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
         self.transaction(|tx| async move {
-            let mut condition = Condition::all();
+            let mut condition = Condition::all().add(
+                extension::Column::LatestVersion
+                    .into_expr()
+                    .eq(extension_version::Column::Version.into_expr()),
+            );
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
             }
 
             let extensions = extension::Entity::find()
+                .inner_join(extension_version::Entity)
+                .select_also(extension_version::Entity)
                 .filter(condition)
+                .filter(extension_version::Column::SchemaVersion.lte(max_schema_version))
                 .order_by_desc(extension::Column::TotalDownloadCount)
                 .order_by_asc(extension::Column::Name)
                 .limit(Some(limit as u64))
-                .filter(
-                    extension::Column::LatestVersion
-                        .into_expr()
-                        .eq(extension_version::Column::Version.into_expr()),
-                )
-                .inner_join(extension_version::Entity)
-                .select_also(extension_version::Entity)
                 .all(&*tx)
                 .await?;
 
@@ -48,6 +49,41 @@ impl Database {
                     })
                 })
                 .collect())
+        })
+        .await
+    }
+
+    pub async fn get_extension(&self, extension_id: &str) -> Result<Option<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let extension = extension::Entity::find()
+                .filter(extension::Column::ExternalId.eq(extension_id))
+                .filter(
+                    extension::Column::LatestVersion
+                        .into_expr()
+                        .eq(extension_version::Column::Version.into_expr()),
+                )
+                .inner_join(extension_version::Entity)
+                .select_also(extension_version::Entity)
+                .one(&*tx)
+                .await?;
+
+            Ok(extension.and_then(|(extension, latest_version)| {
+                let version = latest_version?;
+                Some(ExtensionMetadata {
+                    id: extension.external_id,
+                    name: extension.name,
+                    version: version.version,
+                    authors: version
+                        .authors
+                        .split(',')
+                        .map(|author| author.trim().to_string())
+                        .collect::<Vec<_>>(),
+                    description: version.description,
+                    repository: version.repository,
+                    published_at: version.published_at,
+                    download_count: extension.total_download_count as u64,
+                })
+            }))
         })
         .await
     }
@@ -135,6 +171,7 @@ impl Database {
                         authors: ActiveValue::Set(version.authors.join(", ")),
                         repository: ActiveValue::Set(version.repository.clone()),
                         description: ActiveValue::Set(version.description.clone()),
+                        schema_version: ActiveValue::Set(version.schema_version),
                         download_count: ActiveValue::NotSet,
                     }
                 }))

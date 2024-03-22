@@ -1557,9 +1557,19 @@ impl LspCommand for GetCompletions {
                             (range, text)
                         }
 
-                        Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
-                            log::info!("unsupported insert/replace completion");
-                            return None;
+                        Some(lsp::CompletionTextEdit::InsertAndReplace(edit)) => {
+                            let range = range_from_lsp(edit.insert);
+
+                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                            if start != range.start.0 || end != range.end.0 {
+                                log::info!("completion out of expected range");
+                                return None;
+                            }
+                            (
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                edit.new_text.clone(),
+                            )
                         }
                     };
 

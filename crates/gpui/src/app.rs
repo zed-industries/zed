@@ -584,11 +584,6 @@ impl AppContext {
         self.platform.path_for_auxiliary_executable(name)
     }
 
-    /// Returns the maximum duration in which a second mouse click must occur for an event to be a double-click event.
-    pub fn double_click_interval(&self) -> Duration {
-        self.platform.double_click_interval()
-    }
-
     /// Displays a platform modal for selecting paths.
     /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.

@@ -4,10 +4,11 @@ use crate::{
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, Global, GlobalElementId, GlobalPixels, Hsla, KeyBinding, KeyDownEvent,
     KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers,
-    MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, View,
-    VisualContext, WeakView, WindowAppearance, WindowOptions, WindowParams, WindowTextSystem,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
+    WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -631,6 +632,28 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
+    /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
+    pub fn notify(&mut self, view_id: EntityId) {
+        for view_id in self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .view_path(view_id)
+            .into_iter()
+            .rev()
+        {
+            if !self.window.dirty_views.insert(view_id) {
+                break;
+            }
+        }
+
+        if self.window.draw_phase == DrawPhase::None {
+            self.window.dirty.set(true);
+            self.app.push_effect(Effect::Notify { emitter: view_id });
+        }
+    }
+
     /// Close this window.
     pub fn remove_window(&mut self) {
         self.window.removed = true;
@@ -697,6 +720,12 @@ impl<'a> WindowContext<'a> {
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {
         self.window.platform_window.is_maximized()
+    }
+
+    /// Check if the platform window is minimized
+    /// On some platforms (namely Windows) the position is incorrect when minimized
+    pub fn is_minimized(&self) -> bool {
+        self.window.platform_window.is_minimized()
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -1359,6 +1388,11 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
+        self.dispatch_modifiers_changed_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
         self.dispatch_keystroke_observers(event, None);
     }
 
@@ -1388,6 +1422,27 @@ impl<'a> WindowContext<'a> {
             for key_listener in node.key_listeners.clone() {
                 self.with_element_context(|cx| {
                     key_listener(event, DispatchPhase::Bubble, cx);
+                });
+                if !self.propagate_event {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn dispatch_modifiers_changed_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
+        let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+            return;
+        };
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            for listener in node.modifiers_changed_listeners.clone() {
+                self.with_element_context(|cx| {
+                    listener(event, cx);
                 });
                 if !self.propagate_event {
                     return;
@@ -2159,25 +2214,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
-        for view_id in self
-            .window
-            .rendered_frame
-            .dispatch_tree
-            .view_path(self.view.entity_id())
-            .into_iter()
-            .rev()
-        {
-            if !self.window.dirty_views.insert(view_id) {
-                break;
-            }
-        }
-
-        if self.window.draw_phase == DrawPhase::None {
-            self.window_cx.window.dirty.set(true);
-            self.window_cx.app.push_effect(Effect::Notify {
-                emitter: self.view.model.entity_id,
-            });
-        }
+        self.window_cx.notify(self.view.entity_id());
     }
 
     /// Register a callback to be invoked when the window is resized.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euxo pipefail
+source script/lib/blob-store.sh
 
 build_flag="--release"
 target_dir="release"
@@ -28,29 +29,6 @@ Options:
   -f    Overwrite the local app bundle if it exists.
   -h    Display this help and exit.
   "
-}
-
-function uploadDsym
-{
-  SPACE="zed-debug-symbols"
-  REGION="nyc3"
-  file_to_upload="$1"
-  file_name="$2"
-  date=$(date +"%a, %d %b %Y %T %z")
-  acl="x-amz-acl:public-read"
-  content_type="application/octet-stream"
-  storage_type="x-amz-storage-class:STANDARD"
-  string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${file_name}"
-  signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
-
-  curl --fail -vv -s -X PUT -T "$file_to_upload" \
-    -H "Host: ${SPACE}.${REGION}.digitaloceanspaces.com" \
-    -H "Date: $date" \
-    -H "Content-Type: $content_type" \
-    -H "$storage_type" \
-    -H "$acl" \
-    -H "Authorization: AWS ${DIGITALOCEAN_SPACES_ACCESS_KEY}:$signature" \
-    "https://${SPACE}.${REGION}.digitaloceanspaces.com/${file_name}"
 }
 
 while getopts 'dlfoh' flag
@@ -152,7 +130,10 @@ function prepare_binaries() {
     gzip target/${architecture}/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs for $architecture"
-    uploadDsym target/${architecture}/${target_dir}/Zed.dwarf.gz "$channel/Zed-$version-${architecture}.dwarf.gz"
+    upload_to_blob_store_public \
+        "zed-debug-symbols" \
+        target/${architecture}/${target_dir}/Zed.dwarf.gz \
+        "$channel/Zed-$version-${architecture}.dwarf.gz"
 
     cp target/${architecture}/${target_dir}/${binary_name} "${app_path}/Contents/MacOS/${zed_crate}"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"

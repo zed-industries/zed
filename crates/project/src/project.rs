@@ -21,7 +21,10 @@ use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use fs::repository::GitRepository;
 use futures::{
-    channel::mpsc::{self, UnboundedReceiver},
+    channel::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
     future::{try_join_all, Shared},
     select,
     stream::FuturesUnordered,
@@ -87,14 +90,16 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use task::static_source::StaticSource;
+use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::HttpClient,
-    merge_json_value_into,
-    paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
+    maybe, merge_json_value_into,
+    paths::{
+        LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+    },
     post_inc, ResultExt, TryFutureExt as _,
 };
 use worktree::{Snapshot, Traversal};
@@ -129,6 +134,13 @@ pub trait Item {
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
+#[derive(Clone)]
+pub enum OpenedBufferEvent {
+    Disconnected,
+    Ok(BufferId),
+    Err(BufferId, Arc<anyhow::Error>),
+}
+
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
@@ -156,7 +168,8 @@ pub struct Project {
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
     next_buffer_id: BufferId,
-    opened_buffer: (watch::Sender<()>, watch::Receiver<()>),
+    loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
+    incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
     #[allow(clippy::type_complexity)]
     loading_buffers_by_path: HashMap<
@@ -169,9 +182,6 @@ pub struct Project {
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
-    /// A mapping from a buffer ID to None means that we've started waiting for an ID but haven't finished loading it.
-    /// Used for re-issuing buffer requests when peers temporarily disconnect
-    incomplete_remote_buffers: HashMap<BufferId, Option<Model<Buffer>>>,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<BufferId>,
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
@@ -283,6 +293,7 @@ pub enum Event {
     LanguageServerLog(LanguageServerId, String),
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageNotFound(Model<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -604,7 +615,6 @@ impl Project {
                 next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
-                incomplete_remote_buffers: Default::default(),
                 loading_buffers_by_path: Default::default(),
                 loading_local_worktrees: Default::default(),
                 local_buffer_ids_by_path: Default::default(),
@@ -612,7 +622,8 @@ impl Project {
                 buffer_snapshots: Default::default(),
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                opened_buffer: watch::channel(),
+                loading_buffers: HashMap::default(),
+                incomplete_remote_buffers: HashMap::default(),
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.observe_global::<SettingsStore>(Self::on_settings_changed),
@@ -718,7 +729,7 @@ impl Project {
                 flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
                 next_buffer_id: BufferId::new(1).unwrap(),
-                opened_buffer: watch::channel(),
+                loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
                 loading_local_worktrees: Default::default(),
@@ -991,19 +1002,17 @@ impl Project {
 
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language, settings) in language_formatters_to_check {
-            if let Some(plugins) = prettier_support::prettier_plugins_for_language(
-                &self.languages,
-                &language,
-                &settings,
-            ) {
+            if let Some(plugins) =
+                prettier_support::prettier_plugins_for_language(&language, &settings)
+            {
                 prettier_plugins_by_worktree
                     .entry(worktree)
                     .or_insert_with(|| HashSet::default())
-                    .extend(plugins);
+                    .extend(plugins.iter().cloned());
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(worktree, prettier_plugins, cx);
+            self.install_default_prettier(worktree, prettier_plugins.into_iter(), cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -1710,7 +1719,8 @@ impl Project {
 
             // Wake up all futures currently waiting on a buffer to get opened,
             // to give them a chance to fail now that we've disconnected.
-            *self.opened_buffer.0.borrow_mut() = ();
+            self.loading_buffers.clear();
+            // self.opened_buffer.send(OpenedBufferEvent::Disconnected);
         }
     }
 
@@ -2143,7 +2153,11 @@ impl Project {
         })
         .detach();
 
-        *self.opened_buffer.0.borrow_mut() = ();
+        if let Some(senders) = self.loading_buffers.remove(&remote_id) {
+            for sender in senders {
+                sender.send(Ok(buffer.clone())).ok();
+            }
+        }
         Ok(())
     }
 
@@ -2797,18 +2811,31 @@ impl Project {
         &mut self,
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let file = buffer.file()?;
+        let Some(file) = buffer.file() else {
+            return;
+        };
         let content = buffer.as_rope();
-        let new_language = self
+        let Some(new_language_result) = self
             .languages
             .language_for_file(file, Some(content), cx)
-            .now_or_never()?
-            .ok()?;
-        self.set_language_for_buffer(buffer_handle, new_language, cx);
-        None
+            .now_or_never()
+        else {
+            return;
+        };
+
+        match new_language_result {
+            Err(e) => {
+                if e.is::<language::LanguageNotFound>() {
+                    cx.emit(Event::LanguageNotFound(buffer_handle.clone()))
+                }
+            }
+            Ok(new_language) => {
+                self.set_language_for_buffer(buffer_handle, new_language, cx);
+            }
+        };
     }
 
     pub fn set_language_for_buffer(
@@ -2829,12 +2856,10 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(
-            &self.languages,
-            &new_language,
-            &settings,
-        ) {
-            self.install_default_prettier(worktree, prettier_plugins, cx);
+        if let Some(prettier_plugins) =
+            prettier_support::prettier_plugins_for_language(&new_language, &settings)
+        {
+            self.install_default_prettier(worktree, prettier_plugins.iter().cloned(), cx);
         };
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
@@ -3088,7 +3113,7 @@ impl Project {
     ) -> Result<Arc<LanguageServer>> {
         let workspace_config =
             cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
-        let language_server = pending_server.task.await?;
+        let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
         language_server
@@ -3328,7 +3353,6 @@ impl Project {
             })
             .detach();
 
-        let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
                 merge_json_value_into(override_options, initialization_options);
@@ -7094,7 +7118,37 @@ impl Project {
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
                                     format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    tasks_file_rx,
+                                    TrackedFile::new(tasks_file_rx, cx),
+                                    cx,
+                                )
+                            },
+                            cx,
+                        );
+                    }
+                })
+            } else if abs_path.ends_with(&*LOCAL_VSCODE_TASKS_RELATIVE_PATH) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let task_abs_path = abs_path.clone();
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                            },
+                            |cx| {
+                                let tasks_file_rx =
+                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
+                                StaticSource::new(
+                                    format!(
+                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
+                                    ),
+                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                        tasks_file_rx,
+                                        cx,
+                                    ),
                                     cx,
                                 )
                             },
@@ -7736,23 +7790,36 @@ impl Project {
                 .ok_or_else(|| anyhow!("missing variant"))?
             {
                 proto::create_buffer_for_peer::Variant::State(mut state) => {
-                    let mut buffer_file = None;
-                    if let Some(file) = state.file.take() {
-                        let worktree_id = WorktreeId::from_proto(file.worktree_id);
-                        let worktree = this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
-                            anyhow!("no worktree found for id {}", file.worktree_id)
-                        })?;
-                        buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
-                            as Arc<dyn language::File>);
-                    }
-
                     let buffer_id = BufferId::new(state.id)?;
-                    let buffer = cx.new_model(|_| {
+
+                    let buffer_result = maybe!({
+                        let mut buffer_file = None;
+                        if let Some(file) = state.file.take() {
+                            let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                            let worktree =
+                                this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
+                                    anyhow!("no worktree found for id {}", file.worktree_id)
+                                })?;
+                            buffer_file =
+                                Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
+                                    as Arc<dyn language::File>);
+                        }
                         Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
-                            .unwrap()
                     });
-                    this.incomplete_remote_buffers
-                        .insert(buffer_id, Some(buffer));
+
+                    match buffer_result {
+                        Ok(buffer) => {
+                            let buffer = cx.new_model(|_| buffer);
+                            this.incomplete_remote_buffers.insert(buffer_id, buffer);
+                        }
+                        Err(error) => {
+                            if let Some(listeners) = this.loading_buffers.remove(&buffer_id) {
+                                for listener in listeners {
+                                    listener.send(Err(anyhow!(error.cloned()))).ok();
+                                }
+                            }
+                        }
+                    };
                 }
                 proto::create_buffer_for_peer::Variant::Chunk(chunk) => {
                     let buffer_id = BufferId::new(chunk.buffer_id)?;
@@ -7760,23 +7827,34 @@ impl Project {
                         .incomplete_remote_buffers
                         .get(&buffer_id)
                         .cloned()
-                        .flatten()
                         .ok_or_else(|| {
                             anyhow!(
                                 "received chunk for buffer {} without initial state",
                                 chunk.buffer_id
                             )
                         })?;
-                    let operations = chunk
-                        .operations
-                        .into_iter()
-                        .map(language::proto::deserialize_operation)
-                        .collect::<Result<Vec<_>>>()?;
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
-                    if chunk.is_last {
+                    let result = maybe!({
+                        let operations = chunk
+                            .operations
+                            .into_iter()
+                            .map(language::proto::deserialize_operation)
+                            .collect::<Result<Vec<_>>>()?;
+                        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))
+                    });
+
+                    if let Err(error) = result {
                         this.incomplete_remote_buffers.remove(&buffer_id);
-                        this.register_buffer(&buffer, cx)?;
+                        if let Some(listeners) = this.loading_buffers.remove(&buffer_id) {
+                            for listener in listeners {
+                                listener.send(Err(error.cloned())).ok();
+                            }
+                        }
+                    } else {
+                        if chunk.is_last {
+                            this.incomplete_remote_buffers.remove(&buffer_id);
+                            this.register_buffer(&buffer, cx)?;
+                        }
                     }
                 }
             }
@@ -7799,12 +7877,7 @@ impl Project {
                 .opened_buffers
                 .get_mut(&buffer_id)
                 .and_then(|b| b.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                })
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned())
             {
                 buffer.update(cx, |buffer, cx| buffer.set_diff_base(diff_base, cx));
             }
@@ -7827,12 +7900,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|b| b.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                })
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned())
             {
                 let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
                 let worktree = this
@@ -8579,39 +8647,19 @@ impl Project {
         id: BufferId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let mut opened_buffer_rx = self.opened_buffer.1.clone();
+        let buffer = self
+            .opened_buffers
+            .get(&id)
+            .and_then(|buffer| buffer.upgrade());
 
-        cx.spawn(move |this, mut cx| async move {
-            let buffer = loop {
-                let Some(this) = this.upgrade() else {
-                    return Err(anyhow!("project dropped"));
-                };
+        if let Some(buffer) = buffer {
+            return Task::ready(Ok(buffer));
+        }
 
-                let buffer = this.update(&mut cx, |this, _cx| {
-                    this.opened_buffers
-                        .get(&id)
-                        .and_then(|buffer| buffer.upgrade())
-                })?;
+        let (tx, rx) = oneshot::channel();
+        self.loading_buffers.entry(id).or_default().push(tx);
 
-                if let Some(buffer) = buffer {
-                    break buffer;
-                } else if this.update(&mut cx, |this, _| this.is_disconnected())? {
-                    return Err(anyhow!("disconnected before buffer {} could be opened", id));
-                }
-
-                this.update(&mut cx, |this, _| {
-                    this.incomplete_remote_buffers.entry(id).or_default();
-                })?;
-                drop(this);
-
-                opened_buffer_rx
-                    .next()
-                    .await
-                    .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
-            };
-
-            Ok(buffer)
-        })
+        cx.background_executor().spawn(async move { rx.await? })
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -8860,11 +8908,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .and_then(|b| b.clone())
-                });
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_save(version, fingerprint, mtime, cx);
@@ -8894,12 +8938,7 @@ impl Project {
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
-                .or_else(|| {
-                    this.incomplete_remote_buffers
-                        .get(&buffer_id)
-                        .cloned()
-                        .flatten()
-                });
+                .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
@@ -9501,6 +9540,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.shell_env.lock().as_ref().cloned().unwrap_or_default()
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         self.load_shell_env().await;
@@ -9510,6 +9550,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
             .as_ref()
             .and_then(|shell_env| shell_env.get("PATH").cloned());
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
+        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
+        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
+        which::which(command).ok()
     }
 
     fn update_status(
