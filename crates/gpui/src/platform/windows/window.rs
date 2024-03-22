@@ -1362,6 +1362,10 @@ impl PlatformWindow for WindowsWindow {
         unsafe { SetForegroundWindow(self.inner.hwnd) };
     }
 
+    fn is_active(&self) -> bool {
+        self.inner.hwnd == unsafe { GetActiveWindow() }
+    }
+
     // todo(windows)
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }

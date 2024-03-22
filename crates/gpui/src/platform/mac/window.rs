@@ -913,6 +913,11 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    // todo(macos)
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);

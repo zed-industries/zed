@@ -181,6 +181,10 @@ impl PlatformWindow for TestWindow {
             .set_active_window(Some(self.clone()))
     }
 
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0.lock().title = Some(title.to_owned());
     }
