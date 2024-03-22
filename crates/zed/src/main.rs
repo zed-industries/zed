@@ -285,7 +285,7 @@ fn main() {
             .detach_and_log_err(cx);
         } else {
             let urls: Vec<_> = args
-                .urls
+                .paths_or_urls
                 .iter()
                 .filter_map(|arg| parse_url_arg(arg, cx).log_err())
                 .collect();
@@ -918,41 +918,18 @@ fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
-/// zed --host=abc
-
-/// ... registers itself as a host environment
-
-/// Create a new remote project named zed-conrad
-/// Create an empty directory under ./projects/zed-conrad
-/// Open a shell inside that directory
-
-// [[
-
-//     Which server:
-//         [new server]
-//             > token
-//             > name?
-//             > Ok
-//             `ssh zed --daemon <token>`
-//     Which server:
-//         local or conrads-cloud-mac
-//         directory:
-//         Remote project otken: abc
-//         ssh into your box and run:
-//         zed --headless abc
-// ]]
-// PROJECT_TOKEN=abc
-
 #[derive(Parser, Debug)]
 #[command(name = "zed", disable_version_flag = true)]
 struct Args {
-    /// A sequence of space-separated paths that you want to open.
+    /// A sequence of space-separated paths or urls that you want to open.
     ///
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
-    urls: Vec<String>,
+    ///
+    /// URLs can either be file:// or zed:// scheme, or relative to https://zed.dev.
+    paths_or_urls: Vec<String>,
 
-    /// --dev_server_token <token>
+    /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
 }

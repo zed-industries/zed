@@ -26,7 +26,8 @@ use subtle::ConstantTimeEq;
 ///   or (in development) the string ADMIN:<config.api_token>.
 /// Authorization: "dev-server-token" <token>
 pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
-    let mut auth_header = dbg!(req.headers())
+    let mut auth_header = req
+        .headers()
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
@@ -49,10 +50,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         })?;
         let dev_server = verify_dev_server_token(dev_server_token, &state.db)
             .await
-            .map_err(|e| {
-                dbg!(&e);
-                Error::Http(StatusCode::UNAUTHORIZED, format!("{}", e))
-            })?;
+            .map_err(|e| Error::Http(StatusCode::UNAUTHORIZED, format!("{}", e)))?;
 
         req.extensions_mut()
             .insert(Principal::DevServer(dev_server));
@@ -255,7 +253,6 @@ pub async fn verify_dev_server_token(
     {
         Ok(server)
     } else {
-        dbg!(&server.hashed_token, &token_hash);
         Err(anyhow!("wrong token for dev server"))
     }
 }

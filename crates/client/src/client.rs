@@ -1049,7 +1049,7 @@ impl Client {
             .unwrap_or_default();
 
         let request = Request::builder()
-            .header("Authorization", dbg!(credentials.authorization_header()))
+            .header("Authorization", credentials.authorization_header())
             .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION)
             .header("x-zed-app-version", app_version)
             .header(

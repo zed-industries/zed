@@ -116,7 +116,7 @@ pub enum Principal {
 }
 
 impl Principal {
-    fn update_span<'a>(&self, span: &tracing::Span) {
+    fn update_span(&self, span: &tracing::Span) {
         match &self {
             Principal::User(user) => {
                 span.record("user_id", &user.id.0);
