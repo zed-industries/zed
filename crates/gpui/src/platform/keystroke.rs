@@ -216,7 +216,7 @@ impl Modifiers {
     /// helper method for Modifiers with just control
     pub fn control() -> Modifiers {
         Modifiers {
-            command: true,
+            control: true,
             ..Default::default()
         }
     }
