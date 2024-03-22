@@ -596,12 +596,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_mouse_down_msg(
-        &self,
-        button: MouseButton,
-        lparam: LPARAM,
-        click_count: usize,
-    ) -> Option<isize> {
+    fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
@@ -611,7 +606,7 @@ impl WindowsWindowInner {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count,
+                click_count: 1,
                 first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
@@ -1016,7 +1011,6 @@ impl WindowsWindowInner {
         button: MouseButton,
         wparam: WPARAM,
         lparam: LPARAM,
-        click_count: usize,
     ) -> Option<isize> {
         if !self.hide_title_bar {
             return None;
@@ -1034,7 +1028,7 @@ impl WindowsWindowInner {
                 button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count,
+                click_count: 1,
                 first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
