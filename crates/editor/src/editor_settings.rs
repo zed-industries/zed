@@ -93,6 +93,7 @@ pub enum ShowScrollbar {
 pub enum MultiCursorModifier {
     Alt,
     Cmd,
+    Ctrl,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
