@@ -1,6 +1,6 @@
 use crate::{
-    language_settings::all_language_settings, CachedLspAdapter, File, Language, LanguageConfig,
-    LanguageContextProvider, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
+    language_settings::all_language_settings, task_context::ContextProvider, CachedLspAdapter,
+    File, Language, LanguageConfig, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
     LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -73,9 +73,17 @@ struct AvailableLanguage {
     name: Arc<str>,
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
-    load: Arc<dyn Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync>,
+    load: Arc<
+        dyn Fn() -> Result<(
+                LanguageConfig,
+                LanguageQueries,
+                Option<Arc<dyn ContextProvider>>,
+            )>
+            + 'static
+            + Send
+            + Sync,
+    >,
     loaded: bool,
-    context_provider: Option<Arc<dyn LanguageContextProvider>>,
 }
 
 enum AvailableGrammar {
@@ -195,8 +203,7 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            None,
-            move || Ok((config.clone(), Default::default())),
+            move || Ok((config.clone(), Default::default(), None)),
         )
     }
 
@@ -245,8 +252,14 @@ impl LanguageRegistry {
         name: Arc<str>,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
-        context_provider: Option<Arc<dyn LanguageContextProvider>>,
-        load: impl Fn() -> Result<(LanguageConfig, LanguageQueries)> + 'static + Send + Sync,
+        load: impl Fn() -> Result<(
+                LanguageConfig,
+                LanguageQueries,
+                Option<Arc<dyn ContextProvider>>,
+            )>
+            + 'static
+            + Send
+            + Sync,
     ) {
         let load = Arc::new(load);
         let state = &mut *self.state.write();
@@ -266,8 +279,6 @@ impl LanguageRegistry {
             grammar: grammar_name,
             matcher,
             load,
-
-            context_provider,
             loaded: false,
         });
         state.version += 1;
@@ -333,7 +344,6 @@ impl LanguageRegistry {
             matcher: language.config.matcher.clone(),
             load: Arc::new(|| Err(anyhow!("already loaded"))),
             loaded: true,
-            context_provider: language.context_provider.clone(),
         });
         state.add(language);
     }
@@ -507,9 +517,8 @@ impl LanguageRegistry {
                     .spawn(async move {
                         let id = language.id;
                         let name = language.name.clone();
-                        let provider = language.context_provider.clone();
                         let language = async {
-                            let (config, queries) = (language.load)()?;
+                            let (config, queries, provider) = (language.load)()?;
 
                             if let Some(grammar) = config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);

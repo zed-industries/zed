@@ -18,6 +18,7 @@ use std::{
         Arc,
     },
 };
+use task::static_source::{Definition, TaskDefinitions};
 use util::{
     async_maybe,
     fs::remove_matching,
@@ -534,4 +535,46 @@ fn label_for_symbol_elixir(
         text: name.to_string(),
         filter_range: 0..name.len(),
     })
+}
+
+pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
+    // Taken from https://gist.github.com/josevalim/2e4f60a14ccd52728e3256571259d493#gistcomment-4995881
+    ContextProviderWithTasks::new(TaskDefinitions(vec![
+        Definition {
+            label: "Elixir: test suite".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: failed tests suite".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned(), "--failed".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: test file".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned(), "$ZED_FILE".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: test at current line".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned(), "$ZED_FILE:$ZED_ROW".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: break line".to_owned(),
+            command: "iex".to_owned(),
+            args: vec![
+                "-S".to_owned(),
+                "mix".to_owned(),
+                "test".to_owned(),
+                "-b".to_owned(),
+                "$ZED_FILE:$ZED_ROW".to_owned(),
+            ],
+            ..Default::default()
+        },
+    ]))
 }
