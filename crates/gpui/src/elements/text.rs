@@ -415,8 +415,26 @@ impl Element for InteractiveText {
         state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> Hitbox {
-        self.text.after_layout(bounds, state, cx);
-        cx.insert_hitbox(bounds, false)
+        cx.with_element_state::<InteractiveTextState, _>(
+            Some(self.element_id.clone()),
+            |interactive_state, cx| {
+                let interactive_state = interactive_state
+                    .map(|interactive_state| interactive_state.unwrap_or_default());
+
+                if let Some(interactive_state) = interactive_state.as_ref() {
+                    if let Some(active_tooltip) = interactive_state.active_tooltip.borrow().as_ref()
+                    {
+                        if let Some(tooltip) = active_tooltip.tooltip.clone() {
+                            cx.set_tooltip(tooltip);
+                        }
+                    }
+                }
+
+                self.text.after_layout(bounds, state, cx);
+                let hitbox = cx.insert_hitbox(bounds, false);
+                (hitbox, interactive_state)
+            },
+        )
     }
 
     fn paint(
@@ -557,16 +575,6 @@ impl Element for InteractiveText {
                     cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
                         active_tooltip.take();
                     });
-
-                    if let Some(tooltip) = interactive_state
-                        .active_tooltip
-                        .clone()
-                        .borrow()
-                        .as_ref()
-                        .and_then(|at| at.tooltip.clone())
-                    {
-                        cx.set_tooltip(tooltip);
-                    }
                 }
 
                 self.text.paint(bounds, text_state, &mut (), cx);
