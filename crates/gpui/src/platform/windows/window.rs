@@ -1796,3 +1796,84 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
 const DOUBLE_CLICK_SPATIAL_TOLERANCE: f32 = 4.0;
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::*;
+
+    #[test]
+    fn test_double_click_interval() {
+        let mut state = ClickState::new();
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Right,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            2
+        );
+        state.last_click -= Duration::from_millis(700);
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn test_double_click_spatial_tolerance() {
+        let mut state = ClickState::new();
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(-3.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(3.0))
+            ),
+            2
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Right,
+                point(GlobalPixels(3.0), GlobalPixels(2.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Right,
+                point(GlobalPixels(10.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+    }
+}
