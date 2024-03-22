@@ -1,16 +1,12 @@
 pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
-mod extension_task;
 mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
 
-use crate::{
-    extension_lsp_adapter::ExtensionLspAdapter, extension_task::ExtensionContextProvider,
-    wasm_host::wit,
-};
+use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -27,7 +23,8 @@ use futures::{
 };
 use gpui::{actions, AppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -847,7 +844,7 @@ impl ExtensionStore {
                         .ok()
                         .and_then(|contents| {
                             let definitions = serde_json_lenient::from_str(&contents).log_err()?;
-                            Some(Arc::new(ExtensionContextProvider::new(definitions)) as Arc<_>)
+                            Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
                         });
 
                     Ok((config, queries, tasks))

@@ -1,12 +1,9 @@
-use anyhow::Result;
-use task::{static_source::TaskDefinitions, TaskVariables};
-
 use crate::{LanguageRegistry, Location};
 
-use std::sync::Arc;
-
+use anyhow::Result;
 use gpui::{AppContext, Context, Model};
-use task::{static_source::tasks_for, TaskSource};
+use std::sync::Arc;
+use task::{static_source::tasks_for, static_source::TaskDefinitions, TaskSource, TaskVariables};
 
 /// Language Contexts are used by Zed tasks to extract information about source file.
 pub trait ContextProvider: Send + Sync {
@@ -45,6 +42,23 @@ impl ContextProvider for SymbolContextProvider {
         Ok(TaskVariables::from_iter(
             symbol.map(|symbol| ("ZED_SYMBOL".to_string(), symbol)),
         ))
+    }
+}
+
+/// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
+pub struct ContextProviderWithTasks {
+    definitions: TaskDefinitions,
+}
+
+impl ContextProviderWithTasks {
+    pub fn new(definitions: TaskDefinitions) -> Self {
+        Self { definitions }
+    }
+}
+
+impl ContextProvider for ContextProviderWithTasks {
+    fn associated_tasks(&self) -> Option<TaskDefinitions> {
+        Some(self.definitions.clone())
     }
 }
 
