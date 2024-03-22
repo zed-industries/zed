@@ -1062,11 +1062,11 @@ fn direct_write_features(features: &FontFeatures) -> Vec<*const DWRITE_TYPOGRAPH
         DWRITE_FONT_FEATURE_TAG_ORDINALS,
         features.ordn(),
     );
-    // add_feature(
-    //     &mut result,
-    //     DWRITE_FONT_FEATURE_TAG_ORDINALS,
-    //     features.pnum(),
-    // );
+    add_feature(
+        &mut result,
+        DWRITE_FONT_FEATURE_TAG_PROPORTIONAL_FIGURES,
+        features.pnum(),
+    );
     add_feature(
         &mut result,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_1,
