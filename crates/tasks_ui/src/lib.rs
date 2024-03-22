@@ -170,7 +170,7 @@ fn task_context(
                         .insert("ZED_WORKTREE_ROOT".into(), worktree_path);
                 }
                 if let Some(language_context) = context {
-                    task_variables.0.extend(language_context.0.into_iter());
+                    task_variables.0.extend(language_context.0);
                 }
 
                 Some(TaskContext {
