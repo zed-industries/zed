@@ -863,7 +863,7 @@ impl CompletionsMenu {
                     font_size,
                     &[style.text.to_run(completion.label.text.as_str().len())],
                 ) {
-                    len = text_width.width.0 as f32;
+                    len = text_width.width.0;
                 }
 
                 if let Some(Documentation::SingleLine(documentation_text)) = documentation {
@@ -879,7 +879,7 @@ impl CompletionsMenu {
                 }
                 (len + padding_width).min(max_completion_len.0 as f32)
             })
-            .fold(190. as f32, |a, b| a.max(b));
+            .fold(190_f32, |a, b| a.max(b));
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -953,8 +953,8 @@ impl CompletionsMenu {
                                 max_completion_len,
                             );
                         div()
-                            .min_w(px(widest_completion_pixels + padding_width as f32))
-                            .max_w(max_completion_len + px(padding_width as f32))
+                            .min_w(px(widest_completion_pixels + padding_width))
+                            .max_w(max_completion_len + px(padding_width))
                             .child(
                                 ListItem::new(mat.candidate_id)
                                     .inset(true)
@@ -979,7 +979,7 @@ impl CompletionsMenu {
         )
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
-        .min_w(px(widest_completion_pixels + padding_width as f32));
+        .min_w(px(widest_completion_pixels + padding_width));
 
         Popover::new()
             .child(list)
