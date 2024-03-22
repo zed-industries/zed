@@ -1095,12 +1095,11 @@ impl CompletionsMenu {
                                 if let Some(variable_name_truncation_index) = completion_layout_line
                                     .index_for_x(max_width_of_variable_name - ellipsis_width.width)
                                 {
+                                    variable_name_end = variable_name_truncation_index + 2;
                                     variable_name_length_truncated =
                                         completion.label.filter_range.end as i32
-                                            - variable_name_truncation_index as i32
-                                            - 2;
-                                    variable_name_end = variable_name_truncation_index + 2;
-
+                                            - variable_name_end as i32
+                                            - 1;
                                     completion_label_text = completion
                                         .label
                                         .text
@@ -1162,7 +1161,7 @@ impl CompletionsMenu {
                                     completion_layout_line
                                         .index_for_x(max_completion_len - ellipsis_width.width)
                                 {
-                                    variable_name_end = type_annotation_truncation_index + 2;
+                                    // variable_name_end = type_annotation_truncation_index + 2;
                                     completion_label_text = completion
                                         .label
                                         .text
@@ -1176,11 +1175,12 @@ impl CompletionsMenu {
                                 if let Some(variable_name_truncation_index) = completion_layout_line
                                     .index_for_x(max_width_of_variable_name - ellipsis_width.width)
                                 {
+                                    variable_name_end = variable_name_truncation_index + 2;
+
                                     variable_name_length_truncated =
                                         completion.label.filter_range.end as i32
-                                            - variable_name_truncation_index as i32
-                                            - 2;
-                                    variable_name_end = variable_name_truncation_index + 2;
+                                            - variable_name_end as i32
+                                            - 1;
 
                                     let second_part_text = &completion.label.text.as_str()
                                         [completion.label.filter_range.end..];
