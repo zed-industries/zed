@@ -873,7 +873,7 @@ impl CompletionsMenu {
                             font_size,
                             &[style.text.to_run(documentation_text.as_str().len())],
                         ) {
-                            len = documentation_width.width.0 as f32 + padding_width;
+                            len = documentation_width.width.0 + padding_width;
                         }
                     }
                 }
