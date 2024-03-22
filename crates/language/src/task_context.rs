@@ -1,8 +1,12 @@
 use anyhow::Result;
-use gpui::AppContext;
 use task::{static_source::TaskDefinitions, TaskVariables};
 
-use crate::Location;
+use crate::{LanguageRegistry, Location};
+
+use std::sync::Arc;
+
+use gpui::{AppContext, Context, Model};
+use task::{static_source::tasks_for, TaskSource};
 
 /// Language Contexts are used by Zed tasks to extract information about source file.
 pub trait ContextProvider: Send + Sync {
@@ -14,10 +18,10 @@ pub trait ContextProvider: Send + Sync {
     }
 }
 
-/// A context provider that fills out LanguageContext without inspecting the contents.
-pub struct DefaultContextProvider;
+/// A context provider that finds out what symbol is currently focused in the buffer.
+pub struct SymbolContextProvider;
 
-impl ContextProvider for DefaultContextProvider {
+impl ContextProvider for SymbolContextProvider {
     fn build_context(
         &self,
         location: Location,
@@ -41,5 +45,47 @@ impl ContextProvider for DefaultContextProvider {
         Ok(TaskVariables::from_iter(
             symbol.map(|symbol| ("ZED_SYMBOL".to_string(), symbol)),
         ))
+    }
+}
+
+/// A source that pulls in the tasks from language registry.
+pub struct LanguageSource {
+    languages: Arc<LanguageRegistry>,
+}
+
+impl LanguageSource {
+    pub fn new(
+        languages: Arc<LanguageRegistry>,
+        cx: &mut AppContext,
+    ) -> Model<Box<dyn TaskSource>> {
+        cx.new_model(|_| Box::new(Self { languages }) as Box<_>)
+    }
+}
+
+impl TaskSource for LanguageSource {
+    fn as_any(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn tasks_for_path(
+        &mut self,
+        _: Option<&std::path::Path>,
+        _: &mut gpui::ModelContext<Box<dyn TaskSource>>,
+    ) -> Vec<Arc<dyn task::Task>> {
+        self.languages
+            .to_vec()
+            .into_iter()
+            .filter_map(|language| {
+                language
+                    .context_provider()?
+                    .associated_tasks()
+                    .map(|tasks| (tasks, language))
+            })
+            .flat_map(|(tasks, language)| {
+                let language_name = language.name();
+                let id_base = format!("buffer_source_{language_name}");
+                tasks_for(tasks, &id_base)
+            })
+            .collect()
     }
 }

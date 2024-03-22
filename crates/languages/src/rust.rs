@@ -326,7 +326,7 @@ impl ContextProvider for RustContextProvider {
         location: Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
-        let mut context = DefaultContextProvider.build_context(location.clone(), cx)?;
+        let mut context = SymbolContextProvider.build_context(location.clone(), cx)?;
 
         if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
             let local_file = file.as_local()?.abs_path(cx);

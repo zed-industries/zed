@@ -9,9 +9,8 @@ use task::{Task, TaskContext, TaskVariables};
 use util::ResultExt;
 use workspace::Workspace;
 
-mod buffer_source;
 mod modal;
-pub use buffer_source::BufferSource;
+
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
@@ -250,7 +249,7 @@ mod tests {
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
-    use language::{DefaultContextProvider, Language, LanguageConfig};
+    use language::{Language, LanguageConfig, SymbolContextProvider};
     use project::{FakeFs, Project, TaskSourceKind};
     use serde_json::json;
     use task::{oneshot_source::OneshotSource, TaskContext, TaskVariables};
@@ -300,7 +299,7 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(DefaultContextProvider))),
+            .with_context_provider(Some(Arc::new(SymbolContextProvider))),
         );
 
         let typescript_language = Arc::new(
@@ -318,7 +317,7 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(DefaultContextProvider))),
+            .with_context_provider(Some(Arc::new(SymbolContextProvider))),
         );
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, cx| {

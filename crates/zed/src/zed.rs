@@ -18,6 +18,7 @@ pub use open_listener::*;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
+use language::LanguageSource;
 use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -33,7 +34,6 @@ use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
-use tasks_ui::BufferSource;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -181,7 +181,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     );
                     inventory.add_source(
                         TaskSourceKind::Buffer,
-                        |cx| BufferSource::new(workspace_handle.model.downgrade(), cx),
+                        |cx| LanguageSource::new(app_state.languages.clone(), cx),
                         cx,
                     );
                 })
