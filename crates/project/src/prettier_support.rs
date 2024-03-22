@@ -530,7 +530,7 @@ impl Project {
         if buffer_language.prettier_parser_name().is_none() {
             return Task::ready(None);
         }
-        let Some(node) = self.node.as_ref().map(Arc::clone) else {
+        let Some(node) = self.node.clone() else {
             return Task::ready(None);
         };
         match File::from_dyn(buffer_file).map(|file| (file.worktree_id(cx), file.abs_path(cx))) {
