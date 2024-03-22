@@ -79,9 +79,9 @@ impl ZedDotDevCompletionProvider {
     ) -> BoxFuture<'static, Result<usize>> {
         match request.model {
             crate::LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
-            crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptFour)
-            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptFourTurbo)
-            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptThreePointFiveTurbo) => {
+            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
+            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
+            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
             crate::LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {

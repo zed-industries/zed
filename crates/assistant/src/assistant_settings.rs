@@ -14,10 +14,11 @@ use settings::Settings;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ZedDotDevModel {
-    GptThreePointFiveTurbo,
-    GptFour,
+    Gpt3Point5Turbo,
+    Gpt4,
     #[default]
-    GptFourTurbo,
+    Gpt4Turbo,
+    Claude3,
     Custom(String),
 }
 
@@ -49,9 +50,9 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
                 E: de::Error,
             {
                 match value {
-                    "gpt-3.5-turbo" => Ok(ZedDotDevModel::GptThreePointFiveTurbo),
-                    "gpt-4" => Ok(ZedDotDevModel::GptFour),
-                    "gpt-4-turbo-preview" => Ok(ZedDotDevModel::GptFourTurbo),
+                    "gpt-3.5-turbo" => Ok(ZedDotDevModel::Gpt3Point5Turbo),
+                    "gpt-4" => Ok(ZedDotDevModel::Gpt4),
+                    "gpt-4-turbo-preview" => Ok(ZedDotDevModel::Gpt4Turbo),
                     _ => Ok(ZedDotDevModel::Custom(value.to_owned())),
                 }
             }
@@ -94,27 +95,27 @@ impl JsonSchema for ZedDotDevModel {
 impl ZedDotDevModel {
     pub fn id(&self) -> &str {
         match self {
-            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
-            Self::GptFour => "gpt-4",
-            Self::GptFourTurbo => "gpt-4-turbo-preview",
+            Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
+            Self::Gpt4 => "gpt-4",
+            Self::Gpt4Turbo => "gpt-4-turbo-preview",
             Self::Custom(id) => id,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
-            Self::GptFour => "gpt-4",
-            Self::GptFourTurbo => "gpt-4-turbo",
+            Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
+            Self::Gpt4 => "gpt-4",
+            Self::Gpt4Turbo => "gpt-4-turbo",
             Self::Custom(id) => id.as_str(),
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::GptThreePointFiveTurbo => 2048,
-            Self::GptFour => 4096,
-            Self::GptFourTurbo => 128000,
+            Self::Gpt3Point5Turbo => 2048,
+            Self::Gpt4 => 4096,
+            Self::Gpt4Turbo => 128000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
