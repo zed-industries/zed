@@ -113,7 +113,7 @@ impl GitBlame {
         let mut cursor = self.entries.cursor::<u32>();
         rows.into_iter().map(move |row| {
             let row = row?;
-            cursor.seek(&row, Bias::Right, &());
+            cursor.seek_forward(&row, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
     }
@@ -139,7 +139,10 @@ impl GitBlame {
                         old: old_point_range.start.row + 1..old_point_range.end.row + 1,
                         new: new_point_range.start.row + 1..new_point_range.end.row + 1,
                     }
-                } else if old_point_range.start.column == 0 && old_point_range.end.column == 0 {
+                } else if old_point_range.start.column == 0
+                    && old_point_range.end.column == 0
+                    && new_point_range.end.column == 0
+                {
                     Edit {
                         old: old_point_range.start.row..old_point_range.end.row,
                         new: new_point_range.start.row..new_point_range.end.row,
@@ -454,7 +457,19 @@ mod tests {
             );
         });
 
-        // Modify a single line
+        // Modify a single line, at the start of the line
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "X")], None, cx);
+        });
+        git_blame.update(cx, |blame, cx| {
+            assert_blame_rows!(
+                blame,
+                (0..2),
+                vec![None, Some(blame_entry("1b1b1b", 0..4))],
+                cx
+            );
+        });
+        // Modify a single line, in the middle of the line
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(1, 2)..Point::new(1, 2), "X")], None, cx);
         });
