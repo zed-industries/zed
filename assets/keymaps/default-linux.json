@@ -15,6 +15,7 @@
       "shift-f10": "menu::ShowContextMenu",
       "ctrl-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
+      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "shift-enter": "menu::UseSelectedQuery",
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -557,6 +558,10 @@
     "bindings": {
       "escape": "chat_panel::CloseReplyPreview"
     }
+  },
+  {
+    "context": "FileFinder",
+    "bindings": { "ctrl-shift-p": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",

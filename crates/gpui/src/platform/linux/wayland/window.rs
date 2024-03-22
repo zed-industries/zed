@@ -283,6 +283,11 @@ impl PlatformWindow for WaylandWindow {
         false
     }
 
+    // todo(linux)
+    fn is_minimized(&self) -> bool {
+        false
+    }
+
     fn content_size(&self) -> Size<Pixels> {
         let inner = self.0.inner.borrow();
         Size {

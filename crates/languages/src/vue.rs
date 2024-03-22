@@ -5,7 +5,6 @@ pub use language::*;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use serde_json::Value;
 use smol::fs::{self};
 use std::{
     any::Any,
@@ -56,17 +55,20 @@ impl super::LspAdapter for VueLspAdapter {
             ts_version: self.node.npm_package_latest_version("typescript").await?,
         }) as Box<_>)
     }
-    fn initialization_options(&self) -> Option<Value> {
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
         let typescript_sdk_path = self.typescript_install_path.lock();
         let typescript_sdk_path = typescript_sdk_path
             .as_ref()
             .expect("initialization_options called without a container_dir for typescript");
 
-        Some(serde_json::json!({
+        Ok(Some(serde_json::json!({
             "typescript": {
                 "tsdk": typescript_sdk_path
             }
-        }))
+        })))
     }
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         // REFACTOR is explicitly disabled, as vue-lsp does not adhere to LSP protocol for code actions with these - it

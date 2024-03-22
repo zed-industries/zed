@@ -88,10 +88,6 @@ impl LspAdapter for PrismaLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        None
-    }
 }
 
 async fn get_cached_server_binary(

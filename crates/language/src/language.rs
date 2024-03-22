@@ -259,10 +259,6 @@ impl CachedLspAdapter {
         self.adapter.label_for_symbol(name, kind, language).await
     }
 
-    pub fn prettier_plugins(&self) -> &[&'static str] {
-        self.adapter.prettier_plugins()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Option<&FakeLspAdapter> {
         self.adapter.as_fake()
@@ -441,8 +437,11 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
-    fn initialization_options(&self) -> Option<Value> {
-        None
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
     }
 
     fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
@@ -470,10 +469,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &[]
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -575,6 +570,9 @@ pub struct LanguageConfig {
     /// The name of a Prettier parser that should be used for this language.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
+    /// The names of any Prettier plugins that should be used for this language.
+    #[serde(default)]
+    pub prettier_plugins: Vec<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -656,6 +654,7 @@ impl Default for LanguageConfig {
             overrides: Default::default(),
             word_characters: Default::default(),
             prettier_parser_name: None,
+            prettier_plugins: Default::default(),
             collapsed_placeholder: Default::default(),
         }
     }
@@ -1283,6 +1282,10 @@ impl Language {
     pub fn prettier_parser_name(&self) -> Option<&str> {
         self.config.prettier_parser_name.as_deref()
     }
+
+    pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
+        &self.config.prettier_plugins
+    }
 }
 
 impl LanguageScope {
@@ -1547,12 +1550,11 @@ impl LspAdapter for FakeLspAdapter {
         self.disk_based_diagnostics_progress_token.clone()
     }
 
-    fn initialization_options(&self) -> Option<Value> {
-        self.initialization_options.clone()
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &self.prettier_plugins
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(self.initialization_options.clone())
     }
 
     fn as_fake(&self) -> Option<&FakeLspAdapter> {
