@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tab_switcher_tests;
+
 use collections::HashMap;
 use gpui::{
     impl_actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,

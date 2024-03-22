@@ -9357,12 +9357,19 @@ dependencies = [
 name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
+ "ctor",
+ "editor",
+ "env_logger",
  "gpui",
+ "language",
  "menu",
  "picker",
+ "project",
  "serde",
- "serde_derive",
+ "serde_json",
+ "theme",
  "ui",
  "util",
  "workspace",
