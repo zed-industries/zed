@@ -117,7 +117,7 @@ impl LineWrapper {
                 buffer,
                 self.font_size,
                 &[FontRun {
-                    len: 1,
+                    len: buffer.len(),
                     font_id: self.font_id,
                 }],
             )

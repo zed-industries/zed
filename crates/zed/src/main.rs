@@ -783,7 +783,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.build_zed_api_url("/telemetry/crashes");
+    let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -809,7 +809,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = Request::post(&crash_report_url)
+            let mut request = Request::post(&crash_report_url.to_string())
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain");
 

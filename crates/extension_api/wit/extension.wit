@@ -51,6 +51,12 @@ world extension {
     /// Gets the latest version of the given NPM package.
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
 
+    /// Returns the installed version of the given NPM package, if it exists.
+    import npm-package-installed-version: func(package-name: string) -> result<option<string>, string>;
+
+    /// Installs the specified NPM package.
+    import npm-install-package: func(package-name: string, version: string) -> result<_, string>;
+
     /// Gets the latest release for the given GitHub repository.
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
@@ -81,4 +87,5 @@ world extension {
     }
 
     export language-server-command: func(config: language-server-config, worktree: borrow<worktree>) -> result<command, string>;
+    export language-server-initialization-options: func(config: language-server-config, worktree: borrow<worktree>) -> result<option<string>, string>;
 }

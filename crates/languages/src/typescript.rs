@@ -164,8 +164,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true,
             "tsserver": {
                 "path": "node_modules/typescript/lib",
@@ -180,7 +183,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                 "includeInlayFunctionLikeReturnTypeHints": true,
                 "includeInlayEnumMemberValueHints": true,
             }
-        }))
+        })))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -366,18 +369,6 @@ impl LspAdapter for EsLintLspAdapter {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         get_cached_eslint_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn label_for_completion(
-        &self,
-        _item: &lsp::CompletionItem,
-        _language: &Arc<language::Language>,
-    ) -> Option<language::CodeLabel> {
-        None
-    }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        None
     }
 }
 

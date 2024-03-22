@@ -108,6 +108,7 @@ pub struct EntryDetails {
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
 pub struct Delete {
+    #[serde(default)]
     pub skip_prompt: bool,
 }
 

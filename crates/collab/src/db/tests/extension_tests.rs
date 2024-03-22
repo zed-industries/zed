@@ -16,7 +16,7 @@ async fn test_extensions(db: &Arc<Database>) {
     let versions = db.get_known_extension_versions().await.unwrap();
     assert!(versions.is_empty());
 
-    let extensions = db.get_extensions(None, 5).await.unwrap();
+    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
     assert!(extensions.is_empty());
 
     let t0 = OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
@@ -33,6 +33,7 @@ async fn test_extensions(db: &Arc<Database>) {
                         description: "an extension".into(),
                         authors: vec!["max".into()],
                         repository: "ext1/repo".into(),
+                        schema_version: 1,
                         published_at: t0,
                     },
                     NewExtensionVersion {
@@ -41,6 +42,7 @@ async fn test_extensions(db: &Arc<Database>) {
                         description: "a good extension".into(),
                         authors: vec!["max".into(), "marshall".into()],
                         repository: "ext1/repo".into(),
+                        schema_version: 1,
                         published_at: t0,
                     },
                 ],
@@ -53,6 +55,7 @@ async fn test_extensions(db: &Arc<Database>) {
                     description: "a great extension".into(),
                     authors: vec!["marshall".into()],
                     repository: "ext2/repo".into(),
+                    schema_version: 0,
                     published_at: t0,
                 }],
             ),
@@ -75,7 +78,7 @@ async fn test_extensions(db: &Arc<Database>) {
     );
 
     // The latest version of each extension is returned.
-    let extensions = db.get_extensions(None, 5).await.unwrap();
+    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[
@@ -102,6 +105,22 @@ async fn test_extensions(db: &Arc<Database>) {
         ]
     );
 
+    // Extensions with too new of a schema version are excluded.
+    let extensions = db.get_extensions(None, 0, 5).await.unwrap();
+    assert_eq!(
+        extensions,
+        &[ExtensionMetadata {
+            id: "ext2".into(),
+            name: "Extension Two".into(),
+            version: "0.2.0".into(),
+            authors: vec!["marshall".into()],
+            description: "a great extension".into(),
+            repository: "ext2/repo".into(),
+            published_at: t0,
+            download_count: 0
+        },]
+    );
+
     // Record extensions being downloaded.
     for _ in 0..7 {
         assert!(db.record_extension_download("ext2", "0.0.2").await.unwrap());
@@ -122,7 +141,7 @@ async fn test_extensions(db: &Arc<Database>) {
         .unwrap());
 
     // Extensions are returned in descending order of total downloads.
-    let extensions = db.get_extensions(None, 5).await.unwrap();
+    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[
@@ -161,6 +180,7 @@ async fn test_extensions(db: &Arc<Database>) {
                     description: "a real good extension".into(),
                     authors: vec!["max".into(), "marshall".into()],
                     repository: "ext1/repo".into(),
+                    schema_version: 1,
                     published_at: t0,
                 }],
             ),
@@ -172,6 +192,7 @@ async fn test_extensions(db: &Arc<Database>) {
                     description: "an old extension".into(),
                     authors: vec!["marshall".into()],
                     repository: "ext2/repo".into(),
+                    schema_version: 0,
                     published_at: t0,
                 }],
             ),
@@ -196,7 +217,7 @@ async fn test_extensions(db: &Arc<Database>) {
         .collect()
     );
 
-    let extensions = db.get_extensions(None, 5).await.unwrap();
+    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[

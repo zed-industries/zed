@@ -92,8 +92,11 @@ impl LspAdapter for TailwindLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true,
             "userLanguages": {
                 "html": "html",
@@ -101,7 +104,7 @@ impl LspAdapter for TailwindLspAdapter {
                 "javascript": "javascript",
                 "typescriptreact": "typescriptreact",
             },
-        }))
+        })))
     }
 
     fn workspace_configuration(&self, _workspace_root: &Path, _: &mut AppContext) -> Value {
@@ -125,10 +128,6 @@ impl LspAdapter for TailwindLspAdapter {
             ("ERB".to_string(), "erb".to_string()),
             ("PHP".to_string(), "php".to_string()),
         ])
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-tailwindcss"]
     }
 }
 

@@ -50,15 +50,18 @@ fn main() {
         println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
 
         let manifest = std::path::Path::new("resources/windows/manifest.xml");
+        let icon = std::path::Path::new("resources/windows/app-icon.ico");
         println!("cargo:rerun-if-changed={}", manifest.display());
-        println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
+        println!("cargo:rerun-if-changed={}", icon.display());
 
+        println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
         println!(
             "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
             manifest.canonicalize().unwrap().display()
         );
 
-        let res = winresource::WindowsResource::new();
+        let mut res = winresource::WindowsResource::new();
+        res.set_icon(icon.to_str().unwrap());
         if let Err(e) = res.compile() {
             eprintln!("{}", e);
             std::process::exit(1);

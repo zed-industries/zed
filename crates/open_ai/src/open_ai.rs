@@ -72,6 +72,14 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
         }
     }
+
+    pub fn max_token_count(&self) -> usize {
+        match self {
+            Model::ThreePointFiveTurbo => 4096,
+            Model::Four => 8192,
+            Model::FourTurbo => 128000,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

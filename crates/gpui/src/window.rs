@@ -4,10 +4,11 @@ use crate::{
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, Global, GlobalElementId, GlobalPixels, Hsla, KeyBinding, KeyDownEvent,
     KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers,
-    MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, View,
-    VisualContext, WeakView, WindowAppearance, WindowOptions, WindowParams, WindowTextSystem,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
+    WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -721,6 +722,12 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
+    /// Check if the platform window is minimized
+    /// On some platforms (namely Windows) the position is incorrect when minimized
+    pub fn is_minimized(&self) -> bool {
+        self.window.platform_window.is_minimized()
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();
@@ -1381,6 +1388,11 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
+        self.dispatch_modifiers_changed_event(event, &dispatch_path);
+        if !self.propagate_event {
+            return;
+        }
+
         self.dispatch_keystroke_observers(event, None);
     }
 
@@ -1410,6 +1422,27 @@ impl<'a> WindowContext<'a> {
             for key_listener in node.key_listeners.clone() {
                 self.with_element_context(|cx| {
                     key_listener(event, DispatchPhase::Bubble, cx);
+                });
+                if !self.propagate_event {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn dispatch_modifiers_changed_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
+        let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
+            return;
+        };
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            for listener in node.modifiers_changed_listeners.clone() {
+                self.with_element_context(|cx| {
+                    listener(event, cx);
                 });
                 if !self.propagate_event {
                     return;

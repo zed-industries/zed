@@ -39,6 +39,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::{ThemeRegistry, ThemeSettings};
+use url::Url;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
     paths::EXTENSIONS_DIR,
@@ -52,6 +53,8 @@ pub use extension_manifest::{
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+const CURRENT_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Deserialize)]
 pub struct ExtensionsApiResponse {
@@ -381,15 +384,18 @@ impl ExtensionStore {
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionApiResponse>>> {
-        let url = self.http_client.build_zed_api_url(&format!(
-            "/extensions{query}",
-            query = search
-                .map(|search| format!("?filter={search}"))
-                .unwrap_or_default()
-        ));
+        let version = CURRENT_SCHEMA_VERSION.to_string();
+        let mut query = vec![("max_schema_version", version.as_str())];
+        if let Some(search) = search {
+            query.push(("filter", search));
+        }
+
+        let url = self.http_client.build_zed_api_url("/extensions", &query);
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
-            let mut response = http_client.get(&url, AsyncBody::empty(), true).await?;
+            let mut response = http_client
+                .get(&url?.as_ref(), AsyncBody::empty(), true)
+                .await?;
 
             let mut body = Vec::new();
             response
@@ -424,7 +430,7 @@ impl ExtensionStore {
     fn install_or_upgrade_extension_at_endpoint(
         &mut self,
         extension_id: Arc<str>,
-        url: String,
+        url: Url,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
     ) {
@@ -451,7 +457,7 @@ impl ExtensionStore {
             });
 
             let mut response = http_client
-                .get(&url, Default::default(), true)
+                .get(&url.as_ref(), Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
@@ -486,9 +492,13 @@ impl ExtensionStore {
     ) {
         log::info!("installing extension {extension_id} latest version");
 
-        let url = self
+        let Some(url) = self
             .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/download"));
+            .build_zed_api_url(&format!("/extensions/{extension_id}/download"), &[])
+            .log_err()
+        else {
+            return;
+        };
 
         self.install_or_upgrade_extension_at_endpoint(
             extension_id,
@@ -515,9 +525,16 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) {
         log::info!("installing extension {extension_id} {version}");
-        let url = self
+        let Some(url) = self
             .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/{version}/download"));
+            .build_zed_api_url(
+                &format!("/extensions/{extension_id}/{version}/download"),
+                &[],
+            )
+            .log_err()
+        else {
+            return;
+        };
 
         self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx);
     }
@@ -1114,6 +1131,7 @@ fn manifest_from_old_manifest(
         description: manifest_json.description,
         repository: manifest_json.repository,
         authors: manifest_json.authors,
+        schema_version: 0,
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
