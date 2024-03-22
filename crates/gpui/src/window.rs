@@ -1784,6 +1784,16 @@ impl<'a> WindowContext<'a> {
             .on_should_close(Box::new(move || this.update(|cx| f(cx)).unwrap_or(true)))
     }
 
+    /// Register a callback that fires when the window is activated or deactivated.
+    pub fn on_active_status_change(&mut self, mut f: impl Fn(bool, &mut WindowContext) + 'static) {
+        let mut this = self.to_async();
+        self.window
+            .platform_window
+            .on_active_status_change(Box::new(move |active| {
+                let _ = this.update(|cx| f(active, cx));
+            }))
+    }
+
     /// Register an action listener on the window for the next frame. The type of action
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
