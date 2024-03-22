@@ -3190,7 +3190,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ])
         });
-        view.duplicate_line_down(&DuplicateLineDown::default(), cx);
+        view.duplicate_line_up(&DuplicateLineUp::default(), cx);
         assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
         assert_eq!(
             view.selections.display_ranges(cx),
