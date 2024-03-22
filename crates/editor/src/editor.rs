@@ -36,7 +36,6 @@ mod selections_collection;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
@@ -101,7 +100,6 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-
 use std::ops::Not as _;
 use std::{
     any::TypeId,
@@ -224,9 +222,7 @@ impl InlayId {
 }
 
 enum DocumentHighlightRead {}
-
 enum DocumentHighlightWrite {}
-
 enum InputComposition {}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1087,7 +1083,7 @@ impl CompletionsMenu {
                                         ),
                                     )
                                 {
-                                    variable_name_end = documentation_truncation_index + 3;
+                                    variable_name_end = documentation_truncation_index + 2;
                                     documentation_text = documentation_text
                                         .chars()
                                         .take(documentation_truncation_index)
@@ -1102,8 +1098,8 @@ impl CompletionsMenu {
                                     variable_name_length_truncated =
                                         completion.label.filter_range.end as i32
                                             - variable_name_truncation_index as i32
-                                            - 3;
-                                    variable_name_end = variable_name_truncation_index + 3;
+                                            - 2;
+                                    variable_name_end = variable_name_truncation_index + 2;
 
                                     completion_label_text = completion
                                         .label
@@ -1166,7 +1162,7 @@ impl CompletionsMenu {
                                     completion_layout_line
                                         .index_for_x(max_completion_len - ellipsis_width.width)
                                 {
-                                    variable_name_end = type_annotation_truncation_index + 3;
+                                    variable_name_end = type_annotation_truncation_index + 2;
                                     completion_label_text = completion
                                         .label
                                         .text
@@ -1183,8 +1179,8 @@ impl CompletionsMenu {
                                     variable_name_length_truncated =
                                         completion.label.filter_range.end as i32
                                             - variable_name_truncation_index as i32
-                                            - 3;
-                                    variable_name_end = variable_name_truncation_index + 3;
+                                            - 2;
+                                    variable_name_end = variable_name_truncation_index + 2;
 
                                     let second_part_text = &completion.label.text.as_str()
                                         [completion.label.filter_range.end..];
@@ -1199,6 +1195,7 @@ impl CompletionsMenu {
                                         + second_part_text;
                                     completion_label =
                                         completion_label.with_text(completion_label_text.clone());
+
                                     if let Ok(layout_line) =
                                         completion_label.layout_line(font_size, cx)
                                     {
@@ -1212,7 +1209,7 @@ impl CompletionsMenu {
                                             {
                                                 completion_label_text = completion_label_text
                                                     .chars()
-                                                    .take(type_annotation_truncation_index)
+                                                    .take(type_annotation_truncation_index - 2)
                                                     .collect::<String>()
                                                     + "…";
                                             }

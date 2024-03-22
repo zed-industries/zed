@@ -31,7 +31,6 @@ where
     let id = id.into();
     let mut base_style = StyleRefinement::default();
     base_style.overflow.y = Some(Overflow::Scroll);
-    base_style.overflow.x = Some(Overflow::Visible);
 
     let render_range = move |range, cx: &mut WindowContext| {
         view.update(cx, |this, cx| {
