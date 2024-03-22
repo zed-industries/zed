@@ -1,7 +1,7 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    rpc::{Principal, Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState, Config, RateLimiter,
 };
 use anyhow::anyhow;
@@ -235,9 +235,8 @@ impl TestServer {
                             .spawn(server.handle_connection(
                                 server_conn,
                                 client_name,
-                                user,
+                                Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
-                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))

@@ -1,11 +1,11 @@
 mod connection_pool;
 
 use crate::{
-    auth::{self, Impersonator},
+    auth::{self},
     db::{
-        self, devserver, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
-        MessageId, NotificationId, Project, ProjectId, RemoveChannelMemberResult, ReplicaId,
+        self, dev_server, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser,
+        CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
+        NotificationId, Project, ProjectId, RemoveChannelMemberResult, ReplicaId,
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -65,7 +65,7 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{
-    field::{self, ValueSet},
+    field::{self},
     info_span, instrument, Instrument,
 };
 use util::{http::IsahcHttpClient, SemanticVersion};
@@ -109,9 +109,10 @@ impl<R: RequestMessage> StreamingResponse<R> {
 }
 
 #[derive(Clone, Debug)]
-enum Principal {
+pub enum Principal {
     User(User),
-    DevServer(devserver::Model),
+    Impersonated { user: User, admin: User },
+    DevServer(dev_server::Model),
 }
 
 impl Principal {
@@ -121,7 +122,14 @@ impl Principal {
                 span.record("user_id", &user.id.0);
                 span.record("login", &user.github_login);
             }
-            Principal::DevServer(devserver) => span.record("devserver_id", &devserver.id.0),
+            Principal::Impersonated { user, admin } => {
+                span.record("user_id", &user.id.0);
+                span.record("login", &user.github_login);
+                span.record("impersonator", &admin.github_login);
+            }
+            Principal::DevServer(dev_server) => {
+                span.record("dev_server_id", &dev_server.id.0);
+            }
         }
     }
 }
@@ -166,7 +174,8 @@ impl Session {
     fn user_id(&self) -> Option<UserId> {
         match &self.principal {
             Principal::User(user) => Some(user.id),
-            _ => None,
+            Principal::Impersonated { user, .. } => Some(user.id),
+            Principal::DevServer(_) => None,
         }
     }
 }
@@ -176,10 +185,14 @@ impl Debug for Session {
         let mut result = f.debug_struct("Session");
         match &self.principal {
             Principal::User(user) => {
-                result.field("user_id", &user.id);
+                result.field("user", &user.github_login);
+            }
+            Principal::Impersonated { user, admin } => {
+                result.field("user", &user.github_login);
+                result.field("impersonator", &admin.github_login);
             }
             Principal::DevServer(dev_server) => {
-                result.field("dev_server_id", &dev_server.id);
+                result.field("dev_server", &dev_server.id);
             }
         }
         result.field("connection_id", &self.connection_id).finish()
@@ -714,16 +727,12 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
-        impersonator: Option<User>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
     ) -> impl Future<Output = ()> {
         let this = self.clone();
         let span = info_span!("handle connection", %address, impersonator = field::Empty, connection_id = field::Empty);
         principal.update_span(&span);
-        if let Some(impersonator) = impersonator {
-            span.record("impersonator", &impersonator.github_login);
-        }
 
         let mut teardown = self.teardown.subscribe();
         async move {
@@ -1075,9 +1084,7 @@ pub async fn handle_websocket_request(
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
-    Extension(user): Option<Extension<User>>,
-    Extension(dev_server): Option<Extension<User>>,
-    Extension(impersonator): Extension<Impersonator>,
+    Extension(principal): Extension<Principal>,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
     if protocol_version != rpc::PROTOCOL_VERSION {
@@ -1116,9 +1123,8 @@ pub async fn handle_websocket_request(
                 .handle_connection(
                     connection,
                     socket_address,
-                    user,
+                    principal,
                     version,
-                    impersonator.0,
                     None,
                     Executor::Production,
                 )
