@@ -200,6 +200,8 @@ impl Assistant {
             return;
         }
 
+        self.enabled = enabled;
+
         if !enabled {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.hide_namespace(Self::NAMESPACE);
