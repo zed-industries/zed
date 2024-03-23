@@ -106,13 +106,11 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
-            println!("Querying font: {:#?}, with id: {:?}", font, font_id);
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let font_id = lock.select_font(font).unwrap();
             lock.font_selections.insert(font.clone(), font_id);
-            println!("Querying font: {:#?}, with id: {:?}", font, font_id);
             Ok(font_id)
         }
     }
@@ -202,7 +200,6 @@ impl DirectWriteState {
 
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
-            println!("Selecting {:#?}", target_font);
             for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
                 let font = fontset
                     .GetMatchingFonts(
@@ -268,10 +265,6 @@ impl DirectWriteState {
                     PCWSTR::from_raw(locale_wide.as_ptr()),
                     local_wide,
                     local_length as u32,
-                );
-                println!(
-                    "drawing: {} with {}, index {}, emoji: {}",
-                    local_str, font_info.font_family, font_info.font_set_index, font_info.is_emoji
                 );
 
                 let Some(analysis_result) = analysis.generate_result(&self.components.analyzer)
@@ -545,6 +538,8 @@ impl DirectWriteState {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             return Err(anyhow!("glyph bounds are empty"));
         }
+        let x = &self.fonts[params.font_id.0];
+        println!("rastering: {}", x.font_family);
         unsafe {
             // TODO:
             // let mut bitmap_size = glyph_bounds.size;
@@ -643,8 +638,6 @@ impl DirectWriteState {
                 return result;
             }
             let system_collection = system_collection.unwrap();
-            let default_locale_name_wide = "en-us".encode_utf16().chain(Some(0)).collect_vec();
-            let default_locale_name = PCWSTR::from_raw(default_locale_name_wide.as_ptr());
             let locale_name_wide = self
                 .components
                 .locale
@@ -655,66 +648,31 @@ impl DirectWriteState {
             let family_count = system_collection.GetFontFamilyCount();
             for index in 0..family_count {
                 let font_family = system_collection.GetFontFamily(index).unwrap();
-                let locale_family_name = {
-                    let family_name = font_family.GetFamilyNames().unwrap();
-                    let mut locale_name_index = 0u32;
-                    let mut exists = BOOL(0);
-                    family_name
-                        .FindLocaleName(locale_name, &mut locale_name_index as _, &mut exists as _)
-                        .unwrap();
-                    if !exists.as_bool() {
-                        family_name
-                            .FindLocaleName(
-                                default_locale_name,
-                                &mut locale_name_index as _,
-                                &mut exists as _,
-                            )
-                            .unwrap();
-                    }
-                    if !exists.as_bool() {
-                        continue;
-                    }
-                    let family_name_length =
-                        family_name.GetStringLength(locale_name_index).unwrap() as usize;
-                    let mut family_name_vec = vec![0u16; family_name_length + 1];
-                    family_name
-                        .GetString(locale_name_index, &mut family_name_vec)
-                        .unwrap();
-                    String::from_utf16_lossy(&family_name_vec[..family_name_length])
-                };
                 let font_count = font_family.GetFontCount();
                 for font_index in 0..font_count {
                     let font = font_family.GetFont(font_index).unwrap();
-                    let font_name = font.GetFaceNames().unwrap();
-                    let mut locale_name_index = 0u32;
-                    let mut exists = BOOL(0);
-                    font_name
-                        .FindLocaleName(locale_name, &mut locale_name_index, &mut exists as _)
+                    let mut font_name_localized_string: Option<IDWriteLocalizedStrings> = {
+                        let mut string: Option<IDWriteLocalizedStrings> = std::mem::zeroed();
+                        let mut exists = BOOL(0);
+                        font.GetInformationalStrings(
+                            DWRITE_INFORMATIONAL_STRING_FULL_NAME,
+                            &mut string as _,
+                            &mut exists as _,
+                        )
                         .unwrap();
-                    if !exists.as_bool() {
-                        font_name
-                            .FindLocaleName(
-                                default_locale_name,
-                                &mut locale_name_index as _,
-                                &mut exists as _,
-                            )
-                            .unwrap();
-                    }
-                    if !exists.as_bool() {
+                        if exists.as_bool() {
+                            string
+                        } else {
+                            continue;
+                        }
+                    };
+                    let Some(localized_font_name) = font_name_localized_string else {
                         continue;
-                    }
-                    let font_name_length =
-                        font_name.GetStringLength(locale_name_index).unwrap() as usize;
-                    let mut font_name_vec = vec![0u16; font_name_length + 1];
-                    font_name
-                        .GetString(locale_name_index, &mut font_name_vec)
-                        .unwrap();
-                    let locale_font_name = format!(
-                        "{} {}",
-                        locale_family_name,
-                        String::from_utf16_lossy(&font_name_vec[..font_name_length])
-                    );
-                    result.push(locale_font_name);
+                    };
+                    let Some(font_name) = get_name(localized_font_name, locale_name) else {
+                        continue;
+                    };
+                    result.push(font_name);
                 }
             }
 
@@ -734,8 +692,6 @@ impl DirectWriteState {
                 return result;
             }
             let system_collection = system_collection.unwrap();
-            let default_locale_name_wide = "en-us".encode_utf16().chain(Some(0)).collect_vec();
-            let default_locale_name = PCWSTR::from_raw(default_locale_name_wide.as_ptr());
             let locale_name_wide = self
                 .components
                 .locale
@@ -745,35 +701,16 @@ impl DirectWriteState {
             let locale_name = PCWSTR::from_raw(locale_name_wide.as_ptr());
             let family_count = system_collection.GetFontFamilyCount();
             for index in 0..family_count {
-                let font_family = system_collection.GetFontFamily(index).unwrap();
-                let locale_family_name = {
-                    let family_name = font_family.GetFamilyNames().unwrap();
-                    let mut locale_name_index = 0u32;
-                    let mut exists = BOOL(0);
-                    family_name
-                        .FindLocaleName(locale_name, &mut locale_name_index as _, &mut exists as _)
-                        .unwrap();
-                    if !exists.as_bool() {
-                        family_name
-                            .FindLocaleName(
-                                default_locale_name,
-                                &mut locale_name_index as _,
-                                &mut exists as _,
-                            )
-                            .unwrap();
-                    }
-                    if !exists.as_bool() {
-                        continue;
-                    }
-                    let family_name_length =
-                        family_name.GetStringLength(locale_name_index).unwrap() as usize;
-                    let mut family_name_vec = vec![0u16; family_name_length + 1];
-                    family_name
-                        .GetString(locale_name_index, &mut family_name_vec)
-                        .unwrap();
-                    String::from_utf16_lossy(&family_name_vec[..family_name_length])
+                let Some(font_family) = system_collection.GetFontFamily(index).log_err() else {
+                    continue;
                 };
-                result.push(locale_family_name);
+                let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
+                    continue;
+                };
+                let Some(family_name) = get_name(localized_family_name, locale_name) else {
+                    continue;
+                };
+                result.push(family_name);
             }
 
             result
@@ -1065,3 +1002,31 @@ fn make_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
 
     DWRITE_FONT_FEATURE_TAG(result)
 }
+
+unsafe fn get_name(string: IDWriteLocalizedStrings, locale: PCWSTR) -> Option<String> {
+    let mut locale_name_index = 0u32;
+    let mut exists = BOOL(0);
+    string
+        .FindLocaleName(locale, &mut locale_name_index, &mut exists as _)
+        .unwrap();
+    if !exists.as_bool() {
+        string
+            .FindLocaleName(
+                DEFAULT_LOCALE_NAME,
+                &mut locale_name_index as _,
+                &mut exists as _,
+            )
+            .unwrap();
+    }
+    if !exists.as_bool() {
+        return None;
+    }
+
+    let name_length = string.GetStringLength(locale_name_index).unwrap() as usize;
+    let mut name_vec = vec![0u16; name_length + 1];
+    string.GetString(locale_name_index, &mut name_vec).unwrap();
+
+    Some(String::from_utf16_lossy(&name_vec[..name_length]))
+}
+
+const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-us");
