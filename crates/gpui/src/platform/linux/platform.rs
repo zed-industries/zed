@@ -4,10 +4,10 @@ use std::cell::RefCell;
 use std::env;
 use std::{
     path::{Path, PathBuf},
+    process::Command,
     rc::Rc,
     sync::Arc,
     time::Duration,
-    process::Command
 };
 
 use anyhow::anyhow;
