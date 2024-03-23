@@ -54,6 +54,7 @@ pub(crate) struct WindowsWindowInner {
     display: RefCell<Rc<WindowsDisplay>>,
     last_ime_input: RefCell<Option<String>>,
     click_state: RefCell<ClickState>,
+    fullscreen: Cell<bool>,
 }
 
 impl WindowsWindowInner {
@@ -115,6 +116,7 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let last_ime_input = RefCell::new(None);
         let click_state = RefCell::new(ClickState::new());
+        let fullscreen = Cell::new(false);
         Self {
             hwnd,
             origin,
@@ -129,6 +131,7 @@ impl WindowsWindowInner {
             display,
             last_ime_input,
             click_state,
+            fullscreen,
         }
     }
 
@@ -138,6 +141,42 @@ impl WindowsWindowInner {
 
     fn is_minimized(&self) -> bool {
         unsafe { IsIconic(self.hwnd) }.as_bool()
+    }
+
+    fn toggle_fullscreen(&self) {
+        let fullscreen = !self.fullscreen.get();
+        self.fullscreen.set(fullscreen);
+        let mut style = unsafe { get_window_long(self.hwnd, GWL_STYLE) } as u32;
+        if fullscreen {
+            style &= !(WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX).0;
+        } else {
+            style |= (WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX).0;
+        }
+        let hwnd_insert_after = if fullscreen {
+            HWND_TOPMOST
+        } else {
+            HWND_NOTOPMOST
+        };
+        let hwnd = self.hwnd;
+        let bounds = self.display.borrow().clone().bounds();
+        self.platform_inner
+            .foreground_executor
+            .spawn(async move {
+                unsafe { set_window_long(hwnd, GWL_STYLE, style as isize) };
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        hwnd_insert_after,
+                        bounds.origin.x.0 as i32,
+                        bounds.origin.y.0 as i32,
+                        bounds.size.width.0 as i32,
+                        bounds.size.height.0 as i32,
+                        SWP_FRAMECHANGED,
+                    )
+                }
+                .log_err();
+            })
+            .detach();
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
@@ -920,6 +959,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_hit_test_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        if self.fullscreen.get() {
+            return Some(HTCLIENT as _);
+        }
+
         if !self.hide_title_bar {
             return None;
         }
@@ -1426,11 +1469,13 @@ impl PlatformWindow for WindowsWindow {
     }
 
     // todo(windows)
-    fn toggle_fullscreen(&self) {}
+    fn toggle_fullscreen(&self) {
+        self.inner.toggle_fullscreen();
+    }
 
     // todo(windows)
     fn is_fullscreen(&self) -> bool {
-        false
+        self.inner.fullscreen.get()
     }
 
     // todo(windows)
