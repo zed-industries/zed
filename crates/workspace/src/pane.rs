@@ -184,6 +184,7 @@ pub struct Pane {
     tab_bar_scroll_handle: ScrollHandle,
     display_nav_history_buttons: bool,
     double_click_dispatch_action: Box<dyn Action>,
+    centered_layout: bool,
 }
 
 pub struct ItemNavHistory {
@@ -349,6 +350,7 @@ impl Pane {
             display_nav_history_buttons: true,
             _subscriptions: subscriptions,
             double_click_dispatch_action,
+            centered_layout: false,
         }
     }
 
@@ -444,6 +446,10 @@ impl Pane {
     {
         self.custom_drop_handle = Some(Arc::new(handle));
         cx.notify();
+    }
+
+    pub fn set_centered_layout(&mut self, centered_layout: bool) {
+        self.centered_layout = centered_layout;
     }
 
     pub fn nav_history_for_item<T: Item>(&self, item: &View<T>) -> ItemNavHistory {
@@ -1770,7 +1776,13 @@ impl FocusableView for Pane {
 
 impl Render for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
+        let content_width = if self.centered_layout && !self.is_zoomed() {
+            0.6
+        } else {
+            1.0
+        };
+
+        h_flex()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
             .size_full()
@@ -1858,74 +1870,89 @@ impl Render for Pane {
                 }),
             )
             .when(self.active_item().is_some(), |pane| {
-                pane.child(self.render_tab_bar(cx))
+                pane.bg(cx.theme().styles.colors.editor_background)
             })
-            .child({
-                let has_worktrees = self.project.read(cx).worktrees().next().is_some();
-                // main content
-                div()
-                    .flex_1()
-                    .relative()
-                    .group("")
-                    .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
-                    .map(|div| {
-                        if let Some(item) = self.active_item() {
-                            div.v_flex()
-                                .child(self.toolbar.clone())
-                                .child(item.to_any())
-                        } else {
-                            let placeholder = div.h_flex().size_full().justify_center();
-                            if has_worktrees {
-                                placeholder
-                            } else {
-                                placeholder.child(
-                                    Label::new("Open a file or project to get started.")
-                                        .color(Color::Muted),
-                                )
-                            }
-                        }
+            .child(
+                v_flex()
+                    .w(relative(content_width))
+                    .mx_auto()
+                    .h_full()
+                    .when(self.active_item().is_some(), |pane| {
+                        pane.child(self.render_tab_bar(cx))
                     })
-                    .child(
-                        // drag target
+                    .child({
+                        let has_worktrees = self.project.read(cx).worktrees().next().is_some();
+                        // main content
                         div()
-                            .invisible()
-                            .absolute()
-                            .bg(theme::color_alpha(
-                                cx.theme().colors().drop_target_background,
-                                0.75,
-                            ))
-                            .group_drag_over::<DraggedTab>("", |style| style.visible())
-                            .group_drag_over::<ProjectEntryId>("", |style| style.visible())
-                            .group_drag_over::<ExternalPaths>("", |style| style.visible())
-                            .when_some(self.can_drop_predicate.clone(), |this, p| {
-                                this.can_drop(move |a, cx| p(a, cx))
+                            .flex_1()
+                            .relative()
+                            .group("")
+                            .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
+                            .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
+                            .on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
+                            .map(|div| {
+                                if let Some(item) = self.active_item() {
+                                    div.v_flex()
+                                        .child(self.toolbar.clone())
+                                        .child(item.to_any())
+                                } else {
+                                    let placeholder = div.h_flex().size_full().justify_center();
+                                    if has_worktrees {
+                                        placeholder
+                                    } else {
+                                        placeholder.child(
+                                            Label::new("Open a file or project to get started.")
+                                                .color(Color::Muted),
+                                        )
+                                    }
+                                }
                             })
-                            .on_drop(cx.listener(move |this, dragged_tab, cx| {
-                                this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
-                            }))
-                            .on_drop(cx.listener(move |this, entry_id, cx| {
-                                this.handle_project_entry_drop(entry_id, cx)
-                            }))
-                            .on_drop(cx.listener(move |this, paths, cx| {
-                                this.handle_external_paths_drop(paths, cx)
-                            }))
-                            .map(|div| match self.drag_split_direction {
-                                None => div.top_0().left_0().right_0().bottom_0(),
-                                Some(SplitDirection::Up) => div.top_0().left_0().right_0().h_32(),
-                                Some(SplitDirection::Down) => {
-                                    div.left_0().bottom_0().right_0().h_32()
-                                }
-                                Some(SplitDirection::Left) => {
-                                    div.top_0().left_0().bottom_0().w_32()
-                                }
-                                Some(SplitDirection::Right) => {
-                                    div.top_0().bottom_0().right_0().w_32()
-                                }
-                            }),
-                    )
-            })
+                            .child(
+                                // drag target
+                                div()
+                                    .invisible()
+                                    .absolute()
+                                    .bg(theme::color_alpha(
+                                        cx.theme().colors().drop_target_background,
+                                        0.75,
+                                    ))
+                                    .group_drag_over::<DraggedTab>("", |style| style.visible())
+                                    .group_drag_over::<ProjectEntryId>("", |style| style.visible())
+                                    .group_drag_over::<ExternalPaths>("", |style| style.visible())
+                                    .when_some(self.can_drop_predicate.clone(), |this, p| {
+                                        this.can_drop(move |a, cx| p(a, cx))
+                                    })
+                                    .on_drop(cx.listener(move |this, dragged_tab, cx| {
+                                        this.handle_tab_drop(
+                                            dragged_tab,
+                                            this.active_item_index(),
+                                            cx,
+                                        )
+                                    }))
+                                    .on_drop(cx.listener(move |this, entry_id, cx| {
+                                        this.handle_project_entry_drop(entry_id, cx)
+                                    }))
+                                    .on_drop(cx.listener(move |this, paths, cx| {
+                                        this.handle_external_paths_drop(paths, cx)
+                                    }))
+                                    .map(|div| match self.drag_split_direction {
+                                        None => div.top_0().left_0().right_0().bottom_0(),
+                                        Some(SplitDirection::Up) => {
+                                            div.top_0().left_0().right_0().h_32()
+                                        }
+                                        Some(SplitDirection::Down) => {
+                                            div.left_0().bottom_0().right_0().h_32()
+                                        }
+                                        Some(SplitDirection::Left) => {
+                                            div.top_0().left_0().bottom_0().w_32()
+                                        }
+                                        Some(SplitDirection::Right) => {
+                                            div.top_0().bottom_0().right_0().w_32()
+                                        }
+                                    }),
+                            )
+                    }),
+            )
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|pane, _, cx| {
