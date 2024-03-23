@@ -25,11 +25,8 @@ struct FontInfo {
     font_face: IDWriteFontFace3,
     font_set_index: usize,
     features: Vec<DWRITE_FONT_FEATURE>,
-    raw_features: FontFeatures,
+    is_emoji: bool,
 }
-
-unsafe impl Send for FontInfo {}
-unsafe impl Sync for FontInfo {}
 
 pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 
@@ -109,11 +106,13 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
+            println!("Querying font: {:#?}, with id: {:?}", font, font_id);
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let font_id = lock.select_font(font).unwrap();
             lock.font_selections.insert(font.clone(), font_id);
+            println!("Querying font: {:#?}, with id: {:?}", font, font_id);
             Ok(font_id)
         }
     }
@@ -203,6 +202,7 @@ impl DirectWriteState {
 
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
+            println!("Selecting {:#?}", target_font);
             for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
                 let font = fontset
                     .GetMatchingFonts(
@@ -214,17 +214,19 @@ impl DirectWriteState {
                     )
                     .unwrap();
                 let total_number = font.GetFontCount();
-                for sub_index in 0..total_number {
+                for _ in 0..total_number {
                     let font_face_ref = font.GetFontFaceReference(0).unwrap();
                     let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
                         continue;
                     };
+                    let font_family = target_font.family.to_string();
+                    let is_emoji = font_family == "Segoe UI Emoji".to_string();
                     let font_info = FontInfo {
-                        font_family: target_font.family.to_string(),
+                        font_family,
                         font_face,
                         font_set_index: fontset_index,
                         features: direct_write_features(&target_font.features),
-                        raw_features: target_font.features,
+                        is_emoji,
                     };
                     let font_id = FontId(self.fonts.len());
                     self.fonts.push(font_info);
@@ -266,6 +268,10 @@ impl DirectWriteState {
                     PCWSTR::from_raw(locale_wide.as_ptr()),
                     local_wide,
                     local_length as u32,
+                );
+                println!(
+                    "drawing: {} with {}, index {}, emoji: {}",
+                    local_str, font_info.font_family, font_info.font_set_index, font_info.is_emoji
                 );
 
                 let Some(analysis_result) = analysis.generate_result(&self.components.analyzer)
@@ -361,8 +367,7 @@ impl DirectWriteState {
                             y: px(0.),
                         },
                         index: offset + pos,
-                        // TODO:
-                        is_emoji: false,
+                        is_emoji: font_info.is_emoji,
                     };
                     glyph_position += glyph_advances[pos];
                     glyphs.push(shaped_gylph);
@@ -480,7 +485,6 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
-        // TODO: is this right?
         let transform = DWRITE_MATRIX {
             m11: params.scale_factor,
             m12: 0.0,
@@ -1006,14 +1010,27 @@ impl IDWriteTextAnalysisSink_Impl for AnalysisSink {
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
 fn direct_write_features(features: &FontFeatures) -> Vec<DWRITE_FONT_FEATURE> {
     let mut feature_list = Vec::new();
+    let tag_values = features.tag_value_list();
+    if tag_values.is_empty() {
+        return feature_list;
+    }
     // All of these features are enabled by default by DirectWrite.
     // If you want to (and can) peek into the source of DirectWrite
     add_feature(&mut feature_list, "liga", true);
     add_feature(&mut feature_list, "clig", true);
     add_feature(&mut feature_list, "calt", true);
 
-    for (tag, enable) in features.tag_value_list() {
-        if tag == "liga".to_string() || tag == "calt".to_string() {
+    for (tag, enable) in tag_values {
+        if tag == "liga".to_string() && !enable {
+            feature_list[0].parameter = 0;
+            continue;
+        }
+        if tag == "clig".to_string() && !enable {
+            feature_list[1].parameter = 0;
+            continue;
+        }
+        if tag == "calt".to_string() && !enable {
+            feature_list[2].parameter = 0;
             continue;
         }
         add_feature(&mut feature_list, &tag, enable);
