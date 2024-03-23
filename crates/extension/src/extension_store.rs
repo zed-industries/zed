@@ -39,6 +39,7 @@ use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
+    maybe,
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
@@ -108,6 +109,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionFailedToLoad(Arc<str>),
 }
 
 impl EventEmitter<Event> for ExtensionStore {}
@@ -886,41 +888,38 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let mut path = root_dir.clone();
-                path.extend([extension.manifest.id.as_ref(), "extension.wasm"]);
-                let Some(mut wasm_file) = fs
-                    .open_sync(&path)
-                    .await
-                    .context("failed to open wasm file")
-                    .log_err()
-                else {
-                    continue;
-                };
+                let wasm_extension = maybe!(async {
+                    let mut path = root_dir.clone();
+                    path.extend([extension.manifest.clone().id.as_ref(), "extension.wasm"]);
+                    let mut wasm_file = fs
+                        .open_sync(&path)
+                        .await
+                        .context("failed to open wasm file")?;
 
-                let mut wasm_bytes = Vec::new();
-                if wasm_file
-                    .read_to_end(&mut wasm_bytes)
-                    .context("failed to read wasm")
-                    .log_err()
-                    .is_none()
-                {
-                    continue;
+                    let mut wasm_bytes = Vec::new();
+                    wasm_file
+                        .read_to_end(&mut wasm_bytes)
+                        .context("failed to read wasm")?;
+
+                    wasm_host
+                        .load_extension(
+                            wasm_bytes,
+                            extension.manifest.clone().clone(),
+                            cx.background_executor().clone(),
+                        )
+                        .await
+                        .context("failed to load wasm extension")
+                })
+                .await;
+
+                if let Some(wasm_extension) = wasm_extension.log_err() {
+                    wasm_extensions.push((extension.manifest.clone(), wasm_extension));
+                } else {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                    })
+                    .ok();
                 }
-
-                let Some(wasm_extension) = wasm_host
-                    .load_extension(
-                        wasm_bytes,
-                        extension.manifest.clone(),
-                        cx.background_executor().clone(),
-                    )
-                    .await
-                    .context("failed to load wasm extension")
-                    .log_err()
-                else {
-                    continue;
-                };
-
-                wasm_extensions.push((extension.manifest.clone(), wasm_extension));
             }
 
             this.update(&mut cx, |this, cx| {

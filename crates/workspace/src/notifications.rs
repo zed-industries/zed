@@ -184,7 +184,7 @@ impl LanguageServerPrompt {
     }
 
     async fn select_option(this: View<Self>, ix: usize, mut cx: AsyncWindowContext) {
-        util::async_maybe!({
+        util::maybe!(async move {
             let potential_future = this.update(&mut cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
             });

@@ -1,6 +1,7 @@
 use crate::{
-    ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionIndexThemeEntry,
-    ExtensionManifest, ExtensionStore, GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION,
+    Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
+    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    RELOAD_DEBOUNCE_DURATION,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
@@ -558,6 +559,15 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         }
     });
 
+    extension_store.update(cx, |_, cx| {
+        cx.subscribe(&extension_store, |_, _, event, _| {
+            if matches!(event, Event::ExtensionFailedToLoad(_)) {
+                panic!("extension failed to load");
+            }
+        })
+        .detach();
+    });
+
     extension_store
         .update(cx, |store, cx| {
             store.install_dev_extension(gleam_extension_dir.clone(), cx)
@@ -602,7 +612,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             ),
             (
                 LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloaded
+                LanguageServerBinaryStatus::None
             )
         ]
     );

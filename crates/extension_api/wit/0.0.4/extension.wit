@@ -38,15 +38,17 @@ world extension {
     }
 
     variant language-server-installation-status {
-        checking-for-update,
-        downloaded,
+        none,
         downloading,
-        cached,
+        checking-for-update,
         failed(string),
     }
 
     /// Gets the current operating system and architecture
     import current-platform: func() -> tuple<os, architecture>;
+
+    /// Get the path to the node binary used by Zed.
+    import node-binary-path: func() -> result<string, string>;
 
     /// Gets the latest version of the given NPM package.
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;

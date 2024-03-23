@@ -16,10 +16,9 @@ use task::{
     TaskVariables,
 };
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 pub struct RustLspAdapter;
@@ -397,7 +396,7 @@ impl ContextProvider for RustContextProvider {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

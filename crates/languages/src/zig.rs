@@ -9,8 +9,8 @@ use lsp::LanguageServerBinary;
 use smol::fs;
 use std::env::consts::{ARCH, OS};
 use std::{any::Any, path::PathBuf};
-use util::async_maybe;
 use util::github::latest_github_release;
+use util::maybe;
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct ZlsAdapter;
@@ -113,7 +113,7 @@ impl LspAdapter for ZlsAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

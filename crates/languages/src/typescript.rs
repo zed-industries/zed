@@ -18,10 +18,9 @@ use std::{
     sync::Arc,
 };
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{build_tarball_url, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -199,7 +198,7 @@ async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
         let new_server_path = container_dir.join(TypeScriptLspAdapter::NEW_SERVER_PATH);
         if new_server_path.exists() {
@@ -378,7 +377,7 @@ async fn get_cached_eslint_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         // This is unfortunate but we don't know what the version is to build a path directly
         let mut dir = fs::read_dir(&container_dir).await?;
         let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
