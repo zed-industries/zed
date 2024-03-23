@@ -17,7 +17,7 @@ use crate::{
     state::{Mode, Operator},
     Vim,
 };
-use collections::HashSet;
+use collections::BTreeSet;
 use editor::scroll::Autoscroll;
 use editor::{Bias, DisplayPoint};
 use gpui::{actions, ViewContext, WindowContext};
@@ -284,7 +284,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
-                let selection_start_rows: HashSet<u32> = old_selections
+                let selection_start_rows: BTreeSet<u32> = old_selections
                     .into_iter()
                     .map(|selection| selection.start.row())
                     .collect();
@@ -318,8 +318,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
-
-                let selection_end_rows: HashSet<u32> = old_selections
+                let selection_end_rows: BTreeSet<u32> = old_selections
                     .into_iter()
                     .map(|selection| selection.end.row())
                     .collect();
