@@ -66,13 +66,7 @@ impl ZedDotDevCompletionProvider {
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         let client = self.client.clone();
         if stdout_is_a_pty() {
-            if client::IMPERSONATE_LOGIN.is_some() {
-                cx.spawn(move |cx| async move { client.authenticate_and_connect(false, &cx).await })
-            } else {
-                Task::ready(Err(anyhow!(
-                    "not authenticated yet, please authenticate first."
-                )))
-            }
+            cx.spawn(move |cx| async move { client.authenticate_and_connect(false, &cx).await })
         } else {
             cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
         }
