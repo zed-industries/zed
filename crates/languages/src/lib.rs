@@ -22,7 +22,6 @@ mod dockerfile;
 mod elixir;
 mod elm;
 mod erlang;
-mod gleam;
 mod go;
 mod haskell;
 mod html;
@@ -82,7 +81,6 @@ pub fn init(
             tree_sitter_embedded_template::language(),
         ),
         ("erlang", tree_sitter_erlang::language()),
-        ("gleam", tree_sitter_gleam::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
@@ -235,8 +233,6 @@ pub fn init(
         }
     }
     language!("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
-
-    language!("gleam", vec![Arc::new(gleam::GleamLspAdapter)]);
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
