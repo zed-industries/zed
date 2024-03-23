@@ -47,8 +47,8 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
-    async_maybe,
     http::{HttpClient, HttpClientWithUrl},
+    maybe,
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt, TryFutureExt,
 };
@@ -455,7 +455,7 @@ async fn installation_id() -> Result<(String, bool)> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppContext) {
-    async_maybe!({
+    maybe!(async {
         if let Some(location) = workspace::last_opened_workspace_paths().await {
             cx.update(|cx| {
                 workspace::open_paths(

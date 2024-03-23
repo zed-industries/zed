@@ -101,7 +101,3 @@ impl Extension {
         }
     }
 }
-
-fn convert_result<T>(result: Result<T>) -> wasmtime::Result<Result<T, String>> {
-    Ok(result.map_err(|error| error.to_string()))
-}

@@ -1228,25 +1228,21 @@ async fn create_room(
 ) -> Result<()> {
     let live_kit_room = nanoid::nanoid!(30);
 
-    let live_kit_connection_info = {
-        let live_kit_room = live_kit_room.clone();
+    let live_kit_connection_info = util::maybe!(async {
         let live_kit = session.live_kit_client.as_ref();
+        let live_kit = live_kit?;
         let user_id = session.user_id().to_string();
 
-        util::async_maybe!({
-            let live_kit = live_kit?;
+        let token = live_kit
+            .room_token(&live_kit_room, &user_id.to_string())
+            .trace_err()?;
 
-            let token = live_kit
-                .room_token(&live_kit_room, &user_id.to_string())
-                .trace_err()?;
-
-            Some(proto::LiveKitConnectionInfo {
-                server_url: live_kit.url().into(),
-                token,
-                can_publish: true,
-            })
+        Some(proto::LiveKitConnectionInfo {
+            server_url: live_kit.url().into(),
+            token,
+            can_publish: true,
         })
-    }
+    })
     .await;
 
     let room = session

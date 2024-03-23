@@ -39,6 +39,7 @@ use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
+    maybe,
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
@@ -887,7 +888,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let wasm_extension = (|| async {
+                let wasm_extension = maybe!(async {
                     let mut path = root_dir.clone();
                     path.extend([extension.manifest.clone().id.as_ref(), "extension.wasm"]);
                     let mut wasm_file = fs
@@ -908,7 +909,7 @@ impl ExtensionStore {
                         )
                         .await
                         .context("failed to load wasm extension")
-                })()
+                })
                 .await;
 
                 if let Some(wasm_extension) = wasm_extension.log_err() {

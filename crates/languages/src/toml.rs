@@ -6,8 +6,8 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf};
-use util::async_maybe;
 use util::github::latest_github_release;
+use util::maybe;
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct TaploLspAdapter;
@@ -108,7 +108,7 @@ impl LspAdapter for TaploLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

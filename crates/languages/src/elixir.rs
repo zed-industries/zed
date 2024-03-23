@@ -20,10 +20,9 @@ use std::{
 };
 use task::static_source::{Definition, TaskDefinitions};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -413,7 +412,7 @@ impl LspAdapter for NextLspAdapter {
 }
 
 async fn get_cached_server_binary_next(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

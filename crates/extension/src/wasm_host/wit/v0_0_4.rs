@@ -1,4 +1,3 @@
-use super::convert_result;
 use crate::wasm_host::WasmState;
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -11,7 +10,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
 };
-use util::{async_maybe, SemanticVersion};
+use util::{maybe, SemanticVersion};
 use wasmtime::component::{Linker, Resource};
 
 pub const VERSION: SemanticVersion = SemanticVersion {
@@ -130,7 +129,7 @@ impl ExtensionImports for WasmState {
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
         convert_result(
-            async_maybe!({
+            maybe!(async {
                 let release = util::github::latest_github_release(
                     &repo,
                     options.require_assets,
@@ -201,7 +200,7 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
-        let result = async_maybe!({
+        let result = maybe!(async {
             let path = PathBuf::from(path);
             let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
 
@@ -278,4 +277,8 @@ impl ExtensionImports for WasmState {
         .await;
         convert_result(result)
     }
+}
+
+fn convert_result<T>(result: Result<T>) -> wasmtime::Result<Result<T, String>> {
+    Ok(result.map_err(|error| error.to_string()))
 }
