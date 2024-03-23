@@ -27,8 +27,7 @@ struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
     font_set_index: usize,
-    // features: FontFeatures,
-    features: Vec<*const DWRITE_TYPOGRAPHIC_FEATURES>,
+    features: Vec<DWRITE_FONT_FEATURE>,
     raw_features: FontFeatures,
 }
 
@@ -307,15 +306,21 @@ impl DirectWriteState {
                     vec![DWRITE_SHAPING_GLYPH_PROPERTIES::default(); list_capacity];
                 let mut glyph_count = 0u32;
 
-                let feature_list = &font_info.features;
-                let feature_length_list = [local_length as u32];
-                let (features, feature_length, feature_ranges) = {
-                    if feature_list.is_empty() {
+                let mut features = font_info.features.clone();
+                let dwrite_feature = DWRITE_TYPOGRAPHIC_FEATURES {
+                    // features: font_info.features.as_ptr() as *mut _,
+                    features: features.as_mut_ptr(),
+                    featureCount: font_info.features.len() as u32,
+                };
+                println!("feature list: {:#?}", font_info.features);
+                let pointer_dwrite_feature = &dwrite_feature as *const DWRITE_TYPOGRAPHIC_FEATURES;
+                let (features, feature_range_length, feature_ranges) = {
+                    if font_info.features.is_empty() {
                         (None, None, 0)
                     } else {
                         (
-                            Some(feature_list.as_ptr()),
-                            Some(feature_length_list.as_ptr()),
+                            Some(&pointer_dwrite_feature as *const _),
+                            Some(&(local_length as u32) as *const _),
                             1,
                         )
                     }
@@ -332,9 +337,9 @@ impl DirectWriteState {
                         locale_string,
                         None,
                         features,
-                        feature_length,
+                        feature_range_length,
                         feature_ranges,
-                        list_capacity as u32, // TODO:
+                        list_capacity as u32,
                         cluster_map.as_mut_ptr(),
                         text_props.as_mut_ptr(),
                         glyph_indeices.as_mut_ptr(),
@@ -366,7 +371,7 @@ impl DirectWriteState {
                         &analysis_result,
                         locale_string,
                         features,
-                        feature_length,
+                        feature_range_length,
                         feature_ranges,
                         glyph_advances.as_mut_ptr(),
                         glyph_offsets.as_mut_ptr(),
@@ -544,13 +549,14 @@ impl DirectWriteState {
         let font_info = &self.fonts[font_id.0];
         let codepoints = [ch as u32];
         let mut glyph_indices = vec![0u16; 1];
-        unsafe {
+        let ret = unsafe {
             font_info
                 .font_face
                 .GetGlyphIndices(codepoints.as_ptr(), 1, glyph_indices.as_mut_ptr())
                 .log_err()
         }
-        .map(|_| GlyphId(glyph_indices[0] as u32))
+        .map(|_| GlyphId(glyph_indices[0] as u32));
+        ret
     }
 
     fn rasterize_glyph(
@@ -697,7 +703,7 @@ impl DirectWriteState {
                     family_name
                         .GetString(locale_name_index, &mut family_name_vec)
                         .unwrap();
-                    String::from_utf16_lossy(&family_name_vec)
+                    String::from_utf16_lossy(&family_name_vec[..family_name_length])
                 };
                 let font_count = font_family.GetFontCount();
                 for font_index in 0..font_count {
@@ -730,11 +736,12 @@ impl DirectWriteState {
                     let locale_font_name = format!(
                         "{} {}",
                         locale_family_name,
-                        String::from_utf16_lossy(&font_name_vec)
+                        String::from_utf16_lossy(&font_name_vec[..font_name_length])
                     );
                     result.push(locale_font_name);
                 }
             }
+            println!("==> All font familys names\n{:#?}", result);
             result
         }
     }
@@ -789,10 +796,11 @@ impl DirectWriteState {
                     family_name
                         .GetString(locale_name_index, &mut family_name_vec)
                         .unwrap();
-                    String::from_utf16_lossy(&family_name_vec)
+                    String::from_utf16_lossy(&family_name_vec[..family_name_length])
                 };
                 result.push(locale_family_name);
             }
+            println!("==> All font familys\n{:#?}", result);
             result
         }
     }
@@ -1025,180 +1033,202 @@ impl IDWriteTextAnalysisSink_Impl for AnalysisSink {
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
-fn direct_write_features(features: &FontFeatures) -> Vec<*const DWRITE_TYPOGRAPHIC_FEATURES> {
-    let mut result = Vec::new();
+fn direct_write_features(features: &FontFeatures) -> Vec<DWRITE_FONT_FEATURE> {
+    let mut feature_list = Vec::new();
+    // All of these features are enabled by default by DirectWrite.
+    // If you want to (and can) peek into the source of DirectWrite
+    // fontFeatures.emplace_back(DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES, 1);
+    // fontFeatures.emplace_back(DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_LIGATURES, 1);
+    // fontFeatures.emplace_back(DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES, 1);
+    // https://github.com/microsoft/terminal/blob/5b8e731e5d64eafc1df5bd0467d4df82028fd13a/src/renderer/atlas/AtlasEngine.api.cpp#L533
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES,
         features.calt(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_CASE_SENSITIVE_FORMS,
         features.case(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_CAPITAL_SPACING,
         features.cpsp(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_FRACTIONS,
         features.frac(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES,
         features.liga(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_LINING_FIGURES,
         features.onum(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_ORDINALS,
         features.ordn(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_PROPORTIONAL_FIGURES,
         features.pnum(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_1,
         features.ss01(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_2,
         features.ss02(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_3,
         features.ss03(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_4,
         features.ss04(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_5,
         features.ss05(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_6,
         features.ss06(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_7,
         features.ss07(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_8,
         features.ss08(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_9,
         features.ss09(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_10,
         features.ss10(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_11,
         features.ss11(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_12,
         features.ss12(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_13,
         features.ss13(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_14,
         features.ss14(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_15,
         features.ss15(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_16,
         features.ss16(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_17,
         features.ss17(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_18,
         features.ss18(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_19,
         features.ss19(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_20,
         features.ss20(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_SUBSCRIPT,
         features.subs(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_SUPERSCRIPT,
         features.sups(),
     );
-    add_feature(&mut result, DWRITE_FONT_FEATURE_TAG_SWASH, features.swsh());
     add_feature(
-        &mut result,
+        &mut feature_list,
+        DWRITE_FONT_FEATURE_TAG_SWASH,
+        features.swsh(),
+    );
+    add_feature(
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_TITLING,
         features.titl(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES,
         features.tnum(),
     );
     add_feature(
-        &mut result,
+        &mut feature_list,
         DWRITE_FONT_FEATURE_TAG_SLASHED_ZERO,
         features.zero(),
     );
 
-    result
+    let cv01 = DWRITE_FONT_FEATURE {
+        nameTag: make_tag("cv01"),
+        parameter: 1,
+    };
+    feature_list.push(cv01);
+
+    let cv02 = DWRITE_FONT_FEATURE {
+        nameTag: make_tag("cv02"),
+        parameter: 1,
+    };
+    feature_list.push(cv02);
+
+    feature_list
 }
 
 fn add_feature(
-    feature_list: &mut Vec<*const DWRITE_TYPOGRAPHIC_FEATURES>,
+    feature_list: &mut Vec<DWRITE_FONT_FEATURE>,
     feature: DWRITE_FONT_FEATURE_TAG,
     enable: Option<bool>,
 ) {
@@ -1206,19 +1236,26 @@ fn add_feature(
         return;
     };
     let font_feature = if enable {
-        Arc::new(DWRITE_FONT_FEATURE {
+        DWRITE_FONT_FEATURE {
             nameTag: feature,
             parameter: 1,
-        })
+        }
     } else {
-        Arc::new(DWRITE_FONT_FEATURE {
+        DWRITE_FONT_FEATURE {
             nameTag: feature,
             parameter: 0,
-        })
+        }
     };
-    let result = Arc::new(DWRITE_TYPOGRAPHIC_FEATURES {
-        features: Arc::into_raw(font_feature) as _,
-        featureCount: 1,
-    });
-    feature_list.push(Arc::into_raw(result));
+    feature_list.push(font_feature);
+}
+
+fn make_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
+    assert_eq!(tag_name.chars().count(), 4);
+    let bytes = tag_name.bytes().collect_vec();
+    let result = ((bytes[3] as u32) << 24)
+        | ((bytes[2] as u32) << 16)
+        | ((bytes[1] as u32) << 8)
+        | (bytes[0] as u32);
+
+    DWRITE_FONT_FEATURE_TAG(result)
 }
