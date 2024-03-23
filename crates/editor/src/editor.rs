@@ -127,7 +127,7 @@ use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{TabBarPlacement, TabsSettings},
     searchable::SearchEvent,
-    ItemNavHistory, Pane, SplitDirection, Toast, ViewId, Workspace, WorkspaceId,
+    ItemNavHistory, SplitDirection, Toast, ViewId, Workspace, WorkspaceId,
 };
 
 use crate::hover_links::find_url;

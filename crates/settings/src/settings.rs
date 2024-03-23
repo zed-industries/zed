@@ -9,7 +9,6 @@ use util::asset_str;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{Settings, SettingsJsonSchemaParams, SettingsLocation, SettingsStore};
-pub use tab_bar::TabBarPlacement;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]

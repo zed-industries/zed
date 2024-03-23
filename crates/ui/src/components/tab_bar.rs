@@ -106,8 +106,6 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        const HEIGHT_IN_REMS: f32 = 29. / 16.;
-
         let placement_top = self.placement == TabBarPlacement::Top;
         let placement_bottom = self.placement == TabBarPlacement::Bottom;
 
