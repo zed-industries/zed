@@ -2188,6 +2188,7 @@ impl EditorElement {
                 ));
                 let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
                 let is_singleton = self.editor.read(cx).is_singleton(cx);
+                let mut markers_counter = 0;
 
                 if is_singleton && scrollbar_settings.selections {
                     let row_ranges =
@@ -2196,7 +2197,13 @@ impl EditorElement {
                         row_ranges,
                         cx.theme().status().info,
                     ));
-                    Self::paint_scrollbar_markers(ranges_iter, 1, scrollbar_layout, cx);
+                    Self::paint_scrollbar_markers(
+                        ranges_iter,
+                        1,
+                        scrollbar_layout,
+                        &mut markers_counter,
+                        cx,
+                    );
                 }
 
                 if is_singleton && scrollbar_settings.symbols_selections {
@@ -2209,7 +2216,13 @@ impl EditorElement {
                         row_ranges,
                         cx.theme().status().info,
                     ));
-                    Self::paint_scrollbar_markers(ranges_iter, 1, scrollbar_layout, cx);
+                    Self::paint_scrollbar_markers(
+                        ranges_iter,
+                        1,
+                        scrollbar_layout,
+                        &mut markers_counter,
+                        cx,
+                    );
                 }
 
                 if is_singleton && scrollbar_settings.git_diff {
@@ -2225,7 +2238,13 @@ impl EditorElement {
                         }),
                         cx.theme().clone(),
                     ));
-                    Self::paint_scrollbar_markers(ranges_iter, 0, scrollbar_layout, cx);
+                    Self::paint_scrollbar_markers(
+                        ranges_iter,
+                        0,
+                        scrollbar_layout,
+                        &mut markers_counter,
+                        cx,
+                    );
                 }
 
                 if is_singleton && scrollbar_settings.diagnostics {
@@ -2251,7 +2270,13 @@ impl EditorElement {
                         }),
                         cx.theme().clone(),
                     ));
-                    Self::paint_scrollbar_markers(ranges_iter, 2, scrollbar_layout, cx);
+                    Self::paint_scrollbar_markers(
+                        ranges_iter,
+                        2,
+                        scrollbar_layout,
+                        &mut markers_counter,
+                        cx,
+                    );
                 }
 
                 cx.paint_quad(quad(
@@ -2581,8 +2606,10 @@ impl EditorElement {
         row_ranges: Box<dyn Iterator<Item = MarkedRowRange> + 'a>,
         column: usize,
         scrollbar_layout: &ScrollbarLayout,
+        markers_counter: &mut usize,
         cx: &mut ElementContext,
     ) {
+        const MARKERS_LIMIT: usize = 5000;
         let x_range = Self::scrollbar_column_x_range(column, scrollbar_layout);
         let mut marker: Option<Marker> = None;
         for range in row_ranges {
@@ -2595,11 +2622,16 @@ impl EditorElement {
             if current_marker.try_merge(&range_marker) {
                 continue;
             }
+            *markers_counter += 1;
+            if *markers_counter > MARKERS_LIMIT {
+                return;
+            }
             current_marker.paint(&x_range, cx);
             marker = Some(range_marker);
         }
         if let Some(current_marker) = marker.take() {
             current_marker.paint(&x_range, cx);
+            *markers_counter += 1;
         }
     }
 
