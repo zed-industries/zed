@@ -6,7 +6,8 @@ use crate::{
     Vim,
 };
 use editor::{
-    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, DisplayPoint,
+    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, Bias,
+    DisplayPoint,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
@@ -53,7 +54,22 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                 });
             });
             copy_selections_content(vim, editor, motion.linewise(), cx);
-            editor.insert("", cx);
+
+            let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+            let mut edits = Vec::new();
+            for selection in &selections {
+                let mut insert = "".to_string();
+                let offset_range = selection
+                    .map(|p| p.to_offset(&display_map, Bias::Left))
+                    .range();
+
+                if motion == Motion::CurrentLine {
+                    let (indent, _) = display_map.line_indent(selection.start.row());
+                    insert.push_str(&" ".repeat(indent as usize));
+                }
+                edits.push((offset_range, insert));
+            }
+            editor.edit(edits, cx);
         });
     });
 
@@ -394,6 +410,40 @@ mod test {
             jumps over
             ˇ"},
             ["c", "shift-g"],
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_change_cc(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+           The quick
+             brownˇ fox
+           jumps over
+           the lazy"},
+            ["c", "c"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
+           ˇThe quick
+           brown fox
+           jumps over
+           the lazy"},
+            ["c", "c"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
+           The quick
+             broˇwn fox
+           jumˇps over
+           the lazy"},
+            ["c", "c"],
         )
         .await;
     }
