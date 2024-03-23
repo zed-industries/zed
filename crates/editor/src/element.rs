@@ -10,7 +10,12 @@ use crate::{
     },
     items::BufferSearchHighlights,
     mouse_context_menu,
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{
+        markers::{
+            DiagnosticRangesIter, DiffHunkRangesIter, MarkedRowRange, Marker, SameColorRangesIter,
+        },
+        scroll_amount::ScrollAmount,
+    },
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
     HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
@@ -30,7 +35,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
-use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -2184,25 +2188,15 @@ impl EditorElement {
                 ));
                 let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
                 let is_singleton = self.editor.read(cx).is_singleton(cx);
-                let left = scrollbar_layout.hitbox.left();
-                let right = scrollbar_layout.hitbox.right();
-                let column_width =
-                    px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
 
                 if is_singleton && scrollbar_settings.selections {
                     let row_ranges =
                         self.retrieve_marked_row_ranges::<BufferSearchHighlights>(layout, cx);
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    let color = cx.theme().status().info;
-                    Self::paint_scrollbar_markers(
-                        Box::new(row_ranges.into_iter()),
-                        left_x,
-                        right_x,
-                        color,
-                        scrollbar_layout,
-                        cx,
-                    );
+                    let ranges_iter = Box::new(SameColorRangesIter::new(
+                        row_ranges,
+                        cx.theme().status().info,
+                    ));
+                    Self::paint_scrollbar_markers(ranges_iter, 1, scrollbar_layout, cx);
                 }
 
                 if is_singleton && scrollbar_settings.symbols_selections {
@@ -2211,48 +2205,27 @@ impl EditorElement {
                     row_ranges.extend(
                         self.retrieve_marked_row_ranges::<DocumentHighlightWrite>(layout, cx),
                     );
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    let color = cx.theme().status().info;
-                    Self::paint_scrollbar_markers(
-                        Box::new(row_ranges.into_iter()),
-                        left_x,
-                        right_x,
-                        color,
-                        scrollbar_layout,
-                        cx,
-                    );
+                    let ranges_iter = Box::new(SameColorRangesIter::new(
+                        row_ranges,
+                        cx.theme().status().info,
+                    ));
+                    Self::paint_scrollbar_markers(ranges_iter, 1, scrollbar_layout, cx);
                 }
 
                 if is_singleton && scrollbar_settings.git_diff {
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH;
-                    let right_x = left_x + column_width;
-                    for hunk in layout
+                    let diff_hunks = layout
                         .position_map
                         .snapshot
                         .buffer_snapshot
-                        .git_diff_hunks_in_range(0..layout.max_row)
-                    {
-                        let start_display_row = Point::new(hunk.associated_range.start, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot)
-                            .row();
-                        let mut end_display_row = Point::new(hunk.associated_range.end, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot)
-                            .row();
-                        if end_display_row != start_display_row {
-                            end_display_row -= 1;
-                        }
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display_row, end_display_row);
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
-                        let color = match hunk.status() {
-                            DiffHunkStatus::Added => cx.theme().status().created,
-                            DiffHunkStatus::Modified => cx.theme().status().modified,
-                            DiffHunkStatus::Removed => cx.theme().status().deleted,
-                        };
-                        cx.paint_quad(fill(bounds, color));
-                    }
+                        .git_diff_hunks_in_range(0..layout.max_row);
+                    let ranges_iter = Box::new(DiffHunkRangesIter::new(
+                        Box::new(diff_hunks),
+                        Box::new(|point: Point| {
+                            point.to_display_point(&layout.position_map.snapshot.display_snapshot)
+                        }),
+                        cx.theme().clone(),
+                    ));
+                    Self::paint_scrollbar_markers(ranges_iter, 0, scrollbar_layout, cx);
                 }
 
                 if is_singleton && scrollbar_settings.diagnostics {
@@ -2262,7 +2235,6 @@ impl EditorElement {
                         .display_snapshot
                         .buffer_snapshot
                         .max_point();
-
                     let diagnostics = layout
                         .position_map
                         .snapshot
@@ -2272,29 +2244,14 @@ impl EditorElement {
                         .sorted_by_key(|diagnostic| {
                             std::cmp::Reverse(diagnostic.diagnostic.severity)
                         });
-
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + 2.0 * column_width;
-                    for diagnostic in diagnostics {
-                        let start_display = diagnostic
-                            .range
-                            .start
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = diagnostic
-                            .range
-                            .end
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right, end_y));
-                        let color = match diagnostic.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => cx.theme().status().error,
-                            DiagnosticSeverity::WARNING => cx.theme().status().warning,
-                            DiagnosticSeverity::INFORMATION => cx.theme().status().info,
-                            _ => cx.theme().status().hint,
-                        };
-                        cx.paint_quad(fill(bounds, color));
-                    }
+                    let ranges_iter = Box::new(DiagnosticRangesIter::new(
+                        Box::new(diagnostics),
+                        Box::new(|point: Point| {
+                            point.to_display_point(&layout.position_map.snapshot.display_snapshot)
+                        }),
+                        cx.theme().clone(),
+                    ));
+                    Self::paint_scrollbar_markers(ranges_iter, 2, scrollbar_layout, cx);
                 }
 
                 cx.paint_quad(quad(
@@ -2620,40 +2577,29 @@ impl EditorElement {
         });
     }
 
-    fn paint_scrollbar_markers(
-        row_ranges: Box<dyn Iterator<Item = Range<u32>>>,
-        left_x: Pixels,
-        right_x: Pixels,
-        color: impl Into<Hsla> + Copy,
+    fn paint_scrollbar_markers<'a>(
+        row_ranges: Box<dyn Iterator<Item = MarkedRowRange> + 'a>,
+        column: usize,
         scrollbar_layout: &ScrollbarLayout,
         cx: &mut ElementContext,
     ) {
-        let mut hunk: Option<Range<Pixels>> = None;
+        let x_range = Self::scrollbar_column_x_range(column, scrollbar_layout);
+        let mut marker: Option<Marker> = None;
         for range in row_ranges {
             let (start, end) = scrollbar_layout.ys_for_marker(range.start, range.end);
-            let Some(ref current_hunk) = hunk else {
-                hunk = Some(Range { start, end });
+            let range_marker = Marker::new(start, end, range.color);
+            let Some(ref mut current_marker) = marker else {
+                marker = Some(range_marker);
                 continue;
             };
-            if start >= current_hunk.start && start <= current_hunk.end {
-                if end > current_hunk.end {
-                    hunk = Some(Range {
-                        start: current_hunk.start,
-                        end,
-                    });
-                }
+            if current_marker.try_merge(&range_marker) {
                 continue;
             }
-            let bounds = Bounds::from_corners(
-                point(left_x, current_hunk.start),
-                point(right_x, current_hunk.end),
-            );
-            cx.paint_quad(fill(bounds, color));
-            hunk = Some(Range { start, end });
+            current_marker.paint(&x_range, cx);
+            marker = Some(range_marker);
         }
-        if let Some(hunk) = hunk.take() {
-            let bounds = Bounds::from_corners(point(left_x, hunk.start), point(right_x, hunk.end));
-            cx.paint_quad(fill(bounds, color));
+        if let Some(current_marker) = marker.take() {
+            current_marker.paint(&x_range, cx);
         }
     }
 
@@ -2686,6 +2632,24 @@ impl EditorElement {
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
+    }
+
+    fn scrollbar_column_x_range(
+        column: usize,
+        scrollbar_layout: &ScrollbarLayout,
+    ) -> Range<Pixels> {
+        const COLUMNS: usize = 3;
+        let left = scrollbar_layout.hitbox.left();
+        let right = scrollbar_layout.hitbox.right();
+        let column_width =
+            px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / COLUMNS as f32).floor());
+        let start = left + ScrollbarLayout::BORDER_WIDTH + (column as f32) * column_width;
+        let end = if column == COLUMNS - 1 {
+            right
+        } else {
+            start + column_width
+        };
+        Range { start, end }
     }
 
     fn retrieve_marked_row_ranges<T: 'static>(

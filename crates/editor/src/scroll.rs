@@ -1,5 +1,6 @@
 mod actions;
 pub(crate) mod autoscroll;
+pub(crate) mod markers;
 pub(crate) mod scroll_amount;
 
 use crate::{
