@@ -1,11 +1,9 @@
-use std::{
-    arch::x86_64::CpuidResult, borrow::Cow, cell::Cell, fmt::Debug, mem::ManuallyDrop, sync::Arc,
-};
+use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use util::ResultExt;
 use windows::{
@@ -18,9 +16,8 @@ use windows::{
 };
 
 use crate::{
-    px, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlobalPixels,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, ShapedGlyph,
-    ShapedRun, SharedString, Size,
+    px, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
+    LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, ShapedGlyph, ShapedRun, Size,
 };
 
 struct FontInfo {
@@ -117,7 +114,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let font_id = lock.select_font(font).unwrap();
             lock.font_selections.insert(font.clone(), font_id);
-            println!("Get font id: {:#?}", font_id);
             Ok(font_id)
         }
     }
@@ -171,11 +167,9 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 
 impl DirectWriteState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        println!("Adding fonts");
         for font_data in fonts {
             match font_data {
                 Cow::Borrowed(data) => unsafe {
-                    println!("Add borrowed font");
                     let font_file = self
                         .components
                         .in_memory_loader
@@ -188,7 +182,6 @@ impl DirectWriteState {
                     self.components.builder.AddFontFile(&font_file)?;
                 },
                 Cow::Owned(data) => unsafe {
-                    println!("Add owned font");
                     let font_file = self
                         .components
                         .in_memory_loader
@@ -211,11 +204,6 @@ impl DirectWriteState {
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
             for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
-                println!(
-                    "Checking fontsets: {}/{}",
-                    fontset_index + 1,
-                    self.font_sets.len()
-                );
                 let font = fontset
                     .GetMatchingFonts(
                         &HSTRING::from(target_font.family.to_string()),
@@ -227,12 +215,8 @@ impl DirectWriteState {
                     .unwrap();
                 let total_number = font.GetFontCount();
                 for sub_index in 0..total_number {
-                    println!("   Checking sub fonts: {}/{}", sub_index + 1, total_number);
                     let font_face_ref = font.GetFontFaceReference(0).unwrap();
-                    let Ok(font_face) = font_face_ref
-                        .CreateFontFace()
-                        .inspect_err(|e| println!("        Error: {}", e))
-                    else {
+                    let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
                         continue;
                     };
                     let font_info = FontInfo {
@@ -266,25 +250,16 @@ impl DirectWriteState {
             let mut shaped_runs_vec = Vec::new();
             let mut glyph_position = 0.0f32;
             let text_wide = text.encode_utf16().collect_vec();
-            println!(
-                "==> text: {}, raw: {:?}, raw_wide: {:?}",
-                text,
-                text.as_bytes(),
-                text_wide
-            );
             let mut ascent = 0.0f32;
             let mut descent = 0.0f32;
             for run in font_runs {
-                println!("fontrun: {:?}", run);
                 let run_len = run.len;
                 if run_len == 0 {
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
                 let local_str = &text[offset..(offset + run_len)];
-                println!("text: {}, with {}", local_str, font_info.font_family);
                 let local_wide = local_str.encode_utf16().collect_vec();
-                // let local_wide = text_wide[offset..(offset + run_len)].to_vec();
                 let local_length = local_wide.len();
                 let local_wstring = PCWSTR::from_raw(local_wide.as_ptr());
                 let analysis = Analysis::new(
@@ -295,7 +270,7 @@ impl DirectWriteState {
 
                 let Some(analysis_result) = analysis.generate_result(&self.components.analyzer)
                 else {
-                    println!("None analysis result");
+                    log::error!("None analysis result");
                     continue;
                 };
                 let list_capacity = local_length * 2;
@@ -312,7 +287,6 @@ impl DirectWriteState {
                     features: features.as_mut_ptr(),
                     featureCount: font_info.features.len() as u32,
                 };
-                println!("feature list: {:#?}", font_info.features);
                 let pointer_dwrite_feature = &dwrite_feature as *const DWRITE_TYPOGRAPHIC_FEATURES;
                 let (features, feature_range_length, feature_ranges) = {
                     if font_info.features.is_empty() {
@@ -480,7 +454,7 @@ impl DirectWriteState {
                     },
                 },
             };
-            println!("Font metrics: {:#?}", res);
+
             res
         }
     }
@@ -694,7 +668,6 @@ impl DirectWriteState {
                             .unwrap();
                     }
                     if !exists.as_bool() {
-                        println!("Can this happen?");
                         continue;
                     }
                     let family_name_length =
@@ -724,7 +697,6 @@ impl DirectWriteState {
                             .unwrap();
                     }
                     if !exists.as_bool() {
-                        println!("Can this happen?");
                         continue;
                     }
                     let font_name_length =
@@ -741,7 +713,7 @@ impl DirectWriteState {
                     result.push(locale_font_name);
                 }
             }
-            println!("==> All font familys names\n{:#?}", result);
+
             result
         }
     }
@@ -787,7 +759,6 @@ impl DirectWriteState {
                             .unwrap();
                     }
                     if !exists.as_bool() {
-                        println!("Can this happen?");
                         continue;
                     }
                     let family_name_length =
@@ -800,7 +771,7 @@ impl DirectWriteState {
                 };
                 result.push(locale_family_name);
             }
-            println!("==> All font familys\n{:#?}", result);
+
             result
         }
     }
