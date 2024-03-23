@@ -124,9 +124,12 @@ impl X11Client {
         client
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<Rc<X11WindowState>> {
+    fn get_window(&self, win: xproto::Window) -> Option<X11Window> {
         let state = self.state.borrow();
-        state.windows.get(&win).map(|wr| Rc::clone(&wr.state))
+        state
+            .windows
+            .get(&win)
+            .map(|wr| X11Window(Rc::clone(&wr.state)))
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
@@ -164,19 +167,19 @@ impl X11Client {
                     },
                 };
                 let window = self.get_window(event.window)?;
-                window.configure(bounds);
+                window.0.configure(bounds);
             }
             Event::Expose(event) => {
                 let window = self.get_window(event.window)?;
-                window.refresh();
+                window.0.refresh();
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(true);
+                window.0.set_focused(true);
             }
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(false);
+                window.0.set_focused(false);
             }
             Event::KeyPress(event) => {
                 let window = self.get_window(event.event)?;
@@ -189,10 +192,12 @@ impl X11Client {
                     keystroke
                 };
 
-                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                    keystroke,
-                    is_held: false,
-                }));
+                window
+                    .0
+                    .handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                        keystroke,
+                        is_held: false,
+                    }));
             }
             Event::KeyRelease(event) => {
                 let window = self.get_window(event.event)?;
@@ -205,30 +210,37 @@ impl X11Client {
                     keystroke
                 };
 
-                window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
+                window
+                    .0
+                    .handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
             Event::ButtonPress(event) => {
                 let window = self.get_window(event.event)?;
                 let modifiers = super::modifiers_from_state(event.state);
                 let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into())
+                        / window.scale_factor();
                 if let Some(button) = super::button_of_key(event.detail) {
-                    window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
-                        button,
-                        position,
-                        modifiers,
-                        click_count: 1,
-                    }));
+                    window
+                        .0
+                        .handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: 1,
+                        }));
                 } else if event.detail >= 4 && event.detail <= 5 {
                     // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
                     let scroll_direction = if event.detail == 4 { 1.0 } else { -1.0 };
                     let scroll_y = SCROLL_LINES * scroll_direction;
-                    window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                        position,
-                        delta: ScrollDelta::Lines(Point::new(0.0, scroll_y as f32)),
-                        modifiers,
-                        touch_phase: TouchPhase::Moved,
-                    }));
+                    window
+                        .0
+                        .handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Lines(Point::new(0.0, scroll_y as f32)),
+                            modifiers,
+                            touch_phase: TouchPhase::Moved,
+                        }));
                 } else {
                     log::warn!("Unknown button press: {event:?}");
                 }
@@ -237,39 +249,48 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 let modifiers = super::modifiers_from_state(event.state);
                 let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into())
+                        / window.scale_factor();
                 if let Some(button) = super::button_of_key(event.detail) {
-                    window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
-                        button,
-                        position,
-                        modifiers,
-                        click_count: 1,
-                    }));
+                    window
+                        .0
+                        .handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                            button,
+                            position,
+                            modifiers,
+                            click_count: 1,
+                        }));
                 }
             }
             Event::MotionNotify(event) => {
                 let window = self.get_window(event.event)?;
                 let pressed_button = super::button_from_state(event.state);
                 let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into())
+                        / window.scale_factor();
                 let modifiers = super::modifiers_from_state(event.state);
-                window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
-                    pressed_button,
-                    position,
-                    modifiers,
-                }));
+                window
+                    .0
+                    .handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
             }
             Event::LeaveNotify(event) => {
                 let window = self.get_window(event.event)?;
                 let pressed_button = super::button_from_state(event.state);
                 let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into())
+                        / window.scale_factor();
                 let modifiers = super::modifiers_from_state(event.state);
-                window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
-                    pressed_button,
-                    position,
-                    modifiers,
-                }));
+                window
+                    .0
+                    .handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
+                        pressed_button,
+                        position,
+                        modifiers,
+                    }));
             }
             _ => {}
         };
@@ -403,7 +424,7 @@ impl Client for X11Client {
     }
 }
 
-// Adatpted from:
+// Adapted from:
 // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
 pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
