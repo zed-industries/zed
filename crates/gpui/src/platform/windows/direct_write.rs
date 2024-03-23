@@ -1037,212 +1037,30 @@ fn direct_write_features(features: &FontFeatures) -> Vec<DWRITE_FONT_FEATURE> {
     let mut feature_list = Vec::new();
     // All of these features are enabled by default by DirectWrite.
     // If you want to (and can) peek into the source of DirectWrite
-    // fontFeatures.emplace_back(DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES, 1);
-    // fontFeatures.emplace_back(DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_LIGATURES, 1);
-    // fontFeatures.emplace_back(DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES, 1);
-    // https://github.com/microsoft/terminal/blob/5b8e731e5d64eafc1df5bd0467d4df82028fd13a/src/renderer/atlas/AtlasEngine.api.cpp#L533
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES,
-        features.calt(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_CASE_SENSITIVE_FORMS,
-        features.case(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_CAPITAL_SPACING,
-        features.cpsp(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_FRACTIONS,
-        features.frac(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES,
-        features.liga(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_LINING_FIGURES,
-        features.onum(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_ORDINALS,
-        features.ordn(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_PROPORTIONAL_FIGURES,
-        features.pnum(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_1,
-        features.ss01(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_2,
-        features.ss02(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_3,
-        features.ss03(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_4,
-        features.ss04(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_5,
-        features.ss05(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_6,
-        features.ss06(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_7,
-        features.ss07(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_8,
-        features.ss08(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_9,
-        features.ss09(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_10,
-        features.ss10(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_11,
-        features.ss11(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_12,
-        features.ss12(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_13,
-        features.ss13(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_14,
-        features.ss14(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_15,
-        features.ss15(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_16,
-        features.ss16(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_17,
-        features.ss17(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_18,
-        features.ss18(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_19,
-        features.ss19(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_20,
-        features.ss20(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_SUBSCRIPT,
-        features.subs(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_SUPERSCRIPT,
-        features.sups(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_SWASH,
-        features.swsh(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_TITLING,
-        features.titl(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES,
-        features.tnum(),
-    );
-    add_feature(
-        &mut feature_list,
-        DWRITE_FONT_FEATURE_TAG_SLASHED_ZERO,
-        features.zero(),
-    );
+    add_feature(&mut feature_list, "liga", true);
+    add_feature(&mut feature_list, "clig", true);
+    add_feature(&mut feature_list, "calt", true);
 
-    let cv01 = DWRITE_FONT_FEATURE {
-        nameTag: make_tag("cv01"),
-        parameter: 1,
-    };
-    feature_list.push(cv01);
-
-    let cv02 = DWRITE_FONT_FEATURE {
-        nameTag: make_tag("cv02"),
-        parameter: 1,
-    };
-    feature_list.push(cv02);
+    for (tag, enable) in features.tag_value_list() {
+        if tag == "liga".to_string() || tag == "calt".to_string() {
+            continue;
+        }
+        add_feature(&mut feature_list, &tag, enable);
+    }
 
     feature_list
 }
 
-fn add_feature(
-    feature_list: &mut Vec<DWRITE_FONT_FEATURE>,
-    feature: DWRITE_FONT_FEATURE_TAG,
-    enable: Option<bool>,
-) {
-    let Some(enable) = enable else {
-        return;
-    };
+fn add_feature(feature_list: &mut Vec<DWRITE_FONT_FEATURE>, feature_name: &str, enable: bool) {
+    let tag = make_tag(feature_name);
     let font_feature = if enable {
         DWRITE_FONT_FEATURE {
-            nameTag: feature,
+            nameTag: tag,
             parameter: 1,
         }
     } else {
         DWRITE_FONT_FEATURE {
-            nameTag: feature,
+            nameTag: tag,
             parameter: 0,
         }
     };

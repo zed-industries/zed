@@ -26,6 +26,28 @@ macro_rules! create_definitions {
                     }
                 }
             )*
+
+            /// Get the tag name list of the font OpenType features
+            /// only enabled or disabled features are returned
+            pub fn tag_value_list(&self) -> Vec<(String, bool)> {
+                let mut result = Vec::new();
+                $(
+                    {
+                        let value = if (self.enabled & (1 << $idx)) != 0 {
+                            Some(true)
+                        } else if (self.disabled & (1 << $idx)) != 0 {
+                            Some(false)
+                        } else {
+                            None
+                        };
+                        if let Some(enable) = value {
+                            let tag_name = stringify!($name).to_string();
+                            result.push((tag_name, enable));
+                        }
+                    }
+                )*
+                result
+            }
         }
 
         impl std::fmt::Debug for FontFeatures {
@@ -94,9 +116,11 @@ macro_rules! create_definitions {
                 let mut map = serializer.serialize_map(None)?;
 
                 $(
-                    let feature = stringify!($name);
-                    if let Some(value) = self.$name() {
-                        map.serialize_entry(feature, &value)?;
+                    {
+                        let feature = stringify!($name);
+                        if let Some(value) = self.$name() {
+                            map.serialize_entry(feature, &value)?;
+                        }
                     }
                 )*
 
@@ -161,5 +185,11 @@ create_definitions!(
     (swsh, 30),
     (titl, 31),
     (tnum, 32),
-    (zero, 33)
+    (zero, 33),
+    (cv01, 34),
+    (cv02, 35),
+    (cv03, 36),
+    (cv04, 37),
+    (cv05, 38),
+    (cv06, 39)
 );
