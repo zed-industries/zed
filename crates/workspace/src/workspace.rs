@@ -26,7 +26,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
     EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
@@ -127,6 +127,7 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleBottomDock,
+        ToggleCenteredLayout,
         CloseAllDocks,
     ]
 );
@@ -562,6 +563,7 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
+    centered_layout: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -663,16 +665,14 @@ impl Workspace {
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = cx.new_view(|cx| {
-            let mut pane = Pane::new(
+            Pane::new(
                 weak_handle.clone(),
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
                 cx,
-            );
-            pane.set_centered_layout(true);
-            pane
+            )
         });
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
 
@@ -836,6 +836,7 @@ impl Workspace {
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
+            centered_layout: false,
         }
     }
 
@@ -1937,16 +1938,14 @@ impl Workspace {
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
         let pane = cx.new_view(|cx| {
-            let mut pane = Pane::new(
+            Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
                 cx,
-            );
-            pane.set_centered_layout(true);
-            pane
+            )
         });
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         self.panes.push(pane.clone());
@@ -3684,6 +3683,7 @@ impl Workspace {
                     workspace.reopen_closed_item(cx).detach();
                 }),
             )
+            .on_action(cx.listener(Workspace::toggle_centered_layout))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3751,6 +3751,11 @@ impl Workspace {
     {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
+    }
+
+    pub fn toggle_centered_layout(&mut self, _: &ToggleCenteredLayout, cx: &mut ViewContext<Self>) {
+        self.centered_layout = !self.centered_layout;
+        cx.notify();
     }
 }
 
@@ -3894,6 +3899,11 @@ impl Render for Workspace {
         let mut context = KeyContext::default();
         context.add("Workspace");
 
+        let center_pane_width = if self.centered_layout && self.center.panes().len() == 1 {
+            0.6
+        } else {
+            1.0
+        };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
             (
@@ -3986,15 +3996,22 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .child(self.center.render(
-                                        &self.project,
-                                        &self.follower_states,
-                                        self.active_call(),
-                                        &self.active_pane,
-                                        self.zoomed.as_ref(),
-                                        &self.app_state,
-                                        cx,
-                                    ))
+                                    .bg(cx.theme().styles.colors.editor_background)
+                                    .child(
+                                        div()
+                                            .w(relative(center_pane_width))
+                                            .h_full()
+                                            .mx_auto()
+                                            .child(self.center.render(
+                                                &self.project,
+                                                &self.follower_states,
+                                                self.active_call(),
+                                                &self.active_pane,
+                                                self.zoomed.as_ref(),
+                                                &self.app_state,
+                                                cx,
+                                            )),
+                                    )
                                     .children(
                                         self.zoomed_position
                                             .ne(&Some(DockPosition::Bottom))
