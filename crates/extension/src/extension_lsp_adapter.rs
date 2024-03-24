@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use wasmtime_wasi::preview2::WasiView as _;
+use wasmtime_wasi::WasiView as _;
 
 pub struct ExtensionLspAdapter {
     pub(crate) extension: WasmExtension,

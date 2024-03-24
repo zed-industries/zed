@@ -205,7 +205,7 @@ impl ActivityIndicator {
                 }
                 LanguageServerBinaryStatus::Downloading => downloading.push(status.name.0.as_ref()),
                 LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.0.as_ref()),
-                LanguageServerBinaryStatus::Downloaded | LanguageServerBinaryStatus::Cached => {}
+                LanguageServerBinaryStatus::None => {}
             }
         }
 

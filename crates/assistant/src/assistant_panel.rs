@@ -55,6 +55,11 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, cx| {
+                    let settings = AssistantSettings::get_global(cx);
+                    if !settings.enabled {
+                        return;
+                    }
+
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
                 .register_action(AssistantPanel::inline_assist)
@@ -229,6 +234,11 @@ impl AssistantPanel {
         _: &InlineAssist,
         cx: &mut ViewContext<Workspace>,
     ) {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled {
+            return;
+        }
+
         let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
@@ -1217,7 +1227,12 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Ai).filter(|_| AssistantSettings::get_global(cx).button)
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled || !settings.button {
+            return None;
+        }
+
+        Some(IconName::Ai)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

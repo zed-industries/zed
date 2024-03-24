@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{async_maybe, paths, ResultExt};
+use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
@@ -52,7 +52,7 @@ impl JsonLspAdapter {
             },
             cx,
         );
-        let tasks_schema = task::static_source::DefinitionProvider::generate_json_schema();
+        let tasks_schema = task::static_source::TaskDefinitions::generate_json_schema();
         serde_json::json!({
             "json": {
                 "format": {
@@ -167,7 +167,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

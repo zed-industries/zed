@@ -9,10 +9,6 @@ impl GleamExtension {
     fn language_server_binary_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                zed::set_language_server_installation_status(
-                    &config.name,
-                    &zed::LanguageServerInstallationStatus::Cached,
-                );
                 return Ok(path.clone());
             }
         }
@@ -75,11 +71,6 @@ impl GleamExtension {
                     fs::remove_dir_all(&entry.path()).ok();
                 }
             }
-
-            zed::set_language_server_installation_status(
-                &config.name,
-                &zed::LanguageServerInstallationStatus::Downloaded,
-            );
         }
 
         self.cached_binary_path = Some(binary_path.clone());

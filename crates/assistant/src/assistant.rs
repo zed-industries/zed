@@ -10,11 +10,12 @@ pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
 use chrono::{DateTime, Local};
 use client::{proto, Client};
+use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
-use gpui::{actions, AppContext, SharedString};
+use gpui::{actions, AppContext, Global, SharedString};
 pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     fmt::{self, Display},
     sync::Arc,
@@ -182,10 +183,61 @@ enum MessageStatus {
     Error(SharedString),
 }
 
+/// The state pertaining to the Assistant.
+#[derive(Default)]
+struct Assistant {
+    /// Whether the Assistant is enabled.
+    enabled: bool,
+}
+
+impl Global for Assistant {}
+
+impl Assistant {
+    const NAMESPACE: &'static str = "assistant";
+
+    fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
+        if self.enabled == enabled {
+            return;
+        }
+
+        self.enabled = enabled;
+
+        if !enabled {
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                filter.hide_namespace(Self::NAMESPACE);
+            });
+
+            return;
+        }
+
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.show_namespace(Self::NAMESPACE);
+        });
+    }
+}
+
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     completion_provider::init(client, cx);
     assistant_panel::init(cx);
+
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_namespace(Assistant::NAMESPACE);
+    });
+    cx.update_global(|assistant: &mut Assistant, cx: &mut AppContext| {
+        let settings = AssistantSettings::get_global(cx);
+
+        assistant.set_enabled(settings.enabled, cx);
+    });
+    cx.observe_global::<SettingsStore>(|cx| {
+        cx.update_global(|assistant: &mut Assistant, cx: &mut AppContext| {
+            let settings = AssistantSettings::get_global(cx);
+
+            assistant.set_enabled(settings.enabled, cx);
+        });
+    })
+    .detach();
 }
 
 #[cfg(test)]
