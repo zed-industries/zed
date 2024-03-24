@@ -9,9 +9,8 @@ use gpui::{
     ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use language::{Buffer, LanguageRegistry};
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use picker::{Picker, PickerDelegate};
 use project::Project;
-use search::SearchOptions;
 use std::sync::Arc;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
@@ -120,14 +119,6 @@ impl LanguageSelectorDelegate {
 
 impl PickerDelegate for LanguageSelectorDelegate {
     type ListItem = ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Select a language...".into()

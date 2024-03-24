@@ -14,10 +14,8 @@ use gpui::{
     actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
-
+use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
-use search::SearchOptions;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -230,14 +228,6 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Execute a command...".into()

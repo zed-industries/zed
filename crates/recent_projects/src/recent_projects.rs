@@ -8,9 +8,8 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate, SupportedSearchOptions,
+    Picker, PickerDelegate
 };
-use search::SearchOptions;
 use serde::Deserialize;
 use std::{path::Path, sync::Arc};
 use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
@@ -171,14 +170,6 @@ impl RecentProjectsDelegate {
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {

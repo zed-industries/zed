@@ -1,7 +1,6 @@
 use fuzzy::StringMatchCandidate;
 use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
-use search::SearchOptions;
+use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};

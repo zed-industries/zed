@@ -5,9 +5,8 @@ use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, Task, View,
     ViewContext, VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use picker::{Picker, PickerDelegate};
 use project::Fs;
-use search::SearchOptions;
 use settings::{update_settings_file, Settings};
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
@@ -99,14 +98,6 @@ impl BaseKeymapSelectorDelegate {
 
 impl PickerDelegate for BaseKeymapSelectorDelegate {
     type ListItem = ui::ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Select a base keymap...".into()

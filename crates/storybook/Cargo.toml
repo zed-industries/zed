@@ -26,7 +26,6 @@ language.workspace = true
 log.workspace = true
 menu.workspace = true
 picker.workspace = true
-search.workspace = true
 rust-embed.workspace = true
 settings.workspace = true
 simplelog = "0.9"

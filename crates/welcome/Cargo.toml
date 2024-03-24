@@ -25,7 +25,6 @@ install_cli.workspace = true
 picker.workspace = true
 project.workspace = true
 schemars.workspace = true
-search.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme_selector.workspace = true

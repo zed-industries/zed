@@ -57,8 +57,12 @@ impl SupportedSearchOptions {
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
 
-    fn search_options(&self) -> SearchOptions;
-    fn supported_search_options(&self) -> SupportedSearchOptions;
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions::NONE
+    }
+    fn supported_search_options(&self) -> SupportedSearchOptions {
+        SupportedSearchOptions::default()
+    }
 
     fn toggle_include_ignored(&mut self) {}
 

@@ -6,8 +6,7 @@ use gpui::{
     FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
-use search::SearchOptions;
+use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
 use ui::{
     h_flex, v_flex, Button, ButtonCommon, Clickable, Color, HighlightedLabel, Label, LabelCommon,
@@ -135,14 +134,6 @@ impl BranchListDelegate {
 
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Select branch...".into()

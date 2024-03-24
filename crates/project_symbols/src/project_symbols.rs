@@ -5,9 +5,8 @@ use gpui::{
     View, ViewContext, WeakView, WindowContext,
 };
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
+use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol};
-use search::SearchOptions;
 use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use util::ResultExt;
@@ -107,14 +106,6 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search project symbols...".into()

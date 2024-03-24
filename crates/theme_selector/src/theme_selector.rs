@@ -6,8 +6,7 @@ use gpui::{
     actions, impl_actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View,
     ViewContext, VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate, SupportedSearchOptions};
-use search::SearchOptions;
+use picker::{Picker, PickerDelegate};
 use serde::Deserialize;
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
@@ -178,14 +177,6 @@ impl ThemeSelectorDelegate {
 
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
-
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Select Theme...".into()
