@@ -142,6 +142,16 @@ For example, to disable ligatures for a given font you can add the following to 
 
 `boolean` values
 
+## Centered Layout Ratio
+
+- Description: Defines the relative width of the central pane from the workspace when the centered layout is activated.
+- Setting: `centered_layout_ratio`
+- Default: `0.6`
+
+**Options**
+
+`float` values in from 0.2 to 1.0.
+
 ## Copilot
 
 - Description: Copilot-specific settings.
