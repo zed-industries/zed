@@ -8,7 +8,7 @@ use gpui::{
 };
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate
+    Picker, PickerDelegate,
 };
 use project::{Inventory, ProjectPath, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};

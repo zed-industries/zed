@@ -106,7 +106,6 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Search project symbols...".into()
     }

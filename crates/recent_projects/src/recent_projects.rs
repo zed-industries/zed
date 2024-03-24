@@ -8,7 +8,7 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate
+    Picker, PickerDelegate,
 };
 use serde::Deserialize;
 use std::{path::Path, sync::Arc};

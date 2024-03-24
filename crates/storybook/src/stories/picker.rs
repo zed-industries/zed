@@ -37,14 +37,6 @@ impl Delegate {
 impl PickerDelegate for Delegate {
     type ListItem = ListItem;
 
-    fn search_options(&self) -> SearchOptions {
-        SearchOptions::NONE
-    }
-
-    fn supported_search_options(&self) -> SupportedSearchOptions {
-        SupportedSearchOptions::default()
-    }
-
     fn match_count(&self) -> usize {
         self.candidates.len()
     }
