@@ -75,9 +75,9 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, Context as _, Div, Element, ElementContext, FluentBuilder, InteractiveElement as _,
-    IntoElement, Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
-    VisualContext as _, WindowContext,
+    div, h_flex, Context as _, Div, Element, ElementContext, FluentBuilder,
+    InteractiveElement as _, IntoElement, Label, ParentElement as _, Pixels, SharedString,
+    Styled as _, ViewContext, VisualContext as _, WindowContext,
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -582,7 +582,8 @@ struct FollowerState {
 }
 
 impl Workspace {
-    const MIN_CENTERED_LAYOUT_RATIO: f32 = 0.2;
+    const DEFAULT_PADDING: f32 = 0.2;
+    const MAX_PADDING: f32 = 0.4;
 
     pub fn new(
         workspace_id: WorkspaceId,
@@ -3770,6 +3771,13 @@ impl Workspace {
             .detach_and_log_err(cx);
         cx.notify();
     }
+
+    fn adjust_padding(padding: Option<f32>) -> f32 {
+        padding
+            .unwrap_or(Self::DEFAULT_PADDING)
+            .min(Self::MAX_PADDING)
+            .max(0.0)
+    }
 }
 
 fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<Bounds<GlobalPixels>> {
@@ -3912,15 +3920,16 @@ impl Render for Workspace {
         let mut context = KeyContext::default();
         context.add("Workspace");
         let centered_layout = self.centered_layout
-            && self.active_item(cx).is_some()
-            && self.center.panes().len() == 1;
-        let center_pane_width = if centered_layout {
-            WorkspaceSettings::get_global(cx)
-                .centered_layout_ratio
-                .min(1.0)
-                .max(Self::MIN_CENTERED_LAYOUT_RATIO)
+            && self.center.panes().len() == 1
+            && self.active_item(cx).is_some();
+        let padding = if centered_layout {
+            let settings = WorkspaceSettings::get_global(cx).centered_layout;
+            (
+                Self::adjust_padding(settings.left_padding),
+                Self::adjust_padding(settings.right_padding),
+            )
         } else {
-            1.0
+            (0.0, 0.0)
         };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
@@ -4018,10 +4027,9 @@ impl Render for Workspace {
                                         div.bg(cx.theme().styles.colors.editor_background)
                                     })
                                     .child(
-                                        div()
-                                            .w(relative(center_pane_width))
+                                        h_flex()
                                             .h_full()
-                                            .mx_auto()
+                                            .child(div().w(relative(padding.0)))
                                             .child(self.center.render(
                                                 &self.project,
                                                 &self.follower_states,
@@ -4030,7 +4038,8 @@ impl Render for Workspace {
                                                 self.zoomed.as_ref(),
                                                 &self.app_state,
                                                 cx,
-                                            )),
+                                            ))
+                                            .child(div().w(relative(padding.1))),
                                     )
                                     .children(
                                         self.zoomed_position
