@@ -944,12 +944,19 @@ impl Workspace {
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
                 options.bounds = bounds;
                 options.fullscreen = fullscreen;
+                let centered_layout = serialized_workspace
+                    .as_ref()
+                    .map(|w| w.centered_layout)
+                    .unwrap_or(false);
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {
-                            Workspace::new(workspace_id, project_handle, app_state, cx)
+                            let mut workspace =
+                                Workspace::new(workspace_id, project_handle, app_state, cx);
+                            workspace.centered_layout = centered_layout;
+                            workspace
                         })
                     }
                 })?
@@ -3495,6 +3502,7 @@ impl Workspace {
                     display: Default::default(),
                     docks,
                     fullscreen: cx.is_fullscreen(),
+                    centered_layout: self.centered_layout,
                 };
                 return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
             }
@@ -3757,6 +3765,9 @@ impl Workspace {
 
     pub fn toggle_centered_layout(&mut self, _: &ToggleCenteredLayout, cx: &mut ViewContext<Self>) {
         self.centered_layout = !self.centered_layout;
+        cx.background_executor()
+            .spawn(DB.set_centered_layout(self.database_id, self.centered_layout))
+            .detach_and_log_err(cx);
         cx.notify();
     }
 }
