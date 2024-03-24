@@ -5,6 +5,7 @@ use settings::Settings;
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_magnification: f32,
+    pub centered_layout_ratio: f32,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
@@ -18,6 +19,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: `1.0`
     pub active_pane_magnification: Option<f32>,
+    /// The relative width of the central pane from the workspace when the centered
+    /// layout is used.
+    ///
+    /// Default: `0.6`
+    pub centered_layout_ratio: Option<f32>,
     /// Whether or not to prompt the user to confirm before closing the application.
     ///
     /// Default: false

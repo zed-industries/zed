@@ -582,6 +582,8 @@ struct FollowerState {
 }
 
 impl Workspace {
+    const MIN_CENTERED_LAYOUT_RATIO: f32 = 0.2;
+
     pub fn new(
         workspace_id: WorkspaceId,
         project: Model<Project>,
@@ -3900,7 +3902,10 @@ impl Render for Workspace {
         context.add("Workspace");
 
         let center_pane_width = if self.centered_layout && self.center.panes().len() == 1 {
-            0.6
+            WorkspaceSettings::get_global(cx)
+                .centered_layout_ratio
+                .min(1.0)
+                .max(Self::MIN_CENTERED_LAYOUT_RATIO)
         } else {
             1.0
         };
