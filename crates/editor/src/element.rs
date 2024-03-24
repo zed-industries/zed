@@ -20,7 +20,7 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
+    div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
     InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -1390,7 +1390,14 @@ impl EditorElement {
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default();
 
-                    let jump_handler = project::File::from_dyn(buffer.file()).map(|file| {
+                    #[derive(Clone)]
+                    struct JumpData {
+                        position: Point,
+                        anchor: text::Anchor,
+                        path: ProjectPath,
+                    }
+
+                    let jump_data = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_path = ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path.clone(),
@@ -1401,9 +1408,11 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        cx.listener_for(&self.editor, move |editor, _, cx| {
-                            editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                        })
+                        JumpData {
+                            position: jump_position,
+                            anchor: jump_anchor,
+                            path: jump_path,
+                        }
                     });
 
                     let element = if *starts_new_buffer {
@@ -1454,11 +1463,11 @@ impl EditorElement {
                                                 }),
                                         ),
                                     )
-                                    .when_some(jump_handler, |this, jump_handler| {
+                                    .when_some(jump_data.clone(), |this, jump_data| {
                                         this.cursor_pointer()
                                             .tooltip(|cx| {
                                                 Tooltip::for_action(
-                                                    "Jump to Buffer",
+                                                    "Jump to File",
                                                     &OpenExcerpts,
                                                     cx,
                                                 )
@@ -1466,30 +1475,32 @@ impl EditorElement {
                                             .on_mouse_down(MouseButton::Left, |_, cx| {
                                                 cx.stop_propagation()
                                             })
-                                            .on_click(jump_handler)
+                                            .on_click(cx.listener_for(&self.editor, {
+                                                move |editor, _, cx| {
+                                                    editor.jump(
+                                                        jump_data.path.clone(),
+                                                        jump_data.position,
+                                                        jump_data.anchor,
+                                                        cx,
+                                                    );
+                                                }
+                                            }))
                                     }),
                             )
                     } else {
-                        h_flex()
+                        v_flex()
                             .id(("collapsed context", block_id))
                             .size_full()
-                            .gap(gutter_dimensions.left_padding + gutter_dimensions.right_padding)
                             .child(
-                                h_flex()
-                                    .justify_end()
-                                    .flex_none()
-                                    .w(gutter_dimensions.width
-                                        - (gutter_dimensions.left_padding
-                                            + gutter_dimensions.right_padding))
+                                div()
+                                    .flex()
+                                    .v_flex()
+                                    .justify_start()
+                                    .id("jump to collapsed context")
+                                    .group("")
+                                    .w(relative(1.0))
                                     .h_full()
-                                    .text_buffer(cx)
-                                    .text_color(cx.theme().colors().editor_line_number)
-                                    .child("..."),
-                            )
-                            .child(
-                                ButtonLike::new("jump to collapsed context")
-                                    .style(ButtonStyle::Transparent)
-                                    .full_width()
+                                    .cursor_pointer()
                                     .child(
                                         div()
                                             .h_px()
@@ -1499,11 +1510,84 @@ impl EditorElement {
                                                 style.bg(cx.theme().colors().border)
                                             }),
                                     )
-                                    .when_some(jump_handler, |this, jump_handler| {
-                                        this.on_click(jump_handler).tooltip(|cx| {
-                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
-                                        })
+                                    .when_some(jump_data.clone(), |this, jump_data| {
+                                        this.on_click(cx.listener_for(&self.editor, {
+                                            let path = jump_data.path.clone();
+                                            move |editor, _, cx| {
+                                                cx.stop_propagation();
+
+                                                editor.jump(
+                                                    path.clone(),
+                                                    jump_data.position,
+                                                    jump_data.anchor,
+                                                    cx,
+                                                );
+                                            }
+                                        }))
+                                        .tooltip(
+                                            move |cx| {
+                                                Tooltip::for_action(
+                                                    format!(
+                                                        "Jump to {}:L{}",
+                                                        jump_data.path.path.display(),
+                                                        jump_data.position.row + 1
+                                                    ),
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            },
+                                        )
                                     }),
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_end()
+                                    .flex_none()
+                                    .w(
+                                        gutter_dimensions.width - (gutter_dimensions.left_padding), // + gutter_dimensions.right_padding)
+                                    )
+                                    .h_full()
+                                    .child(
+                                        ButtonLike::new("jump-icon")
+                                            .style(ButtonStyle::Transparent)
+                                            .child(
+                                                svg()
+                                                    .path(IconName::ArrowUpRight.path())
+                                                    .size(IconSize::XSmall.rems())
+                                                    .text_color(cx.theme().colors().border)
+                                                    .group_hover("", |style| {
+                                                        style.text_color(
+                                                            cx.theme().colors().editor_line_number,
+                                                        )
+                                                    }),
+                                            )
+                                            .when_some(jump_data.clone(), |this, jump_data| {
+                                                this.on_click(cx.listener_for(&self.editor, {
+                                                    let path = jump_data.path.clone();
+                                                    move |editor, _, cx| {
+                                                        editor.jump(
+                                                            path.clone(),
+                                                            jump_data.position,
+                                                            jump_data.anchor,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }))
+                                                .tooltip({
+                                                    move |cx| {
+                                                        Tooltip::for_action(
+                                                            format!(
+                                                                "Jump to {}:L{}",
+                                                                jump_data.path.path.display(),
+                                                                jump_data.position.row + 1
+                                                            ),
+                                                            &OpenExcerpts,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                            }),
+                                    ),
                             )
                     };
                     element.into_any()

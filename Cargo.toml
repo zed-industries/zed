@@ -1,3 +1,4 @@
+
 [workspace]
 members = [
     "crates/activity_indicator",
@@ -97,6 +98,7 @@ members = [
 
     "extensions/gleam",
     "extensions/uiua",
+    "extensions/svelte",
 
     "tooling/xtask",
 ]
@@ -210,7 +212,7 @@ bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
-cap-std = "2.0"
+cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
@@ -293,7 +295,6 @@ tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir"
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-erlang = "0.4.0"
-tree-sitter-gleam = { git = "https://github.com/gleam-lang/tree-sitter-gleam", rev = "58b7cac8fc14c92b0677c542610d8738c373fa81" }
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
@@ -320,7 +321,6 @@ tree-sitter-regex = "0.20.0"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
 tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
-tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "bd60db7d3d06f89b6ec3b287c9a6e9190b5564bd" }
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
@@ -330,18 +330,18 @@ unindent = "0.1.7"
 unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
-wasmparser = "0.121"
-wasm-encoder = "0.41"
-wasmtime = { version = "18.0", default-features = false, features = [
+wasmparser = "0.201"
+wasm-encoder = "0.201"
+wasmtime = { version = "19.0.0", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "18.0"
+wasmtime-wasi = "19.0.0"
 which = "6.0.0"
-wit-component = "0.20"
+wit-component = "0.201"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
@@ -375,7 +375,7 @@ features = [
 ]
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "4294e59279205f503eb14348dd5128bd5910c8fb" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "05079ae3d1bc44bedc4594eef925b36ba5e317a2" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "30419d07660dc11a21e42ef4a7fa329600cff152" }
 
@@ -389,6 +389,7 @@ cranelift-codegen = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
+wasmtime = { opt-level = 3 }
 
 [profile.release]
 debug = "limited"

@@ -11,10 +11,9 @@ use settings::Settings;
 use smol::{fs, fs::File};
 use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -207,7 +206,7 @@ impl LspAdapter for DenoLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

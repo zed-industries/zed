@@ -245,6 +245,8 @@
   "assistant": {
     // Version of this setting.
     "version": "1",
+    // Whether the assistant is enabled.
+    "enabled": true,
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
