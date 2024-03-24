@@ -75,9 +75,9 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, Context as _, Div, Element, ElementContext, InteractiveElement as _, IntoElement, Label,
-    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
-    WindowContext,
+    div, Context as _, Div, Element, ElementContext, FluentBuilder, InteractiveElement as _,
+    IntoElement, Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
+    VisualContext as _, WindowContext,
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -3900,8 +3900,10 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut context = KeyContext::default();
         context.add("Workspace");
-
-        let center_pane_width = if self.centered_layout && self.center.panes().len() == 1 {
+        let centered_layout = self.centered_layout
+            && self.active_item(cx).is_some()
+            && self.center.panes().len() == 1;
+        let center_pane_width = if centered_layout {
             WorkspaceSettings::get_global(cx)
                 .centered_layout_ratio
                 .min(1.0)
@@ -4001,7 +4003,9 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .bg(cx.theme().styles.colors.editor_background)
+                                    .when(centered_layout, |div| {
+                                        div.bg(cx.theme().styles.colors.editor_background)
+                                    })
                                     .child(
                                         div()
                                             .w(relative(center_pane_width))
