@@ -37,6 +37,8 @@ const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(target_os = "macos") {
     Some("wasi-sdk-21.0-macos.tar.gz")
 } else if cfg!(target_os = "linux") {
     Some("wasi-sdk-21.0-linux.tar.gz")
+} else if cfg!(target_os = "windows") {
+    Some("wasi-sdk-21.0.m-mingw.tar.gz")
 } else {
     None
 };
@@ -371,7 +373,7 @@ impl ExtensionBuilder {
 
         let wasi_sdk_dir = self.cache_dir.join("wasi-sdk");
         let mut clang_path = wasi_sdk_dir.clone();
-        clang_path.extend(["bin", "clang-17"]);
+        clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
 
         if fs::metadata(&clang_path).map_or(false, |metadata| metadata.is_file()) {
             return Ok(clang_path);
