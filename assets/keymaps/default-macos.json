@@ -16,7 +16,6 @@
       "ctrl-enter": "menu::ShowContextMenu",
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
-      "cmd-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "shift-enter": "menu::UseSelectedQuery",
       "cmd-shift-w": "workspace::CloseWindow",
@@ -597,10 +596,6 @@
     "bindings": {
       "tab": "channel_modal::ToggleMode"
     }
-  },
-  {
-    "context": "FileFinder",
-    "bindings": { "cmd-shift-p": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",
