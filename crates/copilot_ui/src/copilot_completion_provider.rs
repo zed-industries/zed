@@ -8,7 +8,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
-pub(crate) struct CopilotCompletionProvider {
+pub struct CopilotCompletionProvider {
     cycled: bool,
     buffer_id: Option<EntityId>,
     completions: Vec<copilot::Completion>,
@@ -35,8 +35,9 @@ impl CopilotCompletionProvider {
         }
     }
 
-    pub fn set_telemetry(&mut self, telemetry: Arc<Telemetry>) {
+    pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
         self.telemetry = Some(telemetry);
+        self
     }
 
     fn active_completion(&self) -> Option<&copilot::Completion> {
