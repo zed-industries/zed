@@ -2633,6 +2633,7 @@ impl EditorElement {
             current_marker.paint(&x_range, cx);
             *markers_counter += 1;
         }
+        println!("markers: {markers_counter}");
     }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
@@ -2690,21 +2691,10 @@ impl EditorElement {
         cx: &mut ElementContext<'_>,
     ) -> Vec<Range<u32>> {
         self.editor.update(cx, |editor, _cx| {
-            let Some(mut highlights) = editor.background_highlights.remove(&TypeId::of::<T>())
-            else {
+            let Some(highlights) = editor.background_highlights.get(&TypeId::of::<T>()) else {
                 return vec![];
             };
-            let ranges = if let Some(ref ranges) = highlights.marked_row_ranges {
-                ranges.clone()
-            } else {
-                let ranges = Self::group_ranges(&highlights.ranges, &layout.position_map.snapshot);
-                highlights.marked_row_ranges = Some(ranges.clone());
-                ranges
-            };
-            editor
-                .background_highlights
-                .insert(TypeId::of::<T>(), highlights);
-            ranges
+            Self::group_ranges(&highlights.ranges, &layout.position_map.snapshot)
         })
     }
 
@@ -2715,8 +2705,8 @@ impl EditorElement {
         let mut results = Vec::new();
         let mut current_hunk = None;
         for range in ranges {
-            let start_row = range.start.to_display_point(&display_snapshot).row();
-            let end_row = range.end.to_display_point(&display_snapshot).row();
+            let start_row = range.start.to_point(&display_snapshot.buffer_snapshot).row;
+            let end_row = range.end.to_point(&display_snapshot.buffer_snapshot).row;
             let Some(mut hunk) = current_hunk.take() else {
                 current_hunk = Some(Range {
                     start: start_row,
