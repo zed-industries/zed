@@ -1277,7 +1277,7 @@ struct Summary {
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    language_model_contexts: Vec<LanguageModelContextSelection>,
+    inline_context: HashMap<EntityId, Box<dyn AssistantContext>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1299,7 +1299,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        language_model_contexts: Vec<LanguageModelContextSelection>,
+        inline_context: HashMap<EntityId, Box<dyn AssistantContext>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1333,7 +1333,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
-            language_model_contexts,
+            inline_context,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1435,7 +1435,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
-                language_model_contexts: Default::default(),
+                inline_context: Default::default(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1630,10 +1630,11 @@ impl Conversation {
 
         // Build up a prompt to include the file context as a system message
         let s: String = self
-            .language_model_contexts
+            .inline_context
             .iter()
-            .map(|item| item.context.text_for_llm(cx))
-            .collect();
+            .map(|(_entity_id, context)| context.text_for_llm(cx))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         request.messages.push(LanguageModelRequestMessage {
             role: Role::System,
@@ -2024,11 +2025,6 @@ struct ConversationEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-struct LanguageModelContextSelection {
-    entity_id: EntityId,
-    context: Box<dyn AssistantContext>,
-}
-
 impl ConversationEditor {
     fn new(
         model: LanguageModel,
@@ -2046,7 +2042,7 @@ impl ConversationEditor {
     fn llm_context(
         workspace: &View<Workspace>,
         cx: &mut WindowContext,
-    ) -> Vec<LanguageModelContextSelection> {
+    ) -> HashMap<EntityId, Box<dyn AssistantContext>> {
         workspace
             .update(cx, |workspace, cx| {
                 // TODO: Project Diagnostics from the workspace
@@ -2056,12 +2052,12 @@ impl ConversationEditor {
                 //     //     // Note: this is now stale data
                 // });
 
-                workspace
-                    .active_item_as::<Editor>(cx)
-                    .map(|editor| LanguageModelContextSelection {
-                        entity_id: editor.entity_id(),
-                        context: Box::new(editor),
-                    })
+                workspace.active_item_as::<Editor>(cx).map(|editor| {
+                    (
+                        editor.entity_id(),
+                        Box::new(editor) as Box<dyn AssistantContext>,
+                    )
+                })
             })
             .into_iter()
             .collect()
@@ -2234,7 +2230,7 @@ impl ConversationEditor {
         let updated_llm_context = Self::llm_context(&workspace, cx);
 
         self.conversation.update(cx, |conversation, _cx| {
-            conversation.language_model_contexts = updated_llm_context;
+            conversation.inline_context = updated_llm_context;
         });
     }
 
@@ -2494,13 +2490,16 @@ impl Render for ConversationEditor {
 
         // In the future we'll need some way to group on the file context, project diagnostics, etc.
         // For now, we'll just render the file context as is.
-        let file_context_items = conversation.language_model_contexts.iter().map(|item| {
-            let element_id = ElementId::Name(format!("llm-context-{}", item.entity_id).into());
+        let file_context_items = conversation
+            .inline_context
+            .iter()
+            .map(|(entity_id, context)| {
+                let element_id = ElementId::Name(format!("llm-context-{}", entity_id).into());
 
-            let el = item.context.inline_render(cx);
+                let el = context.inline_render(cx);
 
-            div().h_flex().child(el).child(div().id(element_id))
-        });
+                div().h_flex().child(el).child(div().id(element_id))
+            });
 
         let file_context_container = div()
             .p_4()
