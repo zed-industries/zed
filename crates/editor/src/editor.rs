@@ -1694,6 +1694,14 @@ impl Editor {
         }
     }
 
+    pub fn with_log_mode(mut self) -> Self {
+        self.read_only = true;
+        self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth);
+        self.show_wrap_guides = Some(false);
+        self.show_breadcrumbs = false;
+        self
+    }
+
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
         self.buffer.read(cx).replica_id()
     }
