@@ -1154,7 +1154,7 @@ impl EditorElement {
                     let short_commit_text = format!("{:6}", short_commit_id);
                     let name_date = format!("{:20} ({})", name, datetime);
 
-                    let mut element = div()
+                    let mut element = h_flex()
                         .children([
                             div().text_color(sha_color.cursor).child(short_commit_text),
                             div().text_color(cx.theme().status().hint).child(name_date),

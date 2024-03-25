@@ -1,14 +1,10 @@
 use anyhow::Result;
-use language::Buffer;
-use language::BufferSnapshot;
-use sum_tree::SumTree;
-use text::Bias;
-use text::Edit;
-
 use git::blame::BlameEntry;
 use gpui::{Model, ModelContext, Subscription, Task};
+use language::{Bias, Buffer, BufferSnapshot, Edit};
 use project::{Item, Project};
 use smallvec::SmallVec;
+use sum_tree::SumTree;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -130,12 +126,10 @@ impl GitBlame {
                 let new_point_range = new_snapshot.offset_to_point(edit.new.start)
                     ..new_snapshot.offset_to_point(edit.new.end);
 
-                dbg!(&old_point_range, &new_point_range);
-
-                if edit.old.is_empty()
-                    && old_point_range.start.column
-                        == self.buffer_snapshot.line_len(old_point_range.start.row)
-                    && new_snapshot.chars_at(edit.new.start).next() == Some('\n')
+                if old_point_range.start.column
+                    == self.buffer_snapshot.line_len(old_point_range.start.row)
+                    && (new_snapshot.chars_at(edit.new.start).next() == Some('\n')
+                        || self.buffer_snapshot.line_len(old_point_range.end.row) == 0)
                 {
                     Edit {
                         old: old_point_range.start.row + 1..old_point_range.end.row + 1,
@@ -185,26 +179,32 @@ impl GitBlame {
             }
 
             cursor.seek(&edit.old.end, Bias::Right, &());
-            new_entries.push(
-                GitBlameEntry {
-                    rows: edit.new.len() as u32,
-                    blame: None,
-                },
-                &(),
-            );
+            if !edit.new.is_empty() {
+                new_entries.push(
+                    GitBlameEntry {
+                        rows: edit.new.len() as u32,
+                        blame: None,
+                    },
+                    &(),
+                );
+            }
 
+            let old_end = cursor.end(&());
             if row_edits
                 .peek()
-                .map_or(true, |next_edit| next_edit.old.start > cursor.end(&()))
+                .map_or(true, |next_edit| next_edit.old.start >= old_end)
             {
                 if let Some(entry) = cursor.item() {
-                    new_entries.push(
-                        GitBlameEntry {
-                            rows: cursor.end(&()) - edit.old.end,
-                            blame: entry.blame.clone(),
-                        },
-                        &(),
-                    );
+                    if old_end > edit.old.end {
+                        new_entries.push(
+                            GitBlameEntry {
+                                rows: cursor.end(&()) - edit.old.end,
+                                blame: entry.blame.clone(),
+                            },
+                            &(),
+                        );
+                    }
+
                     cursor.next(&());
                 }
             }
@@ -214,6 +214,15 @@ impl GitBlame {
 
         self.buffer_snapshot = new_snapshot;
         self.entries = new_entries;
+    }
+
+    #[cfg(test)]
+    fn check_invariants(&mut self, cx: &mut ModelContext<Self>) {
+        self.sync(cx);
+        assert_eq!(
+            self.entries.summary().rows,
+            self.buffer.read(cx).max_point().row + 1
+        );
     }
 
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
@@ -280,15 +289,14 @@ impl GitBlame {
 
 #[cfg(test)]
 mod tests {
-    use crate::git::blame::GitBlame;
-    use git::blame::BlameEntry;
+    use super::*;
     use gpui::Context;
-    use project::{FakeFs, Project};
+    use language::{Point, Rope};
+    use project::FakeFs;
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path};
-    use text::{Point, Rope};
     use unindent::Unindent as _;
     use util::RandomCharIter;
 
@@ -532,11 +540,17 @@ mod tests {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
+        let max_edits_per_operation = env::var("MAX_EDITS_PER_OPERATION")
+            .map(|i| {
+                i.parse()
+                    .expect("invalid `MAX_EDITS_PER_OPERATION` variable")
+            })
+            .unwrap_or(5);
 
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let buffer_initial_text_len = rng.gen_range(20..50);
+        let buffer_initial_text_len = rng.gen_range(5..15);
         let mut buffer_initial_text = Rope::from(
             RandomCharIter::new(&mut rng)
                 .take(buffer_initial_text_len)
@@ -544,11 +558,13 @@ mod tests {
                 .as_str(),
         );
 
-        let mut newline_ixs = (0..buffer_initial_text_len).choose_multiple(&mut rng, 10);
+        let mut newline_ixs = (0..buffer_initial_text_len).choose_multiple(&mut rng, 5);
         newline_ixs.sort_unstable();
         for newline_ix in newline_ixs.into_iter().rev() {
+            let newline_ix = buffer_initial_text.clip_offset(newline_ix, Bias::Right);
             buffer_initial_text.replace(newline_ix..newline_ix, "\n");
         }
+        log::info!("initial buffer text: {:?}", buffer_initial_text);
 
         fs.insert_tree(
             "/my-repo",
@@ -559,7 +575,59 @@ mod tests {
         )
         .await;
 
-        let max_row = buffer_initial_text.max_point().row;
+        let blame_entries = gen_blame_entries(buffer_initial_text.max_point().row, &mut rng);
+        log::info!("initial blame entries: {:?}", blame_entries);
+        fs.set_blame_for_repo(
+            Path::new("/my-repo/.git"),
+            vec![(Path::new("file.txt"), blame_entries)],
+        );
+
+        let project = Project::test(fs.clone(), ["/my-repo".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
+            .await
+            .unwrap();
+
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        cx.executor().run_until_parked();
+        git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
+
+        for _ in 0..operations {
+            match rng.gen_range(0..100) {
+                0..=19 => {
+                    log::info!("quiescing");
+                    cx.executor().run_until_parked();
+                }
+                20..=69 => {
+                    log::info!("editing buffer");
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.randomly_edit(&mut rng, max_edits_per_operation, cx);
+                        log::info!("buffer text: {:?}", buffer.text());
+                    });
+
+                    let blame_entries = gen_blame_entries(
+                        buffer.read_with(cx, |buffer, _| buffer.max_point().row),
+                        &mut rng,
+                    );
+                    log::info!("regenerating blame entries: {:?}", blame_entries);
+
+                    fs.set_blame_for_repo(
+                        Path::new("/my-repo/.git"),
+                        vec![(Path::new("file.txt"), blame_entries)],
+                    );
+                }
+                _ => {
+                    git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
+                }
+            }
+        }
+
+        git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
+    }
+
+    fn gen_blame_entries(max_row: u32, rng: &mut StdRng) -> Vec<BlameEntry> {
         let mut last_row = 0;
         let mut blame_entries = Vec::new();
         for ix in 0..5 {
@@ -572,44 +640,7 @@ mod tests {
                 break;
             }
         }
-
-        dbg!(&blame_entries, &buffer_initial_text);
-
-        fs.set_blame_for_repo(
-            Path::new("/my-repo/.git"),
-            vec![(Path::new("file.txt"), blame_entries)],
-        );
-
-        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.open_local_buffer("/my-repo/file.txt", cx)
-            })
-            .await
-            .unwrap();
-
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
-        cx.executor().run_until_parked();
-
-        git_blame.update(cx, |blame, cx| {
-            blame.sync(cx);
-            assert_eq!(
-                blame.entries.summary().rows,
-                buffer.read(cx).max_point().row + 1
-            );
-        });
-
-        for _ in 0..operations {
-            // todo: edit multiple things at once.
-            buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
-            git_blame.update(cx, |blame, cx| {
-                blame.sync(cx);
-                assert_eq!(
-                    blame.entries.summary().rows,
-                    buffer.read(cx).max_point().row + 1
-                );
-            });
-        }
+        blame_entries
     }
 
     fn blame_entry(sha: &str, range: Range<u32>) -> BlameEntry {
