@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::env;
 use std::{
     path::{Path, PathBuf},
+    process::Command,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -148,8 +149,44 @@ impl Platform for LinuxPlatform {
         self.inner.loop_signal.stop();
     }
 
-    // todo(linux)
-    fn restart(&self) {}
+    fn restart(&self) {
+        use std::os::unix::process::CommandExt as _;
+
+        // get the process id of the current process
+        let app_pid = std::process::id().to_string();
+        // get the path to the executable
+        let app_path = match self.app_path() {
+            Ok(path) => path,
+            Err(err) => {
+                log::error!("Failed to get app path: {:?}", err);
+                return;
+            }
+        };
+
+        // script to wait for the current process to exit  and then restart the app
+        let script = format!(
+            r#"
+            while kill -O {pid} 2>/dev/null; do
+                sleep 0.1
+            done
+            {app_path}
+            "#,
+            pid = app_pid,
+            app_path = app_path.display()
+        );
+
+        // execute the script using /bin/bash
+        let restart_process = Command::new("/bin/bash")
+            .arg("-c")
+            .arg(script)
+            .process_group(0)
+            .spawn();
+
+        match restart_process {
+            Ok(_) => self.quit(),
+            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+        }
+    }
 
     // todo(linux)
     fn activate(&self, ignoring_other_apps: bool) {}
@@ -331,11 +368,10 @@ impl Platform for LinuxPlatform {
         })
     }
 
-    //todo(linux)
     fn app_path(&self) -> Result<PathBuf> {
-        Err(anyhow::Error::msg(
-            "Platform<LinuxPlatform>::app_path is not implemented yet",
-        ))
+        // get the path of the executable of the current process
+        let exe_path = std::env::current_exe()?;
+        Ok(exe_path)
     }
 
     // todo(linux)
