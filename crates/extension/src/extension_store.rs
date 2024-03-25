@@ -10,6 +10,7 @@ use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use client::{telemetry::Telemetry, Client};
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use fs::{Fs, RemoveOptions};
@@ -30,7 +31,6 @@ use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
-    ffi::OsStr,
     path::{self, Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -75,6 +75,7 @@ pub struct ExtensionStore {
     extension_index: ExtensionIndex,
     fs: Arc<dyn Fs>,
     http_client: Arc<HttpClientWithUrl>,
+    telemetry: Option<Arc<Telemetry>>,
     reload_tx: UnboundedSender<Option<Arc<str>>>,
     reload_complete_senders: Vec<oneshot::Sender<()>>,
     installed_dir: PathBuf,
@@ -149,7 +150,7 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
-    http_client: Arc<HttpClientWithUrl>,
+    client: Arc<Client>,
     node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -160,7 +161,8 @@ pub fn init(
             EXTENSIONS_DIR.clone(),
             None,
             fs,
-            http_client,
+            client.http_client().clone(),
+            Some(client.telemetry().clone()),
             node_runtime,
             language_registry,
             theme_registry,
@@ -187,6 +189,7 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        telemetry: Option<Arc<Telemetry>>,
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
@@ -216,6 +219,7 @@ impl ExtensionStore {
             wasm_extensions: Vec::new(),
             fs,
             http_client,
+            telemetry,
             language_registry,
             theme_registry,
             reload_tx,
@@ -587,8 +591,8 @@ impl ExtensionStore {
         let builder = self.builder.clone();
 
         cx.spawn(move |this, mut cx| async move {
-            let extension_manifest =
-                Self::load_extension_manifest(fs.clone(), &extension_source_path).await?;
+            let mut extension_manifest =
+                ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
             if !this.update(&mut cx, |this, cx| {
@@ -622,7 +626,7 @@ impl ExtensionStore {
                         builder
                             .compile_extension(
                                 &extension_source_path,
-                                &extension_manifest,
+                                &mut extension_manifest,
                                 CompileExtensionOptions { release: false },
                             )
                             .await
@@ -667,9 +671,13 @@ impl ExtensionStore {
 
         cx.notify();
         let compile = cx.background_executor().spawn(async move {
-            let manifest = Self::load_extension_manifest(fs, &path).await?;
+            let mut manifest = ExtensionManifest::load(fs, &path).await?;
             builder
-                .compile_extension(&path, &manifest, CompileExtensionOptions { release: true })
+                .compile_extension(
+                    &path,
+                    &mut manifest,
+                    CompileExtensionOptions { release: true },
+                )
                 .await
         });
 
@@ -758,6 +766,17 @@ impl ExtensionStore {
             reload_count,
             extensions_to_unload.len() - reload_count
         );
+
+        if let Some(telemetry) = &self.telemetry {
+            for extension_id in &extensions_to_load {
+                if let Some(extension) = self.extension_index.extensions.get(extension_id) {
+                    telemetry.report_extension_event(
+                        extension_id.clone(),
+                        extension.manifest.version.clone(),
+                    );
+                }
+            }
+        }
 
         let themes_to_remove = old_index
             .themes
@@ -908,7 +927,9 @@ impl ExtensionStore {
                             cx.background_executor().clone(),
                         )
                         .await
-                        .context("failed to load wasm extension")
+                        .with_context(|| {
+                            format!("failed to load wasm extension {}", extension.manifest.id)
+                        })
                 })
                 .await;
 
@@ -989,8 +1010,7 @@ impl ExtensionStore {
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
     ) -> Result<()> {
-        let mut extension_manifest =
-            Self::load_extension_manifest(fs.clone(), &extension_dir).await?;
+        let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
 
         // TODO: distinguish dev extensions more explicitly, by the absence
@@ -1081,72 +1101,6 @@ impl ExtensionStore {
         );
 
         Ok(())
-    }
-
-    pub async fn load_extension_manifest(
-        fs: Arc<dyn Fs>,
-        extension_dir: &Path,
-    ) -> Result<ExtensionManifest> {
-        let extension_name = extension_dir
-            .file_name()
-            .and_then(OsStr::to_str)
-            .ok_or_else(|| anyhow!("invalid extension name"))?;
-
-        let mut extension_manifest_path = extension_dir.join("extension.json");
-        if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
-        } else {
-            extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
-        }
-    }
-}
-
-fn manifest_from_old_manifest(
-    manifest_json: OldExtensionManifest,
-    extension_id: &str,
-) -> ExtensionManifest {
-    ExtensionManifest {
-        id: extension_id.into(),
-        name: manifest_json.name,
-        version: manifest_json.version,
-        description: manifest_json.description,
-        repository: manifest_json.repository,
-        authors: manifest_json.authors,
-        schema_version: 0,
-        lib: Default::default(),
-        themes: {
-            let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort();
-            themes.dedup();
-            themes
-        },
-        languages: {
-            let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort();
-            languages.dedup();
-            languages
-        },
-        grammars: manifest_json
-            .grammars
-            .into_keys()
-            .map(|grammar_name| (grammar_name, Default::default()))
-            .collect(),
-        language_servers: Default::default(),
     }
 }
 

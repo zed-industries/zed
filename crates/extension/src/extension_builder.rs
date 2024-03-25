@@ -1,3 +1,4 @@
+use crate::wasm_host::parse_wasm_extension_version;
 use crate::ExtensionManifest;
 use crate::{extension_manifest::ExtensionLibraryKind, GrammarManifestEntry};
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -73,9 +74,11 @@ impl ExtensionBuilder {
     pub async fn compile_extension(
         &self,
         extension_dir: &Path,
-        extension_manifest: &ExtensionManifest,
+        extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<()> {
+        populate_defaults(extension_manifest, &extension_dir)?;
+
         if extension_dir.is_relative() {
             bail!(
                 "extension dir {} is not an absolute path",
@@ -85,12 +88,9 @@ impl ExtensionBuilder {
 
         fs::create_dir_all(&self.cache_dir).context("failed to create cache dir")?;
 
-        let cargo_toml_path = extension_dir.join("Cargo.toml");
-        if extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust)
-            || fs::metadata(&cargo_toml_path).map_or(false, |stat| stat.is_file())
-        {
+        if extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust) {
             log::info!("compiling Rust extension {}", extension_dir.display());
-            self.compile_rust_extension(extension_dir, options)
+            self.compile_rust_extension(extension_dir, extension_manifest, options)
                 .await
                 .context("failed to compile Rust extension")?;
         }
@@ -108,6 +108,7 @@ impl ExtensionBuilder {
     async fn compile_rust_extension(
         &self,
         extension_dir: &Path,
+        manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
     ) -> Result<(), anyhow::Error> {
         self.install_rust_wasm_target_if_needed()?;
@@ -161,6 +162,11 @@ impl ExtensionBuilder {
         let component_bytes = self
             .strip_custom_sections(&component_bytes)
             .context("failed to strip debug sections from wasm component")?;
+
+        let wasm_extension_api_version =
+            parse_wasm_extension_version(&manifest.id, &component_bytes)
+                .context("compiled wasm did not contain a valid zed extension api version")?;
+        manifest.lib.version = Some(wasm_extension_api_version);
 
         fs::write(extension_dir.join("extension.wasm"), &component_bytes)
             .context("failed to write extension.wasm")?;
@@ -468,4 +474,87 @@ impl ExtensionBuilder {
 
         Ok(output)
     }
+}
+
+fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
+    // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
+    // contents of the computed fields, since we don't care what the existing values are.
+    if manifest.schema_version == 0 {
+        manifest.languages.clear();
+        manifest.grammars.clear();
+        manifest.themes.clear();
+    }
+
+    let cargo_toml_path = extension_path.join("Cargo.toml");
+    if cargo_toml_path.exists() {
+        manifest.lib.kind = Some(ExtensionLibraryKind::Rust);
+    }
+
+    let languages_dir = extension_path.join("languages");
+    if languages_dir.exists() {
+        for entry in fs::read_dir(&languages_dir).context("failed to list languages dir")? {
+            let entry = entry?;
+            let language_dir = entry.path();
+            let config_path = language_dir.join("config.toml");
+            if config_path.exists() {
+                let relative_language_dir =
+                    language_dir.strip_prefix(extension_path)?.to_path_buf();
+                if !manifest.languages.contains(&relative_language_dir) {
+                    manifest.languages.push(relative_language_dir);
+                }
+            }
+        }
+    }
+
+    let themes_dir = extension_path.join("themes");
+    if themes_dir.exists() {
+        for entry in fs::read_dir(&themes_dir).context("failed to list themes dir")? {
+            let entry = entry?;
+            let theme_path = entry.path();
+            if theme_path.extension() == Some("json".as_ref()) {
+                let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
+                if !manifest.themes.contains(&relative_theme_path) {
+                    manifest.themes.push(relative_theme_path);
+                }
+            }
+        }
+    }
+
+    // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
+    // the manifest using the contents of the `grammars` directory.
+    if manifest.schema_version == 0 {
+        let grammars_dir = extension_path.join("grammars");
+        if grammars_dir.exists() {
+            for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {
+                let entry = entry?;
+                let grammar_path = entry.path();
+                if grammar_path.extension() == Some("toml".as_ref()) {
+                    #[derive(Deserialize)]
+                    struct GrammarConfigToml {
+                        pub repository: String,
+                        pub commit: String,
+                    }
+
+                    let grammar_config = fs::read_to_string(&grammar_path)?;
+                    let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
+
+                    let grammar_name = grammar_path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .ok_or_else(|| anyhow!("no grammar name"))?;
+                    if !manifest.grammars.contains_key(grammar_name) {
+                        manifest.grammars.insert(
+                            grammar_name.into(),
+                            GrammarManifestEntry {
+                                repository: grammar_config.repository,
+                                rev: grammar_config.commit,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

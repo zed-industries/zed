@@ -1,7 +1,4 @@
-use crate::{
-    db::{ExtensionMetadata, NewExtensionVersion},
-    AppState, Error, Result,
-};
+use crate::{db::NewExtensionVersion, AppState, Error, Result};
 use anyhow::{anyhow, Context as _};
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
@@ -12,7 +9,7 @@ use axum::{
     Extension, Json, Router,
 };
 use collections::HashMap;
-use rpc::ExtensionApiManifest;
+use rpc::{ExtensionApiManifest, ExtensionMetadata};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
@@ -78,7 +75,7 @@ async fn download_latest_extension(
         Extension(app),
         Path(DownloadExtensionParams {
             extension_id: params.extension_id,
-            version: extension.version,
+            version: extension.manifest.version,
         }),
     )
     .await
@@ -285,6 +282,7 @@ async fn fetch_extension_manifest(
         authors: manifest.authors,
         repository: manifest.repository,
         schema_version: manifest.schema_version.unwrap_or(0),
+        wasm_api_version: manifest.wasm_api_version,
         published_at,
     })
 }
