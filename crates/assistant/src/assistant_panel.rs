@@ -1628,7 +1628,11 @@ impl Conversation {
             temperature: 1.0,
         };
 
-        // Build up a prompt to include the file context as a system message
+        if self.inline_context.is_empty() {
+            return request;
+        }
+
+        // If there is context to include, build up a prompt to include it in a system message
         let s: String = self
             .inline_context
             .iter()
@@ -2486,40 +2490,7 @@ impl Render for ConversationEditor {
         //   - Deep Code Context (Planned, for query and other tools for the model)
         //
 
-        let conversation = self.conversation.read(cx);
-
-        // In the future we'll need some way to group on the file context, project diagnostics, etc.
-        // For now, we'll just render the file context as is.
-        let file_context_items = conversation
-            .inline_context
-            .iter()
-            .map(|(entity_id, context)| {
-                let element_id = ElementId::Name(format!("llm-context-{}", entity_id).into());
-
-                let el = context.inline_render(cx);
-
-                div().h_flex().child(el).child(div().id(element_id))
-            });
-
-        let file_context_container = div()
-            .p_4()
-            .v_flex()
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .child(Icon::new(IconName::File))
-                    .child(
-                        div()
-                            .h_6()
-                            .child(Label::new("File Context"))
-                            .ml_1()
-                            .font_weight(FontWeight::SEMIBOLD),
-                    ),
-            )
-            .child(div().ml_4().children(file_context_items));
-
-        div()
+        let mut main_ui_container = div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
             .capture_action(cx.listener(ConversationEditor::save))
@@ -2535,8 +2506,49 @@ impl Render for ConversationEditor {
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
-            )
-            .child(div().flex_shrink().child(file_context_container))
+            );
+
+        let conversation = self.conversation.read(cx);
+
+        if !conversation.inline_context.is_empty() {
+            // In the future we'll need some way to group on the file context, project diagnostics, etc.
+            // For now, we'll just render the file context as is.
+            let file_context_items =
+                conversation
+                    .inline_context
+                    .iter()
+                    .map(|(entity_id, context)| {
+                        let element_id =
+                            ElementId::Name(format!("llm-context-{}", entity_id).into());
+
+                        let el = context.inline_render(cx);
+
+                        div().h_flex().child(el).child(div().id(element_id))
+                    });
+
+            let file_context_container = div()
+                .p_4()
+                .v_flex()
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .child(Icon::new(IconName::File))
+                        .child(
+                            div()
+                                .h_6()
+                                .child(Label::new("File Context"))
+                                .ml_1()
+                                .font_weight(FontWeight::SEMIBOLD),
+                        ),
+                )
+                .child(div().ml_4().children(file_context_items));
+
+            main_ui_container =
+                main_ui_container.child(div().flex_shrink().child(file_context_container));
+        }
+
+        main_ui_container
     }
 }
 
