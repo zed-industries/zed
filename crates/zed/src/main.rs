@@ -1077,6 +1077,33 @@ fn init_inline_completion_provider(telemetry: Arc<Telemetry>, cx: &mut AppContex
     if let Some(copilot) = Copilot::global(cx) {
         cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
             if editor.mode() == EditorMode::Full {
+                // We renamed some of these actions to not be copilot-specific, but that
+                // would have not been backwards-compatible. So here we are re-registering
+                // the actions with the old names to not break people's keymaps.
+                editor
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::Suggest, cx: &mut ViewContext<Editor>| {
+                            editor.show_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
+                            editor.next_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
+                            editor.previous_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor,
+                         _: &editor::actions::AcceptPartialCopilotSuggestion,
+                         cx: &mut ViewContext<Editor>| {
+                            editor.accept_partial_inline_completion(&Default::default(), cx);
+                        },
+                    ));
+
                 let provider = cx.new_model(|_| {
                     CopilotCompletionProvider::new(copilot.clone())
                         .with_telemetry(telemetry.clone())

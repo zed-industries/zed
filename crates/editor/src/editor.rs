@@ -1546,7 +1546,8 @@ impl Editor {
         }
 
         if self.has_active_inline_completion(cx) {
-            key_context.add("copilot_completion");
+            key_context.add("copilot_suggestion");
+            key_context.add("inline_completion");
         }
 
         key_context
@@ -3902,7 +3903,7 @@ impl Editor {
         Some(())
     }
 
-    fn show_inline_completion(&mut self, _: &ShowInlineCompletion, cx: &mut ViewContext<Self>) {
+    pub fn show_inline_completion(&mut self, _: &ShowInlineCompletion, cx: &mut ViewContext<Self>) {
         if !self.has_active_inline_completion(cx) {
             self.refresh_inline_completion(false, cx);
             return;
@@ -3975,7 +3976,7 @@ impl Editor {
 
     pub fn accept_partial_inline_completion(
         &mut self,
-        _: &AcceptPartialCopilotSuggestion,
+        _: &AcceptPartialInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
         if self.selections.count() == 1 && self.has_active_inline_completion(cx) {

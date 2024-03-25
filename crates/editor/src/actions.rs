@@ -127,6 +127,7 @@ gpui::actions!(
     editor,
     [
         AcceptPartialCopilotSuggestion,
+        AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
         Backspace,
