@@ -395,7 +395,6 @@ impl Window {
             show,
             kind,
             is_movable,
-            display_id,
             fullscreen,
         } = options;
 
@@ -409,7 +408,6 @@ impl Window {
                 is_movable,
                 focus,
                 show,
-                display_id,
             },
         );
         let display_id = platform_window.display().id();

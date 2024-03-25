@@ -1,7 +1,7 @@
 use super::{global_bounds_from_ns_rect, ns_string, renderer, MacDisplay, NSRange};
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
-    Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
+    Bounds, DisplayId, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
     KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowKind, WindowParams,
@@ -492,7 +492,6 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
-            display_id,
             focus,
             show,
         }: WindowParams,
@@ -525,30 +524,70 @@ impl MacWindow {
                 }
             };
 
-            let display = display_id
-                .and_then(MacDisplay::find_by_id)
-                .unwrap_or_else(MacDisplay::primary);
+            let main_screen = NSScreen::mainScreen(nil);
+            let main_display_id = display_id_for_screen(main_screen);
+            let main_display_bounds = MacDisplay::find_by_id(DisplayId(main_display_id))
+                .map(|b| b.bounds())
+                .unwrap(); //TODO
 
             let mut target_screen = nil;
+            let mut target_bounds = None;
+            let mut target_display_id = None;
+            let mut target_display_bounds = None;
             let screens = NSScreen::screens(nil);
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
+                // NSScreen
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
                 let display_id = display_id_for_screen(screen);
-                if display_id == display.id().0 {
-                    target_screen = screen;
-                    break;
+                if let Some(display) = MacDisplay::find_by_id(DisplayId(display_id)) {
+                    let display_bounds = &display.bounds();
+                    if bounds.intersects(&display_bounds) {
+                        target_display_id = Some(display_id);
+                        target_screen = screen;
+                        // // convert the bounds to the screen's coordinate space
+                        let bounds = Bounds {
+                            origin: bounds.origin - display_bounds.origin,
+                            size: bounds.size,
+                        };
+
+                        target_bounds = Some(NSRect::new(
+                            NSPoint::new(
+                                bounds.origin.x.into(),
+                                (main_display_bounds.size.height
+                                    - bounds.origin.y
+                                    - bounds.size.height)
+                                    .into(),
+                            ),
+                            NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
+                        ));
+                        target_display_bounds = Some(global_bounds_to_ns_rect(display.bounds()));
+                        break;
+                    } else if target_screen == nil {
+                        target_screen = screen;
+                        target_display_id = Some(display_id);
+                        target_bounds = Some(global_bounds_to_ns_rect(display.bounds()));
+                        target_display_bounds = Some(global_bounds_to_ns_rect(display.bounds()));
+                    }
                 }
             }
 
-            let window_rect = {
-                let display_bounds = display.bounds();
-                if bounds.intersects(&display_bounds) {
-                    global_bounds_to_ns_rect(bounds)
-                } else {
-                    global_bounds_to_ns_rect(display_bounds)
-                }
+            let Some(window_rect) = target_bounds else {
+                panic!("tried to create a window with no screens")
             };
+
+            println!(
+                "{:?}: {}x{} {}x{} ({}x{} {}x{})",
+                target_display_id,
+                window_rect.origin.x,
+                window_rect.origin.y,
+                window_rect.size.width,
+                window_rect.size.height,
+                target_display_bounds.unwrap().origin.x,
+                target_display_bounds.unwrap().origin.y,
+                target_display_bounds.unwrap().size.width,
+                target_display_bounds.unwrap().size.height
+            );
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 window_rect,
@@ -688,6 +727,16 @@ impl MacWindow {
             } else if show {
                 native_window.orderFront_(nil);
             }
+            let bounds = window.0.lock().bounds();
+
+            println!(
+                "result {:?}: {:?}x{:?} {:?}x{:?}",
+                target_display_id,
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.size.width,
+                bounds.size.height
+            );
 
             window.0.lock().move_traffic_light();
 
@@ -1431,6 +1480,7 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    dbg!(lock.bounds());
     if let Some(mut callback) = lock.moved_callback.take() {
         drop(lock);
         callback();

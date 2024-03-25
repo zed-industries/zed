@@ -527,9 +527,6 @@ pub struct WindowOptions {
 
     /// Whether the window should be movable by the user
     pub is_movable: bool,
-
-    /// The display to create the window on
-    pub display_id: Option<DisplayId>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -550,9 +547,6 @@ pub(crate) struct WindowParams {
     pub focus: bool,
 
     pub show: bool,
-
-    /// The display to create the window on
-    pub display_id: Option<DisplayId>,
 }
 
 impl Default for WindowOptions {
@@ -568,7 +562,6 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
-            display_id: None,
             fullscreen: false,
         }
     }
