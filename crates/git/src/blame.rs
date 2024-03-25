@@ -112,6 +112,21 @@ impl From<Oid> for u32 {
     }
 }
 
+impl From<Oid> for usize {
+    fn from(oid: Oid) -> Self {
+        let bytes = oid.0.as_bytes();
+        debug_assert!(bytes.len() > 8);
+
+        let mut u64_bytes: [u8; 8] = [0; 8];
+
+        for i in 0..8 {
+            u64_bytes[i] = bytes[i];
+        }
+
+        u64::from_ne_bytes(u64_bytes) as usize
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,

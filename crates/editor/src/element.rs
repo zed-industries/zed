@@ -18,15 +18,18 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::{blame::Oid, diff::DiffHunkStatus};
+use git::{
+    blame::{BlameEntry, Oid},
+    diff::DiffHunkStatus,
+};
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
-    AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
-    TextStyleRefinement, View, ViewContext, WindowContext,
+    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity,
+    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
+    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -49,10 +52,10 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
+use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
-use workspace::item::Item;
+use workspace::{item::Item, Toast};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -1142,7 +1145,8 @@ impl EditorElement {
                         Err(_) => "Error parsing date".to_string(),
                     };
                     let pretty_commit_id = format!("{}", blame_entry.sha);
-                    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+                    let short_commit_id =
+                        pretty_commit_id.clone().chars().take(6).collect::<String>();
 
                     let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
                     let name = if name.len() > 20 {
@@ -1151,14 +1155,38 @@ impl EditorElement {
                         name.to_string()
                     };
 
-                    let short_commit_text = format!("{:6}", short_commit_id);
-                    let name_date = format!("{:20} ({})", name, datetime);
+                    let sha: usize = blame_entry.sha.into();
 
                     let mut element = h_flex()
+                        .id(("blame", ix))
                         .children([
-                            div().text_color(sha_color.cursor).child(short_commit_text),
-                            div().text_color(cx.theme().status().hint).child(name_date),
+                            div()
+                                .text_color(sha_color.cursor)
+                                .child(short_commit_id)
+                                .mr_2(),
+                            div().text_color(cx.theme().status().hint).child(format!(
+                                "{:20} ({})",
+                                name,
+                                datetime.clone()
+                            )),
                         ])
+                        .tooltip(move |cx| {
+                            BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx)
+                        })
+                        .on_click({
+                            let workspace = self.editor.read(cx).workspace();
+                            move |_, cx| {
+                                if let Some(workspace) = &workspace {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace
+                                            .show_toast(Toast::new(sha, "Copied to clipboard!"), cx)
+                                    })
+                                }
+
+                                cx.stop_propagation();
+                                cx.write_to_clipboard(ClipboardItem::new(pretty_commit_id.clone()));
+                            }
+                        })
                         .into_any();
 
                     let start_y = ix as f32 * line_height - (scroll_top % line_height);
@@ -2882,6 +2910,73 @@ impl EditorElement {
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
+    }
+}
+
+struct BlameEntryTooltip {
+    color: Hsla,
+
+    pretty_commit_id: String,
+    datetime: String,
+
+    committer: String,
+    committer_email: String,
+
+    summary: String,
+}
+
+impl BlameEntryTooltip {
+    fn new(color: Hsla, blame_entry: BlameEntry, cx: &mut WindowContext) -> AnyView {
+        let datetime = match blame_entry.committer_datetime() {
+            Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+            Err(_) => "Error parsing date".to_string(),
+        };
+        let pretty_commit_id = format!("{}", blame_entry.sha);
+
+        let committer = blame_entry
+            .committer
+            .clone()
+            .unwrap_or("<no name>".to_string());
+
+        let committer_email = blame_entry.committer_mail.clone().unwrap_or_default();
+
+        let summary = blame_entry.summary.clone().unwrap_or_default();
+
+        cx.new_view(|_cx| Self {
+            color,
+            pretty_commit_id,
+            datetime,
+            committer,
+            committer_email,
+            summary,
+        })
+        .into()
+    }
+}
+
+impl Render for BlameEntryTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |this, cx| {
+            this.child(
+                v_flex()
+                    .child(
+                        div()
+                            .child(format!(
+                                "{} {} - {}",
+                                self.committer.clone(),
+                                self.committer_email.clone(),
+                                self.datetime.clone()
+                            ))
+                            .text_color(cx.theme().colors().text_muted),
+                    )
+                    .child(self.summary.clone())
+                    .child(
+                        div()
+                            .text_color(self.color)
+                            .child(self.pretty_commit_id.clone()),
+                    ),
+            )
+        })
     }
 }
 
