@@ -824,6 +824,29 @@ Some other content
     }
 
     #[gpui::test]
+    async fn test_list_with_linebreak_is_handled_correctly() {
+        let parsed = parse(
+            "\
+- [ ] Task 1
+
+- [x] Task 2
+",
+        )
+        .await;
+
+        assert_eq!(
+            parsed.children,
+            vec![list(
+                vec![
+                    list_item(1, Task(false), vec![p("Task 1", 2..5)]),
+                    list_item(1, Task(true), vec![p("Task 2", 16..19)]),
+                ],
+                0..27
+            ),]
+        );
+    }
+
+    #[gpui::test]
     async fn test_list_nested() {
         let parsed = parse(
             "\
