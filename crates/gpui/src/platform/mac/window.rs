@@ -524,8 +524,8 @@ impl MacWindow {
                 }
             };
 
+            let mut target_screen = nil;
             let mut target_bounds = None;
-            let mut target_display_id = None;
             let screens = NSScreen::screens(nil);
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
@@ -533,15 +533,20 @@ impl MacWindow {
                 let display_id = display_id_for_screen(screen);
                 if let Some(display) = MacDisplay::find_by_id(DisplayId(display_id)) {
                     let display_bounds = &display.bounds();
+                    let origin = bounds.origin - display_bounds.origin;
                     if bounds.intersects(&display_bounds) {
-                        target_display_id = Some(display_id);
-                        // // convert the bounds to the screen's coordinate space
-                        let screen_bounds = Bounds {
-                            origin: bounds.origin - display_bounds.origin,
-                            size: bounds.size,
-                        };
+                        // Flipping the origin causes invalid window position
+                        target_bounds = Some(global_bounds_to_ns_rect(Bounds::new(
+                            point(GlobalPixels(0.), origin.y),
+                            bounds.size,
+                        )));
 
-                        target_bounds = Some(global_bounds_to_ns_rect(screen_bounds));
+                        // This works but the origin is not flipped
+                        // target_bounds = Some(NSRect::new(
+                        //     NSPoint::new(0., (origin.y).into()),
+                        //     NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
+                        // ));
+                        target_screen = screen;
                         break;
                     }
                 }
@@ -551,11 +556,12 @@ impl MacWindow {
                 panic!("tried to create a window with no screens")
             };
 
-            let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
+            let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 window_rect,
                 style_mask,
                 NSBackingStoreBuffered,
-                false,
+                NO,
+                target_screen,
             );
             assert!(!native_window.is_null());
             let () = msg_send![
@@ -688,17 +694,6 @@ impl MacWindow {
             } else if show {
                 native_window.orderFront_(nil);
             }
-            let bounds = window.0.lock().bounds();
-
-            println!(
-                "result {:?}: {:?}x{:?} {:?}x{:?}",
-                target_display_id,
-                bounds.origin.x,
-                bounds.origin.y,
-                bounds.size.width,
-                bounds.size.height
-            );
-
             window.0.lock().move_traffic_light();
 
             pool.drain();
@@ -1441,7 +1436,6 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    dbg!(lock.bounds());
     if let Some(mut callback) = lock.moved_callback.take() {
         drop(lock);
         callback();

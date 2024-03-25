@@ -358,7 +358,7 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
+fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<GlobalPixels> {
     const DEFAULT_WINDOW_SIZE: Size<GlobalPixels> = size(GlobalPixels(1024.0), GlobalPixels(700.0));
     const DEFAULT_WINDOW_OFFSET: Point<GlobalPixels> = point(GlobalPixels(0.0), GlobalPixels(35.0));
 
@@ -366,7 +366,12 @@ fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
         .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
-            cx.primary_display()
+            let display = if let Some(display_id) = display_id {
+                cx.displays().iter().find(|d| d.id() == display_id).cloned()
+            } else {
+                cx.primary_display()
+            };
+            display
                 .map(|display| {
                     let center = display.bounds().center();
                     let offset = DEFAULT_WINDOW_SIZE / 2.0;
@@ -395,10 +400,11 @@ impl Window {
             show,
             kind,
             is_movable,
+            display_id,
             fullscreen,
         } = options;
 
-        let bounds = bounds.unwrap_or_else(|| default_bounds(cx));
+        let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let platform_window = cx.platform.open_window(
             handle,
             WindowParams {
