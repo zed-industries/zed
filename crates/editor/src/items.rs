@@ -955,13 +955,16 @@ impl Item for Editor {
     }
 }
 
+/// This trait allows the assistant panel (or any LLM utility) to
+/// * create a text based representation for large language model consumption
+/// * render a mini view of the item for humans
 pub trait AssistantContext {
-    fn markdown(&self, cx: &AppContext) -> String;
-    fn mini_render(&self, cx: &AppContext) -> AnyElement;
+    fn text_for_llm(&self, cx: &AppContext) -> String;
+    fn inline_render(&self, cx: &AppContext) -> AnyElement;
 }
 
 impl AssistantContext for View<Editor> {
-    fn markdown(&self, cx: &AppContext) -> String {
+    fn text_for_llm(&self, cx: &AppContext) -> String {
         let editor = self.read(cx);
         let buffer = editor.buffer.read(cx);
 
@@ -995,7 +998,7 @@ impl AssistantContext for View<Editor> {
         return "".into();
     }
 
-    fn mini_render(&self, cx: &AppContext) -> AnyElement {
+    fn inline_render(&self, cx: &AppContext) -> AnyElement {
         let editor = self.read(cx);
         let buffer = editor.buffer.read(cx);
 

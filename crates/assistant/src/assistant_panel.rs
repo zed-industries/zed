@@ -1632,7 +1632,7 @@ impl Conversation {
         let s: String = self
             .language_model_contexts
             .iter()
-            .map(|item| item.context.markdown(cx))
+            .map(|item| item.context.text_for_llm(cx))
             .collect();
 
         request.messages.push(LanguageModelRequestMessage {
@@ -2497,7 +2497,7 @@ impl Render for ConversationEditor {
         let file_context_items = conversation.language_model_contexts.iter().map(|item| {
             let element_id = ElementId::Name(format!("llm-context-{}", item.entity_id).into());
 
-            let el = item.context.mini_render(cx);
+            let el = item.context.inline_render(cx);
 
             div().h_flex().child(el).child(div().id(element_id))
         });
