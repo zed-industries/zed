@@ -1,6 +1,5 @@
-use std::fmt::Display;
-
 use serde::{Deserialize, Serialize};
+use std::{fmt::Display, sync::Arc};
 use util::SemanticVersion;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -61,6 +60,7 @@ pub enum Event {
     Memory(MemoryEvent),
     App(AppEvent),
     Setting(SettingEvent),
+    Extension(ExtensionEvent),
     Edit(EditEvent),
     Action(ActionEvent),
 }
@@ -123,6 +123,12 @@ pub struct EditEvent {
 pub struct SettingEvent {
     pub setting: String,
     pub value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionEvent {
+    pub extension_id: Arc<str>,
+    pub version: Arc<str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

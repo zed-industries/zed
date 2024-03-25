@@ -11,10 +11,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
-    ExtensionLibraryKind, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    ExtensionManifest,
 };
 use language::LanguageConfig;
-use serde::Deserialize;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -56,15 +55,14 @@ async fn main() -> Result<()> {
     };
 
     log::info!("loading extension manifest");
-    let mut manifest = ExtensionStore::load_extension_manifest(fs.clone(), &extension_path).await?;
-    populate_default_paths(&mut manifest, &extension_path)?;
+    let mut manifest = ExtensionManifest::load(fs.clone(), &extension_path).await?;
 
     log::info!("compiling extension");
     let builder = ExtensionBuilder::new(scratch_dir);
     builder
         .compile_extension(
             &extension_path,
-            &manifest,
+            &mut manifest,
             CompileExtensionOptions { release: true },
         )
         .await
@@ -101,92 +99,10 @@ async fn main() -> Result<()> {
         repository: manifest
             .repository
             .ok_or_else(|| anyhow!("missing repository in extension manifest"))?,
+        wasm_api_version: manifest.lib.version.map(|version| version.to_string()),
     })?;
     fs::remove_dir_all(&archive_dir)?;
     fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
-
-    Ok(())
-}
-
-fn populate_default_paths(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
-    // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
-    // contents of the computed fields, since we don't care what the existing values are.
-    if manifest.schema_version == 0 {
-        manifest.languages.clear();
-        manifest.grammars.clear();
-        manifest.themes.clear();
-    }
-
-    let cargo_toml_path = extension_path.join("Cargo.toml");
-    if cargo_toml_path.exists() {
-        manifest.lib.kind = Some(ExtensionLibraryKind::Rust);
-    }
-
-    let languages_dir = extension_path.join("languages");
-    if languages_dir.exists() {
-        for entry in fs::read_dir(&languages_dir).context("failed to list languages dir")? {
-            let entry = entry?;
-            let language_dir = entry.path();
-            let config_path = language_dir.join("config.toml");
-            if config_path.exists() {
-                let relative_language_dir =
-                    language_dir.strip_prefix(extension_path)?.to_path_buf();
-                if !manifest.languages.contains(&relative_language_dir) {
-                    manifest.languages.push(relative_language_dir);
-                }
-            }
-        }
-    }
-
-    let themes_dir = extension_path.join("themes");
-    if themes_dir.exists() {
-        for entry in fs::read_dir(&themes_dir).context("failed to list themes dir")? {
-            let entry = entry?;
-            let theme_path = entry.path();
-            if theme_path.extension() == Some("json".as_ref()) {
-                let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
-                if !manifest.themes.contains(&relative_theme_path) {
-                    manifest.themes.push(relative_theme_path);
-                }
-            }
-        }
-    }
-
-    // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
-    // the manifest using the contents of the `grammars` directory.
-    if manifest.schema_version == 0 {
-        let grammars_dir = extension_path.join("grammars");
-        if grammars_dir.exists() {
-            for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {
-                let entry = entry?;
-                let grammar_path = entry.path();
-                if grammar_path.extension() == Some("toml".as_ref()) {
-                    #[derive(Deserialize)]
-                    struct GrammarConfigToml {
-                        pub repository: String,
-                        pub commit: String,
-                    }
-
-                    let grammar_config = fs::read_to_string(&grammar_path)?;
-                    let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
-
-                    let grammar_name = grammar_path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| anyhow!("no grammar name"))?;
-                    if !manifest.grammars.contains_key(grammar_name) {
-                        manifest.grammars.insert(
-                            grammar_name.into(),
-                            GrammarManifestEntry {
-                                repository: grammar_config.repository,
-                                rev: grammar_config.commit,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-    }
 
     Ok(())
 }

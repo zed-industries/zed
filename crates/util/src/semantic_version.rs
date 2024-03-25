@@ -4,10 +4,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use serde::Serialize;
+use serde::{de::Error, Deserialize, Serialize};
 
 /// A datastructure representing a semantic version number
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SemanticVersion {
     pub major: usize,
     pub minor: usize,
@@ -59,5 +59,25 @@ impl FromStr for SemanticVersion {
 impl Display for SemanticVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl Serialize for SemanticVersion {
+    fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for SemanticVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+        Self::from_str(&string)
+            .map_err(|_| Error::custom(format!("Invalid version string \"{string}\"")))
     }
 }
