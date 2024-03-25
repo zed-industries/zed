@@ -25,7 +25,7 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::{ModalView, Workspace};
 
-actions!(file_finder, [Toggle]);
+actions!(file_finder, [Toggle, SelectPrev]);
 
 impl ModalView for FileFinder {}
 
@@ -47,9 +47,10 @@ impl FileFinder {
             };
 
             file_finder.update(cx, |file_finder, cx| {
-                file_finder
-                    .picker
-                    .update(cx, |picker, cx| picker.cycle_selection(cx))
+                file_finder.init_modifiers = Some(cx.modifiers());
+                file_finder.picker.update(cx, |picker, cx| {
+                    picker.cycle_selection(cx);
+                });
             });
         });
     }
@@ -115,6 +116,11 @@ impl FileFinder {
             }
         }
     }
+
+    fn handle_select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        self.init_modifiers = Some(cx.modifiers());
+        cx.dispatch_action(Box::new(menu::SelectPrev));
+    }
 }
 
 impl EventEmitter<DismissEvent> for FileFinder {}
@@ -131,6 +137,7 @@ impl Render for FileFinder {
             .key_context("FileFinder")
             .w(rems(34.))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_action(cx.listener(Self::handle_select_prev))
             .child(self.picker.clone())
     }
 }
