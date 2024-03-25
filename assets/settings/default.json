@@ -587,6 +587,9 @@
     },
     "OCaml Interface": {
       "tab_size": 2
+    },
+    "Prisma": {
+      "tab_size": 2
     }
   },
   // Zed's Prettier integration settings.
