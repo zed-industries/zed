@@ -715,7 +715,7 @@ impl AssistantPanel {
         let workspace = self
             .workspace
             .upgrade()
-            .ok_or_else(|| anyhow!("workspaced dropped"))?;
+            .ok_or_else(|| anyhow!("workspace dropped"))?;
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
                 self.model.clone(),
@@ -1533,9 +1533,7 @@ impl Conversation {
                 return Default::default();
             }
 
-            // Call to OpenAI to make completions
             let request = self.to_completion_request(cx);
-
             let stream = CompletionProvider::global(cx).complete(request);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2070,11 +2068,12 @@ impl ConversationEditor {
                 // });
 
                 workspace
-                    .active_item_as::<Editor>(cx).map(|editor| LanguageModelContextSelection {
-                            entity_id: editor.entity_id(),
-                            enabled: true,
-                            context: Box::new(editor),
-                        })
+                    .active_item_as::<Editor>(cx)
+                    .map(|editor| LanguageModelContextSelection {
+                        entity_id: editor.entity_id(),
+                        enabled: true,
+                        context: Box::new(editor),
+                    })
             })
             .into_iter()
             .collect()

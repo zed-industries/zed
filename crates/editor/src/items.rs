@@ -1035,7 +1035,13 @@ impl MinimalContext for View<Editor> {
             }
             .into_any_element()
         } else {
-            todo!()
+            EditorLanguageModelContext {
+                icon_path: "icons/file_icons/file.svg".into(),
+                path: None,
+                selection_ranges: vec![],
+                focused: false,
+            }
+            .into_any_element()
         };
 
         el
