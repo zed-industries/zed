@@ -641,11 +641,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = crate::ScrollWheelEvent {
-                position: logical_point(x, y, scale_factor),
+                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 delta: ScrollDelta::Lines(Point {
                     x: 0.0,
                     y: wheel_distance,
@@ -664,11 +667,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = crate::ScrollWheelEvent {
-                position: logical_point(x, y, scale_factor),
+                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 delta: ScrollDelta::Lines(Point {
                     x: wheel_distance,
                     y: 0.0,
