@@ -14,6 +14,7 @@ pub mod language_settings;
 mod outline;
 pub mod proto;
 mod syntax_map;
+mod task_context;
 
 #[cfg(test)]
 mod buffer_tests;
@@ -54,6 +55,9 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
+pub use task_context::{
+    ContextProvider, ContextProviderWithTasks, LanguageSource, SymbolContextProvider,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -120,46 +124,6 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
-pub struct LanguageContext {
-    pub package: Option<String>,
-    pub symbol: Option<String>,
-}
-
-pub trait LanguageContextProvider: Send + Sync {
-    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
-}
-
-/// A context provider that fills out LanguageContext without inspecting the contents.
-pub struct DefaultContextProvider;
-
-impl LanguageContextProvider for DefaultContextProvider {
-    fn build_context(
-        &self,
-        location: Location,
-        cx: &mut AppContext,
-    ) -> gpui::Result<LanguageContext> {
-        let symbols = location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .symbols_containing(location.range.start, None);
-        let symbol = symbols.and_then(|symbols| {
-            symbols.last().map(|symbol| {
-                let range = symbol
-                    .name_ranges
-                    .last()
-                    .cloned()
-                    .unwrap_or(0..symbol.text.len());
-                symbol.text[range].to_string()
-            })
-        });
-        Ok(LanguageContext {
-            package: None,
-            symbol,
-        })
-    }
-}
-
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -170,11 +134,15 @@ pub struct CachedLspAdapter {
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
+    /// Indicates whether this language server is the primary language server
+    /// for a given language. Currently, most LSP-backed features only work
+    /// with one language server, so one server needs to be primary.
+    pub is_primary: bool,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
 impl CachedLspAdapter {
-    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>, is_primary: bool) -> Arc<Self> {
         let name = adapter.name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
@@ -186,6 +154,7 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            is_primary,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
@@ -329,7 +298,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
                         self.name(),
@@ -500,7 +468,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
         .await;
 
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
     binary
 }
 
@@ -777,7 +745,7 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
+    pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -892,10 +860,7 @@ impl Language {
         }
     }
 
-    pub fn with_context_provider(
-        mut self,
-        provider: Option<Arc<dyn LanguageContextProvider>>,
-    ) -> Self {
+    pub fn with_context_provider(mut self, provider: Option<Arc<dyn ContextProvider>>) -> Self {
         self.context_provider = provider;
         self
     }
@@ -1220,7 +1185,7 @@ impl Language {
         self.config.name.clone()
     }
 
-    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+    pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
     }
 

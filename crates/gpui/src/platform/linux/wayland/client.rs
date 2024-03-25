@@ -933,6 +933,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                                 position: state.mouse_location,
                                 modifiers: state.modifiers,
                                 click_count: state.click_state.current_count,
+                                first_mouse: false,
                             }),
                         );
                     }

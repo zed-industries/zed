@@ -1,6 +1,4 @@
-pub struct Guest;
 pub use wit::*;
-
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
 pub trait Extension: Send + Sync {
@@ -10,14 +8,14 @@ pub trait Extension: Send + Sync {
 
     fn language_server_command(
         &mut self,
-        config: wit::LanguageServerConfig,
-        worktree: &wit::Worktree,
+        config: LanguageServerConfig,
+        worktree: &Worktree,
     ) -> Result<Command>;
 
     fn language_server_initialization_options(
         &mut self,
-        _config: wit::LanguageServerConfig,
-        _worktree: &wit::Worktree,
+        _config: LanguageServerConfig,
+        _worktree: &Worktree,
     ) -> Result<Option<String>> {
         Ok(None)
     }
@@ -54,10 +52,12 @@ pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "
 
 mod wit {
     wit_bindgen::generate!({
-        exports: { world: super::Component },
-        skip: ["init-extension"]
+        skip: ["init-extension"],
+        path: "./wit/0.0.4",
     });
 }
+
+wit::export!(Component);
 
 struct Component;
 

@@ -35,13 +35,15 @@ pub enum TaskSourceKind {
     AbsPath(PathBuf),
     /// Worktree-specific task definitions, e.g. dynamic tasks from open worktree file, or tasks from the worktree's .zed/task.json
     Worktree { id: WorktreeId, abs_path: PathBuf },
+    /// Buffer-specific task definitions, originating in e.g. language extension.
+    Buffer,
 }
 
 impl TaskSourceKind {
     fn abs_path(&self) -> Option<&Path> {
         match self {
             Self::AbsPath(abs_path) | Self::Worktree { abs_path, .. } => Some(abs_path),
-            Self::UserInput => None,
+            Self::UserInput | Self::Buffer => None,
         }
     }
 
@@ -590,7 +592,7 @@ mod tests {
             (TaskSourceKind::UserInput, common_name.to_string()),
             (TaskSourceKind::UserInput, "user_input".to_string()),
         ];
-        let worktree_1_tasks = vec![
+        let worktree_1_tasks = [
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
@@ -606,7 +608,7 @@ mod tests {
                 "worktree_1".to_string(),
             ),
         ];
-        let worktree_2_tasks = vec![
+        let worktree_2_tasks = [
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,

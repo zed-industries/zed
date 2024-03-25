@@ -85,10 +85,7 @@ impl ExtensionBuilder {
 
         let cargo_toml_path = extension_dir.join("Cargo.toml");
         if extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust)
-            || fs::metadata(&cargo_toml_path)
-                .ok()
-                .map(|metadata| metadata.is_file())
-                .unwrap_or(false)
+            || fs::metadata(&cargo_toml_path).map_or(false, |stat| stat.is_file())
         {
             log::info!("compiling Rust extension {}", extension_dir.display());
             self.compile_rust_extension(extension_dir, options)

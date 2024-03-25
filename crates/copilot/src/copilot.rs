@@ -29,8 +29,7 @@ use std::{
     sync::Arc,
 };
 use util::{
-    async_maybe, fs::remove_matching, github::latest_github_release, http::HttpClient, paths,
-    ResultExt,
+    fs::remove_matching, github::latest_github_release, http::HttpClient, maybe, paths, ResultExt,
 };
 
 actions!(
@@ -1006,7 +1005,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         e @ Err(..) => {
             e.log_err();
             // Fetch a cached binary, if it exists
-            async_maybe!({
+            maybe!(async {
                 let mut last_version_dir = None;
                 let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
                 while let Some(entry) = entries.next().await {

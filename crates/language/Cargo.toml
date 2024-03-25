@@ -58,6 +58,7 @@ pulldown-cmark.workspace = true
 tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
+task.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
