@@ -109,6 +109,14 @@ async fn main() -> Result<()> {
 }
 
 fn populate_default_paths(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
+    // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
+    // contents of the computed fields, since we don't care what the existing values are.
+    if manifest.schema_version == 0 {
+        manifest.languages.clear();
+        manifest.grammars.clear();
+        manifest.themes.clear();
+    }
+
     let cargo_toml_path = extension_path.join("Cargo.toml");
     if cargo_toml_path.exists() {
         manifest.lib.kind = Some(ExtensionLibraryKind::Rust);
