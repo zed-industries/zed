@@ -916,6 +916,10 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn is_active(&self) -> bool {
+        unsafe { self.0.lock().native_window.isKeyWindow() == YES }
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
