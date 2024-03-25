@@ -524,50 +524,25 @@ impl MacWindow {
                 }
             };
 
-            let main_screen = NSScreen::mainScreen(nil);
-            let main_display_id = display_id_for_screen(main_screen);
-            let main_display_bounds = MacDisplay::find_by_id(DisplayId(main_display_id))
-                .map(|b| b.bounds())
-                .unwrap(); //TODO
-
-            let mut target_screen = nil;
             let mut target_bounds = None;
             let mut target_display_id = None;
-            let mut target_display_bounds = None;
             let screens = NSScreen::screens(nil);
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
-                // NSScreen
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
                 let display_id = display_id_for_screen(screen);
                 if let Some(display) = MacDisplay::find_by_id(DisplayId(display_id)) {
                     let display_bounds = &display.bounds();
                     if bounds.intersects(&display_bounds) {
                         target_display_id = Some(display_id);
-                        target_screen = screen;
                         // // convert the bounds to the screen's coordinate space
-                        let bounds = Bounds {
+                        let screen_bounds = Bounds {
                             origin: bounds.origin - display_bounds.origin,
                             size: bounds.size,
                         };
 
-                        target_bounds = Some(NSRect::new(
-                            NSPoint::new(
-                                bounds.origin.x.into(),
-                                (main_display_bounds.size.height
-                                    - bounds.origin.y
-                                    - bounds.size.height)
-                                    .into(),
-                            ),
-                            NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
-                        ));
-                        target_display_bounds = Some(global_bounds_to_ns_rect(display.bounds()));
+                        target_bounds = Some(global_bounds_to_ns_rect(screen_bounds));
                         break;
-                    } else if target_screen == nil {
-                        target_screen = screen;
-                        target_display_id = Some(display_id);
-                        target_bounds = Some(global_bounds_to_ns_rect(display.bounds()));
-                        target_display_bounds = Some(global_bounds_to_ns_rect(display.bounds()));
                     }
                 }
             }
@@ -576,25 +551,11 @@ impl MacWindow {
                 panic!("tried to create a window with no screens")
             };
 
-            println!(
-                "{:?}: {}x{} {}x{} ({}x{} {}x{})",
-                target_display_id,
-                window_rect.origin.x,
-                window_rect.origin.y,
-                window_rect.size.width,
-                window_rect.size.height,
-                target_display_bounds.unwrap().origin.x,
-                target_display_bounds.unwrap().origin.y,
-                target_display_bounds.unwrap().size.width,
-                target_display_bounds.unwrap().size.height
-            );
-
-            let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
+            let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
                 window_rect,
                 style_mask,
                 NSBackingStoreBuffered,
-                NO,
-                target_screen,
+                false,
             );
             assert!(!native_window.is_null());
             let () = msg_send![

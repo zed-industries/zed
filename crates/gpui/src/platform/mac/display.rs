@@ -42,6 +42,19 @@ impl MacDisplay {
         }
     }
 
+    /// Get the main screen - the one that contains the current key window or,
+    /// if there is no key window, the one that contains the main menu.
+    pub fn main() -> Self {
+        unsafe {
+            let screen = NSScreen::mainScreen(nil);
+            let device_description = NSScreen::deviceDescription(screen);
+            let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+            let screen_number = device_description.objectForKey_(screen_number_key);
+            let screen_number: CGDirectDisplayID = msg_send![screen_number, unsignedIntegerValue];
+            Self(screen_number)
+        }
+    }
+
     /// Obtains an iterator over all currently active system displays.
     pub fn all() -> impl Iterator<Item = Self> {
         unsafe {
@@ -95,18 +108,18 @@ pub(crate) fn global_bounds_from_ns_rect(rect: NSRect) -> Bounds<GlobalPixels> {
 
 /// Convert the given rectangle from GPUI's coordinate system to Cocoa's native coordinate space.
 ///
-/// Cocoa's coordinate space has its origin at the bottom left of the primary screen,
+/// Cocoa's coordinate space has its origin at the bottom left of the main screen,
 /// with the Y axis pointing upwards.
 ///
 /// Conversely, in GPUI's coordinate system, the origin is placed at the top left of the primary
 /// screen, with the Y axis pointing downwards (matching CoreGraphics)
 pub(crate) fn global_bounds_to_ns_rect(bounds: Bounds<GlobalPixels>) -> NSRect {
-    let primary_screen_height = MacDisplay::primary().bounds().size.height;
+    let main_screen_height = MacDisplay::main().bounds().size.height;
 
     NSRect::new(
         NSPoint::new(
             bounds.origin.x.into(),
-            (primary_screen_height - bounds.origin.y - bounds.size.height).into(),
+            (main_screen_height - bounds.origin.y - bounds.size.height).into(),
         ),
         NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
     )
