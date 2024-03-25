@@ -350,6 +350,8 @@ struct MacWindowState {
     input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
+    // Whether the next left-mouse click is also the focusing click.
+    first_mouse: bool,
     minimized: bool,
 }
 
@@ -607,6 +609,7 @@ impl MacWindow {
                 input_during_keydown: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
+                first_mouse: false,
                 minimized: false,
             })));
 
@@ -1262,7 +1265,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
-
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
@@ -1285,6 +1287,20 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     click_count: 1,
                     ..*event
                 };
+            }
+
+            // Handles focusing click.
+            PlatformInput::MouseDown(
+                event @ MouseDownEvent {
+                    button: MouseButton::Left,
+                    ..
+                },
+            ) if (lock.first_mouse) => {
+                *event = MouseDownEvent {
+                    first_mouse: true,
+                    ..*event
+                };
+                lock.first_mouse = false;
             }
 
             // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
@@ -1745,15 +1761,10 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
 }
 
 extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
-    unsafe {
-        let state = get_window_state(this);
-        let lock = state.as_ref().lock();
-        if lock.kind == WindowKind::PopUp {
-            YES
-        } else {
-            NO
-        }
-    }
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.first_mouse = true;
+    YES
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
