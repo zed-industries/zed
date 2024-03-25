@@ -1,5 +1,9 @@
-use util::ResultExt;
+use std::sync::OnceLock;
+
+use ::util::ResultExt;
 use windows::Win32::{Foundation::*, System::Threading::*, UI::WindowsAndMessaging::*};
+
+use crate::*;
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;
@@ -99,4 +103,35 @@ pub(crate) fn create_event() -> windows::core::Result<OwnedHandle> {
 
 pub(crate) fn windows_credentials_target_name(url: &str) -> String {
     format!("zed:url={}", url)
+}
+
+pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
+    static ARROW: OnceLock<HCURSOR> = OnceLock::new();
+    static IBEAM: OnceLock<HCURSOR> = OnceLock::new();
+    static CROSS: OnceLock<HCURSOR> = OnceLock::new();
+    static HAND: OnceLock<HCURSOR> = OnceLock::new();
+    static SIZEWE: OnceLock<HCURSOR> = OnceLock::new();
+    static SIZENS: OnceLock<HCURSOR> = OnceLock::new();
+    static NO: OnceLock<HCURSOR> = OnceLock::new();
+    let (lock, name) = match style {
+        CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => (&IBEAM, IDC_IBEAM),
+        CursorStyle::Crosshair => (&CROSS, IDC_CROSS),
+        CursorStyle::PointingHand | CursorStyle::DragLink => (&HAND, IDC_HAND),
+        CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
+            (&SIZEWE, IDC_SIZEWE)
+        }
+        CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
+            (&SIZENS, IDC_SIZENS)
+        }
+        CursorStyle::OperationNotAllowed => (&NO, IDC_NO),
+        _ => (&ARROW, IDC_ARROW),
+    };
+    *lock.get_or_init(|| {
+        HCURSOR(
+            unsafe { LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED) }
+                .log_err()
+                .unwrap_or_default()
+                .0,
+        )
+    })
 }
