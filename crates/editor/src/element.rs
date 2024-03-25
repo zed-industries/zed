@@ -1497,47 +1497,17 @@ impl EditorElement {
                                     .v_flex()
                                     .justify_start()
                                     .id("jump to collapsed context")
-                                    .group("")
                                     .w(relative(1.0))
                                     .h_full()
-                                    .cursor_pointer()
                                     .child(
                                         div()
                                             .h_px()
                                             .w_full()
                                             .bg(cx.theme().colors().border_variant)
-                                            .group_hover("", |style| {
+                                            .group_hover("excerpt-jump-action", |style| {
                                                 style.bg(cx.theme().colors().border)
                                             }),
-                                    )
-                                    .when_some(jump_data.clone(), |this, jump_data| {
-                                        this.on_click(cx.listener_for(&self.editor, {
-                                            let path = jump_data.path.clone();
-                                            move |editor, _, cx| {
-                                                cx.stop_propagation();
-
-                                                editor.jump(
-                                                    path.clone(),
-                                                    jump_data.position,
-                                                    jump_data.anchor,
-                                                    cx,
-                                                );
-                                            }
-                                        }))
-                                        .tooltip(
-                                            move |cx| {
-                                                Tooltip::for_action(
-                                                    format!(
-                                                        "Jump to {}:L{}",
-                                                        jump_data.path.path.display(),
-                                                        jump_data.position.row + 1
-                                                    ),
-                                                    &OpenExcerpts,
-                                                    cx,
-                                                )
-                                            },
-                                        )
-                                    }),
+                                    ),
                             )
                             .child(
                                 h_flex()
@@ -1555,7 +1525,7 @@ impl EditorElement {
                                                     .path(IconName::ArrowUpRight.path())
                                                     .size(IconSize::XSmall.rems())
                                                     .text_color(cx.theme().colors().border)
-                                                    .group_hover("", |style| {
+                                                    .group_hover("excerpt-jump-action", |style| {
                                                         style.text_color(
                                                             cx.theme().colors().editor_line_number,
                                                         )
@@ -1589,6 +1559,34 @@ impl EditorElement {
                                             }),
                                     ),
                             )
+                            .group("excerpt-jump-action")
+                            .cursor_pointer()
+                            .when_some(jump_data.clone(), |this, jump_data| {
+                                this.on_click(cx.listener_for(&self.editor, {
+                                    let path = jump_data.path.clone();
+                                    move |editor, _, cx| {
+                                        cx.stop_propagation();
+
+                                        editor.jump(
+                                            path.clone(),
+                                            jump_data.position,
+                                            jump_data.anchor,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action(
+                                        format!(
+                                            "Jump to {}:L{}",
+                                            jump_data.path.path.display(),
+                                            jump_data.position.row + 1
+                                        ),
+                                        &OpenExcerpts,
+                                        cx,
+                                    )
+                                })
+                            })
                     };
                     element.into_any()
                 }
