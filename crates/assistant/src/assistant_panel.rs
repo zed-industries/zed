@@ -2026,19 +2026,8 @@ struct ConversationEditor {
 
 struct LanguageModelContextSelection {
     entity_id: EntityId,
-    enabled: bool,
-    // TODO: This has to go after the MinimalContext trait instead
     context: Box<dyn MinimalContext>,
 }
-
-impl LanguageModelContextSelection {
-    fn toggle(&mut self) {
-        self.enabled = !self.enabled;
-        // Send event?
-    }
-}
-
-// Take the trait approach forward so we can defer the render and the llm_markdown bits
 
 impl ConversationEditor {
     fn new(
@@ -2071,7 +2060,6 @@ impl ConversationEditor {
                     .active_item_as::<Editor>(cx)
                     .map(|editor| LanguageModelContextSelection {
                         entity_id: editor.entity_id(),
-                        enabled: true,
                         context: Box::new(editor),
                     })
             })
