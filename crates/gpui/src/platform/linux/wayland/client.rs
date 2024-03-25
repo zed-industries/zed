@@ -800,7 +800,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             && (match state.repeat.current_keysym {
                                 Some(repeat_keysym) => keysym == repeat_keysym,
                                 None => false,
-                              })
+                            })
                         {
                             state.repeat.current_keysym = None;
                         }
