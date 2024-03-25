@@ -15,7 +15,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
-    items::MinimalContext,
+    items::AssistantContext,
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
     ToPoint,
@@ -2026,7 +2026,7 @@ struct ConversationEditor {
 
 struct LanguageModelContextSelection {
     entity_id: EntityId,
-    context: Box<dyn MinimalContext>,
+    context: Box<dyn AssistantContext>,
 }
 
 impl ConversationEditor {

@@ -955,24 +955,12 @@ impl Item for Editor {
     }
 }
 
-pub trait MinimalContext {
+pub trait AssistantContext {
     fn markdown(&self, cx: &AppContext) -> String;
     fn mini_render(&self, cx: &AppContext) -> AnyElement;
 }
 
-pub struct TestMinimalContext {}
-
-impl MinimalContext for TestMinimalContext {
-    fn markdown(&self, _cx: &AppContext) -> String {
-        "test".into()
-    }
-
-    fn mini_render(&self, _cx: &AppContext) -> AnyElement {
-        "test".into_any_element()
-    }
-}
-
-impl MinimalContext for View<Editor> {
+impl AssistantContext for View<Editor> {
     fn markdown(&self, cx: &AppContext) -> String {
         let editor = self.read(cx);
         let buffer = editor.buffer.read(cx);
