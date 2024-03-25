@@ -1458,7 +1458,7 @@ impl Editor {
             remote_id: None,
             hover_state: Default::default(),
             hovered_link_state: Default::default(),
-            inline_completion_provider: None, // todo!("assign this from outside")
+            inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
