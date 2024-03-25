@@ -7,6 +7,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::{fmt, ops::Range, path::Path};
+use url::Url;
 
 pub use git2 as libgit;
 
@@ -149,6 +150,8 @@ pub struct BlameEntry {
 
     pub previous: Option<String>,
     pub filename: String,
+
+    pub permalink: Option<Url>,
 }
 
 impl BlameEntry {

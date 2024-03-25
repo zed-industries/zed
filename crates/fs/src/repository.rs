@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use git::blame::BlameEntry;
 use git2::{BranchType, StatusShow};
@@ -224,6 +224,26 @@ impl GitRepository for LibGitRepository {
         let output = git::blame::run_git_blame(&working_directory, path, &content.to_string())?;
         let mut entries = git::blame::parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+
+        const REMOTE_NAME: &str = "origin";
+        if let Some(origin_url) = self.remote_url(REMOTE_NAME) {
+            let mut permalinks = HashMap::default();
+            for entry in entries.iter_mut() {
+                let permalink = permalinks.entry(entry.sha).or_insert_with(|| {
+                    git::permalink::build_permalink(git::permalink::BuildPermalinkParams {
+                        remote_url: &origin_url,
+                        sha: entry.sha.to_string().as_str(),
+                        path: &entry.filename,
+                        selection: None,
+                    })
+                });
+
+                if let Ok(url) = permalink {
+                    entry.permalink.replace(url.clone());
+                }
+            }
+        }
+
         Ok(entries)
     }
 }

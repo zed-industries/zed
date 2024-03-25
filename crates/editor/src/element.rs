@@ -2923,6 +2923,8 @@ struct BlameEntryTooltip {
     committer_email: String,
 
     summary: String,
+
+    url: Option<String>,
 }
 
 impl BlameEntryTooltip {
@@ -2949,6 +2951,7 @@ impl BlameEntryTooltip {
             committer,
             committer_email,
             summary,
+            url: blame_entry.permalink.clone().map(|url| url.to_string()),
         })
         .into()
     }
@@ -2956,6 +2959,7 @@ impl BlameEntryTooltip {
 
 impl Render for BlameEntryTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let url = self.url.clone();
         tooltip_container(cx, |this, cx| {
             this.child(
                 v_flex()
@@ -2969,7 +2973,19 @@ impl Render for BlameEntryTooltip {
                             ))
                             .text_color(cx.theme().colors().text_muted),
                     )
-                    .child(self.summary.clone())
+                    .child(
+                        div()
+                            .child(self.summary.clone())
+                            .when_some(url, |this, url| {
+                                this.child(
+                                    IconButton::new("open-permalink", IconName::Link).on_click(
+                                        cx.listener(move |_this, _, cx| {
+                                            cx.open_url(&url);
+                                        }),
+                                    ),
+                                )
+                            }),
+                    )
                     .child(
                         div()
                             .text_color(self.color)

@@ -5,6 +5,7 @@ pub use lazy_static::lazy_static;
 
 pub mod blame;
 pub mod diff;
+pub mod permalink;
 
 lazy_static! {
     pub static ref DOT_GIT: &'static OsStr = OsStr::new(".git");

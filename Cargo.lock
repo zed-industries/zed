@@ -4199,6 +4199,7 @@ dependencies = [
  "sum_tree",
  "text",
  "unindent",
+ "url",
  "util",
 ]
 

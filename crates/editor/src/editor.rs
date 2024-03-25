@@ -38,6 +38,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
+use ::git::permalink::{build_permalink, BuildPermalinkParams};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -8867,8 +8868,6 @@ impl Editor {
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        use git::permalink::{build_permalink, BuildPermalinkParams};
-
         let (path, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
             let project = project_handle.read(cx);
@@ -8901,7 +8900,12 @@ impl Editor {
             remote_url: &origin_url,
             sha: &sha,
             path: &path,
-            selection: selection.map(|selection| selection.range()),
+            selection: selection.map(|selection| {
+                let range = selection.range();
+                let start = range.start.row;
+                let end = range.end.row;
+                start..end
+            }),
         })
     }
 
