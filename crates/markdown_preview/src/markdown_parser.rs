@@ -73,6 +73,10 @@ impl<'a> MarkdownParser<'a> {
         return self.peek(0);
     }
 
+    fn current_event(&self) -> Option<&Event> {
+        return self.current().map(|(event, _)| event);
+    }
+
     fn is_text_like(event: &Event) -> bool {
         match event {
             Event::Text(_)
@@ -448,13 +452,20 @@ impl<'a> MarkdownParser<'a> {
                     inside_list_item = true;
 
                     // Check for task list marker (`- [ ]` or `- [x]`)
-                    if let Some(next) = self.current() {
-                        match next.0 {
-                            Event::TaskListMarker(checked) => {
-                                task_item = Some(checked);
-                                self.cursor += 1;
+                    if let Some(event) = self.current_event() {
+                        // If there is a linebreak in between two list items the task list marker will actually be the first element of the paragraph
+                        if event == &Event::Start(Tag::Paragraph) {
+                            self.cursor += 1;
+                        }
+
+                        if let Some(event) = self.current_event() {
+                            match event {
+                                Event::TaskListMarker(checked) => {
+                                    task_item = Some(*checked);
+                                    self.cursor += 1;
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
 
@@ -471,6 +482,11 @@ impl<'a> MarkdownParser<'a> {
                                 current_list_items.push(Box::new(block));
                             }
                         }
+                    }
+
+                    // If there is a linebreak in between two list items the task list marker will actually be the first element of the paragraph
+                    if self.current_event() == Some(&Event::End(TagEnd::Paragraph)) {
+                        self.cursor += 1;
                     }
                 }
                 Event::End(TagEnd::Item) => {
