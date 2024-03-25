@@ -105,7 +105,7 @@ impl FileFinder {
         event: &ModifiersChangedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(init_modifiers) = self.init_modifiers else {
+        let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
         };
         if self.picker.read(cx).delegate.has_changed_selected_index {
