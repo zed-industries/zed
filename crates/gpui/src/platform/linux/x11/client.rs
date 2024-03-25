@@ -247,6 +247,7 @@ impl X11Client {
                         position,
                         modifiers,
                         click_count: state.click_state.current_count,
+                        first_mouse: false,
                     }));
                 } else if event.detail >= 4 && event.detail <= 5 {
                     // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11

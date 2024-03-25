@@ -74,7 +74,7 @@ impl Default for LinuxPlatform {
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
         let wayland_display = env::var_os("WAYLAND_DISPLAY");
-        let use_wayland = wayland_display.is_some() && !wayland_display.unwrap().is_empty();
+        let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
 
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());

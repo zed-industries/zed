@@ -140,6 +140,8 @@ impl From<&dyn PanelHandle> for AnyView {
     }
 }
 
+/// A container with a fixed [`DockPosition`] adjacent to a certain widown edge.
+/// Can contain multiple panels and show/hide itself with all contents.
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,

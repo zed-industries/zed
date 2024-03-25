@@ -529,6 +529,12 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+/// Collects everything project-related for a certain window opened.
+/// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
+///
+/// A `Workspace` usually consists of 1 or more projects, a central pane group, 3 docks and a status bar.
+/// The `Workspace` owns everybody's state and serves as a default, "global context",
+/// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,

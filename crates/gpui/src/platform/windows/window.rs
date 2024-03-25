@@ -228,6 +228,7 @@ impl WindowsWindowInner {
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
             WM_IME_CHAR => self.handle_ime_char(wparam),
+            WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -593,6 +594,7 @@ impl WindowsWindowInner {
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
                 click_count: 1,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
@@ -1008,6 +1010,7 @@ impl WindowsWindowInner {
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
                 click_count: 1,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
@@ -1070,6 +1073,24 @@ impl WindowsWindowInner {
         }
 
         None
+    }
+
+    fn handle_set_cursor(&self, lparam: LPARAM) -> Option<isize> {
+        if matches!(
+            lparam.loword() as u32,
+            HTLEFT
+                | HTRIGHT
+                | HTTOP
+                | HTTOPLEFT
+                | HTTOPRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+                | HTBOTTOMRIGHT
+        ) {
+            return None;
+        }
+        unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
+        Some(1)
     }
 }
 
@@ -1572,7 +1593,6 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             hIcon: icon_handle,
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             ..Default::default()

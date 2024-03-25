@@ -82,6 +82,17 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
+/// A set of local or remote files that are being opened as part of a project.
+/// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
+/// Stores git repositories data and the diagnostics for the file(s).
+///
+/// Has an absolute path, and may be set to be visible in Zed UI or not.
+/// May correspond to a directory or a single file.
+/// Possible examples:
+/// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
+/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+///
+/// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
     Local(LocalWorktree),
     Remote(RemoteWorktree),
