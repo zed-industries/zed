@@ -216,8 +216,8 @@
       "tab": "buffer_search::FocusEditor",
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
-      "alt-enter": "search::SelectAllMatches"
-      // "alt-tab": "search::CycleMode"
+      "alt-enter": "search::SelectAllMatches",
+      "alt-tab": "search::CycleMode"
     }
   },
   {
@@ -238,7 +238,7 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      // "alt-tab": "search::CycleMode",
+      "alt-tab": "search::CycleMode",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ActivateRegexMode",
       "alt-ctrl-x": "search::ActivateTextMode"
@@ -360,7 +360,7 @@
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      // "alt-cmd-r": "editor::RevealInFinder", 
+      "alt-cmd-r": "editor::RevealInFinder",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
@@ -401,7 +401,7 @@
       //     }
       // ]
       "alt-ctrl-o": "projects::OpenRecent",
-      // "alt-cmd-b": "branches::OpenRecent",
+      "alt-ctrl-shift-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
       "ctrl-k s": "workspace::SaveWithoutFormat",
@@ -426,7 +426,8 @@
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
-      "ctrl-p": "file_finder::Toggle", // todo(linux) also do ctrl-e
+      "ctrl-p": "file_finder::Toggle",
+      "ctrl-e": "file_finder::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -550,7 +551,7 @@
       "delete": "project_panel::Delete",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
-      // "alt-cmd-r": "project_panel::RevealInFinder",
+      "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
   },
@@ -598,7 +599,7 @@
   {
     "context": "Terminal",
     "bindings": {
-      // "ctrl-cmd-space": "terminal::ShowCharacterPalette",
+      // "ctrl-cmd-space": "terminal::ShowCharacterPalette", todo(linux)
       "shift-ctrl-c": "terminal::Copy",
       "shift-ctrl-v": "terminal::Paste",
       "up": ["terminal::SendKeystroke", "up"],
