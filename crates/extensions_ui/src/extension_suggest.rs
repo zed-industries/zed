@@ -38,6 +38,7 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
                 ("latex", "tex"),
                 ("make", "Makefile"),
                 ("nix", "nix"),
+                ("prisma", "prisma"),
                 ("r", "r"),
                 ("r", "R"),
                 ("sql", "sql"),
