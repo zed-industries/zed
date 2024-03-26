@@ -1,10 +1,10 @@
-use super::{global_bounds_from_ns_rect, ns_string, renderer, MacDisplay, NSRange};
+use super::{ns_string, renderer, MacDisplay, NSRange};
 use crate::{
-    global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
-    Bounds, DisplayId, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowKind, WindowParams,
+    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayId,
+    DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
+    PromptLevel, Size, Timer, WindowAppearance, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
