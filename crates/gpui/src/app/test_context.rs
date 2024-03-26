@@ -665,6 +665,7 @@ impl VisualTestContext {
             modifiers,
             button: MouseButton::Left,
             click_count: 1,
+            first_mouse: false,
         });
         self.simulate_event(MouseUpEvent {
             position,

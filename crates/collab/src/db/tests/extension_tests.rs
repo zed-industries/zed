@@ -1,10 +1,9 @@
 use super::Database;
 use crate::{
-    db::{ExtensionMetadata, NewExtensionVersion},
+    db::{queries::extensions::convert_time_to_chrono, ExtensionMetadata, NewExtensionVersion},
     test_both_dbs,
 };
 use std::sync::Arc;
-use time::{OffsetDateTime, PrimitiveDateTime};
 
 test_both_dbs!(
     test_extensions,
@@ -19,8 +18,10 @@ async fn test_extensions(db: &Arc<Database>) {
     let extensions = db.get_extensions(None, 1, 5).await.unwrap();
     assert!(extensions.is_empty());
 
-    let t0 = OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
-    let t0 = PrimitiveDateTime::new(t0.date(), t0.time());
+    let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
+    let t0 = time::PrimitiveDateTime::new(t0.date(), t0.time());
+
+    let t0_chrono = convert_time_to_chrono(t0);
 
     db.insert_extension_versions(
         &[
@@ -34,6 +35,7 @@ async fn test_extensions(db: &Arc<Database>) {
                         authors: vec!["max".into()],
                         repository: "ext1/repo".into(),
                         schema_version: 1,
+                        wasm_api_version: None,
                         published_at: t0,
                     },
                     NewExtensionVersion {
@@ -43,6 +45,7 @@ async fn test_extensions(db: &Arc<Database>) {
                         authors: vec!["max".into(), "marshall".into()],
                         repository: "ext1/repo".into(),
                         schema_version: 1,
+                        wasm_api_version: None,
                         published_at: t0,
                     },
                 ],
@@ -56,6 +59,7 @@ async fn test_extensions(db: &Arc<Database>) {
                     authors: vec!["marshall".into()],
                     repository: "ext2/repo".into(),
                     schema_version: 0,
+                    wasm_api_version: None,
                     published_at: t0,
                 }],
             ),
@@ -84,22 +88,30 @@ async fn test_extensions(db: &Arc<Database>) {
         &[
             ExtensionMetadata {
                 id: "ext1".into(),
-                name: "Extension One".into(),
-                version: "0.0.2".into(),
-                authors: vec!["max".into(), "marshall".into()],
-                description: "a good extension".into(),
-                repository: "ext1/repo".into(),
-                published_at: t0,
+                manifest: rpc::ExtensionApiManifest {
+                    name: "Extension One".into(),
+                    version: "0.0.2".into(),
+                    authors: vec!["max".into(), "marshall".into()],
+                    description: Some("a good extension".into()),
+                    repository: "ext1/repo".into(),
+                    schema_version: Some(1),
+                    wasm_api_version: None,
+                },
+                published_at: t0_chrono,
                 download_count: 0,
             },
             ExtensionMetadata {
                 id: "ext2".into(),
-                name: "Extension Two".into(),
-                version: "0.2.0".into(),
-                authors: vec!["marshall".into()],
-                description: "a great extension".into(),
-                repository: "ext2/repo".into(),
-                published_at: t0,
+                manifest: rpc::ExtensionApiManifest {
+                    name: "Extension Two".into(),
+                    version: "0.2.0".into(),
+                    authors: vec!["marshall".into()],
+                    description: Some("a great extension".into()),
+                    repository: "ext2/repo".into(),
+                    schema_version: Some(0),
+                    wasm_api_version: None,
+                },
+                published_at: t0_chrono,
                 download_count: 0
             },
         ]
@@ -111,12 +123,16 @@ async fn test_extensions(db: &Arc<Database>) {
         extensions,
         &[ExtensionMetadata {
             id: "ext2".into(),
-            name: "Extension Two".into(),
-            version: "0.2.0".into(),
-            authors: vec!["marshall".into()],
-            description: "a great extension".into(),
-            repository: "ext2/repo".into(),
-            published_at: t0,
+            manifest: rpc::ExtensionApiManifest {
+                name: "Extension Two".into(),
+                version: "0.2.0".into(),
+                authors: vec!["marshall".into()],
+                description: Some("a great extension".into()),
+                repository: "ext2/repo".into(),
+                schema_version: Some(0),
+                wasm_api_version: None,
+            },
+            published_at: t0_chrono,
             download_count: 0
         },]
     );
@@ -147,22 +163,30 @@ async fn test_extensions(db: &Arc<Database>) {
         &[
             ExtensionMetadata {
                 id: "ext2".into(),
-                name: "Extension Two".into(),
-                version: "0.2.0".into(),
-                authors: vec!["marshall".into()],
-                description: "a great extension".into(),
-                repository: "ext2/repo".into(),
-                published_at: t0,
+                manifest: rpc::ExtensionApiManifest {
+                    name: "Extension Two".into(),
+                    version: "0.2.0".into(),
+                    authors: vec!["marshall".into()],
+                    description: Some("a great extension".into()),
+                    repository: "ext2/repo".into(),
+                    schema_version: Some(0),
+                    wasm_api_version: None,
+                },
+                published_at: t0_chrono,
                 download_count: 7
             },
             ExtensionMetadata {
                 id: "ext1".into(),
-                name: "Extension One".into(),
-                version: "0.0.2".into(),
-                authors: vec!["max".into(), "marshall".into()],
-                description: "a good extension".into(),
-                repository: "ext1/repo".into(),
-                published_at: t0,
+                manifest: rpc::ExtensionApiManifest {
+                    name: "Extension One".into(),
+                    version: "0.0.2".into(),
+                    authors: vec!["max".into(), "marshall".into()],
+                    description: Some("a good extension".into()),
+                    repository: "ext1/repo".into(),
+                    schema_version: Some(1),
+                    wasm_api_version: None,
+                },
+                published_at: t0_chrono,
                 download_count: 5,
             },
         ]
@@ -181,6 +205,7 @@ async fn test_extensions(db: &Arc<Database>) {
                     authors: vec!["max".into(), "marshall".into()],
                     repository: "ext1/repo".into(),
                     schema_version: 1,
+                    wasm_api_version: None,
                     published_at: t0,
                 }],
             ),
@@ -193,6 +218,7 @@ async fn test_extensions(db: &Arc<Database>) {
                     authors: vec!["marshall".into()],
                     repository: "ext2/repo".into(),
                     schema_version: 0,
+                    wasm_api_version: None,
                     published_at: t0,
                 }],
             ),
@@ -223,22 +249,30 @@ async fn test_extensions(db: &Arc<Database>) {
         &[
             ExtensionMetadata {
                 id: "ext2".into(),
-                name: "Extension Two".into(),
-                version: "0.2.0".into(),
-                authors: vec!["marshall".into()],
-                description: "a great extension".into(),
-                repository: "ext2/repo".into(),
-                published_at: t0,
+                manifest: rpc::ExtensionApiManifest {
+                    name: "Extension Two".into(),
+                    version: "0.2.0".into(),
+                    authors: vec!["marshall".into()],
+                    description: Some("a great extension".into()),
+                    repository: "ext2/repo".into(),
+                    schema_version: Some(0),
+                    wasm_api_version: None,
+                },
+                published_at: t0_chrono,
                 download_count: 7
             },
             ExtensionMetadata {
                 id: "ext1".into(),
-                name: "Extension One".into(),
-                version: "0.0.3".into(),
-                authors: vec!["max".into(), "marshall".into()],
-                description: "a real good extension".into(),
-                repository: "ext1/repo".into(),
-                published_at: t0,
+                manifest: rpc::ExtensionApiManifest {
+                    name: "Extension One".into(),
+                    version: "0.0.3".into(),
+                    authors: vec!["max".into(), "marshall".into()],
+                    description: Some("a real good extension".into()),
+                    repository: "ext1/repo".into(),
+                    schema_version: Some(1),
+                    wasm_api_version: None,
+                },
+                published_at: t0_chrono,
                 download_count: 5,
             },
         ]

@@ -561,7 +561,7 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "ctrl-shift-p": "menu::SelectPrev" }
+    "bindings": { "ctrl-shift-p": "file_finder::SelectPrev" }
   },
   {
     "context": "Terminal",

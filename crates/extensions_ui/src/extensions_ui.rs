@@ -3,8 +3,9 @@ mod extension_suggest;
 
 use crate::components::ExtensionCard;
 use client::telemetry::Telemetry;
+use client::ExtensionMetadata;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::{ExtensionApiResponse, ExtensionManifest, ExtensionStatus, ExtensionStore};
+use extension::{ExtensionManifest, ExtensionStatus, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
@@ -97,7 +98,7 @@ pub struct ExtensionsPage {
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
     filter: ExtensionFilter,
-    remote_extension_entries: Vec<ExtensionApiResponse>,
+    remote_extension_entries: Vec<ExtensionMetadata>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
     filtered_remote_extension_indices: Vec<usize>,
     query_editor: View<Editor>,
@@ -385,7 +386,7 @@ impl ExtensionsPage {
 
     fn render_remote_extension(
         &self,
-        extension: &ExtensionApiResponse,
+        extension: &ExtensionMetadata,
         cx: &mut ViewContext<Self>,
     ) -> ExtensionCard {
         let status = ExtensionStore::global(cx)
@@ -394,7 +395,7 @@ impl ExtensionsPage {
 
         let (install_or_uninstall_button, upgrade_button) =
             self.buttons_for_entry(extension, &status, cx);
-        let repository_url = extension.repository.clone();
+        let repository_url = extension.manifest.repository.clone();
 
         ExtensionCard::new()
             .child(
@@ -404,9 +405,12 @@ impl ExtensionsPage {
                         h_flex()
                             .gap_2()
                             .items_end()
-                            .child(Headline::new(extension.name.clone()).size(HeadlineSize::Medium))
                             .child(
-                                Headline::new(format!("v{}", extension.version))
+                                Headline::new(extension.manifest.name.clone())
+                                    .size(HeadlineSize::Medium),
+                            )
+                            .child(
+                                Headline::new(format!("v{}", extension.manifest.version))
                                     .size(HeadlineSize::XSmall),
                             ),
                     )
@@ -424,12 +428,12 @@ impl ExtensionsPage {
                     .child(
                         Label::new(format!(
                             "{}: {}",
-                            if extension.authors.len() > 1 {
+                            if extension.manifest.authors.len() > 1 {
                                 "Authors"
                             } else {
                                 "Author"
                             },
-                            extension.authors.join(", ")
+                            extension.manifest.authors.join(", ")
                         ))
                         .size(LabelSize::Small),
                     )
@@ -442,7 +446,7 @@ impl ExtensionsPage {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .children(extension.description.as_ref().map(|description| {
+                    .children(extension.manifest.description.as_ref().map(|description| {
                         h_flex().overflow_x_hidden().child(
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
@@ -470,7 +474,7 @@ impl ExtensionsPage {
 
     fn buttons_for_entry(
         &self,
-        extension: &ExtensionApiResponse,
+        extension: &ExtensionMetadata,
         status: &ExtensionStatus,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
@@ -479,7 +483,7 @@ impl ExtensionsPage {
                 Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
                     cx.listener({
                         let extension_id = extension.id.clone();
-                        let version = extension.version.clone();
+                        let version = extension.manifest.version.clone();
                         move |this, _, cx| {
                             this.telemetry
                                 .report_app_event("extensions: install extension".to_string());
@@ -514,14 +518,14 @@ impl ExtensionsPage {
                         }
                     }),
                 ),
-                if installed_version == extension.version {
+                if installed_version == extension.manifest.version {
                     None
                 } else {
                     Some(
                         Button::new(SharedString::from(extension.id.clone()), "Upgrade").on_click(
                             cx.listener({
                                 let extension_id = extension.id.clone();
-                                let version = extension.version.clone();
+                                let version = extension.manifest.version.clone();
                                 move |this, _, cx| {
                                     this.telemetry.report_app_event(
                                         "extensions: install extension".to_string(),

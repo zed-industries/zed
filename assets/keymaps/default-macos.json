@@ -600,7 +600,7 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "cmd-shift-p": "menu::SelectPrev" }
+    "bindings": { "cmd-shift-p": "file_finder::SelectPrev" }
   },
   {
     "context": "Terminal",

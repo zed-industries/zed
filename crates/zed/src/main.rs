@@ -184,7 +184,7 @@ fn main() {
 
         extension::init(
             fs.clone(),
-            http.clone(),
+            client.clone(),
             node_runtime.clone(),
             languages.clone(),
             ThemeRegistry::global(cx),

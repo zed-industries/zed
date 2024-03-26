@@ -406,6 +406,11 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
+    // todo(linux)
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0
             .xcb_connection

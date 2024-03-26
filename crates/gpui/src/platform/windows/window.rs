@@ -228,6 +228,7 @@ impl WindowsWindowInner {
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
             WM_IME_CHAR => self.handle_ime_char(wparam),
+            WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -593,6 +594,7 @@ impl WindowsWindowInner {
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
                 click_count: 1,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
@@ -639,11 +641,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = crate::ScrollWheelEvent {
-                position: logical_point(x, y, scale_factor),
+                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 delta: ScrollDelta::Lines(Point {
                     x: 0.0,
                     y: wheel_distance,
@@ -662,11 +667,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = crate::ScrollWheelEvent {
-                position: logical_point(x, y, scale_factor),
+                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 delta: ScrollDelta::Lines(Point {
                     x: wheel_distance,
                     y: 0.0,
@@ -1008,6 +1016,7 @@ impl WindowsWindowInner {
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
                 click_count: 1,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
@@ -1070,6 +1079,24 @@ impl WindowsWindowInner {
         }
 
         None
+    }
+
+    fn handle_set_cursor(&self, lparam: LPARAM) -> Option<isize> {
+        if matches!(
+            lparam.loword() as u32,
+            HTLEFT
+                | HTRIGHT
+                | HTTOP
+                | HTTOPLEFT
+                | HTTOPRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+                | HTBOTTOMRIGHT
+        ) {
+            return None;
+        }
+        unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
+        Some(1)
     }
 }
 
@@ -1362,6 +1389,10 @@ impl PlatformWindow for WindowsWindow {
         unsafe { SetForegroundWindow(self.inner.hwnd) };
     }
 
+    fn is_active(&self) -> bool {
+        self.inner.hwnd == unsafe { GetActiveWindow() }
+    }
+
     // todo(windows)
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
@@ -1572,7 +1603,6 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             hIcon: icon_handle,
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             ..Default::default()
