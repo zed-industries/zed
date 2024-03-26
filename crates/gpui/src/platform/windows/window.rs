@@ -299,15 +299,15 @@ impl WindowsWindowInner {
     }
 
     fn handle_move_msg(&self, lparam: LPARAM) -> Option<isize> {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
+        let x = lparam.signed_loword() as i32;
+        let y = lparam.signed_hiword() as i32;
         self.origin.set(Point {
             x: DevicePixels(x),
             y: DevicePixels(y),
         });
         let size = self.physical_size.get();
-        let center_x = x + size.width.0 / 2.0;
-        let center_y = y + size.height.0 / 2.0;
+        let center_x = x + size.width.0 / 2;
+        let center_y = y + size.height.0 / 2;
         let monitor_bounds = self.display.borrow().bounds();
         if center_x < monitor_bounds.left().0
             || center_x > monitor_bounds.right().0
@@ -329,8 +329,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, lparam: LPARAM) -> Option<isize> {
-        let width = lparam.loword().max(1) as f32;
-        let height = lparam.hiword().max(1) as f32;
+        let width = lparam.loword().max(1) as i32;
+        let height = lparam.hiword().max(1) as i32;
         let scale_factor = self.scale_factor.get();
         let new_physical_size = Size {
             width: DevicePixels(width),
@@ -646,8 +646,8 @@ impl WindowsWindowInner {
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let x = lparam.signed_loword() as i32;
+            let y = lparam.signed_hiword() as i32;
             let physical_point = point(DevicePixels(x), DevicePixels(y));
             let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
@@ -1867,7 +1867,7 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 // https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
-const DOUBLE_CLICK_SPATIAL_TOLERANCE: f32 = 4.0;
+const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
 
 #[cfg(test)]
 mod tests {
