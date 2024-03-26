@@ -1,7 +1,6 @@
+use crate::Direction;
 use gpui::{AppContext, Model, ModelContext};
 use language::Buffer;
-
-pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn is_enabled(

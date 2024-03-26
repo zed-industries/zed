@@ -4062,8 +4062,7 @@ impl Editor {
         .detach();
     }
 
-    // todo!("what should we do with copilot::NextSuggestion?")
-    fn next_inline_completion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
+    pub fn next_inline_completion(&mut self, _: &NextInlineCompletion, cx: &mut ViewContext<Self>) {
         if self.has_active_inline_completion(cx) {
             self.cycle_inline_completion(Direction::Next, cx);
         } else {
@@ -4074,8 +4073,7 @@ impl Editor {
         }
     }
 
-    // todo!("what should we do with copilot::PreviousSuggestion?")
-    fn previous_inline_completion(
+    pub fn previous_inline_completion(
         &mut self,
         _: &PreviousInlineCompletion,
         cx: &mut ViewContext<Self>,
