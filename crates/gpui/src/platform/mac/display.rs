@@ -152,13 +152,6 @@ impl PlatformDisplay for MacDisplay {
             // the top left of the primary display.
             let bounds = CGDisplayBounds(self.0);
 
-            dbg!((
-                bounds.origin.x,
-                bounds.origin.y,
-                bounds.size.width,
-                bounds.size.height
-            ));
-
             Bounds {
                 origin: point(GlobalPixels(0.), GlobalPixels(0.)),
                 size: size(

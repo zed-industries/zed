@@ -1,10 +1,10 @@
 use gpui::*;
 
-struct HelloWorld {
+struct WindowContent {
     text: SharedString,
 }
 
-impl Render for HelloWorld {
+impl Render for WindowContent {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -17,14 +17,14 @@ impl Render for HelloWorld {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(format!("Hello, {}!", &self.text))
+            .child(self.text.clone())
     }
 }
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
         // Create several new windows, positioned where the notification windows should be
-        //
+
         for screen in cx.displays() {
             let options = {
                 let notification_margin_width = GlobalPixels::from(16.);
@@ -60,8 +60,8 @@ fn main() {
             };
 
             cx.open_window(options, |cx| {
-                cx.new_view(|_| HelloWorld {
-                    text: "World".into(),
+                cx.new_view(|_| WindowContent {
+                    text: format!("{:?}", screen.id()).into(),
                 })
             });
         }
