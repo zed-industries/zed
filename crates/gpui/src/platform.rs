@@ -507,6 +507,7 @@ pub trait InputHandler: 'static {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
+    /// The bounds of the window in screen coordinates.
     /// None -> inherit, Some(bounds) -> set bounds
     pub bounds: Option<Bounds<DevicePixels>>,
 
@@ -528,7 +529,8 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
-    /// The display to create the window on
+    /// The display to create the window on, if this is None,
+    /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
 }
 

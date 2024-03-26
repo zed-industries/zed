@@ -42,7 +42,7 @@ fn main() {
                 };
 
                 WindowOptions {
-                    // Set the bounds of the window
+                    // Set the bounds of the window in screen coordinates
                     bounds: Some(bounds),
                     // Specify the display_id to ensure the window is created on the correct screen
                     display_id: Some(screen.id()),
