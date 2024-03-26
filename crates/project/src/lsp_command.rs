@@ -924,21 +924,6 @@ impl LspCommand for GetReferences {
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
-        println!("GetReferences response_from_lsp");
-        // cx.update(|cx| {
-        //     project.update(cx, |this, cx| {
-        //         this.on_lsp_work_start(
-        //             server_id,
-        //             "find_references".to_string(),
-        //             LanguageServerProgress {
-        //                 message: Some("find_references".to_string()),
-        //                 percentage: None,
-        //                 last_update_at: Instant::now(),
-        //             },
-        //             cx,
-        //         );
-        //     })
-        // });
         let mut references = Vec::new();
         let (lsp_adapter, language_server) =
             language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
@@ -971,11 +956,7 @@ impl LspCommand for GetReferences {
                     })?;
             }
         }
-        // cx.update(|cx| {
-        //     project.update(cx, |this, cx| {
-        //         this.on_lsp_work_end(server_id, "find_references".to_string(), cx);
-        //     })
-        // });
+
         Ok(references)
     }
 
