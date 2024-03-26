@@ -363,15 +363,6 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
-impl From<Size<GlobalPixels>> for Size<Pixels> {
-    fn from(size: Size<GlobalPixels>) -> Self {
-        Size {
-            width: Pixels(size.width.0),
-            height: Pixels(size.height.0),
-        }
-    }
-}
-
 impl From<Size<DevicePixels>> for Size<Pixels> {
     fn from(size: Size<DevicePixels>) -> Self {
         Size {
@@ -609,15 +600,6 @@ impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
         Self {
             width: point.x,
             height: point.y,
-        }
-    }
-}
-
-impl From<Size<Pixels>> for Size<GlobalPixels> {
-    fn from(size: Size<Pixels>) -> Self {
-        Size {
-            width: GlobalPixels(size.width.0),
-            height: GlobalPixels(size.height.0),
         }
     }
 }
@@ -2485,34 +2467,6 @@ impl From<ScaledPixels> for f64 {
     }
 }
 
-/// Represents pixels in a global coordinate space, which can span across multiple displays.
-///
-/// `GlobalPixels` is used when dealing with a coordinate system that is not limited to a single
-/// display's boundaries. This type is particularly useful in multi-monitor setups where
-/// positioning and measurements need to be consistent and relative to a "global" origin point
-/// rather than being relative to any individual display.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
-#[repr(transparent)]
-pub struct GlobalPixels(pub(crate) f32);
-
-impl Debug for GlobalPixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px (global coordinate space)", self.0)
-    }
-}
-
-impl From<GlobalPixels> for f64 {
-    fn from(global_pixels: GlobalPixels) -> Self {
-        global_pixels.0 as f64
-    }
-}
-
-impl From<f64> for GlobalPixels {
-    fn from(global_pixels: f64) -> Self {
-        GlobalPixels(global_pixels as f32)
-    }
-}
-
 /// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`WindowContext::set_rem_size`][set_rem_size].
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.
@@ -2864,12 +2818,6 @@ impl Half for Rems {
     }
 }
 
-impl Half for GlobalPixels {
-    fn half(&self) -> Self {
-        Self(self.0 / 2.)
-    }
-}
-
 /// Provides a trait for types that can negate their values.
 pub trait Negate {
     /// Returns the negation of the given value
@@ -2907,12 +2855,6 @@ impl Negate for Pixels {
 }
 
 impl Negate for Rems {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for GlobalPixels {
     fn negate(self) -> Self {
         Self(-self.0)
     }

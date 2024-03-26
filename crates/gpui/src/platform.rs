@@ -599,10 +599,6 @@ pub enum WindowKind {
     PopUp,
 }
 
-/// Platform level interface
-/// bounds: Bounds<GlobalPixels>
-/// fullscreen: bool
-
 /// The appearance of the window, as defined by the operating system.
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
