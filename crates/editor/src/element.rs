@@ -1164,22 +1164,15 @@ impl EditorElement {
                     };
 
                     let mut element = h_flex()
-                        .w_full()
-                        .justify_between()
                         .id(("blame", ix))
                         .children([
                             div()
                                 .text_color(sha_color.cursor)
                                 .child(short_commit_id)
                                 .mr_2(),
-                            h_flex()
-                                .w_full()
-                                .justify_between()
+                            div()
                                 .text_color(cx.theme().status().hint)
-                                .children([
-                                    format!("{:20}", name),
-                                    format!("{: >14}", relative_timestamp),
-                                ]),
+                                .child(format!("{:20} {: >14}", name, relative_timestamp)),
                         ])
                         .hover(|style| style.bg(cx.theme().colors().element_hover))
                         .when_some(blame_entry.permalink.as_ref(), |this, url| {
