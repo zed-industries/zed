@@ -1,4 +1,6 @@
 [
+  // todo(linux): Review the editor bindings
+  // Standard Linux bindings
   {
     "bindings": {
       "up": "menu::SelectPrev",
@@ -9,10 +11,7 @@
       "pagedown": "menu::SelectLast",
       "shift-pagedown": "menu::SelectFirst",
       "ctrl-n": "menu::SelectNext",
-      "ctrl-up": "menu::SelectFirst",
-      "ctrl-down": "menu::SelectLast",
       "enter": "menu::Confirm",
-      "shift-f10": "menu::ShowContextMenu",
       "ctrl-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
@@ -28,8 +27,6 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "ctrl-h": "zed::Hide",
-      "alt-ctrl-h": "zed::HideOthers",
-      "ctrl-m": "zed::Minimize",
       "f11": "zed::ToggleFullScreen"
     }
   },
@@ -46,80 +43,100 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
-      "ctrl-backspace": "editor::DeleteToBeginningOfLine",
-      "ctrl-delete": "editor::DeleteToEndOfLine",
-      "alt-backspace": "editor::DeleteToPreviousWordStart",
-      "alt-delete": "editor::DeleteToNextWordEnd",
-      "alt-h": "editor::DeleteToPreviousWordStart",
-      "alt-d": "editor::DeleteToNextWordEnd",
+      // "ctrl-backspace": "editor::DeleteToBeginningOfLine",
+      // "ctrl-delete": "editor::DeleteToEndOfLine",
+      "ctrl-backspace": "editor::DeleteToPreviousWordStart",
+      // "ctrl-w": "editor::DeleteToPreviousWordStart",
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      // "alt-h": "editor::DeleteToPreviousWordStart",
+      // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
       "ctrl-c": "editor::Copy",
       "ctrl-v": "editor::Paste",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
-      "ctrl-y": "editor::Redo",
       "up": "editor::MoveUp",
-      "ctrl-up": "editor::MoveToStartOfParagraph",
+      // "ctrl-up": "editor::MoveToStartOfParagraph", todo(linux) Should be "scroll down by 1 line"
       "pageup": "editor::PageUp",
-      "shift-pageup": "editor::MovePageUp",
+      // "shift-pageup": "editor::MovePageUp", todo(linux) should be 'select page up'
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
-      "ctrl-down": "editor::MoveToEndOfParagraph",
+      // "ctrl-down": "editor::MoveToEndOfParagraph", todo(linux) should be "scroll up by 1 line"
       "pagedown": "editor::PageDown",
-      "shift-pagedown": "editor::MovePageDown",
+      // "shift-pagedown": "editor::MovePageDown", todo(linux) should be 'select page down'
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
-      "ctrl-p": "editor::MoveUp",
-      "ctrl-n": "editor::MoveDown",
-      "ctrl-b": "editor::MoveLeft",
-      "ctrl-f": "editor::MoveRight",
-      "ctrl-shift-l": "editor::NextScreen", // todo(linux): What is this
       "ctrl-left": "editor::MoveToPreviousWordStart",
-      "alt-b": "editor::MoveToPreviousWordStart",
+      // "alt-b": "editor::MoveToPreviousWordStart",
       "ctrl-right": "editor::MoveToNextWordEnd",
-      "alt-f": "editor::MoveToNextWordEnd",
-      "ctrl-e": "editor::MoveToEndOfLine",
+      // "alt-f": "editor::MoveToNextWordEnd",
+      // "cmd-left": "editor::MoveToBeginningOfLine",
+      // "ctrl-a": "editor::MoveToBeginningOfLine",
+      // "cmd-right": "editor::MoveToEndOfLine",
+      // "ctrl-e": "editor::MoveToEndOfLine", 
       "ctrl-home": "editor::MoveToBeginning",
-      "ctrl-=end": "editor::MoveToEnd",
+      "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
-      "ctrl-shift-n": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
-      "ctrl-shift-b": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
-      "ctrl-shift-f": "editor::SelectRight",
       "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "alt-shift-b": "editor::SelectToPreviousWordStart",
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "alt-shift-f": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::SelectToStartOfParagraph",
-      "ctrl-shift-down": "editor::SelectToEndOfParagraph",
+      "ctrl-shift-up": "editor::AddSelectionAbove",
+      "ctrl-shift-down": "editor::AddSelectionBelow",
+      // "ctrl-shift-up": "editor::SelectToStartOfParagraph",
+      // "ctrl-shift-down": "editor::SelectToEndOfParagraph",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
+      // "cmd-shift-left": [
+      //   "editor::SelectToBeginningOfLine",
+      //   {
+      //     "stop_at_soft_wraps": true
+      //   }
+      // ],
       "shift-home": [
         "editor::SelectToBeginningOfLine",
         {
           "stop_at_soft_wraps": true
         }
       ],
+      // "ctrl-shift-a": [
+      //   "editor::SelectToBeginningOfLine",
+      //   {
+      //     "stop_at_soft_wraps": true
+      //   }
+      // ],
+      // "cmd-shift-right": [
+      //   "editor::SelectToEndOfLine",
+      //   {
+      //     "stop_at_soft_wraps": true
+      //   }
+      // ],
       "shift-end": [
         "editor::SelectToEndOfLine",
         {
           "stop_at_soft_wraps": true
         }
       ],
-      "ctrl-shift-e": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
+      // "ctrl-shift-e": [
+      //   "editor::SelectToEndOfLine",
+      //   {
+      //     "stop_at_soft_wraps": true
+      //   }
+      // ],
+      // "alt-v": [
+      //   "editor::MovePageUp",
+      //   {
+      //     "center_cursor": true
+      //   }
+      // ],
+      "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-alt-z": "editor::RevertSelectedHunks"
+      "ctrl-k ctrl-r": "editor::RevertSelectedHunks"
     }
   },
   {
@@ -127,8 +144,8 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
-      "ctrl-shift-enter": "editor::NewlineAbove",
-      "ctrl-enter": "editor::NewlineBelow",
+      "ctrl-shift-enter": "editor::NewlineBelow",
+      "ctrl-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": [
         "buffer_search::Deploy",
@@ -136,6 +153,12 @@
           "focus": true
         }
       ],
+      // "cmd-e": [
+      //   "buffer_search::Deploy",
+      //   {
+      //     "focus": false
+      //   }
+      // ],
       "ctrl->": "assistant::QuoteSelection"
     }
   },
@@ -164,8 +187,8 @@
   {
     "context": "AssistantPanel",
     "bindings": {
-      "f3": "search::SelectNextMatch",
-      "shift-f3": "search::SelectPrevMatch"
+      "ctrl-g": "search::SelectNextMatch",
+      "ctrl-shift-g": "search::SelectPrevMatch"
     }
   },
   {
@@ -193,7 +216,7 @@
     "context": "BufferSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "ctrl-enter": "search::ReplaceAll"
+      "cmd-enter": "search::ReplaceAll"
     }
   },
   {
@@ -209,9 +232,8 @@
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
       "ctrl-shift-h": "search::ToggleReplace",
-      "ctrl-alt-g": "search::ActivateRegexMode",
-      "ctrl-alt-s": "search::ActivateSemanticMode",
-      "ctrl-alt-x": "search::ActivateTextMode"
+      "alt-ctrl-g": "search::ActivateRegexMode",
+      "alt-ctrl-x": "search::ActivateTextMode"
     }
   },
   {
@@ -225,7 +247,7 @@
     "context": "ProjectSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "ctrl-enter": "search::ReplaceAll"
+      "ctrl-alt-enter": "search::ReplaceAll"
     }
   },
   {
@@ -233,36 +255,34 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
-      "ctrl-shift-h": "search::ToggleReplace",
-      "ctrl-alt-g": "search::ActivateRegexMode",
-      "ctrl-alt-s": "search::ActivateSemanticMode",
-      "ctrl-alt-x": "search::ActivateTextMode"
+      "cmd-shift-h": "search::ToggleReplace",
+      "alt-ctrl-g": "search::ActivateRegexMode",
+      "alt-ctrl-x": "search::ActivateTextMode"
     }
   },
   {
     "context": "Pane",
     "bindings": {
-      "ctrl-{": "pane::ActivatePrevItem",
-      "ctrl-}": "pane::ActivateNextItem",
-      "ctrl-alt-left": "pane::ActivatePrevItem",
-      "ctrl-alt-right": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem",
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-w": "pane::CloseActiveItem",
-      "ctrl-alt-t": "pane::CloseInactiveItems",
-      "ctrl-alt-shift-w": "workspace::CloseInactiveTabsAndPanes",
+      "alt-ctrl-t": "pane::CloseInactiveItems",
+      "alt-ctrl-shift-w": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-k u": "pane::CloseCleanItems",
-      "ctrl-k ctrl-w": "pane::CloseAllItems",
-      "ctrl-f": "project_search::ToggleFocus",
-      "f3": "search::SelectNextMatch",
-      "shift-f3": "search::SelectPrevMatch",
-      "ctrl-shift-h": "search::ToggleReplace",
+      "ctrl-k w": "pane::CloseAllItems",
+      "ctrl-shift-f": "project_search::ToggleFocus",
+      "ctrl-alt-g": "search::SelectNextMatch",
+      "ctrl-alt-shift-g": "search::SelectPrevMatch",
+      "ctrl-alt-shift-h": "search::ToggleReplace",
       "alt-enter": "search::SelectAllMatches",
-      "ctrl-alt-c": "search::ToggleCaseSensitive",
-      "ctrl-alt-w": "search::ToggleWholeWord",
-      "alt-tab": "search::CycleMode",
-      "ctrl-alt-f": "project_search::ToggleFilters",
-      "ctrl-alt-g": "search::ActivateRegexMode",
-      "ctrl-alt-s": "search::ActivateSemanticMode",
-      "ctrl-alt-x": "search::ActivateTextMode"
+      "alt-c": "search::ToggleCaseSensitive",
+      "alt-w": "search::ToggleWholeWord",
+      "alt-r": "search::CycleMode",
+      "alt-ctrl-f": "project_search::ToggleFilters",
+      "ctrl-alt-shift-r": "search::ActivateRegexMode",
+      "ctrl-alt-shift-x": "search::ActivateTextMode"
     }
   },
   // Bindings from VS Code
@@ -271,8 +291,20 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "ctrl-alt-up": "editor::AddSelectionAbove",
-      "ctrl-alt-down": "editor::AddSelectionBelow",
+      "shift-alt-up": "editor::AddSelectionAbove",
+      "shift-alt-down": "editor::AddSelectionBelow",
+      "ctrl-shift-k": "editor::DeleteLine",
+      "alt-up": "editor::MoveLineUp",
+      "alt-down": "editor::MoveLineDown",
+      "ctrl-alt-shift-up": [
+        "editor::DuplicateLine",
+        {
+          "move_upwards": true
+        }
+      ],
+      "ctrl-alt-shift-down": "editor::DuplicateLine",
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
       "ctrl-d": [
         "editor::SelectNext",
         {
@@ -305,8 +337,6 @@
           "advance_downwards": false
         }
       ],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
       "ctrl-u": "editor::UndoSelection",
       "ctrl-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
@@ -315,39 +345,39 @@
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
       "ctrl-f12": "editor::GoToTypeDefinition",
-      "ctrl-alt-f12": "editor::GoToTypeDefinitionSplit",
+      "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
-      "ctrl-alt-[": "editor::Fold",
-      "ctrl-alt-]": "editor::UnfoldLines",
+      "ctrl-shift-[": "editor::Fold",
+      "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "ctrl-alt-r": "editor::RevealInFinder",
-      "ctrl-alt-c": "editor::DisplayCursorNames"
+      "alt-cmd-r": "editor::RevealInFinder",
+      "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "ctrl-shift-o": "outline::Toggle",
+      "cmd-shift-o": "outline::Toggle",
       "ctrl-g": "go_to_line::Toggle"
     }
   },
   {
     "context": "Pane",
     "bindings": {
-      "ctrl-1": ["pane::ActivateItem", 0],
-      "ctrl-2": ["pane::ActivateItem", 1],
-      "ctrl-3": ["pane::ActivateItem", 2],
-      "ctrl-4": ["pane::ActivateItem", 3],
-      "ctrl-5": ["pane::ActivateItem", 4],
-      "ctrl-6": ["pane::ActivateItem", 5],
-      "ctrl-7": ["pane::ActivateItem", 6],
-      "ctrl-8": ["pane::ActivateItem", 7],
-      "ctrl-9": ["pane::ActivateItem", 8],
-      "ctrl-0": "pane::ActivateLastItem",
-      "ctrl--": "pane::GoBack",
-      "ctrl-_": "pane::GoForward",
+      "alt-1": ["pane::ActivateItem", 0],
+      "alt-2": ["pane::ActivateItem", 1],
+      "alt-3": ["pane::ActivateItem", 2],
+      "alt-4": ["pane::ActivateItem", 3],
+      "alt-5": ["pane::ActivateItem", 4],
+      "alt-6": ["pane::ActivateItem", 5],
+      "alt-7": ["pane::ActivateItem", 6],
+      "alt-8": ["pane::ActivateItem", 7],
+      "alt-9": ["pane::ActivateItem", 8],
+      "alt-0": "pane::ActivateLastItem",
+      "ctrl-alt--": "pane::GoBack",
+      "ctrl-alt-_": "pane::GoForward",
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-shift-f": "project_search::ToggleFocus"
     }
@@ -362,8 +392,8 @@
       //         "create_new_window": true
       //     }
       // ]
-      "ctrl-alt-o": "projects::OpenRecent",
-      "ctrl-alt-b": "branches::OpenRecent",
+      "alt-ctrl-o": "projects::OpenRecent",
+      "alt-ctrl-shift-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
       "ctrl-k s": "workspace::SaveWithoutFormat",
@@ -371,24 +401,25 @@
       "ctrl-n": "workspace::NewFile",
       "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
-      "ctrl-1": ["workspace::ActivatePane", 0],
-      "ctrl-2": ["workspace::ActivatePane", 1],
-      "ctrl-3": ["workspace::ActivatePane", 2],
-      "ctrl-4": ["workspace::ActivatePane", 3],
-      "ctrl-5": ["workspace::ActivatePane", 4],
-      "ctrl-6": ["workspace::ActivatePane", 5],
-      "ctrl-7": ["workspace::ActivatePane", 6],
-      "ctrl-8": ["workspace::ActivatePane", 7],
-      "ctrl-9": ["workspace::ActivatePane", 8],
-      "ctrl-b": "workspace::ToggleLeftDock",
-      "ctrl-r": "workspace::ToggleRightDock",
+      "alt-1": ["workspace::ActivatePane", 0],
+      "alt-2": ["workspace::ActivatePane", 1],
+      "alt-3": ["workspace::ActivatePane", 2],
+      "alt-4": ["workspace::ActivatePane", 3],
+      "alt-5": ["workspace::ActivatePane", 4],
+      "alt-6": ["workspace::ActivatePane", 5],
+      "alt-7": ["workspace::ActivatePane", 6],
+      "alt-8": ["workspace::ActivatePane", 7],
+      "alt-9": ["workspace::ActivatePane", 8],
+      "ctrl-alt-b": "workspace::ToggleLeftDock",
+      "ctrl-b": "workspace::ToggleRightDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
-      "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
+      "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
+      "ctrl-e": "file_finder::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -409,15 +440,10 @@
     }
   },
   // Bindings from Sublime Text
-  // todo(linux) make sure these match linux bindings or remove above comment?
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-k": "editor::DeleteLine",
-      "ctrl-shift-d": "editor::DuplicateLine",
       "ctrl-j": "editor::JoinLines",
-      "ctrl-alt-up": "editor::MoveLineUp",
-      "ctrl-alt-down": "editor::MoveLineDown",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
@@ -433,7 +459,6 @@
     }
   },
   // Bindings from Atom
-  // todo(linux) make sure these match linux bindings or remove above comment?
   {
     "context": "Pane",
     "bindings": {
@@ -479,7 +504,7 @@
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
-      "ctrl-alt-c": "collab_panel::ToggleFocus",
+      "ctrl-shift-c": "collab_panel::ToggleFocus",
       "ctrl-alt-i": "zed::DebugElements",
       "ctrl-:": "editor::ToggleInlayHints"
     }
@@ -506,19 +531,19 @@
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
       "ctrl-n": "project_panel::NewFile",
-      "ctrl-alt-n": "project_panel::NewDirectory",
+      "alt-ctrl-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
       "ctrl-c": "project_panel::Copy",
       "ctrl-v": "project_panel::Paste",
       "ctrl-alt-c": "project_panel::CopyPath",
-      "ctrl-alt-shift-c": "project_panel::CopyRelativePath",
+      "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
       "backspace": "project_panel::Delete",
       "delete": "project_panel::Delete",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
-      "ctrl-alt-r": "project_panel::RevealInFinder",
+      "alt-cmd-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
   },
@@ -567,18 +592,8 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "ctrl-shift-c": "terminal::Copy",
-      "ctrl-shift-v": "terminal::Paste",
-      "ctrl-k": "terminal::Clear",
-      // Some nice conveniences
-      "ctrl-backspace": ["terminal::SendText", "\u0015"],
-      "ctrl-right": ["terminal::SendText", "\u0005"],
-      "ctrl-left": ["terminal::SendText", "\u0001"],
-      // Terminal.app compatibility
-      "alt-left": ["terminal::SendText", "\u001bb"],
-      "alt-right": ["terminal::SendText", "\u001bf"],
-      // There are conflicting bindings for these keys in the global context.
-      // these bindings override them, remove at your own risk:
+      "shift-ctrl-c": "terminal::Copy",
+      "shift-ctrl-v": "terminal::Paste",
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],

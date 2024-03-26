@@ -1802,7 +1802,7 @@ impl CollabPanel {
         }
     }
 
-    fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
+    fn show_inline_context_menu(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
         let Some(bounds) = self
             .selection
             .and_then(|ix| self.list_state.bounds_for_item(ix))
