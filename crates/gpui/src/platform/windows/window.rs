@@ -648,7 +648,7 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
-            let physical_point = point(GlobalPixels(x), GlobalPixels(y));
+            let physical_point = point(DevicePixels(x), DevicePixels(y));
             let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
@@ -1077,8 +1077,8 @@ impl WindowsWindowInner {
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let physical_point = point(
-                GlobalPixels(cursor_point.x as f32),
-                GlobalPixels(cursor_point.y as f32),
+                DevicePixels(cursor_point.x as i32),
+                DevicePixels(cursor_point.y as i32),
             );
             let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
@@ -1674,7 +1674,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
 struct ClickState {
     button: MouseButton,
     last_click: Instant,
-    last_position: Point<GlobalPixels>,
+    last_position: Point<DevicePixels>,
     current_count: usize,
 }
 
@@ -1689,7 +1689,7 @@ impl ClickState {
     }
 
     /// update self and return the needed click count
-    pub fn update(&mut self, button: MouseButton, new_position: Point<GlobalPixels>) -> usize {
+    pub fn update(&mut self, button: MouseButton, new_position: Point<DevicePixels>) -> usize {
         if self.button == button && self.is_double_click(new_position) {
             self.current_count += 1;
         } else {
@@ -1703,7 +1703,7 @@ impl ClickState {
     }
 
     #[inline]
-    fn is_double_click(&self, new_position: Point<GlobalPixels>) -> bool {
+    fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
         let diff = self.last_position - new_position;
 
         self.last_click.elapsed() < DOUBLE_CLICK_INTERVAL
@@ -1872,46 +1872,31 @@ const DOUBLE_CLICK_SPATIAL_TOLERANCE: f32 = 4.0;
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{point, GlobalPixels, MouseButton};
+    use crate::{point, DevicePixels, MouseButton};
     use std::time::Duration;
 
     #[test]
     fn test_double_click_interval() {
         let mut state = ClickState::new();
         assert_eq!(
-            state.update(
-                MouseButton::Left,
-                point(GlobalPixels(0.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
             1
         );
         assert_eq!(
-            state.update(
-                MouseButton::Right,
-                point(GlobalPixels(0.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Right, point(DevicePixels(0), DevicePixels(0))),
             1
         );
         assert_eq!(
-            state.update(
-                MouseButton::Left,
-                point(GlobalPixels(0.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
             1
         );
         assert_eq!(
-            state.update(
-                MouseButton::Left,
-                point(GlobalPixels(0.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
             2
         );
         state.last_click -= Duration::from_millis(700);
         assert_eq!(
-            state.update(
-                MouseButton::Left,
-                point(GlobalPixels(0.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
             1
         );
     }
@@ -1920,31 +1905,19 @@ mod tests {
     fn test_double_click_spatial_tolerance() {
         let mut state = ClickState::new();
         assert_eq!(
-            state.update(
-                MouseButton::Left,
-                point(GlobalPixels(-3.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Left, point(DevicePixels(-3), DevicePixels(0))),
             1
         );
         assert_eq!(
-            state.update(
-                MouseButton::Left,
-                point(GlobalPixels(0.0), GlobalPixels(3.0))
-            ),
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(3))),
             2
         );
         assert_eq!(
-            state.update(
-                MouseButton::Right,
-                point(GlobalPixels(3.0), GlobalPixels(2.0))
-            ),
+            state.update(MouseButton::Right, point(DevicePixels(3), DevicePixels(2))),
             1
         );
         assert_eq!(
-            state.update(
-                MouseButton::Right,
-                point(GlobalPixels(10.0), GlobalPixels(0.0))
-            ),
+            state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
         );
     }
