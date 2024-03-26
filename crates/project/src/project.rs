@@ -4917,24 +4917,6 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
-        // if self.is_local() {
-        //     let language_server =
-        //         match self.primary_language_server_for_buffer(buffer.clone().read(cx), cx) {
-        //             Some((_, server)) => Some(Arc::clone(server)),
-        //             None => return Task::ready(Ok(Default::default())),
-        //         }
-        //         .unwrap();
-        //     self.on_lsp_work_start(
-        //         language_server.server_id(),
-        //         "find_references".to_string(),
-        //         LanguageServerProgress {
-        //             message: Some("find_references".to_string()),
-        //             percentage: None,
-        //             last_update_at: Instant::now(),
-        //         },
-        //         cx,
-        //     );
-        // }
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
