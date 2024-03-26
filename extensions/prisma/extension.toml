@@ -1,6 +1,6 @@
 id = "prisma"
 name = "Prisma"
-description = "Prisma support"
+description = "Prisma support."
 version = "0.0.1"
 schema_version = 1
 authors = ["Matthew Gramigna <matthewgramigna@gmail.com>"]
