@@ -1044,8 +1044,8 @@ impl Language {
         get_capture_indices(
             &query,
             &mut [
-                ("language", &mut language_capture_ix),
-                ("content", &mut content_capture_ix),
+                ("injection.language", &mut language_capture_ix),
+                ("injection.content", &mut content_capture_ix),
             ],
         );
         let patterns = (0..query.pattern_count())
@@ -1053,10 +1053,10 @@ impl Language {
                 let mut config = InjectionPatternConfig::default();
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
-                        "language" => {
+                        "injection.language" => {
                             config.language = setting.value.clone();
                         }
-                        "combined" => {
+                        "injection.combined" => {
                             config.combined = true;
                         }
                         _ => {}

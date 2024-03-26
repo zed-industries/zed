@@ -2,6 +2,6 @@
 
 ((sigil
   (sigil_name) @_sigil_name
-  (quoted_content) @content)
+  (quoted_content) @injection.content)
  (#eq? @_sigil_name "H")
- (#set! language "heex"))
+ (#set! injection.language "heex"))

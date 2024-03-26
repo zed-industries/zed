@@ -4,29 +4,29 @@
     (start_tag
       (attribute
         (quoted_attribute_value (attribute_value) @_language))?)
-     (raw_text) @content)
+     (raw_text) @injection.content)
   (#eq? @_language "")
-  (#set! "language" "javascript"))
+  (#set! injection.language "javascript"))
 
  ((script_element
      (start_tag
        (attribute
          (quoted_attribute_value (attribute_value) @_language)))
-      (raw_text) @content)
+      (raw_text) @injection.content)
     (#eq? @_language "ts")
-    (#set! "language" "typescript"))
+    (#set! injection.language "typescript"))
 
 ((script_element
     (start_tag
         (attribute
         (quoted_attribute_value (attribute_value) @_language)))
-    (raw_text) @content)
+    (raw_text) @injection.content)
   (#eq? @_language "typescript")
-  (#set! "language" "typescript"))
+  (#set! injection.language "typescript"))
 
 (style_element
-  (raw_text) @content
-  (#set! "language" "css"))
+  (raw_text) @injection.content
+  (#set! injection.language "css"))
 
-((raw_text_expr) @content
-  (#set! "language" "javascript"))
+((raw_text_expr) @injection.content
+  (#set! injection.language "javascript"))

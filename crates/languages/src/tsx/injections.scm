@@ -1,5 +1,5 @@
-((comment) @content
-  (#set! "language" "jsdoc"))
+((comment) @injection.content
+  (#set! injection.language "jsdoc"))
 
-((regex) @content
-  (#set! "language" "regex"))
+((regex) @injection.content
+  (#set! injection.language "regex"))
