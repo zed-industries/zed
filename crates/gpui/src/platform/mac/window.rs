@@ -440,8 +440,27 @@ impl MacWindowState {
     }
 
     fn bounds(&self) -> Bounds<GlobalPixels> {
-        let frame = unsafe { NSWindow::frame(self.native_window) };
-        global_bounds_from_ns_rect(frame)
+        let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
+        let screen_frame = unsafe {
+            let screen = NSWindow::screen(self.native_window);
+            NSScreen::frame(screen)
+        };
+
+        // Flip the y coordinate to be top-left origin
+        window_frame.origin.y =
+            screen_frame.size.height - window_frame.origin.y - window_frame.size.height;
+
+        let bounds = Bounds::new(
+            point(
+                (window_frame.origin.x - screen_frame.origin.x).into(),
+                (window_frame.origin.y - screen_frame.origin.y).into(),
+            ),
+            size(
+                window_frame.size.width.into(),
+                window_frame.size.height.into(),
+            ),
+        );
+        bounds
     }
 
     fn content_size(&self) -> Size<Pixels> {
