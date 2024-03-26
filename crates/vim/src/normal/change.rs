@@ -6,8 +6,7 @@ use crate::{
     Vim,
 };
 use editor::{
-    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, Bias,
-    DisplayPoint,
+    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
