@@ -7,6 +7,10 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::{fmt, ops::Range, path::Path};
+use time;
+use time::macros::format_description;
+use time::OffsetDateTime;
+use time::UtcOffset;
 use url::Url;
 
 pub use git2 as libgit;
@@ -214,6 +218,21 @@ impl BlameEntry {
         } else {
             // Directly return current time in UTC if there's no committer time or timezone
             Ok(chrono::Utc::now())
+        }
+    }
+
+    pub fn committer_offset_date_time(&self) -> Result<time::OffsetDateTime> {
+        if let (Some(committer_time), Some(committer_tz)) =
+            (self.committer_time, &self.committer_tz)
+        {
+            let format = format_description!("[offset_hour][offset_minute]");
+            let offset = UtcOffset::parse(committer_tz, &format)?;
+            let date_time_utc = OffsetDateTime::from_unix_timestamp(committer_time)?;
+
+            Ok(date_time_utc.to_offset(offset))
+        } else {
+            // Directly return current time in UTC if there's no committer time or timezone
+            Ok(time::OffsetDateTime::now_utc())
         }
     }
 }

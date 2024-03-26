@@ -24,12 +24,12 @@ use git::{
 };
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
-    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity,
-    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
-    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
+    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
+    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
+    TextStyleRefinement, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -52,10 +52,11 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
+use time_format::format_localized_timestamp;
 use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
-use workspace::{item::Item, Toast};
+use workspace::item::Item;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -1141,10 +1142,16 @@ impl EditorElement {
                     };
                     last_used_color = Some((sha_color, blame_entry.sha));
 
-                    let datetime = match blame_entry.committer_datetime() {
-                        Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+                    let relative_timestamp = match blame_entry.committer_offset_date_time() {
+                        Ok(timestamp) => time_format::format_localized_timestamp(
+                            timestamp,
+                            time::OffsetDateTime::now_utc(),
+                            cx.local_timezone(),
+                            time_format::TimestampFormat::Relative,
+                        ),
                         Err(_) => "Error parsing date".to_string(),
                     };
+
                     let pretty_commit_id = format!("{}", blame_entry.sha);
                     let short_commit_id =
                         pretty_commit_id.clone().chars().take(6).collect::<String>();
@@ -1157,18 +1164,24 @@ impl EditorElement {
                     };
 
                     let mut element = h_flex()
+                        .w_full()
+                        .justify_between()
                         .id(("blame", ix))
                         .children([
                             div()
                                 .text_color(sha_color.cursor)
                                 .child(short_commit_id)
                                 .mr_2(),
-                            div().text_color(cx.theme().status().hint).child(format!(
-                                "{:20} ({})",
-                                name,
-                                datetime.clone()
-                            )),
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .text_color(cx.theme().status().hint)
+                                .children([
+                                    format!("{:20}", name),
+                                    format!("{: >14}", relative_timestamp),
+                                ]),
                         ])
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
                         .when_some(blame_entry.permalink.as_ref(), |this, url| {
                             let url = url.clone();
                             this.cursor_pointer().on_click(move |_, cx| {
@@ -2944,7 +2957,7 @@ impl Render for BlameEntryTooltip {
                                     div()
                                         .text_color(cx.theme().colors().text_muted)
                                         .child("Commit")
-                                        .pl_2(),
+                                        .pr_2(),
                                 )
                                 .child(
                                     div().text_color(self.color).child(pretty_commit_id.clone()),
