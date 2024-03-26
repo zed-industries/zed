@@ -8,13 +8,10 @@ impl Render for WindowContent {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
-            .bg(rgb(0x2e7d32))
+            .bg(rgb(0x1e2025))
             .size_full()
             .justify_center()
             .items_center()
-            .shadow_lg()
-            .border()
-            .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
             .child(self.text.clone())
@@ -23,12 +20,12 @@ impl Render for WindowContent {
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
-        // Create several new windows, positioned where the notification windows should be
+        // Create several new windows, positioned in the top right corner of each screen
 
         for screen in cx.displays() {
             let options = {
-                let notification_margin_width = GlobalPixels::from(16.);
-                let notification_margin_height = GlobalPixels::from(-0.) - GlobalPixels::from(48.);
+                let popup_margin_width = GlobalPixels::from(16.);
+                let popup_margin_height = GlobalPixels::from(-0.) - GlobalPixels::from(48.);
 
                 let window_size = Size {
                     width: px(400.),
@@ -40,21 +37,21 @@ fn main() {
 
                 let bounds = gpui::Bounds::<GlobalPixels> {
                     origin: screen_bounds.upper_right()
-                        - point(
-                            size.width + notification_margin_width,
-                            notification_margin_height,
-                        ),
+                        - point(size.width + popup_margin_width, popup_margin_height),
                     size: window_size.into(),
                 };
 
                 WindowOptions {
+                    // Set the bounds of the window
                     bounds: Some(bounds),
+                    // Specify the display_id to ensure the window is created on the correct screen
+                    display_id: Some(screen.id()),
+
                     titlebar: None,
                     focus: false,
                     show: true,
                     kind: WindowKind::PopUp,
                     is_movable: false,
-                    display_id: Some(screen.id()),
                     fullscreen: false,
                 }
             };
