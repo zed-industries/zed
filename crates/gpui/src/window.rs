@@ -1,13 +1,13 @@
 use crate::{
     point, px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena,
-    AsyncWindowContext, Bounds, Context, Corners, CursorStyle, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, Global, GlobalElementId, GlobalPixels, Hsla, KeyBinding, KeyDownEvent,
-    KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
-    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
+    AsyncWindowContext, Bounds, Context, Corners, CursorStyle, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, Global, GlobalElementId, Hsla, KeyBinding,
+    KeyDownEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render,
+    ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
     WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -358,26 +358,27 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(cx: &mut AppContext) -> Bounds<GlobalPixels> {
-    const DEFAULT_WINDOW_SIZE: Size<GlobalPixels> = size(GlobalPixels(1024.0), GlobalPixels(700.0));
-    const DEFAULT_WINDOW_OFFSET: Point<GlobalPixels> = point(GlobalPixels(0.0), GlobalPixels(35.0));
+fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
+    const DEFAULT_WINDOW_SIZE: Size<DevicePixels> = size(DevicePixels(1024), DevicePixels(700));
+    const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
-            cx.primary_display()
+            let display = display_id
+                .map(|id| cx.find_display(id))
+                .unwrap_or_else(|| cx.primary_display());
+
+            display
                 .map(|display| {
                     let center = display.bounds().center();
-                    let offset = DEFAULT_WINDOW_SIZE / 2.0;
+                    let offset = DEFAULT_WINDOW_SIZE / 2;
                     let origin = point(center.x - offset.width, center.y - offset.height);
                     Bounds::new(origin, DEFAULT_WINDOW_SIZE)
                 })
                 .unwrap_or_else(|| {
-                    Bounds::new(
-                        point(GlobalPixels(0.0), GlobalPixels(0.0)),
-                        DEFAULT_WINDOW_SIZE,
-                    )
+                    Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
                 })
         })
 }
@@ -399,7 +400,7 @@ impl Window {
             fullscreen,
         } = options;
 
-        let bounds = bounds.unwrap_or_else(|| default_bounds(cx));
+        let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let platform_window = cx.platform.open_window(
             handle,
             WindowParams {
@@ -867,7 +868,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn window_bounds(&self) -> Bounds<GlobalPixels> {
+    pub fn window_bounds(&self) -> Bounds<DevicePixels> {
         self.window.platform_window.bounds()
     }
 

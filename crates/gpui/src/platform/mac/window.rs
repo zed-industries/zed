@@ -1,10 +1,10 @@
-use super::{global_bounds_from_ns_rect, ns_string, renderer, MacDisplay, NSRange};
+use super::{ns_string, renderer, MacDisplay, NSRange};
 use crate::{
-    global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
-    Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowKind, WindowParams,
+    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DevicePixels,
+    DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
+    Size, Timer, WindowAppearance, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -441,9 +441,28 @@ impl MacWindowState {
         }
     }
 
-    fn bounds(&self) -> Bounds<GlobalPixels> {
-        let frame = unsafe { NSWindow::frame(self.native_window) };
-        global_bounds_from_ns_rect(frame)
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
+        let screen_frame = unsafe {
+            let screen = NSWindow::screen(self.native_window);
+            NSScreen::frame(screen)
+        };
+
+        // Flip the y coordinate to be top-left origin
+        window_frame.origin.y =
+            screen_frame.size.height - window_frame.origin.y - window_frame.size.height;
+
+        let bounds = Bounds::new(
+            point(
+                ((window_frame.origin.x - screen_frame.origin.x) as i32).into(),
+                ((window_frame.origin.y - screen_frame.origin.y) as i32).into(),
+            ),
+            size(
+                (window_frame.size.width as i32).into(),
+                (window_frame.size.height as i32).into(),
+            ),
+        );
+        bounds
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -494,9 +513,9 @@ impl MacWindow {
             titlebar,
             kind,
             is_movable,
-            display_id,
             focus,
             show,
+            display_id,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -529,28 +548,37 @@ impl MacWindow {
 
             let display = display_id
                 .and_then(MacDisplay::find_by_id)
-                .unwrap_or_else(MacDisplay::primary);
+                .unwrap_or_else(|| MacDisplay::primary());
 
             let mut target_screen = nil;
+            let mut screen_frame = None;
+
             let screens = NSScreen::screens(nil);
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
+                let frame = NSScreen::visibleFrame(screen);
                 let display_id = display_id_for_screen(screen);
-                if display_id == display.id().0 {
+                if display_id == display.0 {
+                    screen_frame = Some(frame);
                     target_screen = screen;
-                    break;
                 }
             }
 
-            let window_rect = {
-                let display_bounds = display.bounds();
-                if bounds.intersects(&display_bounds) {
-                    global_bounds_to_ns_rect(bounds)
-                } else {
-                    global_bounds_to_ns_rect(display_bounds)
-                }
-            };
+            let screen_frame = screen_frame.unwrap_or_else(|| {
+                let screen = NSScreen::mainScreen(nil);
+                target_screen = screen;
+                NSScreen::visibleFrame(screen)
+            });
+
+            let window_rect = NSRect::new(
+                NSPoint::new(
+                    screen_frame.origin.x + bounds.origin.x.0 as f64,
+                    screen_frame.origin.y
+                        + (display.bounds().size.height - bounds.origin.y).0 as f64,
+                ),
+                NSSize::new(bounds.size.width.0 as f64, bounds.size.height.0 as f64),
+            );
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 window_rect,
@@ -572,7 +600,10 @@ impl MacWindow {
 
             let window_size = {
                 let scale = get_scale_factor(native_window);
-                size(bounds.size.width.0 * scale, bounds.size.height.0 * scale)
+                size(
+                    bounds.size.width.0 as f32 * scale,
+                    bounds.size.height.0 as f32 * scale,
+                )
             };
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -692,6 +723,11 @@ impl MacWindow {
                 native_window.orderFront_(nil);
             }
 
+            // Set the initial position of the window to the specified origin.
+            // Although we already specified the position using `initWithContentRect_styleMask_backing_defer_screen_`,
+            // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
+            //  is different from the primary screen.
+            NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
             window.0.lock().move_traffic_light();
 
             pool.drain();
@@ -737,7 +773,7 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.0.as_ref().lock().bounds()
     }
 

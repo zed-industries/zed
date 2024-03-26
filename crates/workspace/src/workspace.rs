@@ -27,8 +27,8 @@ use futures::{
 };
 use gpui::{
     actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, KeyContext, Keystroke,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
+    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
     Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
 };
@@ -89,11 +89,11 @@ use crate::persistence::{
 };
 
 lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
+    static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
         .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<GlobalPixels>> = env::var("ZED_WINDOW_POSITION")
+    static ref ZED_WINDOW_POSITION: Option<Point<DevicePixels>> = env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var);
@@ -745,11 +745,7 @@ impl Workspace {
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |_, cx| {
                 if let Some(display) = cx.display() {
-                    // Transform fixed bounds to be stored in terms of the containing display
-                    let mut window_bounds = cx.window_bounds();
-                    let display_bounds = display.bounds();
-                    window_bounds.origin.x -= display_bounds.origin.x;
-                    window_bounds.origin.y -= display_bounds.origin.y;
+                    let window_bounds = cx.window_bounds();
                     let fullscreen = cx.is_fullscreen();
 
                     if let Some(display_uuid) = display.uuid().log_err() {
@@ -902,7 +898,7 @@ impl Workspace {
                 })?;
                 window
             } else {
-                let window_bounds_override = window_bounds_env_override(&cx);
+                let window_bounds_override = window_bounds_env_override();
 
                 let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None, false)
@@ -917,24 +913,7 @@ impl Workspace {
                             Some((display?, bounds?.0, fullscreen.unwrap_or(false)))
                         });
 
-                    if let Some((serialized_display, mut bounds, fullscreen)) = restorable_bounds {
-                        // Stored bounds are relative to the containing display.
-                        // So convert back to global coordinates if that screen still exists
-                        let screen_bounds = cx
-                            .update(|cx| {
-                                cx.displays()
-                                    .into_iter()
-                                    .find(|display| display.uuid().ok() == Some(serialized_display))
-                            })
-                            .ok()
-                            .flatten()
-                            .map(|screen| screen.bounds());
-
-                        if let Some(screen_bounds) = screen_bounds {
-                            bounds.origin.x += screen_bounds.origin.x;
-                            bounds.origin.y += screen_bounds.origin.y;
-                        }
-
+                    if let Some((serialized_display, bounds, fullscreen)) = restorable_bounds {
                         (Some(bounds), Some(serialized_display), fullscreen)
                     } else {
                         (None, None, false)
@@ -3756,14 +3735,11 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<Bounds<GlobalPixels>> {
-    let display_origin = cx
-        .update(|cx| Some(cx.displays().first()?.bounds().origin))
-        .ok()??;
+fn window_bounds_env_override() -> Option<Bounds<DevicePixels>> {
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
-            origin: display_origin + position,
+            origin: position,
             size,
         })
 }
@@ -4662,7 +4638,7 @@ pub fn join_hosted_project(
             )
             .await?;
 
-            let window_bounds_override = window_bounds_env_override(&cx);
+            let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
@@ -4723,7 +4699,7 @@ pub fn join_in_room_project(
                 })?
                 .await?;
 
-            let window_bounds_override = window_bounds_env_override(&cx);
+            let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
@@ -4817,18 +4793,18 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn parse_pixel_position_env_var(value: &str) -> Option<Point<GlobalPixels>> {
+fn parse_pixel_position_env_var(value: &str) -> Option<Point<DevicePixels>> {
     let mut parts = value.split(',');
     let x: usize = parts.next()?.parse().ok()?;
     let y: usize = parts.next()?.parse().ok()?;
-    Some(point((x as f64).into(), (y as f64).into()))
+    Some(point((x as i32).into(), (y as i32).into()))
 }
 
-fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
+fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
-    Some(size((width as f64).into(), (height as f64).into()))
+    Some(size((width as i32).into(), (height as i32).into()))
 }
 
 struct DisconnectedOverlay;

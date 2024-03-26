@@ -30,11 +30,11 @@ use util::{
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
-    PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
-    WindowContext, WindowHandle, WindowId,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window,
+    WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -523,6 +523,14 @@ impl AppContext {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns the display with the given ID, if one exists.
+    pub fn find_display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        self.displays()
+            .iter()
+            .find(|display| display.id() == id)
+            .cloned()
     }
 
     /// Returns the appearance of the application's windows.
