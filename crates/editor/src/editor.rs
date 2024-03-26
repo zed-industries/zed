@@ -898,9 +898,7 @@ impl CompletionsMenu {
                     .max_w(px(640.))
                     .w(px(500.))
                     .overflow_y_scroll()
-                    // Prevent a mouse down on documentation from being propagated to the editor,
-                    // because that would move the cursor.
-                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                    .occlude()
             })
         } else {
             None
@@ -989,6 +987,7 @@ impl CompletionsMenu {
                     .collect()
             },
         )
+        .occlude()
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
@@ -1212,6 +1211,7 @@ impl CodeActionsMenu {
         .px_2()
         .py_1()
         .max_h(max_height)
+        .occlude()
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions
