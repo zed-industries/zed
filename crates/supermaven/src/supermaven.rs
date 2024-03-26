@@ -1,24 +1,26 @@
 mod messages;
+mod supermaven_completion_provider;
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use editor::{Editor, EditorEvent, EditorMode};
 use futures::{
     channel::{mpsc, oneshot},
     io::BufReader,
     AsyncBufReadExt, StreamExt,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Bounds, Global, GlobalPixels, InteractiveText, Render, StyledText,
-    Subscription, Task, View, ViewContext, WeakView, WindowContext,
+    AppContext, AsyncAppContext, Bounds, Global, GlobalPixels, InteractiveText, Model, Render,
+    StyledText, Subscription, Task, ViewContext,
 };
+use language::{Anchor, Buffer};
 use messages::*;
 use serde::{Deserialize, Serialize};
 use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use std::{path::PathBuf, process::Stdio};
+use std::{future::Future, path::Path, process::Stdio};
+pub use supermaven_completion_provider::*;
 use ui::prelude::*;
 use util::ResultExt;
 
@@ -30,8 +32,6 @@ pub struct Supermaven {
     outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
     _handle_outgoing_messages: Task<Result<()>>,
     _handle_incoming_messages: Task<Result<()>>,
-    _maintain_editors: Subscription,
-    registered_editors: HashMap<WeakView<Editor>, RegisteredEditor>,
 }
 
 impl Supermaven {
@@ -78,76 +78,88 @@ impl Supermaven {
             _handle_outgoing_messages: cx
                 .spawn(|_cx| Self::handle_outgoing_messages(outgoing_rx, stdin)),
             _handle_incoming_messages: cx.spawn(|cx| Self::handle_incoming_messages(stdout, cx)),
-            _maintain_editors: cx.observe_new_views({
-                |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-                    if editor.mode() == EditorMode::Full {
-                        Self::update(cx, |this, cx| this.register_editor(editor, cx))
-                    }
-                }
-            }),
-            registered_editors: HashMap::default(),
         }
     }
 
-    fn register_editor(&mut self, _editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-        let editor_handle = cx.view().clone();
-        self.registered_editors.insert(
-            editor_handle.downgrade(),
-            RegisteredEditor {
-                _subscription: cx.window_context().subscribe(
-                    &editor_handle,
-                    |editor, event, cx| {
-                        Self::update(cx, |this, cx| this.handle_editor_event(editor, event, cx))
-                    },
-                ),
+    pub fn complete(
+        &mut self,
+        path: &Path,
+        content: String,
+        offset: usize,
+    ) -> impl Future<Output = ()> {
+        let path = path.to_string_lossy().to_string();
+        let state_id = self.next_state_id;
+        self.next_state_id.0 += 1;
+
+        self.states.insert(
+            state_id,
+            CompletionState {
+                prefix: content[..offset].to_string(),
+                suffix: content[offset..].to_string(),
+                completion: Vec::new(),
             },
         );
+        let _ = self
+            .outgoing_tx
+            .unbounded_send(dbg!(OutboundMessage::StateUpdate(StateUpdateMessage {
+                new_id: state_id.0.to_string(),
+                updates: vec![
+                    StateUpdate::FileUpdate(FileUpdateMessage {
+                        path: path.clone(),
+                        content,
+                    }),
+                    StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
+                ],
+            })));
+
+        let (tx, rx) = oneshot::channel();
+        self.update_txs.push(tx);
+        async move {
+            _ = rx.await;
+        }
     }
 
-    fn handle_editor_event(
-        &mut self,
-        editor: View<Editor>,
-        event: &EditorEvent,
-        cx: &mut WindowContext,
-    ) {
-        match event {
-            EditorEvent::Edited => {
-                // todo!("address multi-buffers")
-                let offset = editor.read(cx).selections.newest::<usize>(cx).head();
-                let path = editor
-                    .read(cx)
-                    .file_at(offset, cx)
-                    .and_then(|file| Some(file.as_local()?.abs_path(cx)))
-                    .unwrap_or_else(|| PathBuf::from("untitled"))
-                    .to_string_lossy()
-                    .to_string();
-                let content = editor.read(cx).text(cx);
-                let state_id = self.next_state_id;
-                self.next_state_id.0 += 1;
+    pub fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        cursor_position: Anchor,
+        cx: &AppContext,
+    ) -> Vec<String> {
+        let mut completions = Vec::new();
+        for state in self.states.values() {
+            // todo!("avoid collecting into a string")
+            let buffer_prefix = buffer
+                .read(cx)
+                .text_for_range(Anchor::MIN..cursor_position)
+                .collect::<String>();
+            if buffer_prefix.starts_with(&state.prefix) && buffer_prefix.len() > state.prefix.len()
+            {
+                let user_input = &buffer_prefix[state.prefix.len()..];
+                let completion = state
+                    .completion
+                    .iter()
+                    .filter_map(|completion| {
+                        if let ResponseItem::Text { text } = completion {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>();
 
-                self.states.insert(
-                    state_id,
-                    CompletionState {
-                        prefix: content[..offset].to_string(),
-                        suffix: content[offset..].to_string(),
-                        completion: Vec::new(),
-                    },
-                );
-                let _ = self
-                    .outgoing_tx
-                    .unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
-                        new_id: state_id.0.to_string(),
-                        updates: vec![
-                            StateUpdate::FileUpdate(FileUpdateMessage {
-                                path: path.clone(),
-                                content,
-                            }),
-                            StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
-                        ],
-                    }));
+                let common_prefix_len = user_input
+                    .chars()
+                    .zip(completion.chars())
+                    .take_while(|(input_char, completion_char)| input_char == completion_char)
+                    .count();
+                let completion = &completion[common_prefix_len..];
+                if !completion.is_empty() {
+                    completions.push(completion.to_string());
+                }
             }
-            _ => {}
         }
+
+        completions
     }
 
     async fn handle_outgoing_messages(
@@ -263,65 +275,65 @@ impl Render for ActivationRequestPrompt {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
+// #[cfg(test)]
+// mod tests {
+//     use std::sync::Arc;
 
-    use super::*;
-    use gpui::{Context, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, Buffer, BufferId, LanguageRegistry};
-    use project::Project;
-    use settings::SettingsStore;
+//     use super::*;
+//     use gpui::{Context, TestAppContext};
+//     use language::{language_settings::AllLanguageSettings, Buffer, BufferId, LanguageRegistry};
+//     use project::Project;
+//     use settings::SettingsStore;
 
-    #[gpui::test]
-    async fn test_exploratory(cx: &mut TestAppContext) {
-        env_logger::init();
+//     #[gpui::test]
+//     async fn test_exploratory(cx: &mut TestAppContext) {
+//         env_logger::init();
 
-        init_test(cx);
-        let background_executor = cx.executor();
-        background_executor.allow_parking();
+//         init_test(cx);
+//         let background_executor = cx.executor();
+//         background_executor.allow_parking();
 
-        cx.update(Supermaven::launch).await.unwrap();
+//         cx.update(Supermaven::launch).await.unwrap();
 
-        let language_registry = Arc::new(LanguageRegistry::test(background_executor.clone()));
+//         let language_registry = Arc::new(LanguageRegistry::test(background_executor.clone()));
 
-        let python = language_registry.language_for_name("Python");
+//         let python = language_registry.language_for_name("Python");
 
-        let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
-            buffer.set_language_registry(language_registry);
-            cx.spawn(|buffer, mut cx| async move {
-                let python = python.await?;
-                buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
-                    buffer.set_language(Some(python), cx);
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-            buffer
-        });
+//         let buffer = cx.new_model(|cx| {
+//             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
+//             buffer.set_language_registry(language_registry);
+//             cx.spawn(|buffer, mut cx| async move {
+//                 let python = python.await?;
+//                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
+//                     buffer.set_language(Some(python), cx);
+//                 })?;
+//                 anyhow::Ok(())
+//             })
+//             .detach_and_log_err(cx);
+//             buffer
+//         });
 
-        let editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
-        editor
-            .update(cx, |editor, cx| editor.insert("import numpy as ", cx))
-            .unwrap();
+//         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
+//         editor
+//             .update(cx, |editor, cx| editor.insert("import numpy as ", cx))
+//             .unwrap();
 
-        cx.executor()
-            .timer(std::time::Duration::from_secs(60))
-            .await;
-    }
+//         cx.executor()
+//             .timer(std::time::Duration::from_secs(60))
+//             .await;
+//     }
 
-    pub fn init_test(cx: &mut TestAppContext) {
-        _ = cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            editor::init(cx);
-            SettingsStore::update(cx, |store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-            });
-        });
-    }
-}
+//     pub fn init_test(cx: &mut TestAppContext) {
+//         _ = cx.update(|cx| {
+//             let store = SettingsStore::test(cx);
+//             cx.set_global(store);
+//             theme::init(theme::LoadThemes::JustBase, cx);
+//             language::init(cx);
+//             Project::init_settings(cx);
+//             editor::init(cx);
+//             SettingsStore::update(cx, |store, cx| {
+//                 store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
+//             });
+//         });
+//     }
+// }
