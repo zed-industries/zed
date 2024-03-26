@@ -274,7 +274,7 @@ impl HasDisplayHandle for WaylandWindow {
 
 impl PlatformWindow for WaylandWindow {
     // todo(linux)
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         unimplemented!()
     }
 

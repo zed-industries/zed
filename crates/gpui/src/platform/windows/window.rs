@@ -1207,7 +1207,7 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         Bounds {
             origin: self.inner.origin.get(),
             size: self.inner.physical_size.get(),

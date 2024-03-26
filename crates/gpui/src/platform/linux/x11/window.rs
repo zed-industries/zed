@@ -325,12 +325,12 @@ impl X11WindowState {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.0
             .inner
             .borrow_mut()
             .bounds
-            .map(|v| GlobalPixels(v as f32))
+            .map(|v| DevicePixels(v as i32))
     }
 
     // todo(linux)
