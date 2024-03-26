@@ -646,8 +646,8 @@ impl WindowsWindowInner {
     fn handle_mouse_down_msg(&self, button: MouseButton, lparam: LPARAM) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
-            let x = lparam.signed_loword() as i32;
-            let y = lparam.signed_hiword() as i32;
+            let x = lparam.signed_loword() as f32;
+            let y = lparam.signed_hiword() as f32;
             let physical_point = point(DevicePixels(x), DevicePixels(y));
             let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
