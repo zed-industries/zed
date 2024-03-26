@@ -458,21 +458,16 @@ impl<'a> MarkdownParser<'a> {
                             self.cursor += 1;
                         }
 
-                        if let Some(event) = self.current_event() {
-                            match event {
-                                Event::TaskListMarker(checked) => {
-                                    task_item = Some(*checked);
-                                    self.cursor += 1;
-                                }
-                                _ => {}
-                            }
+                        if let Some(Event::TaskListMarker(checked)) = self.current_event() {
+                            task_item = Some(*checked);
+                            self.cursor += 1;
                         }
                     }
 
-                    if let Some(next) = self.current() {
+                    if let Some(event) = self.current_event() {
                         // This is a plain list item.
                         // For example `- some text` or `1. [Docs](./docs.md)`
-                        if MarkdownParser::is_text_like(&next.0) {
+                        if MarkdownParser::is_text_like(event) {
                             let text = self.parse_text(false);
                             let block = ParsedMarkdownElement::Paragraph(text);
                             current_list_items.push(Box::new(block));
