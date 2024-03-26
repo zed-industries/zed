@@ -9,8 +9,8 @@ use axum::{
     Extension, Json, Router,
 };
 use collections::HashMap;
-use rpc::{ExtensionApiManifest, ExtensionMetadata};
-use serde::{Deserialize, Serialize};
+use rpc::{ExtensionApiManifest, GetExtensionsResponse};
+use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
 use util::ResultExt;
@@ -46,11 +46,6 @@ struct DownloadExtensionParams {
     version: String,
 }
 
-#[derive(Debug, Serialize)]
-struct GetExtensionsResponse {
-    pub data: Vec<ExtensionMetadata>,
-}
-
 async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
@@ -75,7 +70,7 @@ async fn download_latest_extension(
         Extension(app),
         Path(DownloadExtensionParams {
             extension_id: params.extension_id,
-            version: extension.manifest.version,
+            version: extension.manifest.version.to_string(),
         }),
     )
     .await

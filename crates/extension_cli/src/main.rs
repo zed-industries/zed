@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
 
     let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
         name: manifest.name,
-        version: manifest.version.to_string(),
+        version: manifest.version,
         description: manifest.description,
         authors: manifest.authors,
         schema_version: Some(manifest.schema_version),

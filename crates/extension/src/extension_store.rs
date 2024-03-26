@@ -10,7 +10,7 @@ use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::{telemetry::Telemetry, Client};
+use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use fs::{Fs, RemoveOptions};
@@ -53,22 +53,6 @@ const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 const CURRENT_SCHEMA_VERSION: i64 = 1;
-
-#[derive(Deserialize)]
-pub struct ExtensionsApiResponse {
-    pub data: Vec<ExtensionApiResponse>,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct ExtensionApiResponse {
-    pub id: Arc<str>,
-    pub name: String,
-    pub version: Arc<str>,
-    pub description: Option<String>,
-    pub authors: Vec<String>,
-    pub repository: String,
-    pub download_count: usize,
-}
 
 pub struct ExtensionStore {
     builder: Arc<ExtensionBuilder>,
@@ -386,7 +370,7 @@ impl ExtensionStore {
         &self,
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<ExtensionApiResponse>>> {
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let version = CURRENT_SCHEMA_VERSION.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
         if let Some(search) = search {
@@ -415,8 +399,7 @@ impl ExtensionStore {
                 );
             }
 
-            let response: ExtensionsApiResponse = serde_json::from_slice(&body)?;
-
+            let response: GetExtensionsResponse = serde_json::from_slice(&body)?;
             Ok(response.data)
         })
     }
