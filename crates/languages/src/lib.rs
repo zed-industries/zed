@@ -29,7 +29,6 @@ mod lua;
 mod nu;
 mod ocaml;
 mod php;
-mod prisma;
 mod purescript;
 mod python;
 mod ruby;
@@ -99,7 +98,6 @@ pub fn init(
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
         ("php", tree_sitter_php::language_php()),
-        ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
@@ -370,12 +368,6 @@ pub fn init(
         vec![Arc::new(terraform::TerraformLspAdapter)]
     );
     language!("hcl", vec![]);
-    language!(
-        "prisma",
-        vec![Arc::new(prisma::PrismaLspAdapter::new(
-            node_runtime.clone(),
-        ))]
-    );
     language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 
     languages.register_secondary_lsp_adapter(
