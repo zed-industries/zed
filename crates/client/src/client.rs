@@ -34,6 +34,7 @@ use std::{
     convert::TryFrom,
     fmt::Write as _,
     future::Future,
+    io::IsTerminal,
     marker::PhantomData,
     path::PathBuf,
     sync::{
@@ -117,6 +118,13 @@ pub fn init_settings(cx: &mut AppContext) {
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.register_setting::<ClientSettings>(cx);
     });
+}
+
+// NOTE: This env var is normally part of the cli crate
+pub const FORCE_CLI_MODE_ENV_VAR_NAME: &str = "ZED_FORCE_CLI_MODE";
+
+pub fn stdout_is_a_pty() -> bool {
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {

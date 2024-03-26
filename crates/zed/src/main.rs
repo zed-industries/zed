@@ -7,8 +7,7 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use clap::{command, Parser};
-use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, Client, ClientSettings, DevServerToken, UserStore};
+use client::{parse_zed_link, stdout_is_a_pty, Client, ClientSettings, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -36,7 +35,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::OpenOptions,
-    io::{IsTerminal, Write},
+    io::Write,
     panic,
     path::Path,
     sync::{
@@ -912,10 +911,6 @@ async fn load_login_shell_environment() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
 #[derive(Parser, Debug)]
