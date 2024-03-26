@@ -5293,7 +5293,6 @@ dependencies = [
  "theme",
  "toml 0.8.10",
  "tree-sitter",
- "tree-sitter-astro",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
@@ -10134,15 +10133,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-astro"
-version = "0.0.1"
-source = "git+https://github.com/virchau13/tree-sitter-astro.git?rev=e924787e12e8a03194f36a113290ac11d6dc10f3#e924787e12e8a03194f36a113290ac11d6dc10f3"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-bash"
 version = "0.20.4"
 source = "git+https://github.com/tree-sitter/tree-sitter-bash?rev=7331995b19b8f8aba2d5e26deb51d2195c18bc94#7331995b19b8f8aba2d5e26deb51d2195c18bc94"
@@ -12554,6 +12544,13 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "serde",
+]
+
+[[package]]
+name = "zed_astro"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

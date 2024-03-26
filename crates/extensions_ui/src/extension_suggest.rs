@@ -17,6 +17,7 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
     SUGGESTED
         .get_or_init(|| {
             [
+                ("astro", "astro"),
                 ("beancount", "beancount"),
                 ("dockerfile", "Dockerfile"),
                 ("elisp", "el"),
