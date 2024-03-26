@@ -23,14 +23,12 @@ mod elixir;
 mod elm;
 mod erlang;
 mod go;
-mod haskell;
 mod html;
 mod json;
 mod lua;
 mod nu;
 mod ocaml;
 mod php;
-mod prisma;
 mod purescript;
 mod python;
 mod ruby;
@@ -85,7 +83,6 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("haskell", tree_sitter_haskell::language()),
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
@@ -101,7 +98,6 @@ pub fn init(
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
         ("php", tree_sitter_php::language_php()),
-        ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
         ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
@@ -316,7 +312,6 @@ pub fn init(
         }
     }
 
-    language!("haskell", vec![Arc::new(haskell::HaskellLanguageServer {})]);
     language!(
         "html",
         vec![
@@ -373,12 +368,6 @@ pub fn init(
         vec![Arc::new(terraform::TerraformLspAdapter)]
     );
     language!("hcl", vec![]);
-    language!(
-        "prisma",
-        vec![Arc::new(prisma::PrismaLspAdapter::new(
-            node_runtime.clone(),
-        ))]
-    );
     language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 
     languages.register_secondary_lsp_adapter(

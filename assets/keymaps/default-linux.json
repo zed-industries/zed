@@ -140,17 +140,17 @@
     }
   },
   {
-    "context": "Editor && mode == full && copilot_suggestion",
+    "context": "Editor && mode == full && inline_completion",
     "bindings": {
-      "alt-]": "copilot::NextSuggestion",
-      "alt-[": "copilot::PreviousSuggestion",
-      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+      "alt-]": "editor::NextInlineCompletion",
+      "alt-[": "editor::PreviousInlineCompletion",
+      "alt-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
-    "context": "Editor && !copilot_suggestion",
+    "context": "Editor && !inline_completion",
     "bindings": {
-      "alt-\\": "copilot::Suggest"
+      "alt-\\": "editor::ShowInlineCompletion"
     }
   },
   {
@@ -561,7 +561,7 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "ctrl-shift-p": "menu::SelectPrev" }
+    "bindings": { "ctrl-shift-p": "file_finder::SelectPrev" }
   },
   {
     "context": "Terminal",

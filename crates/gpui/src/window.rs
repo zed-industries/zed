@@ -423,7 +423,7 @@ impl Window {
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
-        let active = Rc::new(Cell::new(false));
+        let active = Rc::new(Cell::new(platform_window.is_active()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
@@ -854,18 +854,6 @@ impl<'a> WindowContext<'a> {
     {
         self.app
             .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
-    }
-
-    /// Updates the global of the given type. The given closure is given simultaneous mutable
-    /// access both to the global and the context.
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: Global,
-    {
-        let mut global = self.app.lease_global::<G>();
-        let result = f(&mut global, self);
-        self.app.end_global_lease(global);
-        result
     }
 
     fn window_bounds_changed(&mut self) {
@@ -2388,17 +2376,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     {
         let view = self.view().downgrade();
         self.window_cx.spawn(|cx| f(view, cx))
-    }
-
-    /// Updates the global state of the given type.
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: Global,
-    {
-        let mut global = self.app.lease_global::<G>();
-        let result = f(&mut global, self);
-        self.app.end_global_lease(global);
-        result
     }
 
     /// Register a callback to be invoked when the given global state changes.

@@ -346,6 +346,11 @@ impl PlatformWindow for WaylandWindow {
         // todo(linux)
     }
 
+    // todo(linux)
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0.toplevel.set_title(title.to_string());
     }

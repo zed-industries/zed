@@ -2442,13 +2442,20 @@ name = "copilot_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "copilot",
  "editor",
  "fs",
+ "futures 0.3.28",
  "gpui",
+ "indoc",
  "language",
+ "lsp",
  "menu",
+ "project",
+ "serde_json",
  "settings",
+ "theme",
  "ui",
  "util",
  "workspace",
@@ -3215,7 +3222,6 @@ dependencies = [
  "clock",
  "collections",
  "convert_case 0.6.0",
- "copilot",
  "ctor",
  "db",
  "emojis",
@@ -3472,6 +3478,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "cap-std",
+ "client",
  "collections",
  "ctor",
  "env_logger",
@@ -5297,7 +5304,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
- "tree-sitter-haskell",
  "tree-sitter-hcl",
  "tree-sitter-heex",
  "tree-sitter-html",
@@ -5309,7 +5315,6 @@ dependencies = [
  "tree-sitter-nu",
  "tree-sitter-ocaml",
  "tree-sitter-php",
- "tree-sitter-prisma-io",
  "tree-sitter-proto",
  "tree-sitter-purescript",
  "tree-sitter-python",
@@ -7799,6 +7804,7 @@ dependencies = [
  "anyhow",
  "async-tungstenite",
  "base64 0.13.1",
+ "chrono",
  "collections",
  "env_logger",
  "futures 0.3.28",
@@ -10116,7 +10122,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.100"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=05079ae3d1bc44bedc4594eef925b36ba5e317a2#05079ae3d1bc44bedc4594eef925b36ba5e317a2"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=7f21c3b98c0749ac192da67a0d65dfe3eabc4a63#7f21c3b98c0749ac192da67a0d65dfe3eabc4a63"
 dependencies = [
  "cc",
  "regex",
@@ -10280,15 +10286,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-haskell"
-version = "0.14.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=8a99848fc734f9c4ea523b3f2a07df133cbbcec2#8a99848fc734f9c4ea523b3f2a07df133cbbcec2"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-hcl"
 version = "0.0.1"
 source = "git+https://github.com/MichaHoffmann/tree-sitter-hcl?rev=v1.1.0#636dbe70301ecbab8f353c8c78b3406fe4f185f5"
@@ -10395,15 +10392,6 @@ name = "tree-sitter-php"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0db3788e709a5adfb583683a4b686a084e41a0f9e5a2fcb9a8e358f11481036a"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-prisma-io"
-version = "1.4.0"
-source = "git+https://github.com/victorhqc/tree-sitter-prisma#eca2596a355b1a9952b4f80f8f9caed300a272b5"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12599,6 +12587,20 @@ dependencies = [
 
 [[package]]
 name = "zed_gleam"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_haskell"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_prisma"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",

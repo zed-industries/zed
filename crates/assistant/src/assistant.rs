@@ -12,7 +12,7 @@ use chrono::{DateTime, Local};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
-use gpui::{actions, AppContext, Global, SharedString};
+use gpui::{actions, AppContext, BorrowAppContext, Global, SharedString};
 pub(crate) use saved_conversation::*;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};

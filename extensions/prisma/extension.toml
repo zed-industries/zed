@@ -1,0 +1,15 @@
+id = "prisma"
+name = "Prisma"
+description = "Prisma support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Matthew Gramigna <matthewgramigna@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.prisma-language-server]
+name = "Prisma Language Server"
+language = "Prisma"
+
+[grammars.prisma]
+repository = "https://github.com/victorhqc/tree-sitter-prisma"
+commit = "eca2596a355b1a9952b4f80f8f9caed300a272b5"
