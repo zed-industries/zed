@@ -12,4 +12,4 @@ language = "Astro"
 
 [grammars.astro]
 repository = "https://github.com/virchau13/tree-sitter-astro"
-commit = "e924787e12e8a03194f36a113290ac11d6dc10f3"
+commit = "dfa0893bdc4bdfada102043404758c66e3580568"
