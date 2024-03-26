@@ -8264,14 +8264,17 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
-        let buffers = buffer.read(cx).all_buffers();
+        let mut buffers = buffer.read(cx).all_buffers();
+        if trigger == FormatTrigger::Save {
+            buffers.retain(|buffer| buffer.read(cx).is_dirty());
+        }
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
 
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
-                _ = timeout => {
+                () = timeout => {
                     log::warn!("timed out waiting for formatting");
                     None
                 }
