@@ -32,7 +32,7 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
                 ("gleam", "gleam"),
                 ("graphql", "gql"),
                 ("graphql", "graphql"),
-                ("haskell", "haskell"),
+                ("haskell", "hs"),
                 ("java", "java"),
                 ("kotlin", "kt"),
                 ("latex", "tex"),
