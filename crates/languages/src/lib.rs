@@ -23,7 +23,6 @@ mod elixir;
 mod elm;
 mod erlang;
 mod go;
-mod haskell;
 mod html;
 mod json;
 mod lua;
@@ -85,7 +84,6 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("haskell", tree_sitter_haskell::language()),
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
@@ -316,7 +314,6 @@ pub fn init(
         }
     }
 
-    language!("haskell", vec![Arc::new(haskell::HaskellLanguageServer {})]);
     language!(
         "html",
         vec![

@@ -1,25 +1,15 @@
-use std::fs;
 use zed_extension_api::{self as zed, Result};
 
-struct HaskellExtension {
-    cached_binary_path: Option<String>,
-}
-
-impl HaskellExtension {
-    fn language_server_binary_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
-    }
-}
+struct HaskellExtension;
 
 impl zed::Extension for HaskellExtension {
     fn new() -> Self {
-        Self {
-            cached_binary_path: None,
-        }
+        Self
     }
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
+        _config: zed::LanguageServerConfig,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let path = worktree
