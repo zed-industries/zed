@@ -366,11 +366,10 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
         .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
-            let display = if let Some(display_id) = display_id {
-                cx.displays().iter().find(|d| d.id() == display_id).cloned()
-            } else {
-                cx.primary_display()
-            };
+            let display = display_id
+                .map(|id| cx.find_display(id))
+                .unwrap_or_else(|| cx.primary_display());
+
             display
                 .map(|display| {
                     let center = display.bounds().center();
