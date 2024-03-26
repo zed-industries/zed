@@ -52,7 +52,7 @@ use language::{
 };
 use log::error;
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    request::Request, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
     MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
 };
@@ -6631,25 +6631,27 @@ impl Project {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
-                let is_references = TypeId::of::<R>() == TypeId::of::<GetReferences>();
-                if is_references {
-                    println!("find references called");
-                    self.on_lsp_work_start(
-                        language_server.server_id(),
-                        "find_references".to_string(),
-                        LanguageServerProgress {
-                            message: Some("find_references".to_string()),
-                            percentage: None,
-                            last_update_at: Instant::now(),
-                        },
-                        cx,
-                    );
-                }
+                let id = R::LspRequest::METHOD;
+                println!("id: {id:?}");
 
                 return cx.spawn(move |this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.on_lsp_work_start(
+                                language_server.server_id(),
+                                id.to_string(),
+                                LanguageServerProgress {
+                                    message: Some(id.to_string()),
+                                    percentage: None,
+                                    last_update_at: Instant::now(),
+                                },
+                                cx,
+                            );
+                        })
+                    });
 
                     let result = language_server.request::<R::LspRequest>(lsp_params).await;
                     let response = match result {
@@ -6664,20 +6666,11 @@ impl Project {
                             return Err(err);
                         }
                     };
-                    if is_references {
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.on_lsp_work_end(
-                                    language_server.server_id(),
-                                    "find_references".to_string(),
-                                    cx,
-                                );
-                            })
-                        });
-                    }
-                    if is_references {
-                        println!("response from lsp...");
-                    }
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.on_lsp_work_end(language_server.server_id(), id.to_string(), cx);
+                        })
+                    });
                     request
                         .response_from_lsp(
                             response,
