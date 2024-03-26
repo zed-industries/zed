@@ -550,6 +550,8 @@ pub(crate) struct WindowParams {
     pub focus: bool,
 
     pub show: bool,
+
+    pub display_id: Option<DisplayId>,
 }
 
 impl Default for WindowOptions {

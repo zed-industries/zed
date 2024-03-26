@@ -77,14 +77,15 @@ extern "C" {
 /// Conversely, in GPUI's coordinate system, the origin is placed at the top left of the primary
 /// screen, with the Y axis pointing downwards (matching CoreGraphics)
 pub(crate) fn global_bounds_from_ns_rect(rect: NSRect) -> Bounds<GlobalPixels> {
-    let primary_screen_size = unsafe { CGDisplayBounds(MacDisplay::primary().id().0) }.size;
+    let primary_screen_size = unsafe { CGDisplayBounds(MacDisplay::primary().id().0) };
 
     Bounds {
         origin: point(
-            GlobalPixels(rect.origin.x as f32),
-            GlobalPixels(
-                primary_screen_size.height as f32 - rect.origin.y as f32 - rect.size.height as f32,
-            ),
+            GlobalPixels(0.0),
+            GlobalPixels(0.0), // GlobalPixels(rect.origin.x as f32),
+                               // GlobalPixels(
+                               //     primary_screen_size.height as f32 - rect.origin.y as f32 - rect.size.height as f32,
+                               // ),
         ),
         size: size(
             GlobalPixels(rect.size.width as f32),
@@ -151,11 +152,15 @@ impl PlatformDisplay for MacDisplay {
             // the top left of the primary display.
             let bounds = CGDisplayBounds(self.0);
 
+            dbg!((
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.size.width,
+                bounds.size.height
+            ));
+
             Bounds {
-                origin: point(
-                    GlobalPixels(bounds.origin.x as f32),
-                    GlobalPixels(bounds.origin.y as f32),
-                ),
+                origin: point(GlobalPixels(0.), GlobalPixels(0.)),
                 size: size(
                     GlobalPixels(bounds.size.width as f32),
                     GlobalPixels(bounds.size.height as f32),

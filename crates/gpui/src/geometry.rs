@@ -2463,7 +2463,7 @@ impl From<ScaledPixels> for f64 {
 /// rather than being relative to any individual display.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct GlobalPixels(pub(crate) f32);
+pub struct GlobalPixels(pub f32);
 
 impl Debug for GlobalPixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

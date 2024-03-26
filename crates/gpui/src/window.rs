@@ -414,6 +414,7 @@ impl Window {
                 is_movable,
                 focus,
                 show,
+                display_id,
             },
         );
         let display_id = platform_window.display().id();

@@ -494,6 +494,7 @@ impl MacWindow {
             is_movable,
             focus,
             show,
+            display_id,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -525,36 +526,82 @@ impl MacWindow {
             };
 
             let mut target_screen = nil;
-            let mut target_bounds = None;
+            // let mut target_bounds = None;
+            // let screens = NSScreen::screens(nil);
+            // let count: u64 = cocoa::foundation::NSArray::count(screens);
+            // for i in 0..count {
+            //     let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
+            //     let display_id = display_id_for_screen(screen);
+            //     if let Some(display) = MacDisplay::find_by_id(DisplayId(display_id)) {
+            //         let display_bounds = &display.bounds();
+            //         if bounds.intersects(&display_bounds) {
+            //             // Flipping the origin causes invalid window position
+            //             target_bounds =
+            //                 Some(global_bounds_to_ns_rect(bounds));
+            //             target_screen = screen;
+            //             break;
+            //         }
+            //     }
+            // }
+
+            let display = display_id
+                .and_then(MacDisplay::find_by_id)
+                .unwrap_or_else(|| MacDisplay::primary());
+
+            let mut frame_origin = None;
             let screens = NSScreen::screens(nil);
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let display_id = display_id_for_screen(screen);
-                if let Some(display) = MacDisplay::find_by_id(DisplayId(display_id)) {
-                    let display_bounds = &display.bounds();
-                    let origin = bounds.origin - display_bounds.origin;
-                    if bounds.intersects(&display_bounds) {
-                        // Flipping the origin causes invalid window position
-                        target_bounds = Some(global_bounds_to_ns_rect(Bounds::new(
-                            point(GlobalPixels(0.), origin.y),
-                            bounds.size,
-                        )));
+                let mut frame = NSScreen::visibleFrame(screen);
+                dbg!(
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height
+                );
 
-                        // This works but the origin is not flipped
-                        // target_bounds = Some(NSRect::new(
-                        //     NSPoint::new(0., (origin.y).into()),
-                        //     NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
-                        // ));
-                        target_screen = screen;
-                        break;
-                    }
+                let display_id = display_id_for_screen(screen);
+                if display_id == display.0 {
+                    frame_origin = Some(frame);
+                    target_screen = screen;
                 }
             }
 
-            let Some(window_rect) = target_bounds else {
-                panic!("tried to create a window with no screens")
-            };
+            // let scale_factor = NSScreen::backingScaleFactor(target_screen) as f32;
+            // let bounds = Bounds::new(
+            // point(
+            // GlobalPixels(bounds.origin.x.0 * scale_factor),
+            // GlobalPixels((display.bounds().size.height - bounds.origin.y).0 * scale_factor),
+            // ),
+            // size(
+            // GlobalPixels(bounds.size.width.0 * scale_factor),
+            // GlobalPixels(bounds.size.height.0 * scale_factor),
+            // ),
+            // );
+            let frame_origin = frame_origin.unwrap();
+
+            // let window_rect = NSRect::new(
+            //     NSPoint::new(
+            //         bounds.origin.x.into(),
+            //         (display.bounds().size.height - bounds.origin.y).into(),
+            //     ),
+            //     NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
+            // );
+
+            let window_rect = NSRect::new(
+                NSPoint::new(
+                    bounds.origin.x.into(),
+                    (display.bounds().size.height - bounds.origin.y).into(),
+                ),
+                NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
+            );
+
+            println!("{:?}", display_id);
+            println!("x: {}", bounds.origin.x.0);
+            println!("y: {}", (display.bounds().size.height - bounds.origin.y).0);
+            println!("w: {}", bounds.size.width.0);
+            println!("h: {}", bounds.size.height.0);
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 window_rect,
@@ -694,6 +741,18 @@ impl MacWindow {
             } else if show {
                 native_window.orderFront_(nil);
             }
+            let point = NSPoint::new(
+                (frame_origin.origin.x as f64).into(),
+                (frame_origin.origin.y as f64).into(),
+            );
+
+            NSWindow::setFrameTopLeftPoint_(
+                native_window,
+                NSPoint::new(
+                    (frame_origin.origin.x + window_rect.origin.x).into(),
+                    (frame_origin.origin.y + window_rect.origin.y).into(),
+                ),
+            );
             window.0.lock().move_traffic_light();
 
             pool.drain();
