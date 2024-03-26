@@ -1156,8 +1156,6 @@ impl EditorElement {
                         name.to_string()
                     };
 
-                    let sha: usize = blame_entry.sha.into();
-
                     let mut element = h_flex()
                         .id(("blame", ix))
                         .children([
@@ -1171,14 +1169,15 @@ impl EditorElement {
                                 datetime.clone()
                             )),
                         ])
+                        .when_some(blame_entry.permalink.as_ref(), |this, url| {
+                            let url = url.clone();
+                            this.cursor_pointer().on_click(move |_, cx| {
+                                cx.stop_propagation();
+                                cx.open_url(url.as_str())
+                            })
+                        })
                         .tooltip(move |cx| {
                             BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx)
-                        })
-                        .on_click({
-                            move |_, cx| {
-                                cx.stop_propagation();
-                                cx.write_to_clipboard(ClipboardItem::new(pretty_commit_id.clone()));
-                            }
                         })
                         .into_any();
 
@@ -2908,75 +2907,56 @@ impl EditorElement {
 
 struct BlameEntryTooltip {
     color: Hsla,
-
-    pretty_commit_id: String,
-    datetime: String,
-
-    committer: String,
-    committer_email: String,
-
-    summary: String,
-
-    url: Option<String>,
+    blame_entry: BlameEntry,
 }
 
 impl BlameEntryTooltip {
     fn new(color: Hsla, blame_entry: BlameEntry, cx: &mut WindowContext) -> AnyView {
-        let datetime = match blame_entry.committer_datetime() {
-            Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
-            Err(_) => "Error parsing date".to_string(),
-        };
-        let pretty_commit_id = format!("{}", blame_entry.sha);
-        let committer = blame_entry.committer.unwrap_or("<no name>".to_string());
-        let committer_email = blame_entry.committer_mail.unwrap_or_default();
-        let summary = blame_entry.summary.unwrap_or_default();
-
-        cx.new_view(|_cx| Self {
-            color,
-            pretty_commit_id,
-            datetime,
-            committer,
-            committer_email,
-            summary,
-            url: blame_entry.permalink.map(|url| url.to_string()),
-        })
-        .into()
+        cx.new_view(|_cx| Self { color, blame_entry }).into()
     }
 }
 
 impl Render for BlameEntryTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let url = self.url.clone();
-        tooltip_container(cx, |this, cx| {
-            this.child(
-                v_flex()
-                    .child(
-                        div()
-                            .child(format!(
-                                "{} {} - {}",
-                                self.committer, self.committer_email, self.datetime
-                            ))
-                            .text_color(cx.theme().colors().text_muted),
-                    )
-                    .child(
-                        div()
-                            .child(self.summary.clone())
-                            .when_some(url, |this, url| {
-                                this.child(
-                                    IconButton::new("open-permalink", IconName::Link).on_click(
-                                        cx.listener(move |_this, _, cx| {
-                                            cx.open_url(&url);
-                                        }),
-                                    ),
+        let committer = self
+            .blame_entry
+            .committer
+            .clone()
+            .unwrap_or("<no name>".to_string());
+        let committer_email = self.blame_entry.committer_mail.clone().unwrap_or_default();
+        let datetime = match self.blame_entry.committer_datetime() {
+            Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+            Err(_) => "Error parsing date".to_string(),
+        };
+
+        let summary = self.blame_entry.summary.clone().unwrap_or_default();
+
+        let pretty_commit_id = format!("{}", self.blame_entry.sha);
+
+        tooltip_container(cx, move |this, cx| {
+            this.occlude()
+                .on_mouse_move(|_, cx| cx.stop_propagation())
+                .child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .child(
+                                    div()
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .child("Commit")
+                                        .pl_2(),
                                 )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_color(self.color)
-                            .child(self.pretty_commit_id.clone()),
-                    ),
-            )
+                                .child(
+                                    div().text_color(self.color).child(pretty_commit_id.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .child(format!("{} {} - {}", committer, committer_email, datetime))
+                                .text_color(cx.theme().colors().text_muted),
+                        )
+                        .child(div().child(summary)),
+                )
         })
     }
 }

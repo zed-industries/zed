@@ -7392,11 +7392,24 @@ impl Project {
                 lock.blame(&relative_path, content)
             })
         } else {
+            // Over the wire, we don't want to send the contents of the buffer.
+
+            // version: clock::Global
             todo!("not yet implemented");
         }
     }
 
     // RPC message handlers
+
+    fn handle_blame_buffer(&self, cx: &AppContext) {
+        let version: clock::Global = todo!();
+        let buffer: Model<Buffer> = todo!();
+
+        // buffer.update(cx, |buffer, cx| buffer.wait_for_version(version))
+        // let content = buffer.read(cx).snapshot().rope_for_version(version)
+        // let snapshot = buffer.read(cx).snapshot();
+        // let mut content = snapshot.as_rope().clone();
+    }
 
     async fn handle_unshare_project(
         this: Model<Self>,
