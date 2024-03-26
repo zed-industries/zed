@@ -424,8 +424,9 @@ impl ExtensionStore {
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
     ) {
-        let extensions_dir = self.extensions_dir();
+        let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
             hash_map::Entry::Occupied(_) => return,
@@ -450,11 +451,19 @@ impl ExtensionStore {
                 .get(&url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+
+            fs.remove_dir(
+                &extension_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
-            archive
-                .unpack(extensions_dir.join(extension_id.as_ref()))
-                .await?;
+            archive.unpack(extension_dir).await?;
             this.update(&mut cx, |this, cx| {
                 this.reload(Some(extension_id.clone()), cx)
             })?
@@ -519,7 +528,7 @@ impl ExtensionStore {
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
-        let extensions_dir = self.extensions_dir();
+        let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
@@ -542,7 +551,7 @@ impl ExtensionStore {
             });
 
             fs.remove_dir(
-                &extensions_dir.join(extension_id.as_ref()),
+                &extension_dir,
                 RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: true,
