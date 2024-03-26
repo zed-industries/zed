@@ -142,6 +142,24 @@ For example, to disable ligatures for a given font you can add the following to 
 
 `boolean` values
 
+## Centered Layout
+
+- Description: Configuration for the centered layout mode.
+- Setting: `centered_layout`
+- Default:
+
+```json
+"centered_layout": {
+  "left_padding": 0.2,
+  "right_padding": 0.2,
+}
+```
+
+**Options**
+
+The `left_padding` and `right_padding` options define the relative width of the
+left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.45`.
+
 ## Copilot
 
 - Description: Copilot-specific settings.
