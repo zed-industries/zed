@@ -1,4 +1,5 @@
 [
+  // todo(linux): Review the editor bindings
   // Standard Linux bindings
   {
     "bindings": {
@@ -66,11 +67,6 @@
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
-      // "ctrl-p": "editor::MoveUp",
-      // "ctrl-n": "editor::MoveDown",
-      // "ctrl-b": "editor::MoveLeft",
-      // "ctrl-f": "editor::MoveRight",
-      // "ctrl-l": "editor::NextScreen",
       "ctrl-left": "editor::MoveToPreviousWordStart",
       // "alt-b": "editor::MoveToPreviousWordStart",
       "ctrl-right": "editor::MoveToNextWordEnd",
@@ -82,18 +78,14 @@
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
-      // "ctrl-shift-p": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
-      // "ctrl-shift-n": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
-      // "ctrl-shift-b": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
-      // "ctrl-shift-f": "editor::SelectRight",
       "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      // "alt-shift-b": "editor::SelectToPreviousWordStart",
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      // "alt-shift-f": "editor::SelectToNextWordEnd",
-      // "ctrl-shift-up": "editor::SelectToStartOfParagraph", todo(convert to multi cursor)
+      "ctrl-shift-up": "editor::AddSelectionAbove",
+      "ctrl-shift-down": "editor::AddSelectionBelow",
+      // "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       // "ctrl-shift-down": "editor::SelectToEndOfParagraph",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
@@ -142,7 +134,7 @@
       //     "center_cursor": true
       //   }
       // ],
-      // "ctrl-cmd-space": "editor::ShowCharacterPalette",
+      "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks"
     }
@@ -599,7 +591,7 @@
   {
     "context": "Terminal",
     "bindings": {
-      // "ctrl-cmd-space": "terminal::ShowCharacterPalette", todo(linux)
+      "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "shift-ctrl-c": "terminal::Copy",
       "shift-ctrl-v": "terminal::Paste",
       "up": ["terminal::SendKeystroke", "up"],
