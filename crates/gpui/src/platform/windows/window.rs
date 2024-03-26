@@ -54,6 +54,7 @@ pub(crate) struct WindowsWindowInner {
     display: RefCell<Rc<WindowsDisplay>>,
     last_ime_input: RefCell<Option<String>>,
     click_state: RefCell<ClickState>,
+    fullscreen: Cell<Option<StyleAndBounds>>,
 }
 
 impl WindowsWindowInner {
@@ -115,6 +116,7 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let last_ime_input = RefCell::new(None);
         let click_state = RefCell::new(ClickState::new());
+        let fullscreen = Cell::new(None);
         Self {
             hwnd,
             origin,
@@ -129,15 +131,69 @@ impl WindowsWindowInner {
             display,
             last_ime_input,
             click_state,
+            fullscreen,
         }
     }
 
     fn is_maximized(&self) -> bool {
-        unsafe { IsZoomed(self.hwnd) }.as_bool()
+        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
     fn is_minimized(&self) -> bool {
         unsafe { IsIconic(self.hwnd) }.as_bool()
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        let fullscreen = self.fullscreen.take();
+        let is_fullscreen = fullscreen.is_some();
+        self.fullscreen.set(fullscreen);
+        is_fullscreen
+    }
+
+    async fn toggle_fullscreen(self: Rc<Self>) {
+        let StyleAndBounds {
+            style,
+            x,
+            y,
+            cx,
+            cy,
+        } = if let Some(state) = self.fullscreen.take() {
+            state
+        } else {
+            let style = WINDOW_STYLE(unsafe { get_window_long(self.hwnd, GWL_STYLE) } as _);
+            let mut rc = RECT::default();
+            unsafe { GetWindowRect(self.hwnd, &mut rc) }.log_err();
+            self.fullscreen.set(Some(StyleAndBounds {
+                style,
+                x: rc.left,
+                y: rc.top,
+                cx: rc.right - rc.left,
+                cy: rc.bottom - rc.top,
+            }));
+            let style = style
+                & !(WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_CAPTION);
+            let bounds = self.display.borrow().clone().bounds();
+            StyleAndBounds {
+                style,
+                x: bounds.left().0 as i32,
+                y: bounds.top().0 as i32,
+                cx: bounds.size.width.0 as i32,
+                cy: bounds.size.height.0 as i32,
+            }
+        };
+        unsafe { set_window_long(self.hwnd, GWL_STYLE, style.0 as isize) };
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                HWND::default(),
+                x,
+                y,
+                cx,
+                cy,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        }
+        .log_err();
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
@@ -821,7 +877,7 @@ impl WindowsWindowInner {
 
     /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
     fn handle_calc_client_size(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
-        if !self.hide_title_bar {
+        if !self.hide_title_bar || self.is_fullscreen() {
             return None;
         }
 
@@ -939,6 +995,10 @@ impl WindowsWindowInner {
                 | HTBOTTOMLEFT
         ) {
             return Some(hit.0);
+        }
+
+        if self.is_fullscreen() {
+            return Some(HTCLIENT as _);
         }
 
         let dpi = unsafe { GetDpiForWindow(self.hwnd) };
@@ -1425,12 +1485,16 @@ impl PlatformWindow for WindowsWindow {
         unsafe { ShowWindowAsync(self.inner.hwnd, SW_MAXIMIZE) };
     }
 
-    // todo(windows)
-    fn toggle_fullscreen(&self) {}
+    fn toggle_fullscreen(&self) {
+        self.inner
+            .platform_inner
+            .foreground_executor
+            .spawn(self.inner.clone().toggle_fullscreen())
+            .detach();
+    }
 
-    // todo(windows)
     fn is_fullscreen(&self) -> bool {
-        false
+        self.inner.is_fullscreen()
     }
 
     // todo(windows)
@@ -1788,6 +1852,14 @@ fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
         x: px(x / scale_factor),
         y: px(y / scale_factor),
     }
+}
+
+struct StyleAndBounds {
+    style: WINDOW_STYLE,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
