@@ -1,6 +1,6 @@
 use super::*;
 use rpc::Notification;
-use sea_orm::TryInsertResult;
+use sea_orm::{SelectColumns, TryInsertResult};
 use time::OffsetDateTime;
 
 impl Database {
@@ -486,7 +486,7 @@ impl Database {
         channel_id: ChannelId,
         message_id: MessageId,
         user_id: UserId,
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<(Vec<ConnectionId>, Vec<NotificationId>)> {
         self.transaction(|tx| async move {
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
@@ -531,7 +531,32 @@ impl Database {
                 }
             }
 
-            Ok(participant_connection_ids)
+            let notification_kind_id = self
+                .notification_kinds_by_id
+                .iter()
+                .find(|(_, kind)| **kind == "ChannelMessageMention")
+                .map(|kind| kind.0 .0);
+
+            let existing_notifications = notification::Entity::find()
+                .filter(notification::Column::EntityId.eq(message_id))
+                .filter(notification::Column::Kind.eq(notification_kind_id))
+                .select_column(notification::Column::Id)
+                .all(&*tx)
+                .await?;
+
+            let existing_notification_ids = existing_notifications
+                .into_iter()
+                .map(|notification| notification.id)
+                .collect();
+
+            // remove all the mention notifications for this message
+            notification::Entity::delete_many()
+                .filter(notification::Column::EntityId.eq(message_id))
+                .filter(notification::Column::Kind.eq(notification_kind_id))
+                .exec(&*tx)
+                .await?;
+
+            Ok((participant_connection_ids, existing_notification_ids))
         })
         .await
     }

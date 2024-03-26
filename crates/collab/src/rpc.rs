@@ -3363,14 +3363,30 @@ async fn remove_channel_message(
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     let message_id = MessageId::from_proto(request.message_id);
-    let connection_ids = session
+    let (connection_ids, existing_notification_ids) = session
         .db()
         .await
         .remove_channel_message(channel_id, message_id, session.user_id())
         .await?;
-    broadcast(Some(session.connection_id), connection_ids, |connection| {
-        session.peer.send(connection, request.clone())
-    });
+
+    broadcast(
+        Some(session.connection_id),
+        connection_ids,
+        move |connection| {
+            session.peer.send(connection, request.clone())?;
+
+            for notification_id in &existing_notification_ids {
+                session.peer.send(
+                    connection,
+                    proto::DeleteNotification {
+                        notification_id: (*notification_id).to_proto(),
+                    },
+                )?;
+            }
+
+            Ok(())
+        },
+    );
     response.send(proto::Ack {})?;
     Ok(())
 }
