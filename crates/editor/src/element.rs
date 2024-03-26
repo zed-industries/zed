@@ -24,12 +24,12 @@ use git::{
 };
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
-    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
-    TextStyleRefinement, View, ViewContext, WindowContext,
+    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity,
+    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
+    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -52,8 +52,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use time_format::format_localized_timestamp;
-use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
+use ui::{h_flex, popover_menu, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
 use workspace::item::Item;
@@ -1162,6 +1161,13 @@ impl EditorElement {
                     } else {
                         name.to_string()
                     };
+
+                    let context_menu = ContextMenu::build(cx, |context_menu, cx| {
+                        let sha = format!("{}", blame_entry.sha);
+                        context_menu.entry("Copy commit SHA", None, move |cx| {
+                            cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+                        })
+                    });
 
                     let mut element = h_flex()
                         .id(("blame", ix))
