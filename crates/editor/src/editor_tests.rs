@@ -5573,7 +5573,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let save = editor
@@ -5594,7 +5594,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
     cx.executor().start_waiting();
-    let _x = save.await;
+    save.await;
 
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -5602,7 +5602,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
@@ -5626,6 +5626,18 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
+    // For non-dirty buffer, no formatting request should be sent
+    let save = editor
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .unwrap();
+    let _pending_format_request = fake_server
+        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("Should not be invoked on non-dirty buffer");
+        })
+        .next();
+    cx.executor().start_waiting();
+    save.await;
+
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
         settings.languages.insert(
@@ -5637,6 +5649,8 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    editor.update(cx, |editor, cx| editor.set_text("somehting_new\n", cx));
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
     let save = editor
         .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
@@ -5653,6 +5667,223 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().start_waiting();
     save.await;
+}
+
+#[gpui::test]
+async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let cols = 4;
+    let rows = 10;
+    let sample_text_1 = sample_text(rows, cols, 'a');
+    assert_eq!(
+        sample_text_1,
+        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+    );
+    let sample_text_2 = sample_text(rows, cols, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let sample_text_3 = sample_text(rows, cols, 'v');
+    assert_eq!(
+        sample_text_3,
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": sample_text_1,
+            "other.rs": sample_text_2,
+            "lib.rs": sample_text_3,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let worktree = project.update(cx, |project, _| {
+        let mut worktrees = project.worktrees().collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "other.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_3 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multi_buffer = MultiBuffer::new(0, ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer_1.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multi_buffer
+    });
+    let multi_buffer_editor =
+        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.change_selections(Some(Autoscroll::Next), cx, |s| s.select_ranges(Some(1..2)));
+        editor.insert("|one|two|three|", cx);
+    });
+    assert!(cx.read(|cx| multi_buffer_editor.is_dirty(cx)));
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.change_selections(Some(Autoscroll::Next), cx, |s| {
+            s.select_ranges(Some(60..70))
+        });
+        editor.insert("|four|five|six|", cx);
+    });
+    assert!(cx.read(|cx| multi_buffer_editor.is_dirty(cx)));
+
+    // First two buffers should be edited, but not the third one.
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
+        "a|one|two|three|aa\nbbbb\ncccc\n\nffff\ngggg\n\njjjj\nllll\nmmmm\nnnnn|four|five|six|\nr\n\nuuuu\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}",
+    );
+    buffer_1.update(cx, |buffer, _| {
+        assert!(buffer.is_dirty());
+        assert_eq!(
+            buffer.text(),
+            "a|one|two|three|aa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj",
+        )
+    });
+    buffer_2.update(cx, |buffer, _| {
+        assert!(buffer.is_dirty());
+        assert_eq!(
+            buffer.text(),
+            "llll\nmmmm\nnnnn|four|five|six|oooo\npppp\nr\nssss\ntttt\nuuuu",
+        )
+    });
+    buffer_3.update(cx, |buffer, _| {
+        assert!(!buffer.is_dirty());
+        assert_eq!(buffer.text(), sample_text_3,)
+    });
+
+    cx.executor().start_waiting();
+    let save = multi_buffer_editor
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server
+        .server
+        .on_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                format!("[{} formatted]", params.text_document.uri),
+            )]))
+        })
+        .detach();
+    save.await;
+
+    // After multibuffer saving, only first two buffers should be reformatted, but not the third one (as it was not dirty).
+    assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
+    assert_eq!(
+        multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
+        "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}",
+    );
+    buffer_1.update(cx, |buffer, _| {
+        assert!(!buffer.is_dirty());
+        assert_eq!(
+            buffer.text(),
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj\n",
+        )
+    });
+    buffer_2.update(cx, |buffer, _| {
+        assert!(!buffer.is_dirty());
+        assert_eq!(
+            buffer.text(),
+            "lll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|oooo\npppp\nr\nssss\ntttt\nuuuu\n",
+        )
+    });
+    buffer_3.update(cx, |buffer, _| {
+        assert!(!buffer.is_dirty());
+        assert_eq!(buffer.text(), sample_text_3,)
+    });
 }
 
 #[gpui::test]
@@ -5687,7 +5918,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let save = editor
@@ -5715,7 +5946,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
@@ -5741,7 +5972,19 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // Set rust language override and assert overridden tabsize is sent to language server
+    // For non-dirty buffer, no formatting request should be sent
+    let save = editor
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .unwrap();
+    let _pending_format_request = fake_server
+        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("Should not be invoked on non-dirty buffer");
+        })
+        .next();
+    cx.executor().start_waiting();
+    save.await;
+
+    // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
@@ -5752,6 +5995,8 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    editor.update(cx, |editor, cx| editor.set_text("somehting_new\n", cx));
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
     let save = editor
         .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
         .unwrap();
