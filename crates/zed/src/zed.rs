@@ -95,7 +95,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
-            traffic_light_position: Some(point(px(9.5), px(9.5))),
+            traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
         bounds: None,
         focus: false,
