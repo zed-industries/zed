@@ -10,6 +10,7 @@ use std::{
     rc::{Rc, Weak},
     str::FromStr,
     sync::{Arc, Once},
+    time::{Duration, Instant},
 };
 
 use ::util::ResultExt;
@@ -52,6 +53,7 @@ pub(crate) struct WindowsWindowInner {
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
     last_ime_input: RefCell<Option<String>>,
+    click_state: RefCell<ClickState>,
 }
 
 impl WindowsWindowInner {
@@ -112,6 +114,7 @@ impl WindowsWindowInner {
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
         let last_ime_input = RefCell::new(None);
+        let click_state = RefCell::new(ClickState::new());
         Self {
             hwnd,
             origin,
@@ -125,6 +128,7 @@ impl WindowsWindowInner {
             hide_title_bar,
             display,
             last_ime_input,
+            click_state,
         }
     }
 
@@ -588,12 +592,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
+            let physical_point = point(GlobalPixels(x), GlobalPixels(y));
+            let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
                 first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
@@ -1010,12 +1016,17 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
+            let physical_point = point(
+                GlobalPixels(cursor_point.x as f32),
+                GlobalPixels(cursor_point.y as f32),
+            );
+            let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
                 button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
                 first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
@@ -1595,6 +1606,48 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 }
 
+#[derive(Debug)]
+struct ClickState {
+    button: MouseButton,
+    last_click: Instant,
+    last_position: Point<GlobalPixels>,
+    current_count: usize,
+}
+
+impl ClickState {
+    pub fn new() -> Self {
+        ClickState {
+            button: MouseButton::Left,
+            last_click: Instant::now(),
+            last_position: Point::default(),
+            current_count: 0,
+        }
+    }
+
+    /// update self and return the needed click count
+    pub fn update(&mut self, button: MouseButton, new_position: Point<GlobalPixels>) -> usize {
+        if self.button == button && self.is_double_click(new_position) {
+            self.current_count += 1;
+        } else {
+            self.current_count = 1;
+        }
+        self.last_click = Instant::now();
+        self.last_position = new_position;
+        self.button = button;
+
+        self.current_count
+    }
+
+    #[inline]
+    fn is_double_click(&self, new_position: Point<GlobalPixels>) -> bool {
+        let diff = self.last_position - new_position;
+
+        self.last_click.elapsed() < DOUBLE_CLICK_INTERVAL
+            && diff.x.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+            && diff.y.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+    }
+}
+
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
@@ -1739,3 +1792,88 @@ fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+// https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
+const DOUBLE_CLICK_SPATIAL_TOLERANCE: f32 = 4.0;
+
+#[cfg(test)]
+mod tests {
+    use super::ClickState;
+    use crate::{point, GlobalPixels, MouseButton};
+    use std::time::Duration;
+
+    #[test]
+    fn test_double_click_interval() {
+        let mut state = ClickState::new();
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Right,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            2
+        );
+        state.last_click -= Duration::from_millis(700);
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn test_double_click_spatial_tolerance() {
+        let mut state = ClickState::new();
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(-3.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Left,
+                point(GlobalPixels(0.0), GlobalPixels(3.0))
+            ),
+            2
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Right,
+                point(GlobalPixels(3.0), GlobalPixels(2.0))
+            ),
+            1
+        );
+        assert_eq!(
+            state.update(
+                MouseButton::Right,
+                point(GlobalPixels(10.0), GlobalPixels(0.0))
+            ),
+            1
+        );
+    }
+}
