@@ -8,14 +8,18 @@ use backtrace::Backtrace;
 use chrono::Utc;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, Client, ClientSettings, DevServerToken, UserStore};
+use client::{
+    parse_zed_link, telemetry::Telemetry, Client, ClientSettings, DevServerToken, UserStore,
+};
 use collab_ui::channel_view::ChannelView;
+use copilot::Copilot;
+use copilot_ui::CopilotCompletionProvider;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::{Editor, EditorMode};
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, ViewContext};
 use image_viewer;
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
@@ -176,6 +180,7 @@ fn main() {
             cx,
         );
         assistant::init(client.clone(), cx);
+        init_inline_completion_provider(client.telemetry().clone(), cx);
 
         extension::init(
             fs.clone(),
@@ -1041,6 +1046,8 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
+    use gpui::BorrowAppContext;
+
     let path = {
         let p = Path::new("assets/icons/file_icons/file_types.json");
         let Ok(full_path) = p.canonicalize() else {
@@ -1065,3 +1072,45 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
+
+fn init_inline_completion_provider(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
+    if let Some(copilot) = Copilot::global(cx) {
+        cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+            if editor.mode() == EditorMode::Full {
+                // We renamed some of these actions to not be copilot-specific, but that
+                // would have not been backwards-compatible. So here we are re-registering
+                // the actions with the old names to not break people's keymaps.
+                editor
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::Suggest, cx: &mut ViewContext<Editor>| {
+                            editor.show_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
+                            editor.next_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
+                            editor.previous_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor,
+                         _: &editor::actions::AcceptPartialCopilotSuggestion,
+                         cx: &mut ViewContext<Editor>| {
+                            editor.accept_partial_inline_completion(&Default::default(), cx);
+                        },
+                    ));
+
+                let provider = cx.new_model(|_| {
+                    CopilotCompletionProvider::new(copilot.clone())
+                        .with_telemetry(telemetry.clone())
+                });
+                editor.set_inline_completion_provider(provider, cx)
+            }
+        })
+        .detach();
+    }
+}

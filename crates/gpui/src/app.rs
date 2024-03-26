@@ -897,17 +897,6 @@ impl AppContext {
             .unwrap()
     }
 
-    /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    pub fn update_global<G: Global, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
-        self.update(|cx| {
-            let mut global = cx.lease_global::<G>();
-            let result = f(&mut global, cx);
-            cx.end_global_lease(global);
-            result
-        })
-    }
-
     /// Register a callback to be invoked when a global of the given type is updated.
     pub fn observe_global<G: Global>(
         &mut self,

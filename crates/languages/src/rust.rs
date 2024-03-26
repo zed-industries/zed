@@ -419,7 +419,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{Context, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
     use text::BufferId;

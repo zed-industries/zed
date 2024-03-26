@@ -1015,7 +1015,7 @@ pub mod tests {
         movement,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
-    use gpui::{div, font, observe, px, AppContext, Context, Element, Hsla};
+    use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Language, LanguageConfig, LanguageMatcher, SelectionGoal,

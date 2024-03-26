@@ -8,8 +8,8 @@ use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
-    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext,
+    px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
+    MouseDownEvent, TestAppContext,
 };
 use language::{
     language_settings::{AllLanguageSettings, Formatter},

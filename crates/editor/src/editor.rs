@@ -24,6 +24,7 @@ mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
+mod inline_completion_provider;
 pub mod items;
 mod mouse_context_menu;
 pub mod movement;
@@ -45,7 +46,6 @@ use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
-use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -69,6 +69,7 @@ use gpui::{
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
+pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{char_kind, CharKind};
@@ -135,7 +136,6 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
-const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -419,7 +419,9 @@ pub struct Editor {
     hover_state: HoverState,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
-    copilot_state: CopilotState,
+    inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
+    active_inline_completion: Option<Inlay>,
+    show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -428,7 +430,6 @@ pub struct Editor {
     pub vim_replace_map: HashMap<Range<usize>, String>,
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
-    show_copilot_suggestions: bool,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
     custom_context_menu: Option<
@@ -624,6 +625,11 @@ pub struct RenameState {
 }
 
 struct InvalidationStack<T>(Vec<T>);
+
+struct RegisteredInlineCompletionProvider {
+    provider: Arc<dyn InlineCompletionProviderHandle>,
+    _subscription: Subscription,
+}
 
 enum ContextMenu {
     Completions(CompletionsMenu),
@@ -1231,116 +1237,6 @@ impl CodeActionsMenu {
 }
 
 #[derive(Debug)]
-pub(crate) struct CopilotState {
-    excerpt_id: Option<ExcerptId>,
-    pending_refresh: Task<Option<()>>,
-    pending_cycling_refresh: Task<Option<()>>,
-    cycled: bool,
-    completions: Vec<copilot::Completion>,
-    active_completion_index: usize,
-    suggestion: Option<Inlay>,
-}
-
-impl Default for CopilotState {
-    fn default() -> Self {
-        Self {
-            excerpt_id: None,
-            pending_cycling_refresh: Task::ready(Some(())),
-            pending_refresh: Task::ready(Some(())),
-            completions: Default::default(),
-            active_completion_index: 0,
-            cycled: false,
-            suggestion: None,
-        }
-    }
-}
-
-impl CopilotState {
-    fn active_completion(&self) -> Option<&copilot::Completion> {
-        self.completions.get(self.active_completion_index)
-    }
-
-    fn text_for_active_completion(
-        &self,
-        cursor: Anchor,
-        buffer: &MultiBufferSnapshot,
-    ) -> Option<&str> {
-        use language::ToOffset as _;
-
-        let completion = self.active_completion()?;
-        let excerpt_id = self.excerpt_id?;
-        let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
-        if excerpt_id != cursor.excerpt_id
-            || !completion.range.start.is_valid(completion_buffer)
-            || !completion.range.end.is_valid(completion_buffer)
-        {
-            return None;
-        }
-
-        let mut completion_range = completion.range.to_offset(&completion_buffer);
-        let prefix_len = Self::common_prefix(
-            completion_buffer.chars_for_range(completion_range.clone()),
-            completion.text.chars(),
-        );
-        completion_range.start += prefix_len;
-        let suffix_len = Self::common_prefix(
-            completion_buffer.reversed_chars_for_range(completion_range.clone()),
-            completion.text[prefix_len..].chars().rev(),
-        );
-        completion_range.end = completion_range.end.saturating_sub(suffix_len);
-
-        if completion_range.is_empty()
-            && completion_range.start == cursor.text_anchor.to_offset(&completion_buffer)
-        {
-            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-            if completion_text.trim().is_empty() {
-                None
-            } else {
-                Some(completion_text)
-            }
-        } else {
-            None
-        }
-    }
-
-    fn cycle_completions(&mut self, direction: Direction) {
-        match direction {
-            Direction::Prev => {
-                self.active_completion_index = if self.active_completion_index == 0 {
-                    self.completions.len().saturating_sub(1)
-                } else {
-                    self.active_completion_index - 1
-                };
-            }
-            Direction::Next => {
-                if self.completions.len() == 0 {
-                    self.active_completion_index = 0
-                } else {
-                    self.active_completion_index =
-                        (self.active_completion_index + 1) % self.completions.len();
-                }
-            }
-        }
-    }
-
-    fn push_completion(&mut self, new_completion: copilot::Completion) {
-        for completion in &self.completions {
-            if completion.text == new_completion.text && completion.range == new_completion.range {
-                return;
-            }
-        }
-        self.completions.push(new_completion);
-    }
-
-    fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
-        a.zip(b)
-            .take_while(|(a, b)| a == b)
-            .map(|(a, _)| a.len_utf8())
-            .sum()
-    }
-}
-
-#[derive(Debug)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
@@ -1562,7 +1458,8 @@ impl Editor {
             remote_id: None,
             hover_state: Default::default(),
             hovered_link_state: Default::default(),
-            copilot_state: Default::default(),
+            inline_completion_provider: None,
+            active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
@@ -1572,7 +1469,7 @@ impl Editor {
             hovered_cursors: Default::default(),
             editor_actions: Default::default(),
             vim_replace_map: Default::default(),
-            show_copilot_suggestions: mode == EditorMode::Full,
+            show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1648,8 +1545,9 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
-        if self.has_active_copilot_suggestion(cx) {
+        if self.has_active_inline_completion(cx) {
             key_context.add("copilot_suggestion");
+            key_context.add("inline_completion");
         }
 
         key_context
@@ -1771,6 +1669,20 @@ impl Editor {
         self.completion_provider = Some(hub);
     }
 
+    pub fn set_inline_completion_provider(
+        &mut self,
+        provider: Model<impl InlineCompletionProvider>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.inline_completion_provider = Some(RegisteredInlineCompletionProvider {
+            _subscription: cx.observe(&provider, |this, _, cx| {
+                this.update_visible_inline_completion(cx);
+            }),
+            provider: Arc::new(provider),
+        });
+        self.refresh_inline_completion(false, cx);
+    }
+
     pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
@@ -1853,8 +1765,8 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
-        self.show_copilot_suggestions = show_copilot_suggestions;
+    pub fn set_show_inline_completions(&mut self, show_inline_completions: bool) {
+        self.show_inline_completions = show_inline_completions;
     }
 
     pub fn set_use_modal_editing(&mut self, to: bool) {
@@ -1966,7 +1878,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            self.discard_copilot_suggestion(cx);
+            self.discard_inline_completion(cx);
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -2392,7 +2304,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_copilot_suggestion(cx) {
+        if self.discard_inline_completion(cx) {
             return true;
         }
 
@@ -2647,7 +2559,7 @@ impl Editor {
             }
 
             drop(snapshot);
-            let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
+            let had_active_copilot_completion = this.has_active_inline_completion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
             if brace_inserted {
@@ -2663,14 +2575,14 @@ impl Editor {
                 }
             }
 
-            if had_active_copilot_suggestion {
-                this.refresh_copilot_suggestions(true, cx);
-                if !this.has_active_copilot_suggestion(cx) {
+            if had_active_copilot_completion {
+                this.refresh_inline_completion(true, cx);
+                if !this.has_active_inline_completion(cx) {
                     this.trigger_completion_on_input(&text, cx);
                 }
             } else {
                 this.trigger_completion_on_input(&text, cx);
-                this.refresh_copilot_suggestions(true, cx);
+                this.refresh_inline_completion(true, cx);
             }
         });
     }
@@ -2856,7 +2768,7 @@ impl Editor {
                 .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
-            this.refresh_copilot_suggestions(true, cx);
+            this.refresh_inline_completion(true, cx);
         });
     }
 
@@ -3503,15 +3415,15 @@ impl Editor {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        this.discard_copilot_suggestion(cx);
+                        this.discard_inline_completion(cx);
                         cx.notify();
                     } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
-                        // also show the copilot suggestion when available.
+                        // also show the copilot completion when available.
                         drop(context_menu);
                         if this.hide_context_menu(cx).is_none() {
-                            this.update_visible_copilot_suggestion(cx);
+                            this.update_visible_inline_completion(cx);
                         }
                     }
                 })?;
@@ -3637,7 +3549,7 @@ impl Editor {
                 });
             }
 
-            this.refresh_copilot_suggestions(true, cx);
+            this.refresh_inline_completion(true, cx);
         });
 
         let provider = self.completion_provider.as_ref()?;
@@ -3674,7 +3586,7 @@ impl Editor {
                 if this.focus_handle.is_focused(cx) {
                     if let Some((buffer, actions)) = this.available_code_actions.clone() {
                         this.completion_tasks.clear();
-                        this.discard_copilot_suggestion(cx);
+                        this.discard_inline_completion(cx);
                         *this.context_menu.write() =
                             Some(ContextMenu::CodeActions(CodeActionsMenu {
                                 buffer,
@@ -3949,115 +3861,55 @@ impl Editor {
         None
     }
 
-    fn refresh_copilot_suggestions(
+    fn refresh_inline_completion(
         &mut self,
         debounce: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
-        let copilot = Copilot::global(cx)?;
-        if !self.show_copilot_suggestions || !copilot.read(cx).status().is_authorized() {
-            self.clear_copilot_suggestions(cx);
-            return None;
-        }
-        self.update_visible_copilot_suggestion(cx);
-
-        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let provider = self.inline_completion_provider()?;
         let cursor = self.selections.newest_anchor().head();
-        if !self.is_copilot_enabled_at(cursor, &snapshot, cx) {
-            self.clear_copilot_suggestions(cx);
+        let (buffer, cursor_buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+        if !self.show_inline_completions
+            || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
+        {
+            self.clear_inline_completion(cx);
             return None;
         }
 
-        let (buffer, buffer_position) =
-            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        self.copilot_state.pending_refresh = cx.spawn(|this, mut cx| async move {
-            if debounce {
-                cx.background_executor()
-                    .timer(COPILOT_DEBOUNCE_TIMEOUT)
-                    .await;
-            }
-
-            let completions = copilot
-                .update(&mut cx, |copilot, cx| {
-                    copilot.completions(&buffer, buffer_position, cx)
-                })
-                .log_err()
-                .unwrap_or(Task::ready(Ok(Vec::new())))
-                .await
-                .log_err()
-                .into_iter()
-                .flatten()
-                .collect_vec();
-
-            this.update(&mut cx, |this, cx| {
-                if !completions.is_empty() {
-                    this.copilot_state.cycled = false;
-                    this.copilot_state.pending_cycling_refresh = Task::ready(None);
-                    this.copilot_state.completions.clear();
-                    this.copilot_state.active_completion_index = 0;
-                    this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
-                    for completion in completions {
-                        this.copilot_state.push_completion(completion);
-                    }
-                    this.update_visible_copilot_suggestion(cx);
-                }
-            })
-            .log_err()?;
-            Some(())
-        });
-
+        self.update_visible_inline_completion(cx);
+        provider.refresh(buffer, cursor_buffer_position, debounce, cx);
         Some(())
     }
 
-    fn cycle_copilot_suggestions(
+    fn cycle_inline_completion(
         &mut self,
         direction: Direction,
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
-        let copilot = Copilot::global(cx)?;
-        if !self.show_copilot_suggestions || !copilot.read(cx).status().is_authorized() {
+        let provider = self.inline_completion_provider()?;
+        let cursor = self.selections.newest_anchor().head();
+        let (buffer, cursor_buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+        if !self.show_inline_completions
+            || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
+        {
             return None;
         }
 
-        if self.copilot_state.cycled {
-            self.copilot_state.cycle_completions(direction);
-            self.update_visible_copilot_suggestion(cx);
-        } else {
-            let cursor = self.selections.newest_anchor().head();
-            let (buffer, buffer_position) =
-                self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-            self.copilot_state.pending_cycling_refresh = cx.spawn(|this, mut cx| async move {
-                let completions = copilot
-                    .update(&mut cx, |copilot, cx| {
-                        copilot.completions_cycling(&buffer, buffer_position, cx)
-                    })
-                    .log_err()?
-                    .await;
-
-                this.update(&mut cx, |this, cx| {
-                    this.copilot_state.cycled = true;
-                    for completion in completions.log_err().into_iter().flatten() {
-                        this.copilot_state.push_completion(completion);
-                    }
-                    this.copilot_state.cycle_completions(direction);
-                    this.update_visible_copilot_suggestion(cx);
-                })
-                .log_err()?;
-
-                Some(())
-            });
-        }
+        provider.cycle(buffer, cursor_buffer_position, direction, cx);
+        self.update_visible_inline_completion(cx);
 
         Some(())
     }
 
-    fn copilot_suggest(&mut self, _: &copilot::Suggest, cx: &mut ViewContext<Self>) {
-        if !self.has_active_copilot_suggestion(cx) {
-            self.refresh_copilot_suggestions(false, cx);
+    pub fn show_inline_completion(&mut self, _: &ShowInlineCompletion, cx: &mut ViewContext<Self>) {
+        if !self.has_active_inline_completion(cx) {
+            self.refresh_inline_completion(false, cx);
             return;
         }
 
-        self.update_visible_copilot_suggestion(cx);
+        self.update_visible_inline_completion(cx);
     }
 
     pub fn display_cursor_names(&mut self, _: &DisplayCursorNames, cx: &mut ViewContext<Self>) {
@@ -4078,48 +3930,43 @@ impl Editor {
         .detach();
     }
 
-    fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
-        if self.has_active_copilot_suggestion(cx) {
-            self.cycle_copilot_suggestions(Direction::Next, cx);
+    pub fn next_inline_completion(&mut self, _: &NextInlineCompletion, cx: &mut ViewContext<Self>) {
+        if self.has_active_inline_completion(cx) {
+            self.cycle_inline_completion(Direction::Next, cx);
         } else {
-            let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
+            let is_copilot_disabled = self.refresh_inline_completion(false, cx).is_none();
             if is_copilot_disabled {
                 cx.propagate();
             }
         }
     }
 
-    fn previous_copilot_suggestion(
+    pub fn previous_inline_completion(
         &mut self,
-        _: &copilot::PreviousSuggestion,
+        _: &PreviousInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.has_active_copilot_suggestion(cx) {
-            self.cycle_copilot_suggestions(Direction::Prev, cx);
+        if self.has_active_inline_completion(cx) {
+            self.cycle_inline_completion(Direction::Prev, cx);
         } else {
-            let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
+            let is_copilot_disabled = self.refresh_inline_completion(false, cx).is_none();
             if is_copilot_disabled {
                 cx.propagate();
             }
         }
     }
 
-    fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
-            if let Some((copilot, completion)) =
-                Copilot::global(cx).zip(self.copilot_state.active_completion())
-            {
-                copilot
-                    .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
-                    .detach_and_log_err(cx);
-
-                self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
+    fn accept_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(completion) = self.take_active_inline_completion(cx) {
+            if let Some(provider) = self.inline_completion_provider() {
+                provider.accept(cx);
             }
+
             cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: None,
-                text: suggestion.text.to_string().into(),
+                text: completion.text.to_string().into(),
             });
-            self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
+            self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
             cx.notify();
             true
         } else {
@@ -4127,21 +3974,21 @@ impl Editor {
         }
     }
 
-    fn accept_partial_copilot_suggestion(
+    pub fn accept_partial_inline_completion(
         &mut self,
-        _: &AcceptPartialCopilotSuggestion,
+        _: &AcceptPartialInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.selections.count() == 1 && self.has_active_copilot_suggestion(cx) {
-            if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
-                let mut partial_suggestion = suggestion
+        if self.selections.count() == 1 && self.has_active_inline_completion(cx) {
+            if let Some(completion) = self.take_active_inline_completion(cx) {
+                let mut partial_completion = completion
                     .text
                     .chars()
                     .by_ref()
                     .take_while(|c| c.is_alphabetic())
                     .collect::<String>();
-                if partial_suggestion.is_empty() {
-                    partial_suggestion = suggestion
+                if partial_completion.is_empty() {
+                    partial_completion = completion
                         .text
                         .chars()
                         .by_ref()
@@ -4151,111 +3998,92 @@ impl Editor {
 
                 cx.emit(EditorEvent::InputHandled {
                     utf16_range_to_replace: None,
-                    text: partial_suggestion.clone().into(),
+                    text: partial_completion.clone().into(),
                 });
-                self.insert_with_autoindent_mode(&partial_suggestion, None, cx);
-                self.refresh_copilot_suggestions(true, cx);
+                self.insert_with_autoindent_mode(&partial_completion, None, cx);
+                self.refresh_inline_completion(true, cx);
                 cx.notify();
             }
         }
     }
 
-    fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
-            if let Some(copilot) = Copilot::global(cx) {
-                copilot
-                    .update(cx, |copilot, cx| {
-                        copilot.discard_completions(&self.copilot_state.completions, cx)
-                    })
-                    .detach_and_log_err(cx);
-
-                self.report_copilot_event(None, false, cx)
-            }
-
-            self.display_map.update(cx, |map, cx| {
-                map.splice_inlays(vec![suggestion.id], Vec::new(), cx)
-            });
-            cx.notify();
-            true
-        } else {
-            false
+    fn discard_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(provider) = self.inline_completion_provider() {
+            provider.discard(cx);
         }
+
+        self.take_active_inline_completion(cx).is_some()
     }
 
-    fn is_copilot_enabled_at(
-        &self,
-        location: Anchor,
-        snapshot: &MultiBufferSnapshot,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        let file = snapshot.file_at(location);
-        let language = snapshot.language_at(location);
-        let settings = all_language_settings(file, cx);
-        self.show_copilot_suggestions
-            && settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
-    }
-
-    fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
-        if let Some(suggestion) = self.copilot_state.suggestion.as_ref() {
+    pub fn has_active_inline_completion(&self, cx: &AppContext) -> bool {
+        if let Some(completion) = self.active_inline_completion.as_ref() {
             let buffer = self.buffer.read(cx).read(cx);
-            suggestion.position.is_valid(&buffer)
+            completion.position.is_valid(&buffer)
         } else {
             false
         }
     }
 
-    fn take_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
-        let suggestion = self.copilot_state.suggestion.take()?;
+    fn take_active_inline_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
+        let completion = self.active_inline_completion.take()?;
         self.display_map.update(cx, |map, cx| {
-            map.splice_inlays(vec![suggestion.id], Default::default(), cx);
+            map.splice_inlays(vec![completion.id], Default::default(), cx);
         });
         let buffer = self.buffer.read(cx).read(cx);
 
-        if suggestion.position.is_valid(&buffer) {
-            Some(suggestion)
+        if completion.position.is_valid(&buffer) {
+            Some(completion)
         } else {
             None
         }
     }
 
-    fn update_visible_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
+    fn update_visible_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
-        if self.context_menu.read().is_some()
-            || !self.completion_tasks.is_empty()
-            || selection.start != selection.end
+        if self.context_menu.read().is_none()
+            && self.completion_tasks.is_empty()
+            && selection.start == selection.end
         {
-            self.discard_copilot_suggestion(cx);
-        } else if let Some(text) = self
-            .copilot_state
-            .text_for_active_completion(cursor, &snapshot)
-        {
-            let text = Rope::from(text);
-            let mut to_remove = Vec::new();
-            if let Some(suggestion) = self.copilot_state.suggestion.take() {
-                to_remove.push(suggestion.id);
-            }
+            if let Some(provider) = self.inline_completion_provider() {
+                if let Some((buffer, cursor_buffer_position)) =
+                    self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+                {
+                    if let Some(text) =
+                        provider.active_completion_text(&buffer, cursor_buffer_position, cx)
+                    {
+                        let text = Rope::from(text);
+                        let mut to_remove = Vec::new();
+                        if let Some(completion) = self.active_inline_completion.take() {
+                            to_remove.push(completion.id);
+                        }
 
-            let suggestion_inlay =
-                Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
-            self.copilot_state.suggestion = Some(suggestion_inlay.clone());
-            self.display_map.update(cx, move |map, cx| {
-                map.splice_inlays(to_remove, vec![suggestion_inlay], cx)
-            });
-            cx.notify();
-        } else {
-            self.discard_copilot_suggestion(cx);
+                        let completion_inlay =
+                            Inlay::suggestion(post_inc(&mut self.next_inlay_id), cursor, text);
+                        self.active_inline_completion = Some(completion_inlay.clone());
+                        self.display_map.update(cx, move |map, cx| {
+                            map.splice_inlays(to_remove, vec![completion_inlay], cx)
+                        });
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
         }
+
+        self.discard_inline_completion(cx);
     }
 
-    fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(old_suggestion) = self.copilot_state.suggestion.take() {
-            self.splice_inlays(vec![old_suggestion.id], Vec::new(), cx);
+    fn clear_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(old_completion) = self.active_inline_completion.take() {
+            self.splice_inlays(vec![old_completion.id], Vec::new(), cx);
         }
-        self.copilot_state = CopilotState::default();
-        self.discard_copilot_suggestion(cx);
+        self.discard_inline_completion(cx);
+    }
+
+    fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
+        Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }
 
     pub fn render_code_actions_indicator(
@@ -4353,7 +4181,7 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
-            self.update_visible_copilot_suggestion(cx);
+            self.update_visible_inline_completion(cx);
         }
         context_menu
     }
@@ -4546,7 +4374,7 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
-            this.refresh_copilot_suggestions(true, cx);
+            this.refresh_inline_completion(true, cx);
         });
     }
 
@@ -4564,7 +4392,7 @@ impl Editor {
                 })
             });
             this.insert("", cx);
-            this.refresh_copilot_suggestions(true, cx);
+            this.refresh_inline_completion(true, cx);
         });
     }
 
@@ -4626,13 +4454,13 @@ impl Editor {
                 }
             }
 
-            // Accept copilot suggestion if there is only one selection and the cursor is not
+            // Accept copilot completion if there is only one selection and the cursor is not
             // in the leading whitespace.
             if self.selections.count() == 1
                 && cursor.column >= current_indent.len
-                && self.has_active_copilot_suggestion(cx)
+                && self.has_active_inline_completion(cx)
             {
-                self.accept_copilot_suggestion(cx);
+                self.accept_inline_completion(cx);
                 return;
             }
 
@@ -4659,7 +4487,7 @@ impl Editor {
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
-            this.refresh_copilot_suggestions(true, cx);
+            this.refresh_inline_completion(true, cx);
         });
     }
 
@@ -5753,7 +5581,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_copilot_suggestions(true, cx);
+            self.refresh_inline_completion(true, cx);
             cx.emit(EditorEvent::Edited);
             cx.emit(EditorEvent::TransactionUndone {
                 transaction_id: tx_id,
@@ -5775,7 +5603,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_copilot_suggestions(true, cx);
+            self.refresh_inline_completion(true, cx);
             cx.emit(EditorEvent::Edited);
         }
     }
@@ -9444,8 +9272,8 @@ impl Editor {
             } => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                if self.has_active_copilot_suggestion(cx) {
-                    self.update_visible_copilot_suggestion(cx);
+                if self.has_active_inline_completion(cx) {
+                    self.update_visible_inline_completion(cx);
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -9523,7 +9351,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
-        self.refresh_copilot_suggestions(true, cx);
+        self.refresh_inline_completion(true, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
@@ -9685,29 +9513,6 @@ impl Editor {
                     ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
             })
             .collect()
-    }
-
-    fn report_copilot_event(
-        &self,
-        suggestion_id: Option<String>,
-        suggestion_accepted: bool,
-        cx: &AppContext,
-    ) {
-        let Some(project) = &self.project else { return };
-
-        // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
-        let file_extension = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|b| b.read(cx).file())
-            .and_then(|file| Path::new(file.file_name(cx)).extension())
-            .and_then(|e| e.to_str())
-            .map(|a| a.to_string());
-
-        let telemetry = project.read(cx).client().telemetry().clone();
-
-        telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension)
     }
 
     fn report_editor_event(

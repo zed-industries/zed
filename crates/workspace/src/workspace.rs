@@ -4901,8 +4901,8 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
-        VisualTestContext,
+        px, BorrowAppContext, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView,
+        Render, TestAppContext, VisualTestContext,
     };
     use project::{Project, ProjectEntryId};
     use serde_json::json;

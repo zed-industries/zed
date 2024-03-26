@@ -383,7 +383,7 @@ fn merge<T: Copy>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::AppContext;
+    use gpui::{AppContext, BorrowAppContext};
     use settings::SettingsStore;
 
     use super::*;
