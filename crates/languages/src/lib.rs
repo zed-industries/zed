@@ -11,7 +11,6 @@ use crate::{elixir::elixir_task_context, rust::RustContextProvider};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
-mod astro;
 mod c;
 mod clojure;
 mod csharp;
@@ -62,7 +61,6 @@ pub fn init(
     DenoSettings::register(cx);
 
     languages.register_native_grammars([
-        ("astro", tree_sitter_astro::language()),
         ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
@@ -168,13 +166,6 @@ pub fn init(
             );
         };
     }
-    language!(
-        "astro",
-        vec![
-            Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!("bash");
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
@@ -353,6 +344,10 @@ pub fn init(
     language!("hcl", vec![]);
     language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 
+    languages.register_secondary_lsp_adapter(
+        "Astro".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
     languages.register_secondary_lsp_adapter(
         "Svelte".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
