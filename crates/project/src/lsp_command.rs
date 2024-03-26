@@ -1,7 +1,7 @@
 use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
-    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, LanguageServerProgress,
-    Location, LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
+    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
+    MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ use lsp::{
     CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
     OneOf, ServerCapabilities,
 };
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc, time::Instant};
+use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
