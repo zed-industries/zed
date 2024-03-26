@@ -29,7 +29,6 @@ mod lua;
 mod nu;
 mod ocaml;
 mod php;
-mod purescript;
 mod python;
 mod ruby;
 mod rust;
@@ -99,7 +98,6 @@ pub fn init(
         ),
         ("php", tree_sitter_php::language_php()),
         ("proto", tree_sitter_proto::language()),
-        ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
         ("regex", tree_sitter_regex::language()),
@@ -341,12 +339,6 @@ pub fn init(
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
-    );
-    language!(
-        "purescript",
-        vec![Arc::new(purescript::PurescriptLspAdapter::new(
-            node_runtime.clone(),
-        ))]
     );
     language!(
         "elm",
