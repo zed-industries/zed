@@ -4,11 +4,11 @@ use zed_extension_api::{self as zed, Result};
 const SERVER_PATH: &str = "node_modules/.bin/purescript-language-server";
 const PACKAGE_NAME: &str = "purescript-language-server";
 
-struct PrismaExtension {
+struct PurescriptExtension {
     did_find_server: bool,
 }
 
-impl PrismaExtension {
+impl PurescriptExtension {
     fn server_exists(&self) -> bool {
         fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
     }
@@ -54,7 +54,7 @@ impl PrismaExtension {
     }
 }
 
-impl zed::Extension for PrismaExtension {
+impl zed::Extension for PurescriptExtension {
     fn new() -> Self {
         Self {
             did_find_server: false,
@@ -96,4 +96,4 @@ impl zed::Extension for PrismaExtension {
     }
 }
 
-zed::register_extension!(PrismaExtension);
+zed::register_extension!(PurescriptExtension);
