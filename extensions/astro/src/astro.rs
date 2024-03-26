@@ -89,7 +89,7 @@ impl zed::Extension for AstroExtension {
         let initialization_options = r#"{
             "provideFormatter": true,
             "typescript": {
-                "tsdk": "node_modules/typescript/lib",
+                "tsdk": "node_modules/typescript/lib"
             }
         }"#;
 
