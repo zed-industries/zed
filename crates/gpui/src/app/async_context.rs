@@ -192,7 +192,7 @@ impl AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
-        Ok(app.update_global(update))
+        Ok(app.update(|cx| cx.update_global(update)))
     }
 }
 

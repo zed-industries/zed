@@ -309,7 +309,7 @@ impl TestAppContext {
     /// sets the global in this context.
     pub fn set_global<G: Global>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
-        lock.set_global(global);
+        lock.update(|cx| cx.set_global(global))
     }
 
     /// updates the global in this context. (panics if `has_global` would return false)
@@ -318,7 +318,7 @@ impl TestAppContext {
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
         let mut lock = self.app.borrow_mut();
-        lock.update_global(update)
+        lock.update(|cx| cx.update_global(update))
     }
 
     /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
