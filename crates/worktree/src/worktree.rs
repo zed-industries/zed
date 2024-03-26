@@ -31,12 +31,8 @@ use gpui::{
 use ignore::IgnoreStack;
 use itertools::Itertools;
 use language::{
-    proto::{
-        deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
-        serialize_version,
-    },
-    Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint,
-    Unclipped,
+    proto::{deserialize_version, serialize_line_ending, serialize_version},
+    Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, Unclipped,
 };
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use parking_lot::Mutex;
@@ -1162,7 +1158,6 @@ impl LocalWorktree {
         }
 
         let text = buffer.as_rope().clone();
-        let fingerprint = text.fingerprint();
         let version = buffer.version();
         let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
         let fs = Arc::clone(&self.fs);
@@ -1225,12 +1220,11 @@ impl LocalWorktree {
                     buffer_id,
                     version: serialize_version(&version),
                     mtime: mtime.map(|time| time.into()),
-                    fingerprint: serialize_fingerprint(fingerprint),
                 })?;
             }
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, mtime, cx);
+                buffer.did_save(version.clone(), mtime, cx);
             })?;
 
             Ok(())
@@ -1631,11 +1625,10 @@ impl RemoteWorktree {
                 })
                 .await?;
             let version = deserialize_version(&response.version);
-            let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
             let mtime = response.mtime.map(|mtime| mtime.into());
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, mtime, cx);
+                buffer.did_save(version.clone(), mtime, cx);
             })?;
 
             Ok(())
@@ -3017,7 +3010,6 @@ impl language::LocalFile for File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
-        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: Option<SystemTime>,
         cx: &mut AppContext,
@@ -3031,7 +3023,6 @@ impl language::LocalFile for File {
                     buffer_id: buffer_id.into(),
                     version: serialize_version(version),
                     mtime: mtime.map(|time| time.into()),
-                    fingerprint: serialize_fingerprint(fingerprint),
                     line_ending: serialize_line_ending(line_ending) as i32,
                 })
                 .log_err();

@@ -3118,12 +3118,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             &[language::Event::Edited, language::Event::DirtyChanged]
         );
         events.lock().clear();
-        buffer.did_save(
-            buffer.version(),
-            buffer.as_rope().fingerprint(),
-            buffer.file().unwrap().mtime(),
-            cx,
-        );
+        buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.

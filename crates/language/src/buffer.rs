@@ -45,9 +45,9 @@ use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
     Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
-    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection,
-    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
-    ToPointUtf16, Transaction, TransactionId, Unclipped,
+    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection, SelectionGoal,
+    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
+    Transaction, TransactionId, Unclipped,
 };
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
@@ -87,8 +87,6 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
-    /// A hash of the current contents of the buffer's file.
-    file_fingerprint: RopeFingerprint,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -407,7 +405,6 @@ pub trait LocalFile: File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
-        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: Option<SystemTime>,
         cx: &mut AppContext,
@@ -577,7 +574,6 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
         Ok(this)
     }
@@ -591,7 +587,6 @@ impl Buffer {
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
-            saved_version_fingerprint: proto::serialize_fingerprint(self.file_fingerprint),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
         }
     }
@@ -671,7 +666,6 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
-            file_fingerprint: buffer.as_rope().fingerprint(),
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -746,11 +740,6 @@ impl Buffer {
         &self.saved_version
     }
 
-    /// The fingerprint of the buffer's text when the buffer was last saved or reloaded from disk.
-    pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
-        self.file_fingerprint
-    }
-
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
     pub fn saved_mtime(&self) -> Option<SystemTime> {
         self.saved_mtime
@@ -783,13 +772,11 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        fingerprint: RopeFingerprint,
         mtime: Option<SystemTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
         self.has_conflict = false;
-        self.file_fingerprint = fingerprint;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
         cx.notify();
@@ -821,13 +808,7 @@ impl Buffer {
                     this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
-                    this.did_reload(
-                        this.version(),
-                        this.as_rope().fingerprint(),
-                        this.line_ending(),
-                        new_mtime,
-                        cx,
-                    );
+                    this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
                 } else {
                     if !diff.edits.is_empty()
                         || this
@@ -838,13 +819,7 @@ impl Buffer {
                         this.has_conflict = true;
                     }
 
-                    this.did_reload(
-                        prev_version,
-                        Rope::text_fingerprint(&new_text),
-                        this.line_ending(),
-                        this.saved_mtime,
-                        cx,
-                    );
+                    this.did_reload(prev_version, this.line_ending(), this.saved_mtime, cx);
                 }
 
                 this.reload_task.take();
@@ -857,20 +832,17 @@ impl Buffer {
     pub fn did_reload(
         &mut self,
         version: clock::Global,
-        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: Option<SystemTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.file_fingerprint = fingerprint;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.file_fingerprint,
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
