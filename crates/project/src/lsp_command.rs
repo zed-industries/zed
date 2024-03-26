@@ -971,12 +971,11 @@ impl LspCommand for GetReferences {
                     })?;
             }
         }
-        println!("done");
-        cx.update(|cx| {
-            project.update(cx, |this, cx| {
-                this.on_lsp_work_end(server_id, "find_references".to_string(), cx);
-            })
-        });
+        // cx.update(|cx| {
+        //     project.update(cx, |this, cx| {
+        //         this.on_lsp_work_end(server_id, "find_references".to_string(), cx);
+        //     })
+        // });
         Ok(references)
     }
 

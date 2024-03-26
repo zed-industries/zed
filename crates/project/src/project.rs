@@ -6629,11 +6629,11 @@ impl Project {
                     .map(|(_, server)| Arc::clone(server)),
             };
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-            let is_references = TypeId::of::<R>() == TypeId::of::<GetReferences>();
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
+                let is_references = TypeId::of::<R>() == TypeId::of::<GetReferences>();
                 if is_references {
-                    println!("is references!!");
+                    println!("find references called");
                     self.on_lsp_work_start(
                         language_server.server_id(),
                         "find_references".to_string(),
@@ -6664,15 +6664,17 @@ impl Project {
                             return Err(err);
                         }
                     };
-                    // cx.update(|cx| {
-                    //     this.update(cx, |this, cx| {
-                    //         this.on_lsp_work_end(
-                    //             language_server.server_id(),
-                    //             "find_references".to_string(),
-                    //             cx,
-                    //         );
-                    //     })
-                    // });
+                    if is_references {
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.on_lsp_work_end(
+                                    language_server.server_id(),
+                                    "find_references".to_string(),
+                                    cx,
+                                );
+                            })
+                        });
+                    }
                     if is_references {
                         println!("response from lsp...");
                     }
@@ -6685,12 +6687,6 @@ impl Project {
                             cx,
                         )
                         .await
-
-                    // self.on_lsp_work_end(
-                    //     language_server.server_id(),
-                    //     "find_references".to_string(),
-                    //     this.upgrade(),
-                    // );
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
