@@ -49,27 +49,30 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             true,
                         )
                     } else {
-                        motion.expand_selection(map, selection, times, false, &text_layout_details)
+                        let result = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            false,
+                            &text_layout_details,
+                        );
+                        if let Motion::CurrentLine = motion {
+                            let scope = map
+                                .buffer_snapshot
+                                .language_scope_at(selection.start.to_point(&map));
+                            for (ch, _) in map.chars_at(selection.start) {
+                                if ch == '\n' || char_kind(&scope, ch) != CharKind::Whitespace {
+                                    break;
+                                }
+                                *selection.start.column_mut() += 1;
+                            }
+                        }
+                        result
                     };
                 });
             });
             copy_selections_content(vim, editor, motion.linewise(), cx);
-
-            let (display_map, selections) = editor.selections.all_adjusted_display(cx);
-            let mut edits = Vec::new();
-            for selection in &selections {
-                let mut insert = "".to_string();
-                let offset_range = selection
-                    .map(|p| p.to_offset(&display_map, Bias::Left))
-                    .range();
-
-                if motion == Motion::CurrentLine {
-                    let (indent, _) = display_map.line_indent(selection.start.row());
-                    insert.push_str(&" ".repeat(indent as usize));
-                }
-                edits.push((offset_range, insert));
-            }
-            editor.edit(edits, cx);
+            editor.insert("", cx);
         });
     });
 
