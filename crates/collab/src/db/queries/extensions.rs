@@ -243,10 +243,10 @@ fn metadata_from_extension_and_version(
     version: extension_version::Model,
 ) -> ExtensionMetadata {
     ExtensionMetadata {
-        id: extension.external_id,
+        id: extension.external_id.into(),
         manifest: rpc::ExtensionApiManifest {
             name: extension.name,
-            version: version.version,
+            version: version.version.into(),
             authors: version
                 .authors
                 .split(',')
