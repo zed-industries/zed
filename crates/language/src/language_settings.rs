@@ -52,7 +52,7 @@ pub fn all_language_settings<'a>(
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
     /// The settings for GitHub Copilot.
-    pub copilot: CopilotSettings,
+    pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
@@ -101,9 +101,9 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<Arc<str>>,
-    /// Controls whether Copilot provides suggestion immediately (true)
-    /// or waits for a `copilot::Toggle` (false).
-    pub show_copilot_suggestions: bool,
+    /// Controls whether inline completions are shown immediately (true)
+    /// or manually by triggering `editor::ShowInlineCompletion` (false).
+    pub show_inline_completions: bool,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -166,10 +166,21 @@ impl LanguageSettings {
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+/// The provider that supplies inline completions.
+pub enum InlineCompletionProvider {
+    None,
+    #[default]
+    Copilot,
+    Supermaven,
+}
+
+/// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
+/// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
-pub struct CopilotSettings {
-    /// Whether Copilot is enabled.
-    pub feature_enabled: bool,
+pub struct InlineCompletionSettings {
+    /// The provider that supplies inline completions.
+    pub provider: InlineCompletionProvider,
     /// A list of globs representing files that Copilot should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
@@ -181,8 +192,8 @@ pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The settings for GitHub Copilot.
-    #[serde(default)]
-    pub copilot: Option<CopilotSettingsContent>,
+    #[serde(default, alias = "copilot")]
+    pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
@@ -277,12 +288,12 @@ pub struct LanguageSettingsContent {
     /// Default: ["..."]
     #[serde(default)]
     pub language_servers: Option<Vec<Arc<str>>>,
-    /// Controls whether Copilot provides suggestion immediately (true)
-    /// or waits for a `copilot::Toggle` (false).
+    /// Controls whether inline completions are shown immediately (true)
+    /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default)]
-    pub show_copilot_suggestions: Option<bool>,
+    #[serde(default, alias = "show_copilot_suggestions")]
+    pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -314,9 +325,9 @@ pub struct LanguageSettingsContent {
     pub code_actions_on_format: Option<HashMap<String, bool>>,
 }
 
-/// The contents of the GitHub Copilot settings.
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
-pub struct CopilotSettingsContent {
+/// The contents of the inline completion settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct InlineCompletionSettingsContent {
     /// A list of globs representing files that Copilot should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
@@ -328,6 +339,8 @@ pub struct CopilotSettingsContent {
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
+    /// Whether the Supermaven feature is enabled.
+    pub supermaven: Option<bool>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -475,29 +488,29 @@ impl AllLanguageSettings {
         &self.defaults
     }
 
-    /// Returns whether GitHub Copilot is enabled for the given path.
-    pub fn copilot_enabled_for_path(&self, path: &Path) -> bool {
+    /// Returns whether inline completions are enabled for the given path.
+    pub fn inline_completions_enabled_for_path(&self, path: &Path) -> bool {
         !self
-            .copilot
+            .inline_completions
             .disabled_globs
             .iter()
             .any(|glob| glob.is_match(path))
     }
 
-    /// Returns whether GitHub Copilot is enabled for the given language and path.
-    pub fn copilot_enabled(&self, language: Option<&Arc<Language>>, path: Option<&Path>) -> bool {
-        if !self.copilot.feature_enabled {
-            return false;
-        }
-
+    /// Returns whether inline completions are enabled for the given language and path.
+    pub fn inline_completions_enabled(
+        &self,
+        language: Option<&Arc<Language>>,
+        path: Option<&Path>,
+    ) -> bool {
         if let Some(path) = path {
-            if !self.copilot_enabled_for_path(path) {
+            if !self.inline_completions_enabled_for_path(path) {
                 return false;
             }
         }
 
         self.language(language.map(|l| l.name()).as_deref())
-            .show_copilot_suggestions
+            .show_inline_completions
     }
 }
 
@@ -556,8 +569,13 @@ impl settings::Settings for AllLanguageSettings {
             .as_ref()
             .and_then(|f| f.copilot)
             .ok_or_else(Self::missing_default)?;
-        let mut copilot_globs = default_value
-            .copilot
+        let mut supermaven_enabled = default_value
+            .features
+            .as_ref()
+            .and_then(|f| f.supermaven)
+            .ok_or_else(Self::missing_default)?;
+        let mut completion_globs = default_value
+            .inline_completions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
@@ -567,12 +585,15 @@ impl settings::Settings for AllLanguageSettings {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = copilot;
             }
+            if let Some(supermaven) = user_settings.features.as_ref().and_then(|f| f.supermaven) {
+                supermaven_enabled = supermaven;
+            }
             if let Some(globs) = user_settings
-                .copilot
+                .inline_completions
                 .as_ref()
                 .and_then(|f| f.disabled_globs.as_ref())
             {
-                copilot_globs = globs;
+                completion_globs = globs;
             }
 
             // A user's global settings override the default global settings and
@@ -601,9 +622,15 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         Ok(Self {
-            copilot: CopilotSettings {
-                feature_enabled: copilot_enabled,
-                disabled_globs: copilot_globs
+            inline_completions: InlineCompletionSettings {
+                provider: if supermaven_enabled {
+                    InlineCompletionProvider::Supermaven
+                } else if copilot_enabled {
+                    InlineCompletionProvider::Copilot
+                } else {
+                    InlineCompletionProvider::None
+                },
+                disabled_globs: completion_globs
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
@@ -714,8 +741,8 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.language_servers, src.language_servers.clone());
     merge(
-        &mut settings.show_copilot_suggestions,
-        src.show_copilot_suggestions,
+        &mut settings.show_inline_completions,
+        src.show_inline_completions,
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(

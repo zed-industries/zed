@@ -1757,19 +1757,20 @@ impl Editor {
         self.completion_provider = Some(hub);
     }
 
-    pub fn set_inline_completion_provider(
+    pub fn set_inline_completion_provider<T>(
         &mut self,
-        provider: Model<impl InlineCompletionProvider>,
+        provider: Option<Model<T>>,
         cx: &mut ViewContext<Self>,
-    ) {
-        self.inline_completion_provider = Some(RegisteredInlineCompletionProvider {
-            _subscription: cx.observe(&provider, |this, _, cx| {
-                if this.focus_handle.is_focused(cx) {
+    ) where
+        T: InlineCompletionProvider,
+    {
+        self.inline_completion_provider =
+            provider.map(|provider| RegisteredInlineCompletionProvider {
+                _subscription: cx.observe(&provider, |this, _, cx| {
                     this.update_visible_inline_completion(cx);
-                }
-            }),
-            provider: Arc::new(provider),
-        });
+                }),
+                provider: Arc::new(provider),
+            });
         self.refresh_inline_completion(false, cx);
     }
 
@@ -9947,12 +9948,14 @@ impl Editor {
             .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
+
+        let copilot_enabled = all_language_settings(file, cx).inline_completions.provider
+            == language::language_settings::InlineCompletionProvider::Copilot;
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
             .settings_at(0, cx)
-            .show_copilot_suggestions;
+            .show_inline_completions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
         telemetry.report_editor_event(

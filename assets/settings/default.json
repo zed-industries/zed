@@ -13,7 +13,9 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Show Copilot icon in status bar
-    "copilot": true
+    "copilot": true,
+    // Show Copilot icon in status bar
+    "supermaven": false
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Mono",

@@ -10,7 +10,7 @@ use gpui::{
     ModelContext, Task, WeakModel,
 };
 use language::{
-    language_settings::{all_language_settings, language_settings},
+    language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language,
     LanguageServerName, PointUtf16, ToPointUtf16,
 };
@@ -354,7 +354,9 @@ impl Copilot {
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        if all_language_settings(None, cx).copilot_enabled(None, None) {
+        if all_language_settings(None, cx).inline_completions.provider
+            == InlineCompletionProvider::Copilot
+        {
             if matches!(self.server, CopilotServer::Disabled) {
                 let start_task = cx
                     .spawn(move |this, cx| {
