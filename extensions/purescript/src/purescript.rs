@@ -86,11 +86,11 @@ impl zed::Extension for PrismaExtension {
         _config: zed::LanguageServerConfig,
         _worktree: &zed::Worktree,
     ) -> Result<Option<String>> {
-        let initialization_options = r#"{{
-            "purescript": {{
+        let initialization_options = r#"{
+            "purescript": {
                 "addSpagoSources": true
-            }}
-        }}"#;
+            }
+        }"#;
 
         Ok(Some(initialization_options.to_string()))
     }
