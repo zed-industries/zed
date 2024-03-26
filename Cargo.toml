@@ -97,6 +97,7 @@ members = [
     "crates/zed_actions",
 
     "extensions/gleam",
+    "extensions/haskell",
     "extensions/uiua",
     "extensions/svelte",
 

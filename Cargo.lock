@@ -12613,6 +12613,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_haskell"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "zed_svelte"
 version = "0.0.1"
 dependencies = [
