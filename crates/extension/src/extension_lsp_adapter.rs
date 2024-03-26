@@ -1,5 +1,5 @@
 use crate::wasm_host::{wit::LanguageServerConfig, WasmExtension, WasmHost};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
@@ -120,7 +120,9 @@ impl LspAdapter for ExtensionLspAdapter {
             })
             .await?;
         Ok(if let Some(json_options) = json_options {
-            serde_json::from_str(&json_options)?
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse initialization_options from extension: {json_options}")
+            })?
         } else {
             None
         })

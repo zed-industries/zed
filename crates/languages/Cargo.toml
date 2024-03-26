@@ -65,7 +65,6 @@ tree-sitter-nu.workspace = true
 tree-sitter-ocaml.workspace = true
 tree-sitter-php.workspace = true
 tree-sitter-proto.workspace = true
-tree-sitter-purescript.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-racket.workspace = true
 tree-sitter-regex.workspace = true

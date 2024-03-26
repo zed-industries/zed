@@ -5322,7 +5322,6 @@ dependencies = [
  "tree-sitter-ocaml",
  "tree-sitter-php",
  "tree-sitter-proto",
- "tree-sitter-purescript",
  "tree-sitter-python",
  "tree-sitter-racket",
  "tree-sitter-regex",
@@ -10413,15 +10412,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-purescript"
-version = "0.1.0"
-source = "git+https://github.com/postsolar/tree-sitter-purescript?rev=v0.1.0#0554811a512b9cec08b5a83ce9096eb22da18213"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-python"
 version = "0.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12608,6 +12598,13 @@ dependencies = [
 
 [[package]]
 name = "zed_prisma"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_purescript"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
