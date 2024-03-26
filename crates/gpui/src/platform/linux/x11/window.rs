@@ -245,7 +245,7 @@ impl X11WindowState {
             x_window,
             callbacks: RefCell::new(Callbacks::default()),
             inner: RefCell::new(LinuxWindowInner {
-                bounds: params.bounds.map(|v| v.0 as i32),
+                bounds: params.bounds.map(|v| v.0),
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
@@ -326,11 +326,7 @@ impl X11WindowState {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0
-            .inner
-            .borrow_mut()
-            .bounds
-            .map(|v| DevicePixels(v as i32))
+        self.0.inner.borrow_mut().bounds.map(|v| v.into())
     }
 
     // todo(linux)
