@@ -54,7 +54,7 @@ pub(crate) struct WindowsWindowInner {
     display: RefCell<Rc<WindowsDisplay>>,
     last_ime_input: RefCell<Option<String>>,
     click_state: RefCell<ClickState>,
-    fullscreen: RefCell<FullScreenState>,
+    fullscreen: Cell<Option<StyleAndBounds>>,
 }
 
 impl WindowsWindowInner {
@@ -116,7 +116,7 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let last_ime_input = RefCell::new(None);
         let click_state = RefCell::new(ClickState::new());
-        let fullscreen = RefCell::new(FullScreenState::None);
+        let fullscreen = Cell::new(None);
         Self {
             hwnd,
             origin,
@@ -144,70 +144,43 @@ impl WindowsWindowInner {
     }
 
     fn is_fullscreen(&self) -> bool {
-        self.fullscreen.borrow().is_fullscreen()
+        let fullscreen = self.fullscreen.take();
+        let is_fullscreen = fullscreen.is_some();
+        self.fullscreen.set(fullscreen);
+        is_fullscreen
     }
 
     async fn toggle_fullscreen(self: Rc<Self>) {
-        let mut state = self.fullscreen.borrow_mut();
-        let (next_state, style, x, y, cx, cy, swp_flags) = match &*state {
-            FullScreenState::None => {
-                let style = WINDOW_STYLE(unsafe { get_window_long(self.hwnd, GWL_STYLE) } as _);
-                let next = if unsafe { IsZoomed(self.hwnd) }.as_bool() {
-                    FullScreenState::Maximized(style)
-                } else {
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(self.hwnd, &mut rc) }.log_err();
-                    FullScreenState::Normal {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    }
-                };
-                let bounds = self.display.borrow().clone().bounds();
-                (
-                    next,
-                    style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION),
-                    bounds.left().0 as i32,
-                    bounds.top().0 as i32,
-                    bounds.size.width.0 as i32,
-                    bounds.size.height.0 as i32,
-                    SET_WINDOW_POS_FLAGS(0),
-                )
-            }
-            FullScreenState::Normal {
+        let StyleAndBounds {
+            style,
+            x,
+            y,
+            cx,
+            cy,
+        } = if let Some(state) = self.fullscreen.take() {
+            state
+        } else {
+            let style = WINDOW_STYLE(unsafe { get_window_long(self.hwnd, GWL_STYLE) } as _);
+            let mut rc = RECT::default();
+            unsafe { GetWindowRect(self.hwnd, &mut rc) }.log_err();
+            self.fullscreen.set(Some(StyleAndBounds {
                 style,
-                x,
-                y,
-                cx,
-                cy,
-            } => (
-                FullScreenState::None,
-                *style,
-                *x,
-                *y,
-                *cx,
-                *cy,
-                SET_WINDOW_POS_FLAGS(0),
-            ),
-            FullScreenState::Maximized(style) => (
-                FullScreenState::None,
-                *style,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOMOVE,
-            ),
+                x: rc.left,
+                y: rc.top,
+                cx: rc.right - rc.left,
+                cy: rc.bottom - rc.top,
+            }));
+            let style = style
+                & !(WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_CAPTION);
+            let bounds = self.display.borrow().clone().bounds();
+            StyleAndBounds {
+                style,
+                x: bounds.left().0 as i32,
+                y: bounds.top().0 as i32,
+                cx: bounds.size.width.0 as i32,
+                cy: bounds.size.height.0 as i32,
+            }
         };
-        *state = next_state;
-        drop(state);
         unsafe { set_window_long(self.hwnd, GWL_STYLE, style.0 as isize) };
         unsafe {
             SetWindowPos(
@@ -217,7 +190,7 @@ impl WindowsWindowInner {
                 y,
                 cx,
                 cy,
-                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER | swp_flags,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
             )
         }
         .log_err();
@@ -1881,22 +1854,12 @@ fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
     }
 }
 
-enum FullScreenState {
-    None,
-    Normal {
-        style: WINDOW_STYLE,
-        x: i32,
-        y: i32,
-        cx: i32,
-        cy: i32,
-    },
-    Maximized(WINDOW_STYLE),
-}
-
-impl FullScreenState {
-    fn is_fullscreen(&self) -> bool {
-        !matches!(self, Self::None)
-    }
+struct StyleAndBounds {
+    style: WINDOW_STYLE,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
