@@ -173,7 +173,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
 
         // Some tests rely on the window size matching the bounds of the test display
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -186,7 +186,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -209,7 +209,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),

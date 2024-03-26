@@ -1,7 +1,7 @@
 use super::{ns_string, renderer, MacDisplay, NSRange};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent, Keystroke,
+    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DevicePixels,
+    DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
     Size, Timer, WindowAppearance, WindowKind, WindowParams,
@@ -439,7 +439,7 @@ impl MacWindowState {
         }
     }
 
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen_frame = unsafe {
             let screen = NSWindow::screen(self.native_window);
@@ -452,12 +452,12 @@ impl MacWindowState {
 
         let bounds = Bounds::new(
             point(
-                (window_frame.origin.x - screen_frame.origin.x).into(),
-                (window_frame.origin.y - screen_frame.origin.y).into(),
+                ((window_frame.origin.x - screen_frame.origin.x) as i32).into(),
+                ((window_frame.origin.y - screen_frame.origin.y) as i32).into(),
             ),
             size(
-                window_frame.size.width.into(),
-                window_frame.size.height.into(),
+                (window_frame.size.width as i32).into(),
+                (window_frame.size.height as i32).into(),
             ),
         );
         bounds
@@ -575,7 +575,7 @@ impl MacWindow {
                     screen_frame.origin.y
                         + (display.bounds().size.height - bounds.origin.y).0 as f64,
                 ),
-                NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
+                NSSize::new(bounds.size.width.0 as f64, bounds.size.height.0 as f64),
             );
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
@@ -598,7 +598,10 @@ impl MacWindow {
 
             let window_size = {
                 let scale = get_scale_factor(native_window);
-                size(bounds.size.width.0 * scale, bounds.size.height.0 * scale)
+                size(
+                    bounds.size.width.0 as f32 * scale,
+                    bounds.size.height.0 as f32 * scale,
+                )
             };
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -766,7 +769,7 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.0.as_ref().lock().bounds()
     }
 

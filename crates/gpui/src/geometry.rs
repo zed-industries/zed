@@ -13,7 +13,7 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
-use crate::AppContext;
+use crate::{AppContext, DisplayId};
 
 /// An axis along which a measurement can be made.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -372,6 +372,15 @@ impl From<Size<GlobalPixels>> for Size<Pixels> {
     }
 }
 
+impl From<Size<DevicePixels>> for Size<Pixels> {
+    fn from(size: Size<DevicePixels>) -> Self {
+        Size {
+            width: Pixels(size.width.0 as f32),
+            height: Pixels(size.height.0 as f32),
+        }
+    }
+}
+
 /// Constructs a new `Size<T>` with the provided width and height.
 ///
 /// # Arguments
@@ -613,6 +622,15 @@ impl From<Size<Pixels>> for Size<GlobalPixels> {
     }
 }
 
+impl From<Size<Pixels>> for Size<DevicePixels> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: DevicePixels(size.width.0 as i32),
+            height: DevicePixels(size.height.0 as i32),
+        }
+    }
+}
+
 impl From<Size<Pixels>> for Size<DefiniteLength> {
     fn from(size: Size<Pixels>) -> Self {
         Size {
@@ -693,31 +711,43 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub size: Size<T>,
 }
 
-impl Bounds<GlobalPixels> {
-    /// Generate a centered bounds for the primary display
-    pub fn centered(size: impl Into<Size<GlobalPixels>>, cx: &mut AppContext) -> Self {
+impl Bounds<DevicePixels> {
+    /// Generate a centered bounds for the given display or primary display if none is provided
+    pub fn centered(
+        display_id: Option<DisplayId>,
+        size: impl Into<Size<DevicePixels>>,
+        cx: &mut AppContext,
+    ) -> Self {
+        let display = display_id
+            .and_then(|id| cx.find_display(id))
+            .or_else(|| cx.primary_display());
+
         let size = size.into();
-        cx.primary_display()
+        display
             .map(|display| {
                 let center = display.bounds().center();
                 Bounds {
-                    origin: point(center.x - size.width / 2.0, center.y - size.height / 2.0),
+                    origin: point(center.x - size.width / 2, center.y - size.height / 2),
                     size,
                 }
             })
             .unwrap_or_else(|| Bounds {
-                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                origin: point(DevicePixels(0), DevicePixels(0)),
                 size,
             })
     }
 
-    /// Generate maximized bounds for the primary display
-    pub fn maximized(cx: &mut AppContext) -> Self {
-        cx.primary_display()
+    /// Generate maximized bounds for the given display or primary display if none is provided
+    pub fn maximized(display_id: Option<DisplayId>, cx: &mut AppContext) -> Self {
+        let display = display_id
+            .and_then(|id| cx.find_display(id))
+            .or_else(|| cx.primary_display());
+
+        display
             .map(|display| display.bounds())
             .unwrap_or_else(|| Bounds {
-                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
-                size: size(GlobalPixels(1024.0), GlobalPixels(768.0)),
+                origin: point(DevicePixels(0), DevicePixels(0)),
+                size: size(DevicePixels(1024), DevicePixels(768)),
             })
     }
 }

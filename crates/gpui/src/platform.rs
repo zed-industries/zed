@@ -23,9 +23,9 @@ mod windows;
 
 use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels,
-    GlyphId, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
+    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -152,7 +152,7 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     fn uuid(&self) -> Result<Uuid>;
 
     /// Get the bounds for this display
-    fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn bounds(&self) -> Bounds<DevicePixels>;
 }
 
 /// An opaque identifier for a hardware display
@@ -168,7 +168,7 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
-    fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn bounds(&self) -> Bounds<DevicePixels>;
     fn is_maximized(&self) -> bool;
     fn is_minimized(&self) -> bool;
     fn content_size(&self) -> Size<Pixels>;
@@ -508,7 +508,7 @@ pub trait InputHandler: 'static {
 #[derive(Debug)]
 pub struct WindowOptions {
     /// None -> inherit, Some(bounds) -> set bounds
-    pub bounds: Option<Bounds<GlobalPixels>>,
+    pub bounds: Option<Bounds<DevicePixels>>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -536,7 +536,7 @@ pub struct WindowOptions {
 #[derive(Debug)]
 pub(crate) struct WindowParams {
     ///
-    pub bounds: Bounds<GlobalPixels>,
+    pub bounds: Bounds<DevicePixels>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,

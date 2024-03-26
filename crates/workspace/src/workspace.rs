@@ -27,8 +27,8 @@ use futures::{
 };
 use gpui::{
     actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, GlobalPixels, KeyContext, Keystroke,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
+    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
     Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
 };
@@ -89,11 +89,11 @@ use crate::persistence::{
 };
 
 lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
+    static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
         .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<GlobalPixels>> = env::var("ZED_WINDOW_POSITION")
+    static ref ZED_WINDOW_POSITION: Option<Point<DevicePixels>> = env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var);
@@ -3729,7 +3729,7 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override() -> Option<Bounds<GlobalPixels>> {
+fn window_bounds_env_override() -> Option<Bounds<DevicePixels>> {
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
@@ -4787,18 +4787,18 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn parse_pixel_position_env_var(value: &str) -> Option<Point<GlobalPixels>> {
+fn parse_pixel_position_env_var(value: &str) -> Option<Point<DevicePixels>> {
     let mut parts = value.split(',');
     let x: usize = parts.next()?.parse().ok()?;
     let y: usize = parts.next()?.parse().ok()?;
-    Some(point((x as f64).into(), (y as f64).into()))
+    Some(point((x as i32).into(), (y as i32).into()))
 }
 
-fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
+fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
-    Some(size((width as f64).into(), (height as f64).into()))
+    Some(size((width as i32).into(), (height as i32).into()))
 }
 
 struct DisconnectedOverlay;

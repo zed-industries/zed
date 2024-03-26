@@ -24,8 +24,8 @@ fn main() {
 
         for screen in cx.displays() {
             let options = {
-                let popup_margin_width = GlobalPixels::from(16.);
-                let popup_margin_height = GlobalPixels::from(-0.) - GlobalPixels::from(48.);
+                let popup_margin_width = DevicePixels::from(16);
+                let popup_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
 
                 let window_size = Size {
                     width: px(400.),
@@ -33,9 +33,9 @@ fn main() {
                 };
 
                 let screen_bounds = screen.bounds();
-                let size: Size<GlobalPixels> = window_size.into();
+                let size: Size<DevicePixels> = window_size.into();
 
-                let bounds = gpui::Bounds::<GlobalPixels> {
+                let bounds = gpui::Bounds::<DevicePixels> {
                     origin: screen_bounds.upper_right()
                         - point(size.width + popup_margin_width, popup_margin_height),
                     size: window_size.into(),

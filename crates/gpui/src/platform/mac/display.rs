@@ -1,4 +1,4 @@
-use crate::{point, size, Bounds, DisplayId, GlobalPixels, PlatformDisplay};
+use crate::{point, size, Bounds, DevicePixels, DisplayId, PlatformDisplay};
 use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
@@ -102,17 +102,17 @@ impl PlatformDisplay for MacDisplay {
         ]))
     }
 
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         unsafe {
             // CGDisplayBounds is in "global display" coordinates, where 0 is
             // the top left of the primary display.
             let bounds = CGDisplayBounds(self.0);
 
             Bounds {
-                origin: point(GlobalPixels(0.), GlobalPixels(0.)),
+                origin: point(DevicePixels(0), DevicePixels(0)),
                 size: size(
-                    GlobalPixels(bounds.size.width as f32),
-                    GlobalPixels(bounds.size.height as f32),
+                    DevicePixels(bounds.size.width as i32),
+                    DevicePixels(bounds.size.height as i32),
                 ),
             }
         }

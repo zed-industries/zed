@@ -6,7 +6,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Bounds, GlobalPixels, Model, Task, View, WeakView};
+use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
 use project::Project;
 use std::{
     path::{Path, PathBuf},
@@ -69,7 +69,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: WorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) bounds: Option<Bounds<GlobalPixels>>,
+    pub(crate) bounds: Option<Bounds<DevicePixels>>,
     pub(crate) fullscreen: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
