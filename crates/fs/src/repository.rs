@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use collections::HashMap;
 use git::blame::BlameEntry;
 use git2::{BranchType, StatusShow};

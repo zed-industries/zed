@@ -1100,6 +1100,7 @@ impl EditorElement {
                 return None;
             };
 
+            // TODO: Pass this in
             let buffer_rows = snapshot
                 .buffer_rows(display_rows.start)
                 .take(display_rows.len());
@@ -1174,15 +1175,7 @@ impl EditorElement {
                             BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx)
                         })
                         .on_click({
-                            let workspace = self.editor.read(cx).workspace();
                             move |_, cx| {
-                                if let Some(workspace) = &workspace {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace
-                                            .show_toast(Toast::new(sha, "Copied to clipboard!"), cx)
-                                    })
-                                }
-
                                 cx.stop_propagation();
                                 cx.write_to_clipboard(ClipboardItem::new(pretty_commit_id.clone()));
                             }
@@ -2934,15 +2927,9 @@ impl BlameEntryTooltip {
             Err(_) => "Error parsing date".to_string(),
         };
         let pretty_commit_id = format!("{}", blame_entry.sha);
-
-        let committer = blame_entry
-            .committer
-            .clone()
-            .unwrap_or("<no name>".to_string());
-
-        let committer_email = blame_entry.committer_mail.clone().unwrap_or_default();
-
-        let summary = blame_entry.summary.clone().unwrap_or_default();
+        let committer = blame_entry.committer.unwrap_or("<no name>".to_string());
+        let committer_email = blame_entry.committer_mail.unwrap_or_default();
+        let summary = blame_entry.summary.unwrap_or_default();
 
         cx.new_view(|_cx| Self {
             color,
@@ -2951,7 +2938,7 @@ impl BlameEntryTooltip {
             committer,
             committer_email,
             summary,
-            url: blame_entry.permalink.clone().map(|url| url.to_string()),
+            url: blame_entry.permalink.map(|url| url.to_string()),
         })
         .into()
     }
@@ -2967,9 +2954,7 @@ impl Render for BlameEntryTooltip {
                         div()
                             .child(format!(
                                 "{} {} - {}",
-                                self.committer.clone(),
-                                self.committer_email.clone(),
-                                self.datetime.clone()
+                                self.committer, self.committer_email, self.datetime
                             ))
                             .text_color(cx.theme().colors().text_muted),
                     )
