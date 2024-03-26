@@ -5301,7 +5301,6 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-dart",
- "tree-sitter-dockerfile",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
@@ -10202,15 +10201,6 @@ dependencies = [
 name = "tree-sitter-dart"
 version = "0.0.1"
 source = "git+https://github.com/agent3bood/tree-sitter-dart?rev=48934e3bf757a9b78f17bdfaa3e2b4284656fdc7#48934e3bf757a9b78f17bdfaa3e2b4284656fdc7"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-dockerfile"
-version = "0.1.0"
-source = "git+https://github.com/camdencheek/tree-sitter-dockerfile?rev=33e22c33bcdbfc33d42806ee84cfd0b1248cc392#33e22c33bcdbfc33d42806ee84cfd0b1248cc392"
 dependencies = [
  "cc",
  "tree-sitter",
