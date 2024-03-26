@@ -364,9 +364,13 @@ sys-locale = "0.3.1"
 version = "0.53.0"
 features = [
     "implement",
+    "Foundation_Numerics",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Media",
     "Win32_Security",

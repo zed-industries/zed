@@ -10672,6 +10672,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-zig"
+version = "0.0.1"
+source = "git+https://github.com/maxxnino/tree-sitter-zig?rev=0d08703e4c3f426ec61695d7617415fff97029bd#0d08703e4c3f426ec61695d7617415fff97029bd"
+dependencies = [
+ "typeface",
+]
+
+[[package]]
+name = "truetype"
+version = "0.47.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fb887b8a8ee8832e5810114ad4ef84d89f0aae569d198baee7fb7f7363a4ca4"
+dependencies = [
+ "typeface",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10721,6 +10738,12 @@ dependencies = [
  "url",
  "utf-8",
 ]
+
+[[package]]
+name = "typeface"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1fdbc53aae2bf36c48f1bc36d73a62b84091b6535b08e4e15bca876ce5e8050"
 
 [[package]]
 name = "typenum"
