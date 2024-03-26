@@ -720,9 +720,10 @@ impl MacWindow {
                 native_window.orderFront_(nil);
             }
 
-            // Set the initial position of the window, although we already specified the position
-            // using `initWithContentRect_styleMask_backing_defer_screen_`, it seems that the
-            // window's position can be incorrect depending on the current active screen
+            // Set the initial position of the window to the specified origin.
+            // Although we already specified the position using `initWithContentRect_styleMask_backing_defer_screen_`,
+            // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
+            //  is different from the primary screen.
             NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
             window.0.lock().move_traffic_light();
 
