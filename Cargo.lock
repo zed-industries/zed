@@ -5304,7 +5304,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
- "tree-sitter-haskell",
  "tree-sitter-hcl",
  "tree-sitter-heex",
  "tree-sitter-html",
@@ -10288,15 +10287,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-haskell"
-version = "0.14.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-haskell?rev=8a99848fc734f9c4ea523b3f2a07df133cbbcec2#8a99848fc734f9c4ea523b3f2a07df133cbbcec2"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-hcl"
 version = "0.0.1"
 source = "git+https://github.com/MichaHoffmann/tree-sitter-hcl?rev=v1.1.0#636dbe70301ecbab8f353c8c78b3406fe4f185f5"
@@ -12607,6 +12597,13 @@ dependencies = [
 
 [[package]]
 name = "zed_gleam"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_haskell"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
