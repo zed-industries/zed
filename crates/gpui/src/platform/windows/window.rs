@@ -648,7 +648,7 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
-            let physical_point = point(DevicePixels(x), DevicePixels(y));
+            let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
             let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
