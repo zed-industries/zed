@@ -1799,9 +1799,9 @@ const DOUBLE_CLICK_SPATIAL_TOLERANCE: f32 = 4.0;
 
 #[cfg(test)]
 mod tests {
+    use super::ClickState;
+    use crate::{point, GlobalPixels, MouseButton};
     use std::time::Duration;
-
-    use crate::*;
 
     #[test]
     fn test_double_click_interval() {
