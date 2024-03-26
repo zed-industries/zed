@@ -2,7 +2,7 @@ use anyhow::Result;
 use uuid::Uuid;
 use x11rb::{connection::Connection as _, xcb_ffi::XCBConnection};
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Size};
 
 #[derive(Debug)]
 pub(crate) struct X11Display {

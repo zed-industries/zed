@@ -41,8 +41,8 @@ use crate::*;
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    origin: Cell<Point<GlobalPixels>>,
-    physical_size: Cell<Size<GlobalPixels>>,
+    origin: Cell<Point<DevicePixels>>,
+    physical_size: Cell<Size<DevicePixels>>,
     scale_factor: Cell<f32>,
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
@@ -65,12 +65,12 @@ impl WindowsWindowInner {
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(Point {
-            x: GlobalPixels(cs.x as f32),
-            y: GlobalPixels(cs.y as f32),
+            x: DevicePixels(cs.x as i32),
+            y: DevicePixels(cs.y as i32),
         });
         let physical_size = Cell::new(Size {
-            width: GlobalPixels(cs.cx as f32),
-            height: GlobalPixels(cs.cy as f32),
+            width: DevicePixels(cs.cx as i32),
+            height: DevicePixels(cs.cy as i32),
         });
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
@@ -241,8 +241,8 @@ impl WindowsWindowInner {
         let x = lparam.signed_loword() as f32;
         let y = lparam.signed_hiword() as f32;
         self.origin.set(Point {
-            x: GlobalPixels(x),
-            y: GlobalPixels(y),
+            x: DevicePixels(x),
+            y: DevicePixels(y),
         });
         let size = self.physical_size.get();
         let center_x = x + size.width.0 / 2.0;
@@ -272,8 +272,8 @@ impl WindowsWindowInner {
         let height = lparam.hiword().max(1) as f32;
         let scale_factor = self.scale_factor.get();
         let new_physical_size = Size {
-            width: GlobalPixels(width),
-            height: GlobalPixels(height),
+            width: DevicePixels(width),
+            height: DevicePixels(height),
         };
         self.physical_size.set(new_physical_size);
         self.renderer.borrow_mut().update_drawable_size(Size {
@@ -854,8 +854,8 @@ impl WindowsWindowInner {
         let height = size_rect.bottom - size_rect.top;
 
         self.physical_size.set(Size {
-            width: GlobalPixels(width as f32),
-            height: GlobalPixels(height as f32),
+            width: DevicePixels(width as i32),
+            height: DevicePixels(height as i32),
         });
 
         if self.hide_title_bar {
@@ -1692,10 +1692,10 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 }
 
 #[inline]
-fn logical_size(physical_size: Size<GlobalPixels>, scale_factor: f32) -> Size<Pixels> {
+fn logical_size(physical_size: Size<DevicePixels>, scale_factor: f32) -> Size<Pixels> {
     Size {
-        width: px(physical_size.width.0 / scale_factor),
-        height: px(physical_size.height.0 / scale_factor),
+        width: px(physical_size.width.0 as f32 / scale_factor),
+        height: px(physical_size.height.0 as f32 / scale_factor),
     }
 }
 

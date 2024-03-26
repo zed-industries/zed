@@ -22,7 +22,7 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
+    px, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
     PromptLevel, Size, WindowAppearance, WindowParams,
 };
 
