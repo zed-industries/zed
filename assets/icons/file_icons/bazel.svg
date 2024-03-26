@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 43.07457 42.356102"
+   version="1.1"
+   id="svg20"
+   width="43.07457"
+   height="42.356102"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs24" />
+  <style
+     id="style2">
+    .dark-green-left { fill: #00701a }
+    .dark-green-right { fill: #004300 }
+    .green { fill: #43a047 }
+    .light-green { fill: #76d275 }
+    .wordmark { fill: #5f6368 }
+  </style>
+  <path
+     class="dark-green-left"
+     d="M 21.228322,32.155179 V 42.226268 L 10.968812,31.966756 v -10.07109 z"
+     id="path4"
+     style="stroke-width:0.942104" />
+  <path
+     class="dark-green-right"
+     d="m 21.793522,32.156381 10.40009,-10.390548 v 10.19972 l -10.40009,10.390548 z"
+     id="path6"
+     style="stroke-width:0.954136" />
+  <path
+     class="green"
+     d="M 10.417134,21.266407 V 31.492226 L -1.4892578e-7,21.065527 V 10.839708 Z"
+     id="path8"
+     style="stroke-width:0.956578" />
+  <path
+     class="green"
+     d="M 43.07457,10.884441 V 21.065963 L 32.702564,31.447493 V 21.265972 Z"
+     id="path10"
+     style="stroke-width:0.952435" />
+  <path
+     class="green"
+     d="M 21.543821,31.406971 11.207565,21.070716 21.543821,10.724967 31.889569,21.070716 Z"
+     id="path12"
+     style="stroke-width:0.949152" />
+  <path
+     class="light-green"
+     d="M 10.653567,20.594044 0.44017985,10.371277 10.653567,0.15789199 20.866954,10.371277 Z"
+     id="path14"
+     style="stroke-width:0.937869" />
+  <path
+     class="light-green"
+     d="M 32.443329,20.751934 22.0626,10.371205 32.443329,0 42.814534,10.371205 Z"
+     id="path16"
+     style="stroke-width:0.95236" />
+</svg>

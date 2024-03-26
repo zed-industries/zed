@@ -17,8 +17,10 @@
     "bash_aliases": "terminal",
     "bash_logout": "terminal",
     "bash_profile": "terminal",
+    "bazel": "bazel",
     "bashrc": "terminal",
     "bmp": "image",
+    "bzl": "bazel",
     "c": "code",
     "cc": "code",
     "cjs": "code",
@@ -184,6 +186,9 @@
     "audio": {
       "icon": "icons/file_icons/audio.svg"
     },
+    "bazel": {
+      "icon": "icons/file_icons/bazel.svg"
+    },
     "code": {
       "icon": "icons/file_icons/code.svg"
     },
@@ -327,7 +332,7 @@
     },
     "tcl": {
       "icon": "icons/file_icons/tcl.svg"
-    },  
+    },
     "vcs": {
       "icon": "icons/file_icons/git.svg"
     },
