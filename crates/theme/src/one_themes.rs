@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{hsla, FontStyle, FontWeight, HighlightStyle};
+use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, WindowBackground};
 
 use crate::{
     default_color_scales, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
@@ -39,6 +39,7 @@ pub(crate) fn one_dark() -> Theme {
         id: "one_dark".to_string(),
         name: "One Dark".into(),
         appearance: Appearance::Dark,
+        window_background: WindowBackground::Opaque,
 
         styles: ThemeStyles {
             system: SystemColors::default(),

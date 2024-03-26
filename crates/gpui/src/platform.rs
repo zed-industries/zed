@@ -191,6 +191,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
+    fn set_background(&mut self, background: WindowBackground);
     fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
@@ -531,6 +532,9 @@ pub struct WindowOptions {
 
     /// The display to create the window on
     pub display_id: Option<DisplayId>,
+
+    /// The background type of the window
+    pub window_background: WindowBackground
 }
 
 /// The variables that can be configured when creating a new window
@@ -554,6 +558,8 @@ pub(crate) struct WindowParams {
 
     /// The display to create the window on
     pub display_id: Option<DisplayId>,
+
+    pub window_background: WindowBackground,
 }
 
 impl Default for WindowOptions {
@@ -571,6 +577,7 @@ impl Default for WindowOptions {
             is_movable: true,
             display_id: None,
             fullscreen: false,
+            window_background: WindowBackground::default(),
         }
     }
 }
@@ -633,6 +640,32 @@ pub enum WindowAppearance {
 impl Default for WindowAppearance {
     fn default() -> Self {
         Self::Light
+    }
+}
+
+/// The appearance of the background of the window itself, when there is
+/// no content or the content is transparent.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum WindowBackground {
+    /// Opaque.
+    ///
+    /// This lets the window manager know that content behind this
+    /// window does not need to be drawn.
+    ///
+    /// Actual color depends on the system and themes should define a fully
+    /// opaque background color instead.
+    Opaque,
+    /// Plain alpha transparency.
+    Transparent,
+    /// Transparency, but the contents behind the window are blurred.
+    ///
+    /// Not always supported.
+    Blurred,
+}
+
+impl Default for WindowBackground {
+    fn default() -> Self {
+        WindowBackground::Opaque
     }
 }
 

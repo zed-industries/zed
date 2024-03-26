@@ -1,7 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult,
     GlobalPixels, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowParams,
+    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowBackground,
+    WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -187,6 +188,10 @@ impl PlatformWindow for TestWindow {
 
     fn set_title(&mut self, title: &str) {
         self.0.lock().title = Some(title.to_owned());
+    }
+
+    fn set_background(&mut self, background: WindowBackground) {
+        unimplemented!()
     }
 
     fn set_edited(&mut self, edited: bool) {

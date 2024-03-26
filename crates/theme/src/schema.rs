@@ -33,6 +33,15 @@ pub enum AppearanceContent {
     Dark,
 }
 
+/// Background style ("opaque", "transparent" or "blurred").
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowBackgroundContent {
+    Opaque,
+    Transparent,
+    Blurred,
+}
+
 /// The content of a serialized theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
@@ -47,6 +56,8 @@ pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
     pub style: ThemeStyleContent,
+    #[serde(default, rename = "window.background")]
+    pub window_background: Option<WindowBackgroundContent>,
 }
 
 /// The content of a serialized theme.
