@@ -74,7 +74,6 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
-    any::TypeId,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -6620,7 +6619,7 @@ impl Project {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
-                    cx.update(|cx| {
+                    let _ = cx.update(|cx| {
                         this.update(cx, |this, cx| {
                             this.on_lsp_work_start(
                                 language_server.server_id(),
@@ -6636,6 +6635,11 @@ impl Project {
                     });
 
                     let result = language_server.request::<R::LspRequest>(lsp_params).await;
+                    let _ = cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.on_lsp_work_end(language_server.server_id(), id.to_string(), cx);
+                        })
+                    });
                     let response = match result {
                         Ok(response) => response,
 
@@ -6648,11 +6652,6 @@ impl Project {
                             return Err(err);
                         }
                     };
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            this.on_lsp_work_end(language_server.server_id(), id.to_string(), cx);
-                        })
-                    });
                     request
                         .response_from_lsp(
                             response,
