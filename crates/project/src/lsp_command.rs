@@ -1,7 +1,7 @@
 use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
-    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
-    MarkupContent, Project, ProjectTransaction, ResolveState,
+    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, LanguageServerProgress,
+    Location, LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ use lsp::{
     CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
     OneOf, ServerCapabilities,
 };
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc, time::Instant};
 use text::{BufferId, LineEnding};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
@@ -924,6 +924,21 @@ impl LspCommand for GetReferences {
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
+        println!("GetReferences response_from_lsp");
+        // cx.update(|cx| {
+        //     project.update(cx, |this, cx| {
+        //         this.on_lsp_work_start(
+        //             server_id,
+        //             "find_references".to_string(),
+        //             LanguageServerProgress {
+        //                 message: Some("find_references".to_string()),
+        //                 percentage: None,
+        //                 last_update_at: Instant::now(),
+        //             },
+        //             cx,
+        //         );
+        //     })
+        // });
         let mut references = Vec::new();
         let (lsp_adapter, language_server) =
             language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
@@ -956,7 +971,12 @@ impl LspCommand for GetReferences {
                     })?;
             }
         }
-
+        println!("done");
+        cx.update(|cx| {
+            project.update(cx, |this, cx| {
+                this.on_lsp_work_end(server_id, "find_references".to_string(), cx);
+            })
+        });
         Ok(references)
     }
 

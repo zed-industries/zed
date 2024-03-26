@@ -74,6 +74,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
+    any::TypeId,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -4840,7 +4841,7 @@ impl Project {
 
     #[inline(never)]
     fn definition_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4853,7 +4854,7 @@ impl Project {
         )
     }
     pub fn definition<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4863,7 +4864,7 @@ impl Project {
     }
 
     fn type_definition_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4877,7 +4878,7 @@ impl Project {
     }
 
     pub fn type_definition<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4887,7 +4888,7 @@ impl Project {
     }
 
     fn implementation_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4901,7 +4902,7 @@ impl Project {
     }
 
     pub fn implementation<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4911,11 +4912,29 @@ impl Project {
     }
 
     fn references_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
+        // if self.is_local() {
+        //     let language_server =
+        //         match self.primary_language_server_for_buffer(buffer.clone().read(cx), cx) {
+        //             Some((_, server)) => Some(Arc::clone(server)),
+        //             None => return Task::ready(Ok(Default::default())),
+        //         }
+        //         .unwrap();
+        //     self.on_lsp_work_start(
+        //         language_server.server_id(),
+        //         "find_references".to_string(),
+        //         LanguageServerProgress {
+        //             message: Some("find_references".to_string()),
+        //             percentage: None,
+        //             last_update_at: Instant::now(),
+        //         },
+        //         cx,
+        //     );
+        // }
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
@@ -4924,7 +4943,7 @@ impl Project {
         )
     }
     pub fn references<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4934,7 +4953,7 @@ impl Project {
     }
 
     fn document_highlights_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4948,7 +4967,7 @@ impl Project {
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -5188,7 +5207,7 @@ impl Project {
     }
 
     fn hover_impl(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -5269,7 +5288,7 @@ impl Project {
     }
 
     pub fn hover<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -5623,7 +5642,7 @@ impl Project {
     }
 
     fn code_actions_impl(
-        &self,
+        &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -5678,7 +5697,7 @@ impl Project {
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
-        &self,
+        &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
@@ -6032,7 +6051,7 @@ impl Project {
     }
 
     fn prepare_rename_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -6045,7 +6064,7 @@ impl Project {
         )
     }
     pub fn prepare_rename<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -6055,7 +6074,7 @@ impl Project {
     }
 
     fn perform_rename_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         new_name: String,
@@ -6075,7 +6094,7 @@ impl Project {
         )
     }
     pub fn perform_rename<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         new_name: String,
@@ -6087,7 +6106,7 @@ impl Project {
     }
 
     pub fn on_type_format_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         trigger: String,
@@ -6111,7 +6130,7 @@ impl Project {
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         trigger: String,
@@ -6123,7 +6142,7 @@ impl Project {
     }
 
     pub fn inlay_hints<T: ToOffset>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
@@ -6133,7 +6152,7 @@ impl Project {
         self.inlay_hints_impl(buffer_handle, range, cx)
     }
     fn inlay_hints_impl(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -6586,7 +6605,7 @@ impl Project {
     }
 
     pub fn request_lsp<R: LspCommand>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
@@ -6610,8 +6629,23 @@ impl Project {
                     .map(|(_, server)| Arc::clone(server)),
             };
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
+            let is_references = TypeId::of::<R>() == TypeId::of::<GetReferences>();
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
+                if is_references {
+                    println!("is references!!");
+                    self.on_lsp_work_start(
+                        language_server.server_id(),
+                        "find_references".to_string(),
+                        LanguageServerProgress {
+                            message: Some("find_references".to_string()),
+                            percentage: None,
+                            last_update_at: Instant::now(),
+                        },
+                        cx,
+                    );
+                }
+
                 return cx.spawn(move |this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
@@ -6630,7 +6664,18 @@ impl Project {
                             return Err(err);
                         }
                     };
-
+                    // cx.update(|cx| {
+                    //     this.update(cx, |this, cx| {
+                    //         this.on_lsp_work_end(
+                    //             language_server.server_id(),
+                    //             "find_references".to_string(),
+                    //             cx,
+                    //         );
+                    //     })
+                    // });
+                    if is_references {
+                        println!("response from lsp...");
+                    }
                     request
                         .response_from_lsp(
                             response,
@@ -6640,6 +6685,12 @@ impl Project {
                             cx,
                         )
                         .await
+
+                    // self.on_lsp_work_end(
+                    //     language_server.server_id(),
+                    //     "find_references".to_string(),
+                    //     this.upgrade(),
+                    // );
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
