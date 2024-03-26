@@ -582,7 +582,7 @@ impl ProjectPanel {
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
-                self.open_entry(entry.id, true, false, cx);
+                self.open_entry(entry.id, true, true, cx);
             } else {
                 self.toggle_expanded(entry.id, cx);
             }
