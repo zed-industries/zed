@@ -208,7 +208,6 @@ impl WindowsWindowInner {
         };
         *state = next_state;
         drop(state);
-        log::info!("{:x}", style.0);
         unsafe { set_window_long(self.hwnd, GWL_STYLE, style.0 as isize) };
         unsafe {
             SetWindowPos(
