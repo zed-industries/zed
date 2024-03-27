@@ -458,6 +458,7 @@ pub struct UpdatedChannelMessage {
     pub notifications: NotificationBatch,
     pub reply_to_message_id: Option<MessageId>,
     pub timestamp: PrimitiveDateTime,
+    pub deleted_mention_notification_ids: Vec<NotificationId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]

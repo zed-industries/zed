@@ -658,14 +658,40 @@ impl Database {
                     .await?;
             }
 
-            let mut mentioned_user_ids = mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+            let mut update_mention_user_ids = HashSet::default();
+            let mut new_mention_user_ids =
+                mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
             // Filter out users that were mentioned before
-            for mention in old_mentions {
-                mentioned_user_ids.remove(&mention.user_id.to_proto());
+            for mention in &old_mentions {
+                if new_mention_user_ids.contains(&mention.user_id.to_proto()) {
+                    update_mention_user_ids.insert(mention.user_id.to_proto());
+                }
+
+                new_mention_user_ids.remove(&mention.user_id.to_proto());
+            }
+
+            let notification_kind_id =
+                self.get_notification_kind_id_by_name("ChannelMessageMention");
+
+            let existing_notifications = notification::Entity::find()
+                .filter(notification::Column::EntityId.eq(message_id))
+                .filter(notification::Column::Kind.eq(notification_kind_id))
+                .all(&*tx)
+                .await?;
+
+            // determine which notifications should be updated or deleted
+            let mut deleted_notification_ids = HashSet::default();
+            let mut updated_notification_ids = HashSet::default();
+            for notification in existing_notifications {
+                if update_mention_user_ids.contains(&notification.recipient_id.to_proto()) {
+                    updated_notification_ids.insert(notification.id);
+                } else {
+                    deleted_notification_ids.insert(notification.id);
+                }
             }
 
             let mut notifications = Vec::new();
-            for mentioned_user in mentioned_user_ids {
+            for mentioned_user in new_mention_user_ids {
                 notifications.extend(
                     self.create_notification(
                         UserId::from_proto(mentioned_user),
@@ -687,6 +713,9 @@ impl Database {
                 notifications,
                 reply_to_message_id: channel_message.reply_to_message_id,
                 timestamp: channel_message.sent_at,
+                deleted_mention_notification_ids: deleted_notification_ids
+                    .into_iter()
+                    .collect::<Vec<_>>(),
             })
         })
         .await
