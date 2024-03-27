@@ -2925,8 +2925,13 @@ impl Render for BlameEntryTooltip {
             .clone()
             .unwrap_or("<no name>".to_string());
         let committer_email = self.blame_entry.committer_mail.clone().unwrap_or_default();
-        let datetime = match self.blame_entry.committer_datetime() {
-            Ok(datetime) => datetime.format("%Y-%m-%d %H:%M").to_string(),
+        let absolute_timestamp = match self.blame_entry.committer_offset_date_time() {
+            Ok(timestamp) => time_format::format_localized_timestamp(
+                timestamp,
+                time::OffsetDateTime::now_utc(),
+                cx.local_timezone(),
+                time_format::TimestampFormat::Absolute,
+            ),
             Err(_) => "Error parsing date".to_string(),
         };
 
@@ -2953,7 +2958,10 @@ impl Render for BlameEntryTooltip {
                         )
                         .child(
                             div()
-                                .child(format!("{} {} - {}", committer, committer_email, datetime))
+                                .child(format!(
+                                    "{} {} - {}",
+                                    committer, committer_email, absolute_timestamp
+                                ))
                                 .text_color(cx.theme().colors().text_muted),
                         )
                         .child(div().child(summary)),

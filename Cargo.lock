@@ -4188,7 +4188,6 @@ name = "git"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clock",
  "git2",
  "lazy_static",

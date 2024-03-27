@@ -22,7 +22,6 @@ sum_tree.workspace = true
 text.workspace = true
 time.workspace = true
 parking_lot.workspace = true
-chrono.workspace = true
 url.workspace = true
 util.workspace = true
 serde.workspace = true

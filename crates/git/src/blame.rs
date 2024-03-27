@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -199,30 +198,6 @@ impl BlameEntry {
             original_line_number,
             ..Default::default()
         })
-    }
-
-    pub fn committer_datetime(&self) -> Result<DateTime<chrono::Utc>> {
-        if let (Some(committer_time), Some(committer_tz)) =
-            (self.committer_time, &self.committer_tz)
-        {
-            let naive_datetime = NaiveDateTime::from_timestamp_opt(committer_time, 0)
-                .ok_or_else(|| anyhow!("Failed to parse timestamp"))?;
-            let timezone_offset_in_seconds = committer_tz
-                .parse::<i32>()
-                .map_err(|e| anyhow!("Failed to parse timezone offset: {}", e))?
-                / 100
-                * 36;
-            let timezone = FixedOffset::east_opt(timezone_offset_in_seconds)
-                .ok_or_else(|| anyhow!("Invalid timezone offset: {}", committer_tz))?;
-
-            // Convert to DateTime<FixedOffset>, then to DateTime<Utc>
-            let datetime_with_timezone =
-                DateTime::<FixedOffset>::from_naive_utc_and_offset(naive_datetime, timezone);
-            Ok(datetime_with_timezone.with_timezone(&chrono::Utc))
-        } else {
-            // Directly return current time in UTC if there's no committer time or timezone
-            Ok(chrono::Utc::now())
-        }
     }
 
     pub fn committer_offset_date_time(&self) -> Result<time::OffsetDateTime> {
