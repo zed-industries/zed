@@ -13,7 +13,7 @@ use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{self, Child},
+    process::{self, windows::CommandExt, Child},
 };
 use std::{
     ffi::OsString,
@@ -217,6 +217,7 @@ impl LanguageServer {
 
         let mut server = process::Command::new(&binary.path)
             .current_dir(working_dir)
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .args(binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
