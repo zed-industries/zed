@@ -150,78 +150,80 @@ impl CopilotButton {
         let fs = self.fs.clone();
 
         ContextMenu::build(cx, move |mut menu, cx| {
-            if let Some(language) = self.language.clone() {
-                let fs = fs.clone();
-                let language_enabled =
-                    language_settings::language_settings(Some(&language), None, cx)
-                        .show_copilot_suggestions;
-
-                menu = menu.entry(
-                    format!(
-                        "{} Suggestions for {}",
-                        if language_enabled {
-                            "Disable"
-                        } else {
-                            "Enable"
-                        },
-                        language.name()
-                    ),
-                    None,
-                    move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
-                );
-            }
-
             let settings = AllLanguageSettings::get_global(cx);
+            let globally_enabled = settings.copilot_enabled(None, None);
 
-            if let Some(file) = &self.file {
-                let path = file.path().clone();
-                let path_enabled = settings.copilot_enabled_for_path(&path);
+            if globally_enabled {
+                if let Some(language) = self.language.clone() {
+                    let fs = fs.clone();
+                    let language_enabled =
+                        language_settings::language_settings(Some(&language), None, cx)
+                            .show_copilot_suggestions;
 
-                menu = menu.entry(
-                    format!(
-                        "{} Suggestions for This Path",
-                        if path_enabled { "Disable" } else { "Enable" }
-                    ),
-                    None,
-                    move |cx| {
-                        if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
-                            if let Ok(workspace) = workspace.root_view(cx) {
-                                let workspace = workspace.downgrade();
-                                cx.spawn(|cx| {
-                                    configure_disabled_globs(
-                                        workspace,
-                                        path_enabled.then_some(path.clone()),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
+                    menu = menu.entry(
+                        format!(
+                            "{} Suggestions for {}",
+                            if language_enabled {
+                                "Disable"
+                            } else {
+                                "Enable"
+                            },
+                            language.name()
+                        ),
+                        None,
+                        move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
+                    );
+                }
+
+                if let Some(file) = &self.file {
+                    let path = file.path().clone();
+                    let path_enabled = settings.copilot_enabled_for_path(&path);
+
+                    menu = menu.entry(
+                        format!(
+                            "{} Suggestions for This Path",
+                            if path_enabled { "Disable" } else { "Enable" }
+                        ),
+                        None,
+                        move |cx| {
+                            if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
+                                if let Ok(workspace) = workspace.root_view(cx) {
+                                    let workspace = workspace.downgrade();
+                                    cx.spawn(|cx| {
+                                        configure_disabled_globs(
+                                            workspace,
+                                            path_enabled.then_some(path.clone()),
+                                            cx,
+                                        )
+                                    })
+                                    .detach_and_log_err(cx);
+                                }
                             }
-                        }
-                    },
-                );
+                        },
+                    );
+                }
+
+                let fs = fs.clone();
+                menu = menu.entry("Disable Copilot", None, move |cx| {
+                    toggle_copilot_globally(fs.clone(), cx)
+                });
+            } else {
+                menu = menu.entry("Enable Copilot", None, move |cx| {
+                    toggle_copilot_globally(fs.clone(), cx)
+                });
             }
 
-            let globally_enabled = settings.copilot_enabled(None, None);
-            let fs_clone_for_first_use = fs.clone();
-            menu.entry(
-                if globally_enabled {
-                    "Disable Globally"
-                } else {
-                    "Enable Globally"
-                },
-                None,
-                move |cx| toggle_copilot_globally(fs_clone_for_first_use.clone(), cx),
-            )
-            .separator()
-            .link(
-                "Copilot Settings",
-                OpenBrowser {
-                    url: COPILOT_SETTINGS_URL.to_string(),
-                }
-                .boxed_clone(),
-            )
-            .entry("Hide", None, move |cx| hide_copilot(fs.clone(), cx))
-            .action("Sign Out", SignOut.boxed_clone())
+            let fs = self.fs.clone();
+            menu.separator()
+                .link(
+                    "Copilot Settings",
+                    OpenBrowser {
+                        url: COPILOT_SETTINGS_URL.to_string(),
+                    }
+                    .boxed_clone(),
+                )
+                .entry("Hide", None, move |cx| hide_copilot(fs.clone(), cx))
+                .action("Sign Out", SignOut.boxed_clone())
         })
     }
 
