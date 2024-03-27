@@ -13,7 +13,7 @@
       "cmd-up": "menu::SelectFirst",
       "cmd-down": "menu::SelectLast",
       "enter": "menu::Confirm",
-      "ctrl-enter": "menu::ShowContextMenu",
+      "ctrl-enter": "menu::SecondaryConfirm",
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "cmd-escape": "menu::Cancel",
@@ -182,17 +182,17 @@
     }
   },
   {
-    "context": "Editor && mode == full && copilot_suggestion",
+    "context": "Editor && mode == full && inline_completion",
     "bindings": {
-      "alt-]": "copilot::NextSuggestion",
-      "alt-[": "copilot::PreviousSuggestion",
-      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+      "alt-]": "editor::NextInlineCompletion",
+      "alt-[": "editor::PreviousInlineCompletion",
+      "alt-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
-    "context": "Editor && !copilot_suggestion",
+    "context": "Editor && !inline_completion",
     "bindings": {
-      "alt-\\": "copilot::Suggest"
+      "alt-\\": "editor::ShowInlineCompletion"
     }
   },
   {
@@ -366,6 +366,7 @@
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
       "cmd-f12": "editor::GoToTypeDefinition",
+      "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
@@ -600,7 +601,7 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "cmd-shift-p": "menu::SelectPrev" }
+    "bindings": { "cmd-shift-p": "file_finder::SelectPrev" }
   },
   {
     "context": "Terminal",

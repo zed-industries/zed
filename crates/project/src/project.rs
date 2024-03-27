@@ -32,16 +32,16 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter,
-    Model, ModelContext, PromptLevel, Task, WeakModel,
+    AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
+    EventEmitter, Model, ModelContext, PromptLevel, Task, WeakModel,
 };
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
     markdown, point_to_lsp,
     proto::{
-        deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
-        serialize_anchor, serialize_version, split_operations,
+        deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
+        serialize_version, split_operations,
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
@@ -92,7 +92,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, RopeFingerprint};
 use util::{
     debug_panic, defer,
     http::HttpClient,
@@ -141,6 +141,11 @@ pub enum OpenedBufferEvent {
     Err(BufferId, Arc<anyhow::Error>),
 }
 
+/// Semantics-aware entity that is relevant to one or more [`Worktree`] with the files.
+/// `Project` is responsible for tasks, LSP and collab queries, synchronizing worktree states accordingly.
+/// Maps [`Worktree`] entries with its own logic using [`ProjectEntryId`] and [`ProjectPath`] structs.
+///
+/// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
@@ -8898,7 +8903,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let fingerprint = deserialize_fingerprint(&envelope.payload.fingerprint)?;
+        let fingerprint = Default::default();
         let version = deserialize_version(&envelope.payload.version);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let mtime = envelope.payload.mtime.map(|time| time.into());
@@ -8926,7 +8931,7 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(&payload.version);
-        let fingerprint = deserialize_fingerprint(&payload.fingerprint)?;
+        let fingerprint = RopeFingerprint::default();
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,

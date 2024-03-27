@@ -3,7 +3,7 @@ use std::{assert_eq, future::IntoFuture, path::Path, time::Duration};
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use menu::{Confirm, SelectNext};
+use menu::{Confirm, SelectNext, SelectPrev};
 use project::FS_WATCH_LATENCY;
 use serde_json::json;
 use workspace::{AppState, Workspace};
@@ -1532,6 +1532,120 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "1.txt");
+    });
+}
+
+#[gpui::test]
+async fn test_switches_between_release_norelease_modes_on_forward_nav(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "1.txt": "// One",
+                "2.txt": "// Two",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+    open_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
+
+    // Open with a shortcut
+    cx.simulate_modifiers_change(Modifiers::command());
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_selection(finder, 0, "2.txt");
+        assert_match_at_position(finder, 1, "1.txt");
+    });
+
+    // Switch to navigating with other shortcuts
+    // Don't open file on modifiers release
+    cx.simulate_modifiers_change(Modifiers::control());
+    cx.dispatch_action(SelectNext);
+    cx.simulate_modifiers_change(Modifiers::none());
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "2.txt");
+        assert_match_selection(finder, 1, "1.txt");
+    });
+
+    // Back to navigation with initial shortcut
+    // Open file on modifiers release
+    cx.simulate_modifiers_change(Modifiers::command());
+    cx.dispatch_action(Toggle);
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "2.txt");
+    });
+}
+
+#[gpui::test]
+async fn test_switches_between_release_norelease_modes_on_backward_nav(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "1.txt": "// One",
+                "2.txt": "// Two",
+                "3.txt": "// Three"
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
+    open_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
+    open_queried_buffer("3", 1, "3.txt", &workspace, cx).await;
+
+    // Open with a shortcut
+    cx.simulate_modifiers_change(Modifiers::command());
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_selection(finder, 0, "3.txt");
+        assert_match_at_position(finder, 1, "2.txt");
+        assert_match_at_position(finder, 2, "1.txt");
+    });
+
+    // Switch to navigating with other shortcuts
+    // Don't open file on modifiers release
+    cx.simulate_modifiers_change(Modifiers::control());
+    cx.dispatch_action(menu::SelectPrev);
+    cx.simulate_modifiers_change(Modifiers::none());
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_at_position(finder, 0, "3.txt");
+        assert_match_at_position(finder, 1, "2.txt");
+        assert_match_selection(finder, 2, "1.txt");
+    });
+
+    // Back to navigation with initial shortcut
+    // Open file on modifiers release
+    cx.simulate_modifiers_change(Modifiers::command());
+    cx.dispatch_action(SelectPrev); // <-- File Finder's SelectPrev, not menu's
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "3.txt");
     });
 }
 

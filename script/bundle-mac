@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
 source script/lib/blob-store.sh
 
 build_flag="--release"
@@ -8,7 +8,7 @@ target_dir="release"
 open_result=false
 local_arch=false
 local_only=false
-overwrite_local_app=false
+local_install=false
 bundle_name=""
 zed_crate="zed"
 binary_name="Zed"
@@ -25,13 +25,13 @@ Build the application bundle for macOS.
 Options:
   -d    Compile in debug mode
   -l    Compile for local architecture and copy bundle to /Applications, implies -d.
-  -o    Open the resulting DMG or the app itself in local mode.
-  -f    Overwrite the local app bundle if it exists.
+  -o    Open dir with the resulting DMG or launch the app itself in local mode.
+  -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
   -h    Display this help and exit.
   "
 }
 
-while getopts 'dlfoh' flag
+while getopts 'dloih' flag
 do
     case "${flag}" in
         o) open_result=true;;
@@ -49,7 +49,7 @@ do
             local_only=true
             target_dir="debug"
             ;;
-        f) overwrite_local_app=true;;
+        i) local_install=true;;
         h)
            help_info
            exit 0
@@ -152,8 +152,8 @@ function sign_binaries() {
     if [ "$local_arch" = false ]; then
         cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
     else
-        cp -R target/${architecture_dir}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
-        cp -R target/${architecture_dir}/${target_dir}/cli "${app_path}/Contents/MacOS/"
+        cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+        cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
     fi
 
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
@@ -218,16 +218,19 @@ function sign_binaries() {
     fi
 
     if [ "$local_only" = true ]; then
-        if [ "$overwrite_local_app" = true ]; then
+        if [ "$local_install" = true ]; then
             rm -rf "/Applications/$bundle_name"
-        fi
-        mv "$app_path" "/Applications/$bundle_name"
-
-        if [ "$open_result" = true ]; then
-            open "/Applications/$bundle_name"
+            mv "$app_path" "/Applications/$bundle_name"
+            echo "Installed application bundle: /Applications/$bundle_name"
+            if [ "$open_result" = true ]; then
+                echo "Opening /Applications/$bundle_name"
+                open "/Applications/$bundle_name"
+            fi
         else
-            echo "Installed application bundle:"
-            echo "/Applications/$bundle_name"
+            if [ "$open_result" = true ]; then
+                echo "Opening $app_path"
+                open "$app_path"
+            fi
         fi
     else
         dmg_target_directory="target/${architecture_dir}/${target_dir}"

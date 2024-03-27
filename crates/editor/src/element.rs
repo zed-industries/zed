@@ -344,9 +344,9 @@ impl EditorElement {
                 cx.propagate();
             }
         });
-        register_action(view, cx, Editor::next_copilot_suggestion);
-        register_action(view, cx, Editor::previous_copilot_suggestion);
-        register_action(view, cx, Editor::copilot_suggest);
+        register_action(view, cx, Editor::next_inline_completion);
+        register_action(view, cx, Editor::previous_inline_completion);
+        register_action(view, cx, Editor::show_inline_completion);
         register_action(view, cx, Editor::context_menu_first);
         register_action(view, cx, Editor::context_menu_prev);
         register_action(view, cx, Editor::context_menu_next);
@@ -354,7 +354,7 @@ impl EditorElement {
         register_action(view, cx, Editor::display_cursor_names);
         register_action(view, cx, Editor::unique_lines_case_insensitive);
         register_action(view, cx, Editor::unique_lines_case_sensitive);
-        register_action(view, cx, Editor::accept_partial_copilot_suggestion);
+        register_action(view, cx, Editor::accept_partial_inline_completion);
         register_action(view, cx, Editor::revert_selected_hunks);
     }
 
@@ -1500,47 +1500,17 @@ impl EditorElement {
                                     .v_flex()
                                     .justify_start()
                                     .id("jump to collapsed context")
-                                    .group("")
                                     .w(relative(1.0))
                                     .h_full()
-                                    .cursor_pointer()
                                     .child(
                                         div()
                                             .h_px()
                                             .w_full()
                                             .bg(cx.theme().colors().border_variant)
-                                            .group_hover("", |style| {
+                                            .group_hover("excerpt-jump-action", |style| {
                                                 style.bg(cx.theme().colors().border)
                                             }),
-                                    )
-                                    .when_some(jump_data.clone(), |this, jump_data| {
-                                        this.on_click(cx.listener_for(&self.editor, {
-                                            let path = jump_data.path.clone();
-                                            move |editor, _, cx| {
-                                                cx.stop_propagation();
-
-                                                editor.jump(
-                                                    path.clone(),
-                                                    jump_data.position,
-                                                    jump_data.anchor,
-                                                    cx,
-                                                );
-                                            }
-                                        }))
-                                        .tooltip(
-                                            move |cx| {
-                                                Tooltip::for_action(
-                                                    format!(
-                                                        "Jump to {}:L{}",
-                                                        jump_data.path.path.display(),
-                                                        jump_data.position.row + 1
-                                                    ),
-                                                    &OpenExcerpts,
-                                                    cx,
-                                                )
-                                            },
-                                        )
-                                    }),
+                                    ),
                             )
                             .child(
                                 h_flex()
@@ -1558,7 +1528,7 @@ impl EditorElement {
                                                     .path(IconName::ArrowUpRight.path())
                                                     .size(IconSize::XSmall.rems())
                                                     .text_color(cx.theme().colors().border)
-                                                    .group_hover("", |style| {
+                                                    .group_hover("excerpt-jump-action", |style| {
                                                         style.text_color(
                                                             cx.theme().colors().editor_line_number,
                                                         )
@@ -1592,6 +1562,34 @@ impl EditorElement {
                                             }),
                                     ),
                             )
+                            .group("excerpt-jump-action")
+                            .cursor_pointer()
+                            .when_some(jump_data.clone(), |this, jump_data| {
+                                this.on_click(cx.listener_for(&self.editor, {
+                                    let path = jump_data.path.clone();
+                                    move |editor, _, cx| {
+                                        cx.stop_propagation();
+
+                                        editor.jump(
+                                            path.clone(),
+                                            jump_data.position,
+                                            jump_data.anchor,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action(
+                                        format!(
+                                            "Jump to {}:L{}",
+                                            jump_data.path.path.display(),
+                                            jump_data.position.row + 1
+                                        ),
+                                        &OpenExcerpts,
+                                        cx,
+                                    )
+                                })
+                            })
                     };
                     element.into_any()
                 }
