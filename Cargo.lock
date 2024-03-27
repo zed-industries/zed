@@ -9399,6 +9399,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tab_switcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "taffy"
 version = "0.3.11"
 source = "git+https://github.com/DioxusLabs/taffy?rev=1876f72bee5e376023eaa518aa7b8a34c769bd1b#1876f72bee5e376023eaa518aa7b8a34c769bd1b"
@@ -12522,6 +12544,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "tab_switcher",
  "task",
  "tasks_ui",
  "terminal_view",

@@ -263,9 +263,7 @@
   {
     "context": "Pane",
     "bindings": {
-      "ctrl-shift-tab": "pane::ActivatePrevItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
-      "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-w": "pane::CloseActiveItem",
       "alt-ctrl-t": "pane::CloseInactiveItems",
@@ -420,6 +418,8 @@
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
+      "ctrl-tab": "tab_switcher::Toggle",
+      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "ctrl-e": "file_finder::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
@@ -588,6 +588,10 @@
   {
     "context": "FileFinder",
     "bindings": { "ctrl-shift-p": "file_finder::SelectPrev" }
+  },
+  {
+    "context": "TabSwitcher",
+    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",
