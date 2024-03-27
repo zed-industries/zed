@@ -3237,6 +3237,7 @@ dependencies = [
  "linkify",
  "log",
  "lsp",
+ "menu",
  "multi_buffer",
  "ordered-float 2.10.0",
  "parking_lot",
