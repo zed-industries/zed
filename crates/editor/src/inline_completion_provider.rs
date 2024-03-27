@@ -30,7 +30,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &AppContext,
-    ) -> Option<&str>;
+    ) -> Option<String>;
 }
 
 pub trait InlineCompletionProviderHandle {
@@ -61,7 +61,7 @@ pub trait InlineCompletionProviderHandle {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str>;
+    ) -> Option<String>;
 }
 
 impl<T> InlineCompletionProviderHandle for Model<T>
@@ -114,7 +114,7 @@ where
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<String> {
         self.read(cx)
             .active_completion_text(buffer, cursor_position, cx)
     }

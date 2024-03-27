@@ -1767,7 +1767,9 @@ impl Editor {
         self.inline_completion_provider =
             provider.map(|provider| RegisteredInlineCompletionProvider {
                 _subscription: cx.observe(&provider, |this, _, cx| {
-                    this.update_visible_inline_completion(cx);
+                    if this.focus_handle.is_focused(cx) {
+                        this.update_visible_inline_completion(cx);
+                    }
                 }),
                 provider: Arc::new(provider),
             });

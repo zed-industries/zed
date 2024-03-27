@@ -1,4 +1,4 @@
-use crate::Supermaven;
+use crate::{common_prefix, ResponseItem, Supermaven};
 use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, Global, Model, ModelContext, Task};
@@ -6,28 +6,14 @@ use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffse
 use std::path::PathBuf;
 
 pub struct SupermavenCompletionProvider {
-    completions: Vec<String>,
-    active_completion_index: usize,
     pending_refresh: Task<Result<()>>,
 }
 
 impl SupermavenCompletionProvider {
     pub fn new() -> Self {
         Self {
-            completions: Vec::new(),
-            active_completion_index: 0,
             pending_refresh: Task::ready(Ok(())),
         }
-    }
-
-    fn update_completions(
-        &mut self,
-        buffer: &Model<Buffer>,
-        cursor_position: Anchor,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.completions = Supermaven::get(cx).completions(buffer, cursor_position, cx);
-        self.active_completion_index = 0;
     }
 }
 
@@ -52,24 +38,14 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         cx: &mut ModelContext<Self>,
     ) {
         dbg!("refresh");
-        let buffer = buffer_handle.read(cx);
-        let path = buffer
-            .file()
-            .and_then(|file| Some(file.as_local()?.abs_path(cx)))
-            .unwrap_or_else(|| PathBuf::from("untitled"));
-        let content = buffer.text();
-        let cursor_offset = cursor_position.to_offset(buffer);
-        let refresh = Supermaven::update(cx, |supermaven, _| {
-            supermaven.complete(&path, content, cursor_offset)
+
+        let refresh = Supermaven::update(cx, |supermaven, cx| {
+            supermaven.complete(&buffer_handle, cursor_position, cx)
         });
 
-        self.update_completions(&buffer_handle, cursor_position, cx);
         self.pending_refresh = cx.spawn(|this, mut cx| async move {
             refresh.await;
-            this.update(&mut cx, |this, cx| {
-                this.update_completions(&buffer_handle, cursor_position, cx);
-                cx.notify();
-            })
+            this.update(&mut cx, |this, cx| cx.notify())
         });
     }
 
@@ -80,23 +56,24 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         direction: Direction,
         cx: &mut ModelContext<Self>,
     ) {
-        match direction {
-            Direction::Prev => {
-                self.active_completion_index = if self.active_completion_index == 0 {
-                    self.completions.len().saturating_sub(1)
-                } else {
-                    self.active_completion_index - 1
-                };
-            }
-            Direction::Next => {
-                if self.completions.len() == 0 {
-                    self.active_completion_index = 0
-                } else {
-                    self.active_completion_index =
-                        (self.active_completion_index + 1) % self.completions.len();
-                }
-            }
-        }
+        // implement cycling
+        // match direction {
+        //     Direction::Prev => {
+        //         self.active_completion_index = if self.active_completion_index == 0 {
+        //             self.completions.len().saturating_sub(1)
+        //         } else {
+        //             self.active_completion_index - 1
+        //         };
+        //     }
+        //     Direction::Next => {
+        //         if self.completions.len() == 0 {
+        //             self.active_completion_index = 0
+        //         } else {
+        //             self.active_completion_index =
+        //                 (self.active_completion_index + 1) % self.completions.len();
+        //         }
+        //     }
+        // }
     }
 
     fn accept(&mut self, cx: &mut ModelContext<Self>) {
@@ -112,7 +89,47 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &AppContext,
-    ) -> Option<&str> {
-        Some(self.completions.get(self.active_completion_index)?.as_str())
+    ) -> Option<String> {
+        struct Candidate {
+            prefix_len: usize,
+            text: String,
+        }
+
+        let buffer = buffer.read(cx);
+        // let cursor_offset = cursor_position.to_offset(buffer);
+        let mut candidate: Option<Candidate> = None;
+        for completion in Supermaven::get(cx).completions() {
+            let mut completion_start = completion.start.to_offset(buffer);
+            let completion_text = completion
+                .completion
+                .iter()
+                .map(|completion| {
+                    if let ResponseItem::Text { text } = completion {
+                        text.as_str()
+                    } else {
+                        ""
+                    }
+                })
+                .collect::<String>();
+            let prefix_len =
+                common_prefix(buffer.chars_at(completion_start), completion_text.chars());
+
+            // completion_start += prefix_len;
+
+            let completion_text = &completion_text[prefix_len..];
+            if prefix_len != 0 && !completion_text.trim().is_empty() {
+                if candidate.as_ref().map_or(true, |candidate| {
+                    (prefix_len, completion_text.len())
+                        >= (candidate.prefix_len, candidate.text.len())
+                }) {
+                    candidate = Some(Candidate {
+                        prefix_len,
+                        text: completion_text.to_string(),
+                    });
+                }
+            }
+        }
+
+        candidate.map(|candidate| candidate.text)
     }
 }

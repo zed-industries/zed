@@ -2,7 +2,7 @@ mod messages;
 mod supermaven_completion_provider;
 
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use futures::{
     channel::{mpsc, oneshot},
     io::BufReader,
@@ -12,7 +12,7 @@ use gpui::{
     AppContext, AsyncAppContext, Bounds, Global, GlobalPixels, InteractiveText, Model, Render,
     StyledText, Task, ViewContext,
 };
-use language::{language_settings::all_language_settings, Anchor, Buffer};
+use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use messages::*;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -20,7 +20,13 @@ use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use std::{future::Future, path::Path, process::Stdio};
+use std::{
+    cmp::Reverse,
+    future::Future,
+    iter,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 pub use supermaven_completion_provider::*;
 use ui::prelude::*;
 use util::ResultExt;
@@ -52,7 +58,7 @@ pub enum Supermaven {
     Started {
         _process: Child,
         next_state_id: SupermavenStateId,
-        states: HashMap<SupermavenStateId, CompletionState>,
+        states: BTreeMap<SupermavenStateId, CompletionState>,
         update_txs: Vec<oneshot::Sender<()>>,
         outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
         _handle_outgoing_messages: Task<Result<()>>,
@@ -93,7 +99,7 @@ impl Supermaven {
                             *this = Self::Started {
                                 _process: process,
                                 next_state_id: SupermavenStateId::default(),
-                                states: HashMap::default(),
+                                states: BTreeMap::default(),
                                 update_txs: Vec::new(),
                                 outgoing_tx,
                                 _handle_outgoing_messages: cx.spawn(|_cx| {
@@ -120,9 +126,9 @@ impl Supermaven {
 
     pub fn complete(
         &mut self,
-        path: &Path,
-        content: String,
-        offset: usize,
+        buffer: &Model<Buffer>,
+        cursor_position: Anchor,
+        cx: &AppContext,
     ) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
         if let Self::Started {
@@ -133,15 +139,22 @@ impl Supermaven {
             ..
         } = self
         {
-            let path = path.to_string_lossy().to_string();
+            let buffer = buffer.read(cx);
+            let path = buffer
+                .file()
+                .and_then(|file| Some(file.as_local()?.abs_path(cx)))
+                .unwrap_or_else(|| PathBuf::from("untitled"))
+                .to_string_lossy()
+                .to_string();
+            let content = buffer.text();
+            let offset = cursor_position.to_offset(buffer);
             let state_id = *next_state_id;
             next_state_id.0 += 1;
 
             states.insert(
                 state_id,
                 CompletionState {
-                    prefix: content[..offset].to_string(),
-                    suffix: content[offset..].to_string(),
+                    start: cursor_position.bias_left(buffer),
                     completion: Vec::new(),
                 },
             );
@@ -164,49 +177,13 @@ impl Supermaven {
         }
     }
 
-    pub fn completions(
-        &self,
-        buffer: &Model<Buffer>,
-        cursor_position: Anchor,
-        cx: &AppContext,
-    ) -> Vec<String> {
-        let mut completions = Vec::new();
-        if let Self::Started { states, .. } = self {
-            for state in states.values() {
-                // todo!("avoid collecting into a string")
-                let buffer_prefix = buffer
-                    .read(cx)
-                    .text_for_range(Anchor::MIN..cursor_position)
-                    .collect::<String>();
-                if buffer_prefix.starts_with(&state.prefix)
-                    && buffer_prefix.len() > state.prefix.len()
-                {
-                    let user_input = &buffer_prefix[state.prefix.len()..];
-                    let completion = state
-                        .completion
-                        .iter()
-                        .filter_map(|completion| {
-                            if let ResponseItem::Text { text } = completion {
-                                Some(text.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<String>();
-
-                    let common_prefix_len = user_input
-                        .chars()
-                        .zip(completion.chars())
-                        .take_while(|(input_char, completion_char)| input_char == completion_char)
-                        .count();
-                    let completion = &completion[common_prefix_len..];
-                    if !completion.is_empty() {
-                        completions.push(completion.to_string());
-                    }
-                }
-            }
-        }
-        completions
+    pub fn completions(&self) -> impl Iterator<Item = &CompletionState> {
+        let completions = if let Self::Started { states, .. } = self {
+            Some(states.values())
+        } else {
+            None
+        };
+        completions.into_iter().flatten()
     }
 
     async fn handle_outgoing_messages(
@@ -290,13 +267,12 @@ impl Supermaven {
 
 impl Global for Supermaven {}
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct SupermavenStateId(usize);
 
 #[allow(dead_code)]
 pub struct CompletionState {
-    prefix: String,
-    suffix: String,
+    start: Anchor,
     completion: Vec<ResponseItem>,
 }
 
@@ -321,6 +297,16 @@ impl Render for ActivationRequestPrompt {
             move |_, cx| cx.open_url(&activate_url)
         })
     }
+}
+
+pub(crate) fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(
+    a: T1,
+    b: T2,
+) -> usize {
+    a.zip(b)
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum()
 }
 
 // #[cfg(test)]
