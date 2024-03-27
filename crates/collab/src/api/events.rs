@@ -459,6 +459,12 @@ impl ToUpload {
             }
 
             insert.end().await?;
+
+            let event_count = rows.len();
+            log::info!(
+                "wrote {event_count} {event_specifier} to '{table}'",
+                event_specifier = if event_count == 1 { "event" } else { "events" }
+            );
         }
 
         Ok(())
