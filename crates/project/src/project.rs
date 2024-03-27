@@ -17,7 +17,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
-use copilot::{request, Copilot};
+use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
 use fs::repository::GitRepository;
 use futures::{
@@ -7403,7 +7403,7 @@ impl Project {
             let client = self.client.clone();
             let version = buffer.read(cx).version();
 
-            cx.spawn(move |_| async move {
+            cx.spawn(|_| async move {
                 let project_id = project_id.context("unable to get project id for buffer")?;
                 let response = client
                     .request(proto::BlameBuffer {
@@ -7413,53 +7413,7 @@ impl Project {
                     })
                     .await?;
 
-                let entries = response
-                    .entries
-                    .into_iter()
-                    .filter_map(|entry| {
-                        Some(git::blame::BlameEntry {
-                            sha: git::Oid::from_bytes(&entry.sha).ok()?,
-                            range: entry.start_line..entry.end_line,
-                            original_line_number: entry.original_line_number,
-                            committer: entry.committer,
-                            committer_time: entry.committer_time,
-                            committer_tz: entry.committer_tz,
-                            committer_mail: entry.committer_mail,
-                            author: entry.author,
-                            author_mail: entry.author_mail,
-                            author_time: entry.author_time,
-                            author_tz: entry.author_tz,
-                            summary: entry.summary,
-                            previous: entry.previous,
-                            filename: entry.filename,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                let messages = response
-                    .messages
-                    .into_iter()
-                    .filter_map(|message| {
-                        Some((git::Oid::from_bytes(&message.oid).ok()?, message.message))
-                    })
-                    .collect::<HashMap<_, _>>();
-
-                let permalinks = response
-                    .permalinks
-                    .into_iter()
-                    .filter_map(|permalink| {
-                        Some((
-                            git::Oid::from_bytes(&permalink.oid).ok()?,
-                            Url::from_str(&permalink.permalink).ok()?,
-                        ))
-                    })
-                    .collect::<HashMap<_, _>>();
-
-                Ok(Blame {
-                    entries,
-                    messages,
-                    permalinks,
-                })
+                Ok(deserialize_blame_buffer_response(response))
             })
         }
     }
@@ -7494,15 +7448,8 @@ impl Project {
             })?
             .await?;
 
-        Ok(proto::BlameBufferResponse {
-            entries: Default::default(),
-            messages: Default::default(),
-            permalinks: Default::default(),
-        })
+        Ok(serialize_blame_buffer_response(blame))
     }
-
-    // foreman start
-    // ./script/zed-local -2
 
     async fn handle_unshare_project(
         this: Model<Self>,
@@ -9942,4 +9889,100 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         }
     }
     Ok(parsed_env)
+}
+
+fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBufferResponse {
+    let entries = blame
+        .entries
+        .into_iter()
+        .map(|entry| proto::BlameEntry {
+            sha: entry.sha.as_bytes().into(),
+            start_line: entry.range.start,
+            end_line: entry.range.end,
+            original_line_number: entry.original_line_number,
+            author: entry.author.clone(),
+            author_mail: entry.author_mail.clone(),
+            author_time: entry.author_time,
+            author_tz: entry.author_tz.clone(),
+            committer: entry.committer.clone(),
+            committer_mail: entry.committer_mail.clone(),
+            committer_time: entry.committer_time,
+            committer_tz: entry.committer_tz.clone(),
+            summary: entry.summary.clone(),
+            previous: entry.previous.clone(),
+            filename: entry.filename.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let messages = blame
+        .messages
+        .into_iter()
+        .map(|(oid, message)| proto::CommitMessage {
+            oid: oid.as_bytes().into(),
+            message,
+        })
+        .collect::<Vec<_>>();
+
+    let permalinks = blame
+        .permalinks
+        .into_iter()
+        .map(|(oid, url)| proto::CommitPermalink {
+            oid: oid.as_bytes().into(),
+            permalink: url.to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    proto::BlameBufferResponse {
+        entries,
+        messages,
+        permalinks,
+    }
+}
+
+fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> git::blame::Blame {
+    let entries = response
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            Some(git::blame::BlameEntry {
+                sha: git::Oid::from_bytes(&entry.sha).ok()?,
+                range: entry.start_line..entry.end_line,
+                original_line_number: entry.original_line_number,
+                committer: entry.committer,
+                committer_time: entry.committer_time,
+                committer_tz: entry.committer_tz,
+                committer_mail: entry.committer_mail,
+                author: entry.author,
+                author_mail: entry.author_mail,
+                author_time: entry.author_time,
+                author_tz: entry.author_tz,
+                summary: entry.summary,
+                previous: entry.previous,
+                filename: entry.filename,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let messages = response
+        .messages
+        .into_iter()
+        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
+        .collect::<HashMap<_, _>>();
+
+    let permalinks = response
+        .permalinks
+        .into_iter()
+        .filter_map(|permalink| {
+            Some((
+                git::Oid::from_bytes(&permalink.oid).ok()?,
+                Url::from_str(&permalink.permalink).ok()?,
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+
+    Blame {
+        entries,
+        permalinks,
+        messages,
+    }
 }

@@ -25,6 +25,11 @@ impl Oid {
         let oid = libgit::Oid::from_bytes(bytes).context("failed to parse bytes into git oid")?;
         Ok(Self(oid))
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
