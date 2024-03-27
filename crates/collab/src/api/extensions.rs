@@ -55,7 +55,7 @@ async fn get_extensions(
     let extension_ids = params
         .ids
         .as_ref()
-        .map(|s| s.split(",").map(|s| s.trim()).collect::<Vec<_>>());
+        .map(|s| s.split(',').map(|s| s.trim()).collect::<Vec<_>>());
 
     let extensions = if let Some(extension_ids) = extension_ids {
         app.db

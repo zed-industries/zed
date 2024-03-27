@@ -20,7 +20,7 @@ impl Database {
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
             }
 
-            self.get_extensions_where(condition, max_schema_version, Some(limit as u64), &*tx)
+            self.get_extensions_where(condition, max_schema_version, Some(limit as u64), &tx)
                 .await
         })
         .await
@@ -40,7 +40,7 @@ impl Database {
                 )
                 .add(extension::Column::ExternalId.is_in(ids.iter().copied()));
 
-            self.get_extensions_where(condition, max_schema_version, None, &*tx)
+            self.get_extensions_where(condition, max_schema_version, None, &tx)
                 .await
         })
         .await
