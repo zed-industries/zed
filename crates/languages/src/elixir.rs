@@ -1,28 +1,30 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
+use project::project_settings::ProjectSettings;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
+use serde_json::Value;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
     env::consts,
     ops::Deref,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
 };
+use task::static_source::{Definition, TaskDefinitions};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -272,6 +274,18 @@ impl LspAdapter for ElixirLspAdapter {
             filter_range,
         })
     }
+
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        let settings = ProjectSettings::get_global(cx)
+            .lsp
+            .get("elixir-ls")
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default();
+
+        serde_json::json!({
+            "elixirLS": settings
+        })
+    }
 }
 
 async fn get_cached_server_binary_elixir_ls(
@@ -412,7 +426,7 @@ impl LspAdapter for NextLspAdapter {
 }
 
 async fn get_cached_server_binary_next(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -534,4 +548,46 @@ fn label_for_symbol_elixir(
         text: name.to_string(),
         filter_range: 0..name.len(),
     })
+}
+
+pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
+    // Taken from https://gist.github.com/josevalim/2e4f60a14ccd52728e3256571259d493#gistcomment-4995881
+    ContextProviderWithTasks::new(TaskDefinitions(vec![
+        Definition {
+            label: "Elixir: test suite".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: failed tests suite".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned(), "--failed".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: test file".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned(), "$ZED_FILE".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: test at current line".to_owned(),
+            command: "mix".to_owned(),
+            args: vec!["test".to_owned(), "$ZED_FILE:$ZED_ROW".to_owned()],
+            ..Default::default()
+        },
+        Definition {
+            label: "Elixir: break line".to_owned(),
+            command: "iex".to_owned(),
+            args: vec![
+                "-S".to_owned(),
+                "mix".to_owned(),
+                "test".to_owned(),
+                "-b".to_owned(),
+                "$ZED_FILE:$ZED_ROW".to_owned(),
+            ],
+            ..Default::default()
+        },
+    ]))
 }

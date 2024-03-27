@@ -10,6 +10,7 @@ use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use fs::{Fs, RemoveOptions};
@@ -23,13 +24,13 @@ use futures::{
 };
 use gpui::{actions, AppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
-    ffi::OsStr,
     path::{self, Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -38,6 +39,7 @@ use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
+    maybe,
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
@@ -52,27 +54,12 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 const CURRENT_SCHEMA_VERSION: i64 = 1;
 
-#[derive(Deserialize)]
-pub struct ExtensionsApiResponse {
-    pub data: Vec<ExtensionApiResponse>,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct ExtensionApiResponse {
-    pub id: Arc<str>,
-    pub name: String,
-    pub version: Arc<str>,
-    pub description: Option<String>,
-    pub authors: Vec<String>,
-    pub repository: String,
-    pub download_count: usize,
-}
-
 pub struct ExtensionStore {
     builder: Arc<ExtensionBuilder>,
     extension_index: ExtensionIndex,
     fs: Arc<dyn Fs>,
     http_client: Arc<HttpClientWithUrl>,
+    telemetry: Option<Arc<Telemetry>>,
     reload_tx: UnboundedSender<Option<Arc<str>>>,
     reload_complete_senders: Vec<oneshot::Sender<()>>,
     installed_dir: PathBuf,
@@ -107,6 +94,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionFailedToLoad(Arc<str>),
 }
 
 impl EventEmitter<Event> for ExtensionStore {}
@@ -146,7 +134,7 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
-    http_client: Arc<HttpClientWithUrl>,
+    client: Arc<Client>,
     node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -157,7 +145,8 @@ pub fn init(
             EXTENSIONS_DIR.clone(),
             None,
             fs,
-            http_client,
+            client.http_client().clone(),
+            Some(client.telemetry().clone()),
             node_runtime,
             language_registry,
             theme_registry,
@@ -184,6 +173,7 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        telemetry: Option<Arc<Telemetry>>,
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
@@ -213,6 +203,7 @@ impl ExtensionStore {
             wasm_extensions: Vec::new(),
             fs,
             http_client,
+            telemetry,
             language_registry,
             theme_registry,
             reload_tx,
@@ -379,7 +370,7 @@ impl ExtensionStore {
         &self,
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<ExtensionApiResponse>>> {
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let version = CURRENT_SCHEMA_VERSION.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
         if let Some(search) = search {
@@ -408,8 +399,7 @@ impl ExtensionStore {
                 );
             }
 
-            let response: ExtensionsApiResponse = serde_json::from_slice(&body)?;
-
+            let response: GetExtensionsResponse = serde_json::from_slice(&body)?;
             Ok(response.data)
         })
     }
@@ -430,8 +420,9 @@ impl ExtensionStore {
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
     ) {
-        let extensions_dir = self.extensions_dir();
+        let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
             hash_map::Entry::Occupied(_) => return,
@@ -456,11 +447,19 @@ impl ExtensionStore {
                 .get(&url.as_ref(), Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+
+            fs.remove_dir(
+                &extension_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
-            archive
-                .unpack(extensions_dir.join(extension_id.as_ref()))
-                .await?;
+            archive.unpack(extension_dir).await?;
             this.update(&mut cx, |this, cx| {
                 this.reload(Some(extension_id.clone()), cx)
             })?
@@ -536,7 +535,7 @@ impl ExtensionStore {
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
-        let extensions_dir = self.extensions_dir();
+        let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
@@ -559,7 +558,7 @@ impl ExtensionStore {
             });
 
             fs.remove_dir(
-                &extensions_dir.join(extension_id.as_ref()),
+                &extension_dir,
                 RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: true,
@@ -584,8 +583,8 @@ impl ExtensionStore {
         let builder = self.builder.clone();
 
         cx.spawn(move |this, mut cx| async move {
-            let extension_manifest =
-                Self::load_extension_manifest(fs.clone(), &extension_source_path).await?;
+            let mut extension_manifest =
+                ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
             if !this.update(&mut cx, |this, cx| {
@@ -619,7 +618,7 @@ impl ExtensionStore {
                         builder
                             .compile_extension(
                                 &extension_source_path,
-                                &extension_manifest,
+                                &mut extension_manifest,
                                 CompileExtensionOptions { release: false },
                             )
                             .await
@@ -664,9 +663,13 @@ impl ExtensionStore {
 
         cx.notify();
         let compile = cx.background_executor().spawn(async move {
-            let manifest = Self::load_extension_manifest(fs, &path).await?;
+            let mut manifest = ExtensionManifest::load(fs, &path).await?;
             builder
-                .compile_extension(&path, &manifest, CompileExtensionOptions { release: true })
+                .compile_extension(
+                    &path,
+                    &mut manifest,
+                    CompileExtensionOptions { release: true },
+                )
                 .await
         });
 
@@ -756,6 +759,17 @@ impl ExtensionStore {
             extensions_to_unload.len() - reload_count
         );
 
+        if let Some(telemetry) = &self.telemetry {
+            for extension_id in &extensions_to_load {
+                if let Some(extension) = self.extension_index.extensions.get(extension_id) {
+                    telemetry.report_extension_event(
+                        extension_id.clone(),
+                        extension.manifest.version.clone(),
+                    );
+                }
+            }
+        }
+
         let themes_to_remove = old_index
             .themes
             .iter()
@@ -835,12 +849,18 @@ impl ExtensionStore {
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
-                None,
                 move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
-                    Ok((config, queries))
+                    let tasks = std::fs::read_to_string(language_path.join("tasks.json"))
+                        .ok()
+                        .and_then(|contents| {
+                            let definitions = serde_json_lenient::from_str(&contents).log_err()?;
+                            Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
+                        });
+
+                    Ok((config, queries, tasks))
                 },
             );
         }
@@ -879,41 +899,40 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let mut path = root_dir.clone();
-                path.extend([extension.manifest.id.as_ref(), "extension.wasm"]);
-                let Some(mut wasm_file) = fs
-                    .open_sync(&path)
-                    .await
-                    .context("failed to open wasm file")
-                    .log_err()
-                else {
-                    continue;
-                };
+                let wasm_extension = maybe!(async {
+                    let mut path = root_dir.clone();
+                    path.extend([extension.manifest.clone().id.as_ref(), "extension.wasm"]);
+                    let mut wasm_file = fs
+                        .open_sync(&path)
+                        .await
+                        .context("failed to open wasm file")?;
 
-                let mut wasm_bytes = Vec::new();
-                if wasm_file
-                    .read_to_end(&mut wasm_bytes)
-                    .context("failed to read wasm")
-                    .log_err()
-                    .is_none()
-                {
-                    continue;
+                    let mut wasm_bytes = Vec::new();
+                    wasm_file
+                        .read_to_end(&mut wasm_bytes)
+                        .context("failed to read wasm")?;
+
+                    wasm_host
+                        .load_extension(
+                            wasm_bytes,
+                            extension.manifest.clone().clone(),
+                            cx.background_executor().clone(),
+                        )
+                        .await
+                        .with_context(|| {
+                            format!("failed to load wasm extension {}", extension.manifest.id)
+                        })
+                })
+                .await;
+
+                if let Some(wasm_extension) = wasm_extension.log_err() {
+                    wasm_extensions.push((extension.manifest.clone(), wasm_extension));
+                } else {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                    })
+                    .ok();
                 }
-
-                let Some(wasm_extension) = wasm_host
-                    .load_extension(
-                        wasm_bytes,
-                        extension.manifest.clone(),
-                        cx.background_executor().clone(),
-                    )
-                    .await
-                    .context("failed to load wasm extension")
-                    .log_err()
-                else {
-                    continue;
-                };
-
-                wasm_extensions.push((extension.manifest.clone(), wasm_extension));
             }
 
             this.update(&mut cx, |this, cx| {
@@ -983,8 +1002,7 @@ impl ExtensionStore {
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
     ) -> Result<()> {
-        let mut extension_manifest =
-            Self::load_extension_manifest(fs.clone(), &extension_dir).await?;
+        let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
 
         // TODO: distinguish dev extensions more explicitly, by the absence
@@ -1075,72 +1093,6 @@ impl ExtensionStore {
         );
 
         Ok(())
-    }
-
-    pub async fn load_extension_manifest(
-        fs: Arc<dyn Fs>,
-        extension_dir: &Path,
-    ) -> Result<ExtensionManifest> {
-        let extension_name = extension_dir
-            .file_name()
-            .and_then(OsStr::to_str)
-            .ok_or_else(|| anyhow!("invalid extension name"))?;
-
-        let mut extension_manifest_path = extension_dir.join("extension.json");
-        if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
-        } else {
-            extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
-        }
-    }
-}
-
-fn manifest_from_old_manifest(
-    manifest_json: OldExtensionManifest,
-    extension_id: &str,
-) -> ExtensionManifest {
-    ExtensionManifest {
-        id: extension_id.into(),
-        name: manifest_json.name,
-        version: manifest_json.version,
-        description: manifest_json.description,
-        repository: manifest_json.repository,
-        authors: manifest_json.authors,
-        schema_version: 0,
-        lib: Default::default(),
-        themes: {
-            let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort();
-            themes.dedup();
-            themes
-        },
-        languages: {
-            let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort();
-            languages.dedup();
-            languages
-        },
-        grammars: manifest_json
-            .grammars
-            .into_keys()
-            .map(|grammar_name| (grammar_name, Default::default()))
-            .collect(),
-        language_servers: Default::default(),
     }
 }
 

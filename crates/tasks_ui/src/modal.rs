@@ -45,7 +45,7 @@ impl_actions!(task, [Rerun, Spawn]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<(TaskSourceKind, Arc<dyn Task>)>,
+    candidates: Option<Vec<(TaskSourceKind, Arc<dyn Task>)>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -62,7 +62,7 @@ impl TasksModalDelegate {
         Self {
             inventory,
             workspace,
-            candidates: Vec::new(),
+            candidates: None,
             matches: Vec::new(),
             selected_index: 0,
             prompt: String::default(),
@@ -84,10 +84,10 @@ impl TasksModalDelegate {
     }
 
     fn active_item_path(
-        &mut self,
+        workspace: &WeakView<Workspace>,
         cx: &mut ViewContext<'_, Picker<Self>>,
     ) -> Option<(PathBuf, ProjectPath)> {
-        let workspace = self.workspace.upgrade()?.read(cx);
+        let workspace = workspace.upgrade()?.read(cx);
         let project = workspace.project().read(cx);
         let active_item = workspace.active_item(cx)?;
         active_item.project_path(cx).and_then(|project_path| {
@@ -183,19 +183,20 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
-                    let (path, worktree) = match picker.delegate.active_item_path(cx) {
-                        Some((abs_path, project_path)) => {
-                            (Some(abs_path), Some(project_path.worktree_id))
-                        }
-                        None => (None, None),
-                    };
-                    picker.delegate.candidates =
+                    let candidates = picker.delegate.candidates.get_or_insert_with(|| {
+                        let (path, worktree) =
+                            match Self::active_item_path(&picker.delegate.workspace, cx) {
+                                Some((abs_path, project_path)) => {
+                                    (Some(abs_path), Some(project_path.worktree_id))
+                                }
+                                None => (None, None),
+                            };
                         picker.delegate.inventory.update(cx, |inventory, cx| {
                             inventory.list_tasks(path.as_deref(), worktree, true, cx)
-                        });
-                    picker
-                        .delegate
-                        .candidates
+                        })
+                    });
+
+                    candidates
                         .iter()
                         .enumerate()
                         .map(|(index, (_, candidate))| StringMatchCandidate {
@@ -244,10 +245,14 @@ impl PickerDelegate for TasksModalDelegate {
                 None
             }
         } else {
-            self.matches.get(current_match_index).map(|current_match| {
-                let ix = current_match.candidate_id;
-                self.candidates[ix].1.clone()
-            })
+            self.matches
+                .get(current_match_index)
+                .and_then(|current_match| {
+                    let ix = current_match.candidate_id;
+                    self.candidates
+                        .as_ref()
+                        .map(|candidates| candidates[ix].1.clone())
+                })
         };
 
         let Some(task) = task else {
@@ -272,10 +277,12 @@ impl PickerDelegate for TasksModalDelegate {
         selected: bool,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &self.candidates[hit.candidate_id];
+        let (source_kind, _) = &candidates[hit.candidate_id];
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
+            TaskSourceKind::Buffer => "language extension".to_string(),
             TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
                 abs_path.compact().to_string_lossy().to_string()
             }

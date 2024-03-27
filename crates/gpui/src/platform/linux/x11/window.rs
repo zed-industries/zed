@@ -2,7 +2,7 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
+    platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
     Scene, Size, WindowAppearance, WindowOptions, WindowParams,
 };
@@ -245,7 +245,7 @@ impl X11WindowState {
             x_window,
             callbacks: RefCell::new(Callbacks::default()),
             inner: RefCell::new(LinuxWindowInner {
-                bounds: params.bounds.map(|v| v.0 as i32),
+                bounds: params.bounds.map(|v| v.0),
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
@@ -325,12 +325,8 @@ impl X11WindowState {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
-        self.0
-            .inner
-            .borrow_mut()
-            .bounds
-            .map(|v| GlobalPixels(v as f32))
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        self.0.inner.borrow_mut().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -404,6 +400,11 @@ impl PlatformWindow for X11Window {
             .xcb_connection
             .configure_window(self.0.x_window, &win_aux)
             .unwrap();
+    }
+
+    // todo(linux)
+    fn is_active(&self) -> bool {
+        false
     }
 
     fn set_title(&mut self, title: &str) {

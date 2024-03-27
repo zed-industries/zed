@@ -10,6 +10,7 @@ use std::{
     rc::{Rc, Weak},
     str::FromStr,
     sync::{Arc, Once},
+    time::{Duration, Instant},
 };
 
 use ::util::ResultExt;
@@ -41,8 +42,8 @@ use crate::*;
 
 pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
-    origin: Cell<Point<GlobalPixels>>,
-    physical_size: Cell<Size<GlobalPixels>>,
+    origin: Cell<Point<DevicePixels>>,
+    physical_size: Cell<Size<DevicePixels>>,
     scale_factor: Cell<f32>,
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
@@ -51,6 +52,9 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
+    last_ime_input: RefCell<Option<String>>,
+    click_state: RefCell<ClickState>,
+    fullscreen: Cell<Option<StyleAndBounds>>,
 }
 
 impl WindowsWindowInner {
@@ -64,12 +68,12 @@ impl WindowsWindowInner {
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(Point {
-            x: GlobalPixels(cs.x as f32),
-            y: GlobalPixels(cs.y as f32),
+            x: DevicePixels(cs.x as i32),
+            y: DevicePixels(cs.y as i32),
         });
         let physical_size = Cell::new(Size {
-            width: GlobalPixels(cs.cx as f32),
-            height: GlobalPixels(cs.cy as f32),
+            width: DevicePixels(cs.cx as i32),
+            height: DevicePixels(cs.cy as i32),
         });
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
@@ -110,6 +114,9 @@ impl WindowsWindowInner {
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
+        let last_ime_input = RefCell::new(None);
+        let click_state = RefCell::new(ClickState::new());
+        let fullscreen = Cell::new(None);
         Self {
             hwnd,
             origin,
@@ -122,15 +129,71 @@ impl WindowsWindowInner {
             handle,
             hide_title_bar,
             display,
+            last_ime_input,
+            click_state,
+            fullscreen,
         }
     }
 
     fn is_maximized(&self) -> bool {
-        unsafe { IsZoomed(self.hwnd) }.as_bool()
+        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
     fn is_minimized(&self) -> bool {
         unsafe { IsIconic(self.hwnd) }.as_bool()
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        let fullscreen = self.fullscreen.take();
+        let is_fullscreen = fullscreen.is_some();
+        self.fullscreen.set(fullscreen);
+        is_fullscreen
+    }
+
+    async fn toggle_fullscreen(self: Rc<Self>) {
+        let StyleAndBounds {
+            style,
+            x,
+            y,
+            cx,
+            cy,
+        } = if let Some(state) = self.fullscreen.take() {
+            state
+        } else {
+            let style = WINDOW_STYLE(unsafe { get_window_long(self.hwnd, GWL_STYLE) } as _);
+            let mut rc = RECT::default();
+            unsafe { GetWindowRect(self.hwnd, &mut rc) }.log_err();
+            self.fullscreen.set(Some(StyleAndBounds {
+                style,
+                x: rc.left,
+                y: rc.top,
+                cx: rc.right - rc.left,
+                cy: rc.bottom - rc.top,
+            }));
+            let style = style
+                & !(WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_CAPTION);
+            let bounds = self.display.borrow().clone().bounds();
+            StyleAndBounds {
+                style,
+                x: bounds.left().0 as i32,
+                y: bounds.top().0 as i32,
+                cx: bounds.size.width.0 as i32,
+                cy: bounds.size.height.0 as i32,
+            }
+        };
+        unsafe { set_window_long(self.hwnd, GWL_STYLE, style.0 as isize) };
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                HWND::default(),
+                x,
+                y,
+                cx,
+                cy,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        }
+        .log_err();
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
@@ -189,9 +252,8 @@ impl WindowsWindowInner {
 
     fn handle_msg(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let handled = match msg {
-            WM_ACTIVATE => self.handle_activate_msg(),
+            WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(lparam),
-            WM_SETFOCUS => self.handle_set_focus_msg(msg, wparam, lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
@@ -211,25 +273,11 @@ impl WindowsWindowInner {
             WM_LBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Left, lparam),
             WM_RBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Right, lparam),
             WM_MBUTTONDOWN => self.handle_mouse_down_msg(MouseButton::Middle, lparam),
-            WM_XBUTTONDOWN => {
-                let nav_dir = match wparam.hiword() {
-                    XBUTTON1 => NavigationDirection::Forward,
-                    XBUTTON2 => NavigationDirection::Back,
-                    _ => return LRESULT(1),
-                };
-                self.handle_mouse_down_msg(MouseButton::Navigate(nav_dir), lparam)
-            }
+            WM_XBUTTONDOWN => self.handle_xbutton_msg(wparam, lparam, Self::handle_mouse_down_msg),
             WM_LBUTTONUP => self.handle_mouse_up_msg(MouseButton::Left, lparam),
             WM_RBUTTONUP => self.handle_mouse_up_msg(MouseButton::Right, lparam),
             WM_MBUTTONUP => self.handle_mouse_up_msg(MouseButton::Middle, lparam),
-            WM_XBUTTONUP => {
-                let nav_dir = match wparam.hiword() {
-                    XBUTTON1 => NavigationDirection::Back,
-                    XBUTTON2 => NavigationDirection::Forward,
-                    _ => return LRESULT(1),
-                };
-                self.handle_mouse_up_msg(MouseButton::Navigate(nav_dir), lparam)
-            }
+            WM_XBUTTONUP => self.handle_xbutton_msg(wparam, lparam, Self::handle_mouse_up_msg),
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(wparam, lparam),
             WM_SYSKEYDOWN => self.handle_syskeydown_msg(wparam, lparam),
@@ -240,6 +288,7 @@ impl WindowsWindowInner {
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
             WM_IME_CHAR => self.handle_ime_char(wparam),
+            WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -250,15 +299,15 @@ impl WindowsWindowInner {
     }
 
     fn handle_move_msg(&self, lparam: LPARAM) -> Option<isize> {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
+        let x = lparam.signed_loword() as i32;
+        let y = lparam.signed_hiword() as i32;
         self.origin.set(Point {
-            x: GlobalPixels(x),
-            y: GlobalPixels(y),
+            x: DevicePixels(x),
+            y: DevicePixels(y),
         });
         let size = self.physical_size.get();
-        let center_x = x + size.width.0 / 2.0;
-        let center_y = y + size.height.0 / 2.0;
+        let center_x = x + size.width.0 / 2;
+        let center_y = y + size.height.0 / 2;
         let monitor_bounds = self.display.borrow().bounds();
         if center_x < monitor_bounds.left().0
             || center_x > monitor_bounds.right().0
@@ -280,12 +329,12 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, lparam: LPARAM) -> Option<isize> {
-        let width = lparam.loword().max(1) as f32;
-        let height = lparam.hiword().max(1) as f32;
+        let width = lparam.loword().max(1) as i32;
+        let height = lparam.hiword().max(1) as i32;
         let scale_factor = self.scale_factor.get();
         let new_physical_size = Size {
-            width: GlobalPixels(width),
-            height: GlobalPixels(height),
+            width: DevicePixels(width),
+            height: DevicePixels(height),
         };
         self.physical_size.set(new_physical_size);
         self.renderer.borrow_mut().update_drawable_size(Size {
@@ -599,12 +648,15 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
+            let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
+            let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
@@ -632,16 +684,33 @@ impl WindowsWindowInner {
         Some(1)
     }
 
+    fn handle_xbutton_msg(
+        &self,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        handler: impl Fn(&Self, MouseButton, LPARAM) -> Option<isize>,
+    ) -> Option<isize> {
+        let nav_dir = match wparam.hiword() {
+            XBUTTON1 => NavigationDirection::Back,
+            XBUTTON2 => NavigationDirection::Forward,
+            _ => return Some(1),
+        };
+        handler(self, MouseButton::Navigate(nav_dir), lparam)
+    }
+
     fn handle_mouse_wheel_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.input.as_mut() {
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = crate::ScrollWheelEvent {
-                position: logical_point(x, y, scale_factor),
+                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 delta: ScrollDelta::Lines(Point {
                     x: 0.0,
                     y: wheel_distance,
@@ -660,11 +729,14 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
                 * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
-            let x = lparam.signed_loword() as f32;
-            let y = lparam.signed_hiword() as f32;
+            let mut cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
             let scale_factor = self.scale_factor.get();
             let event = crate::ScrollWheelEvent {
-                position: logical_point(x, y, scale_factor),
+                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 delta: ScrollDelta::Lines(Point {
                     x: wheel_distance,
                     y: 0.0,
@@ -689,11 +761,14 @@ impl WindowsWindowInner {
             let caret_range = input_handler.selected_text_range().unwrap();
             let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
             self.input_handler.set(Some(input_handler));
+            let scale_factor = self.scale_factor.get();
             let config = CANDIDATEFORM {
                 dwStyle: CFS_CANDIDATEPOS,
+                // logical to physical
                 ptCurrentPos: POINT {
-                    x: caret_position.origin.x.0 as i32,
-                    y: caret_position.origin.y.0 as i32 + (caret_position.size.height.0 as i32 / 2),
+                    x: (caret_position.origin.x.0 * scale_factor) as i32,
+                    y: (caret_position.origin.y.0 * scale_factor) as i32
+                        + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
                 },
                 ..Default::default()
             };
@@ -730,6 +805,15 @@ impl WindowsWindowInner {
         }
     }
 
+    fn retrieve_composition_cursor_position(&self) -> usize {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
+            ImmReleaseContext(self.hwnd, ctx);
+            ret as usize
+        }
+    }
+
     fn handle_ime_composition(&self, lparam: LPARAM) -> Option<isize> {
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = self.parse_ime_compostion_string() else {
@@ -744,11 +828,21 @@ impl WindowsWindowInner {
                 Some(0..string_len),
             );
             self.input_handler.set(Some(input_handler));
-            None
-        } else {
-            // currently, we don't care other stuff
-            None
+            *self.last_ime_input.borrow_mut() = Some(string);
         }
+        if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
+            let Some(ref comp_string) = *self.last_ime_input.borrow() else {
+                return None;
+            };
+            let caret_pos = self.retrieve_composition_cursor_position();
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return None;
+            };
+            input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
+            self.input_handler.set(Some(input_handler));
+        }
+        // currently, we don't care other stuff
+        None
     }
 
     fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
@@ -768,6 +862,7 @@ impl WindowsWindowInner {
         };
         input_handler.replace_text_in_range(None, &ime_char);
         self.input_handler.set(Some(input_handler));
+        *self.last_ime_input.borrow_mut() = None;
         self.invalidate_client_area();
         Some(0)
     }
@@ -782,7 +877,7 @@ impl WindowsWindowInner {
 
     /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
     fn handle_calc_client_size(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
-        if !self.hide_title_bar {
+        if !self.hide_title_bar || self.is_fullscreen() {
             return None;
         }
 
@@ -807,11 +902,16 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_activate_msg(&self) -> Option<isize> {
+    fn handle_activate_msg(&self, wparam: WPARAM) -> Option<isize> {
         if self.hide_title_bar {
             if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
                 unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
             }
+        }
+        let activated = wparam.loword() > 0;
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+            cb(activated);
         }
         None
     }
@@ -824,8 +924,8 @@ impl WindowsWindowInner {
         let height = size_rect.bottom - size_rect.top;
 
         self.physical_size.set(Size {
-            width: GlobalPixels(width as f32),
-            height: GlobalPixels(height as f32),
+            width: DevicePixels(width as i32),
+            height: DevicePixels(height as i32),
         });
 
         if self.hide_title_bar {
@@ -895,6 +995,10 @@ impl WindowsWindowInner {
                 | HTBOTTOMLEFT
         ) {
             return Some(hit.0);
+        }
+
+        if self.is_fullscreen() {
+            return Some(HTCLIENT as _);
         }
 
         let dpi = unsafe { GetDpiForWindow(self.hwnd) };
@@ -972,12 +1076,18 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
+            let physical_point = point(
+                DevicePixels(cursor_point.x as i32),
+                DevicePixels(cursor_point.y as i32),
+            );
+            let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
                 button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
+                first_mouse: false,
             };
             if callback(PlatformInput::MouseDown(event)).default_prevented {
                 return Some(0);
@@ -1042,26 +1152,22 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_set_focus_msg(&self, _msg: u32, wparam: WPARAM, _lparam: LPARAM) -> Option<isize> {
-        // wparam is the window that just lost focus (may be null)
-        // SEE: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus
-        let lost_focus_hwnd = HWND(wparam.0 as isize);
-        if let Some(lost_focus_window) = self
-            .platform_inner
-            .try_get_windows_inner_from_hwnd(lost_focus_hwnd)
-        {
-            let mut callbacks = lost_focus_window.callbacks.borrow_mut();
-            if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-                cb(false);
-            }
+    fn handle_set_cursor(&self, lparam: LPARAM) -> Option<isize> {
+        if matches!(
+            lparam.loword() as u32,
+            HTLEFT
+                | HTRIGHT
+                | HTTOP
+                | HTTOPLEFT
+                | HTTOPRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+                | HTBOTTOMRIGHT
+        ) {
+            return None;
         }
-
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-            cb(true);
-        }
-
-        Some(0)
+        unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
+        Some(1)
     }
 }
 
@@ -1097,7 +1203,7 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Self {
-        let classname = register_wnd_class();
+        let classname = register_wnd_class(platform_inner.icon);
         let hide_title_bar = options
             .titlebar
             .as_ref()
@@ -1199,7 +1305,7 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         Bounds {
             origin: self.inner.origin.get(),
             size: self.inner.physical_size.get(),
@@ -1354,6 +1460,10 @@ impl PlatformWindow for WindowsWindow {
         unsafe { SetForegroundWindow(self.inner.hwnd) };
     }
 
+    fn is_active(&self) -> bool {
+        self.inner.hwnd == unsafe { GetActiveWindow() }
+    }
+
     // todo(windows)
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
@@ -1375,12 +1485,16 @@ impl PlatformWindow for WindowsWindow {
         unsafe { ShowWindowAsync(self.inner.hwnd, SW_MAXIMIZE) };
     }
 
-    // todo(windows)
-    fn toggle_fullscreen(&self) {}
+    fn toggle_fullscreen(&self) {
+        self.inner
+            .platform_inner
+            .foreground_executor
+            .spawn(self.inner.clone().toggle_fullscreen())
+            .detach();
+    }
 
-    // todo(windows)
     fn is_fullscreen(&self) -> bool {
-        false
+        self.inner.is_fullscreen()
     }
 
     // todo(windows)
@@ -1556,14 +1670,56 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 }
 
-fn register_wnd_class() -> PCWSTR {
+#[derive(Debug)]
+struct ClickState {
+    button: MouseButton,
+    last_click: Instant,
+    last_position: Point<DevicePixels>,
+    current_count: usize,
+}
+
+impl ClickState {
+    pub fn new() -> Self {
+        ClickState {
+            button: MouseButton::Left,
+            last_click: Instant::now(),
+            last_position: Point::default(),
+            current_count: 0,
+        }
+    }
+
+    /// update self and return the needed click count
+    pub fn update(&mut self, button: MouseButton, new_position: Point<DevicePixels>) -> usize {
+        if self.button == button && self.is_double_click(new_position) {
+            self.current_count += 1;
+        } else {
+            self.current_count = 1;
+        }
+        self.last_click = Instant::now();
+        self.last_position = new_position;
+        self.button = button;
+
+        self.current_count
+    }
+
+    #[inline]
+    fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
+        let diff = self.last_position - new_position;
+
+        self.last_click.elapsed() < DOUBLE_CLICK_INTERVAL
+            && diff.x.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+            && diff.y.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+    }
+}
+
+fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW).ok().unwrap() },
+            hIcon: icon_handle,
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             ..Default::default()
@@ -1683,10 +1839,10 @@ fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
 }
 
 #[inline]
-fn logical_size(physical_size: Size<GlobalPixels>, scale_factor: f32) -> Size<Pixels> {
+fn logical_size(physical_size: Size<DevicePixels>, scale_factor: f32) -> Size<Pixels> {
     Size {
-        width: px(physical_size.width.0 / scale_factor),
-        height: px(physical_size.height.0 / scale_factor),
+        width: px(physical_size.width.0 as f32 / scale_factor),
+        height: px(physical_size.height.0 as f32 / scale_factor),
     }
 }
 
@@ -1698,5 +1854,71 @@ fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
     }
 }
 
+struct StyleAndBounds {
+    style: WINDOW_STYLE,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
+}
+
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+// https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
+const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
+
+#[cfg(test)]
+mod tests {
+    use super::ClickState;
+    use crate::{point, DevicePixels, MouseButton};
+    use std::time::Duration;
+
+    #[test]
+    fn test_double_click_interval() {
+        let mut state = ClickState::new();
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update(MouseButton::Right, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            2
+        );
+        state.last_click -= Duration::from_millis(700);
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            1
+        );
+    }
+
+    #[test]
+    fn test_double_click_spatial_tolerance() {
+        let mut state = ClickState::new();
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(-3), DevicePixels(0))),
+            1
+        );
+        assert_eq!(
+            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(3))),
+            2
+        );
+        assert_eq!(
+            state.update(MouseButton::Right, point(DevicePixels(3), DevicePixels(2))),
+            1
+        );
+        assert_eq!(
+            state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
+            1
+        );
+    }
+}

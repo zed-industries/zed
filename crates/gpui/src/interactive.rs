@@ -100,6 +100,9 @@ pub struct MouseDownEvent {
 
     /// The number of times the button has been clicked.
     pub click_count: usize,
+
+    /// Whether this is the first, focusing click.
+    pub first_mouse: bool,
 }
 
 impl Sealed for MouseDownEvent {}

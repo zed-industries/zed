@@ -9,8 +9,7 @@ use smol::fs;
 use std::env::consts::ARCH;
 use std::ffi::OsString;
 use std::{any::Any, path::PathBuf};
-use util::async_maybe;
-use util::github::latest_github_release;
+use util::{github::latest_github_release, maybe};
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct OmniSharpAdapter;
@@ -115,7 +114,7 @@ impl super::LspAdapter for OmniSharpAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

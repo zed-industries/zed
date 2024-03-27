@@ -374,6 +374,7 @@ CREATE TABLE extension_versions (
     repository TEXT NOT NULL,
     description TEXT NOT NULL,
     schema_version INTEGER NOT NULL DEFAULT 0,
+    wasm_api_version TEXT,
     download_count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (extension_id, version)
 );
@@ -400,3 +401,11 @@ CREATE TABLE hosted_projects (
 );
 CREATE INDEX idx_hosted_projects_on_channel_id ON hosted_projects (channel_id);
 CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_projects (channel_id, name) WHERE (deleted_at IS NULL);
+
+CREATE TABLE dev_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    name TEXT NOT NULL,
+    hashed_token TEXT NOT NULL
+);
+CREATE INDEX idx_dev_servers_on_channel_id ON dev_servers (channel_id);

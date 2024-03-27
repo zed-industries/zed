@@ -10,11 +10,10 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, OnceLock},
-    time::Duration,
 };
 
 use ::util::{ResultExt, SemanticVersion};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
@@ -62,6 +61,9 @@ pub(crate) struct WindowsPlatformInner {
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+    pub icon: HICON,
+    // NOTE: standard cursor handles don't need to close.
+    pub(crate) current_cursor: Cell<HCURSOR>,
 }
 
 impl WindowsPlatformInner {
@@ -156,6 +158,8 @@ impl WindowsPlatform {
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
+        let icon = load_icon().unwrap_or_default();
+        let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -165,6 +169,8 @@ impl WindowsPlatform {
             raw_window_handles,
             dispatch_event,
             settings,
+            icon,
+            current_cursor,
         });
         Self { inner }
     }
@@ -644,29 +650,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        let handle = match style {
-            CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => unsafe {
-                load_cursor(IDC_IBEAM)
-            },
-            CursorStyle::Crosshair => unsafe { load_cursor(IDC_CROSS) },
-            CursorStyle::PointingHand | CursorStyle::DragLink => unsafe { load_cursor(IDC_HAND) },
-            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => unsafe {
-                load_cursor(IDC_SIZEWE)
-            },
-            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => unsafe {
-                load_cursor(IDC_SIZENS)
-            },
-            CursorStyle::OperationNotAllowed => unsafe { load_cursor(IDC_NO) },
-            _ => unsafe { load_cursor(IDC_ARROW) },
-        };
-        if handle.is_err() {
-            log::error!(
-                "Error loading cursor image: {}",
-                std::io::Error::last_os_error()
-            );
-            return;
-        }
-        let _ = unsafe { SetCursor(HCURSOR(handle.unwrap().0)) };
+        self.inner.current_cursor.set(load_cursor(style));
     }
 
     // todo(windows)
@@ -769,10 +753,6 @@ impl Drop for WindowsPlatform {
             OleUninitialize();
         }
     }
-}
-
-unsafe fn load_cursor(name: PCWSTR) -> Result<HANDLE> {
-    LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED).map_err(|e| anyhow!(e))
 }
 
 fn open_target(target: &str) {
@@ -880,4 +860,20 @@ fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
         let _ = (&period,);
         (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
     }
+}
+
+fn load_icon() -> Result<HICON> {
+    let module = unsafe { GetModuleHandleW(None).context("unable to get module handle")? };
+    let handle = unsafe {
+        LoadImageW(
+            module,
+            IDI_APPLICATION,
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_SHARED,
+        )
+        .context("unable to load icon file")?
+    };
+    Ok(HICON(handle.0))
 }

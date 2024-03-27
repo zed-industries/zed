@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SyntaxTheme};
-use ui::{h_flex, v_flex, Label};
+use ui::{h_flex, v_flex, Checkbox, Selection};
 use workspace::Workspace;
 
 pub struct RenderContext {
@@ -139,11 +139,21 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
         let padding = rems((item.depth - 1) as f32 * 0.25);
 
         let bullet = match item.item_type {
-            Ordered(order) => format!("{}.", order),
-            Unordered => "•".to_string(),
-            Task(checked) => if checked { "☑" } else { "☐" }.to_string(),
+            Ordered(order) => format!("{}.", order).into_any_element(),
+            Unordered => "•".into_any_element(),
+            Task(checked) => div()
+                .mt(px(3.))
+                .child(Checkbox::new(
+                    "checkbox",
+                    if checked {
+                        Selection::Selected
+                    } else {
+                        Selection::Unselected
+                    },
+                ))
+                .into_any_element(),
         };
-        let bullet = div().mr_2().child(Label::new(bullet));
+        let bullet = div().mr_2().child(bullet);
 
         let contents: Vec<AnyElement> = item
             .contents

@@ -11,11 +11,14 @@ use regex::Regex;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
+use task::{
+    static_source::{Definition, TaskDefinitions},
+    TaskVariables,
+};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 pub struct RustLspAdapter;
@@ -319,48 +322,81 @@ impl LspAdapter for RustLspAdapter {
 
 pub(crate) struct RustContextProvider;
 
-impl LanguageContextProvider for RustContextProvider {
+impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         location: Location,
         cx: &mut gpui::AppContext,
-    ) -> Result<LanguageContext> {
-        let mut context = DefaultContextProvider.build_context(location.clone(), cx)?;
-        if context.package.is_none() {
-            if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
-                let local_file = file.as_local()?.abs_path(cx);
-                local_file.parent().map(PathBuf::from)
-            }) {
-                // src/
-                //  main.rs
-                //  lib.rs
-                //  foo/
-                //      bar/
-                //          baz.rs <|>
-                //  /bin/
-                //     bin_1.rs
-                //
-                let Some(pkgid) = std::process::Command::new("cargo")
-                    .current_dir(path)
-                    .arg("pkgid")
-                    .output()
-                    .log_err()
-                else {
-                    return Ok(context);
-                };
-                let package_name = String::from_utf8(pkgid.stdout)
-                    .map(|name| name.trim().to_owned())
-                    .ok();
+    ) -> Result<TaskVariables> {
+        let mut context = SymbolContextProvider.build_context(location.clone(), cx)?;
 
-                context.package = package_name;
+        if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
+            let local_file = file.as_local()?.abs_path(cx);
+            local_file.parent().map(PathBuf::from)
+        }) {
+            let Some(pkgid) = std::process::Command::new("cargo")
+                .current_dir(path)
+                .arg("pkgid")
+                .output()
+                .log_err()
+            else {
+                return Ok(context);
+            };
+            let package_name = String::from_utf8(pkgid.stdout)
+                .map(|name| name.trim().to_owned())
+                .ok();
+
+            if let Some(package_name) = package_name {
+                context.0.insert("ZED_PACKAGE".to_owned(), package_name);
             }
         }
+
         Ok(context)
+    }
+    fn associated_tasks(&self) -> Option<TaskDefinitions> {
+        Some(TaskDefinitions(vec![
+            Definition {
+                label: "Rust: Test current crate".to_owned(),
+                command: "cargo".into(),
+                args: vec!["test".into(), "-p".into(), "$ZED_PACKAGE".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: Test current function".to_owned(),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    "$ZED_PACKAGE".into(),
+                    "--".into(),
+                    "$ZED_SYMBOL".into(),
+                ],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo run".into(),
+                command: "cargo".into(),
+                args: vec!["run".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo check current crate".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "-p".into(), "$ZED_PACKAGE".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo check workspace".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "--workspace".into()],
+                ..Default::default()
+            },
+        ]))
     }
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -383,7 +419,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{Context, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
     use text::BufferId;

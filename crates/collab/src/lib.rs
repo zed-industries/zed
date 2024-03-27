@@ -159,7 +159,8 @@ impl AppState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
         db_options.max_connections(config.database_max_connections);
-        let db = Database::new(db_options, Executor::Production).await?;
+        let mut db = Database::new(db_options, Executor::Production).await?;
+        db.initialize_notification_kinds().await?;
 
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server

@@ -59,7 +59,7 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::GlobalPixels>);
+pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::DevicePixels>);
 
 impl StaticColumnCount for SerializedWindowsBounds {
     fn column_count() -> usize {
@@ -73,10 +73,10 @@ impl Bind for SerializedWindowsBounds {
 
         statement.bind(
             &(
-                SerializedGlobalPixels(self.0.origin.x),
-                SerializedGlobalPixels(self.0.origin.y),
-                SerializedGlobalPixels(self.0.size.width),
-                SerializedGlobalPixels(self.0.size.height),
+                SerializedDevicePixels(self.0.origin.x),
+                SerializedDevicePixels(self.0.origin.y),
+                SerializedDevicePixels(self.0.size.width),
+                SerializedDevicePixels(self.0.size.height),
             ),
             next_index,
         )
@@ -89,10 +89,10 @@ impl Column for SerializedWindowsBounds {
         let bounds = match window_state.as_str() {
             "Fixed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                let x: f64 = x;
-                let y: f64 = y;
-                let width: f64 = width;
-                let height: f64 = height;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
                 SerializedWindowsBounds(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
@@ -106,17 +106,16 @@ impl Column for SerializedWindowsBounds {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct SerializedGlobalPixels(gpui::GlobalPixels);
-impl sqlez::bindable::StaticColumnCount for SerializedGlobalPixels {}
+struct SerializedDevicePixels(gpui::DevicePixels);
+impl sqlez::bindable::StaticColumnCount for SerializedDevicePixels {}
 
-impl sqlez::bindable::Bind for SerializedGlobalPixels {
+impl sqlez::bindable::Bind for SerializedDevicePixels {
     fn bind(
         &self,
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: f64 = self.0.into();
-        let this: f32 = this as _;
+        let this: i32 = self.0.into();
         this.bind(statement, start_index)
     }
 }

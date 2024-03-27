@@ -1,15 +1,15 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::AsyncAppContext;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 pub struct CLspAdapter;
@@ -29,6 +29,7 @@ impl super::LspAdapter for CLspAdapter {
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
+            "windows" => "windows",
             other => bail!("Running on unsupported os: {other}"),
         };
         let asset_name = format!("clangd-{}-{}.zip", os_suffix, release.tag_name);
@@ -42,6 +43,20 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let env = delegate.shell_env().await;
+        let path = delegate.which("clangd".as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(
@@ -248,7 +263,7 @@ impl super::LspAdapter for CLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_clangd_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -278,7 +293,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use gpui::{BorrowAppContext, Context, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
