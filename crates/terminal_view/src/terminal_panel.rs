@@ -114,7 +114,7 @@ impl TerminalPanel {
                                 };
                                 cx.dispatch_action(positon);
                             })
-                            .tooltip(move |cx| Tooltip::text("Hide Terminal Panel.", cx)),
+                            .tooltip(move |cx| Tooltip::text("Hide Terminal Panel", cx)),
                     )
                     .into_any_element()
             });
