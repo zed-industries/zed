@@ -31,10 +31,7 @@ use gpui::{
 use ignore::IgnoreStack;
 use itertools::Itertools;
 use language::{
-    proto::{
-        deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
-        serialize_version,
-    },
+    proto::{deserialize_version, serialize_fingerprint, serialize_line_ending, serialize_version},
     Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint,
     Unclipped,
 };
@@ -1631,7 +1628,7 @@ impl RemoteWorktree {
                 })
                 .await?;
             let version = deserialize_version(&response.version);
-            let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
+            let fingerprint = RopeFingerprint::default();
             let mtime = response.mtime.map(|mtime| mtime.into());
 
             buffer_handle.update(&mut cx, |buffer, cx| {
