@@ -3503,7 +3503,6 @@ impl Workspace {
                 .map(|(path, _)| path)
                 .collect::<Vec<_>>();
             cx.update(|cx| {
-                cx.clear_recent_documents();
                 cx.add_recent_documents(&current_paths);
             })
         })

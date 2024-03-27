@@ -443,7 +443,6 @@ impl RecentProjectsDelegate {
                     .map(|(path, _)| path)
                     .collect::<Vec<_>>();
                 this.update(&mut cx, move |picker, cx| {
-                    cx.clear_recent_documents();
                     cx.add_recent_documents(&updated_paths);
                     picker.delegate.workspaces = workspaces;
                     picker.delegate.set_selected_index(ix - 1, cx);
