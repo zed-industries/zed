@@ -1,6 +1,7 @@
 pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
+mod extension_settings;
 mod wasm_host;
 
 #[cfg(test)]
@@ -13,6 +14,7 @@ use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension_settings::ExtensionSettings;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -32,6 +34,7 @@ use language::{
 };
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     cmp::Ordering,
     path::{self, Path, PathBuf},
@@ -134,6 +137,8 @@ pub fn init(
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
 ) {
+    ExtensionSettings::register(cx);
+
     let store = cx.new_model(move |cx| {
         ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
@@ -386,11 +391,13 @@ impl ExtensionStore {
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let version = CURRENT_SCHEMA_VERSION.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
+        let extension_settings = ExtensionSettings::get_global(cx);
         let extension_ids = self
             .extension_index
             .extensions
             .keys()
             .map(|id| id.as_ref())
+            .filter(|id| extension_settings.should_auto_update(id))
             .collect::<Vec<_>>()
             .join(",");
         query.push(("ids", &extension_ids));
