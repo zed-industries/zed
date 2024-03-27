@@ -4,17 +4,18 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, Hover, RangeToAnchorExt,
 };
-use futures::FutureExt;
+use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
-    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, Model, MouseButton,
+    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
     ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
 use lsp::DiagnosticSeverity;
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
+use smol::stream::StreamExt;
 use std::{ops::Range, sync::Arc, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
@@ -83,13 +84,20 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
             return;
         };
 
-        if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
-            if let RangeInEditor::Inlay(range) = symbol_range {
-                if range == &inlay_hover.range {
-                    // Hover triggered from same location as last time. Don't show again.
-                    return;
+        if editor
+            .hover_state
+            .info_popovers
+            .iter()
+            .any(|InfoPopover { symbol_range, .. }| {
+                if let RangeInEditor::Inlay(range) = symbol_range {
+                    if range == &inlay_hover.range {
+                        // Hover triggered from same location as last time. Don't show again.
+                        return true;
+                    }
                 }
-            }
+                false
+            })
+        {
             hide_hover(editor, cx);
         }
 
@@ -107,15 +115,13 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
 
                 let hover_popover = InfoPopover {
-                    project: project.clone(),
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
-                    blocks,
                     parsed_content,
                 };
 
                 this.update(&mut cx, |this, cx| {
                     // TODO: no background highlights happen for inlays currently
-                    this.hover_state.info_popover = Some(hover_popover);
+                    this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
                 })?;
 
@@ -132,8 +138,9 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
-    let did_hide = editor.hover_state.info_popover.take().is_some()
-        | editor.hover_state.diagnostic_popover.take().is_some();
+    let info_popovers = editor.hover_state.info_popovers.drain(..);
+    let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
+    let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
 
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
@@ -190,22 +197,26 @@ fn show_hover(
     };
 
     if !ignore_timeout {
-        if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
-            if symbol_range
-                .as_text_range()
-                .map(|range| {
-                    let hover_range = range.to_offset(&snapshot.buffer_snapshot);
-                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
-                    // use an inclusive range here to check if we should dismiss the popover
-                    (hover_range.start..=hover_range.end).contains(&multibuffer_offset)
-                })
-                .unwrap_or(false)
-            {
-                // Hover triggered from same location as last time. Don't show again.
-                return;
-            } else {
-                hide_hover(editor, cx);
-            }
+        if editor
+            .hover_state
+            .info_popovers
+            .iter()
+            .any(|InfoPopover { symbol_range, .. }| {
+                symbol_range
+                    .as_text_range()
+                    .map(|range| {
+                        let hover_range = range.to_offset(&snapshot.buffer_snapshot);
+                        // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+                        // use an inclusive range here to check if we should dismiss the popover
+                        (hover_range.start..=hover_range.end).contains(&multibuffer_offset)
+                    })
+                    .unwrap_or(false)
+            })
+        {
+            // Hover triggered from same location as last time. Don't show again.
+            return;
+        } else {
+            hide_hover(editor, cx);
         }
     }
 
@@ -284,10 +295,14 @@ fn show_hover(
                     });
             })?;
 
-            let hover_result = hover_request.await.ok().flatten();
+            let hovers_response = hover_request.await.ok().unwrap_or_default();
+            let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
             let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
-            let hover_popover = match hover_result {
-                Some(hover_result) if !hover_result.is_empty() => {
+            let mut hover_highlights = Vec::with_capacity(hovers_response.len());
+            let mut info_popovers = Vec::with_capacity(hovers_response.len());
+            let mut info_popover_tasks = hovers_response
+                .into_iter()
+                .map(|hover_result| async {
                     // Create symbol range of anchors for highlighting and filtering of future requests.
                     let range = hover_result
                         .range
@@ -303,44 +318,42 @@ fn show_hover(
                         })
                         .unwrap_or_else(|| anchor..anchor);
 
-                    let language_registry =
-                        project.update(&mut cx, |p, _| p.languages().clone())?;
                     let blocks = hover_result.contents;
                     let language = hover_result.language;
                     let parsed_content = parse_blocks(&blocks, &language_registry, language).await;
 
-                    Some(InfoPopover {
-                        project: project.clone(),
-                        symbol_range: RangeInEditor::Text(range),
-                        blocks,
-                        parsed_content,
-                    })
-                }
+                    (
+                        range.clone(),
+                        InfoPopover {
+                            symbol_range: RangeInEditor::Text(range),
+                            parsed_content,
+                        },
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+            while let Some((highlight_range, info_popover)) = info_popover_tasks.next().await {
+                hover_highlights.push(highlight_range);
+                info_popovers.push(info_popover);
+            }
 
-                _ => None,
-            };
-
-            this.update(&mut cx, |this, cx| {
-                if let Some(symbol_range) = hover_popover
-                    .as_ref()
-                    .and_then(|hover_popover| hover_popover.symbol_range.as_text_range())
-                {
+            this.update(&mut cx, |editor, cx| {
+                if hover_highlights.is_empty() {
+                    editor.clear_background_highlights::<HoverState>(cx);
+                } else {
                     // Highlight the selected symbol using a background highlight
-                    this.highlight_background::<HoverState>(
-                        vec![symbol_range],
+                    editor.highlight_background::<HoverState>(
+                        hover_highlights,
                         |theme| theme.element_hover, // todo update theme
                         cx,
                     );
-                } else {
-                    this.clear_background_highlights::<HoverState>(cx);
                 }
 
-                this.hover_state.info_popover = hover_popover;
+                editor.hover_state.info_popovers = info_popovers;
                 cx.notify();
                 cx.refresh();
             })?;
 
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         }
         .log_err()
     });
@@ -422,7 +435,7 @@ async fn parse_blocks(
 
 #[derive(Default)]
 pub struct HoverState {
-    pub info_popover: Option<InfoPopover>,
+    pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
@@ -430,7 +443,7 @@ pub struct HoverState {
 
 impl HoverState {
     pub fn visible(&self) -> bool {
-        self.info_popover.is_some() || self.diagnostic_popover.is_some()
+        !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
 
     pub fn render(
@@ -449,12 +462,20 @@ impl HoverState {
             .as_ref()
             .map(|diagnostic_popover| &diagnostic_popover.local_diagnostic.range.start)
             .or_else(|| {
-                self.info_popover
-                    .as_ref()
-                    .map(|info_popover| match &info_popover.symbol_range {
-                        RangeInEditor::Text(range) => &range.start,
-                        RangeInEditor::Inlay(range) => &range.inlay_position,
-                    })
+                self.info_popovers.iter().find_map(|info_popover| {
+                    match &info_popover.symbol_range {
+                        RangeInEditor::Text(range) => Some(&range.start),
+                        RangeInEditor::Inlay(_) => None,
+                    }
+                })
+            })
+            .or_else(|| {
+                self.info_popovers.iter().find_map(|info_popover| {
+                    match &info_popover.symbol_range {
+                        RangeInEditor::Text(_) => None,
+                        RangeInEditor::Inlay(range) => Some(&range.inlay_position),
+                    }
+                })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
 
@@ -468,8 +489,8 @@ impl HoverState {
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
             elements.push(diagnostic_popover.render(style, max_size, cx));
         }
-        if let Some(info_popover) = self.info_popover.as_mut() {
-            elements.push(info_popover.render(style, max_size, workspace, cx));
+        for info_popover in &mut self.info_popovers {
+            elements.push(info_popover.render(style, max_size, workspace.clone(), cx));
         }
 
         Some((point, elements))
@@ -478,9 +499,7 @@ impl HoverState {
 
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
-    pub project: Model<Project>,
     symbol_range: RangeInEditor,
-    pub blocks: Vec<HoverBlock>,
     parsed_content: ParsedMarkdown,
 }
 
@@ -664,12 +683,19 @@ mod tests {
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
             assert_eq!(
-                editor.hover_state.info_popover.clone().unwrap().blocks,
-                vec![HoverBlock {
-                    text: "some basic docs".to_string(),
-                    kind: HoverBlockKind::Markdown,
-                },]
-            )
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .cloned()
+                .unwrap()
+                .parsed_content;
+            assert_eq!(rendered.text, "some basic docs".to_string())
         });
 
         // Mouse moved with no hover response dismisses
@@ -724,12 +750,19 @@ mod tests {
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
             assert_eq!(
-                editor.hover_state.info_popover.clone().unwrap().blocks,
-                vec![HoverBlock {
-                    text: "some other basic docs".to_string(),
-                    kind: HoverBlockKind::Markdown,
-                }]
-            )
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .cloned()
+                .unwrap()
+                .parsed_content;
+            assert_eq!(rendered.text, "some other basic docs".to_string())
         });
     }
 
@@ -773,11 +806,21 @@ mod tests {
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
             assert_eq!(
-                editor.hover_state.info_popover.clone().unwrap().blocks,
-                vec![HoverBlock {
-                    text: "regular text for hover to show".to_string(),
-                    kind: HoverBlockKind::Markdown,
-                }],
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .cloned()
+                .unwrap()
+                .parsed_content;
+            assert_eq!(
+                rendered.text,
+                "regular text for hover to show".to_string(),
                 "No empty string hovers should be shown"
             );
         });
@@ -824,20 +867,21 @@ mod tests {
         .next()
         .await;
 
-        let languages = cx.language_registry().clone();
-
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
-            let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
             assert_eq!(
-                blocks,
-                vec![HoverBlock {
-                    text: markdown_string,
-                    kind: HoverBlockKind::Markdown,
-                }],
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
             );
-
-            let rendered = smol::block_on(parse_blocks(&blocks, &languages, None));
+            let rendered = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .cloned()
+                .unwrap()
+                .parsed_content;
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -889,7 +933,9 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         cx.editor(|Editor { hover_state, .. }, _| {
-            assert!(hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none())
+            assert!(
+                hover_state.diagnostic_popover.is_some() && hover_state.info_popovers.is_empty()
+            )
         });
 
         // Info Popover shows after request responded to
@@ -1289,8 +1335,10 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let hover_state = &editor.hover_state;
-            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
-            let popover = hover_state.info_popover.as_ref().unwrap();
+            assert!(
+                hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
+            );
+            let popover = hover_state.info_popovers.first().cloned().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             assert_eq!(
                 popover.symbol_range,
@@ -1342,8 +1390,10 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let hover_state = &editor.hover_state;
-            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
-            let popover = hover_state.info_popover.as_ref().unwrap();
+            assert!(
+                hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
+            );
+            let popover = hover_state.info_popovers.first().cloned().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             assert_eq!(
                 popover.symbol_range,
