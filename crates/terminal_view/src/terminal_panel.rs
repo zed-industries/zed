@@ -107,14 +107,14 @@ impl TerminalPanel {
                             .icon_size(IconSize::Small)
                             .on_click(move |_, cx| {
                                 let dock = TerminalSettings::get_global(cx).dock;
-                                let positon = match dock {
+                                let position = match dock {
                                     TerminalDockPosition::Bottom => ToggleBottomDock.boxed_clone(),
                                     TerminalDockPosition::Left => ToggleLeftDock.boxed_clone(),
                                     TerminalDockPosition::Right => ToggleRightDock.boxed_clone(),
                                 };
-                                cx.dispatch_action(positon);
+                                cx.dispatch_action(position);
                             })
-                            .tooltip(move |cx| Tooltip::text("Hide Terminal Panel.", cx)),
+                            .tooltip(move |cx| Tooltip::text("Hide Terminal Panel", cx)),
                     )
                     .into_any_element()
             });
