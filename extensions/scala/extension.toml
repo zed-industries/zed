@@ -1,0 +1,19 @@
+id = "scala"
+name = "Scala"
+description = "Scala support."
+version = "0.0.1"
+schema_version = 1
+authors = [
+    "Igal Tabachnik <hmemcpy@gmail.com>",
+    "Jamie Thompson <bishbashboshjt@gmail.com>",
+    "Michal Příhoda <michal@prihoda.net>"
+]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.metals]
+name = "Metals (Scala Language Server)"
+language = "Scala"
+
+[grammars.scala]
+repository = "https://github.com/tree-sitter/tree-sitter-scala"
+commit = "45b5ba0e749a8477a8fd2666f082f352859bdc3c"
