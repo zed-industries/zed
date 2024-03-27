@@ -17,7 +17,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
-use copilot::Copilot;
+use copilot::{request, Copilot};
 use debounced_delay::DebouncedDelay;
 use fs::repository::GitRepository;
 use futures::{
@@ -84,7 +84,7 @@ use std::{
     ops::Range,
     path::{self, Component, Path, PathBuf},
     process::Stdio,
-    str,
+    str::{self, FromStr},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -96,7 +96,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, RopeFingerprint};
 use util::{
     debug_panic, defer,
-    http::HttpClient,
+    http::{HttpClient, Url},
     maybe, merge_json_value_into,
     paths::{
         LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
@@ -595,6 +595,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
+        client.add_model_request_handler(Self::handle_blame_buffer);
     }
 
     pub fn local(
@@ -7350,7 +7351,12 @@ impl Project {
             .local_git_repo(&project_path.path)
     }
 
-    pub fn blame_buffer(&self, buffer: &Model<Buffer>, cx: &AppContext) -> Task<Result<Blame>> {
+    pub fn blame_buffer(
+        &self,
+        buffer: &Model<Buffer>,
+        version: Option<clock::Global>,
+        cx: &AppContext,
+    ) -> Task<Result<Blame>> {
         if self.is_local() {
             let blame_params = maybe!({
                 let buffer = buffer.read(cx);
@@ -7377,7 +7383,11 @@ impl Project {
                     .path
                     .strip_prefix(&work_directory)?
                     .to_path_buf();
-                let content = buffer.as_rope().clone();
+
+                let content = match version {
+                    Some(version) => buffer.rope_for_version(&version).clone(),
+                    None => buffer.as_rope().clone(),
+                };
                 let repo = repo_entry.repo().clone();
                 anyhow::Ok((repo, relative_path, content))
             });
@@ -7388,24 +7398,111 @@ impl Project {
                 lock.blame(&relative_path, content)
             })
         } else {
-            // Over the wire, we don't want to send the contents of the buffer.
+            let project_id = self.remote_id();
+            let buffer_id = buffer.read(cx).remote_id();
+            let client = self.client.clone();
+            let version = buffer.read(cx).version();
 
-            // version: clock::Global
-            todo!("not yet implemented");
+            cx.spawn(move |_| async move {
+                let project_id = project_id.context("unable to get project id for buffer")?;
+                let response = client
+                    .request(proto::BlameBuffer {
+                        project_id,
+                        buffer_id: buffer_id.into(),
+                        version: serialize_version(&version),
+                    })
+                    .await?;
+
+                let entries = response
+                    .entries
+                    .into_iter()
+                    .filter_map(|entry| {
+                        Some(git::blame::BlameEntry {
+                            sha: git::Oid::from_bytes(&entry.sha).ok()?,
+                            range: entry.start_line..entry.end_line,
+                            original_line_number: entry.original_line_number,
+                            committer: entry.committer,
+                            committer_time: entry.committer_time,
+                            committer_tz: entry.committer_tz,
+                            committer_mail: entry.committer_mail,
+                            author: entry.author,
+                            author_mail: entry.author_mail,
+                            author_time: entry.author_time,
+                            author_tz: entry.author_tz,
+                            summary: entry.summary,
+                            previous: entry.previous,
+                            filename: entry.filename,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let messages = response
+                    .messages
+                    .into_iter()
+                    .filter_map(|message| {
+                        Some((git::Oid::from_bytes(&message.oid).ok()?, message.message))
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                let permalinks = response
+                    .permalinks
+                    .into_iter()
+                    .filter_map(|permalink| {
+                        Some((
+                            git::Oid::from_bytes(&permalink.oid).ok()?,
+                            Url::from_str(&permalink.permalink).ok()?,
+                        ))
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                Ok(Blame {
+                    entries,
+                    messages,
+                    permalinks,
+                })
+            })
         }
     }
 
     // RPC message handlers
 
-    // fn handle_blame_buffer(&self, cx: &AppContext) {
-    // let version: clock::Global = todo!();
-    // let buffer: Model<Buffer> = todo!();
+    async fn handle_blame_buffer(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::BlameBuffer>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::BlameBufferResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
 
-    // buffer.update(cx, |buffer, cx| buffer.wait_for_version(version))
-    // let content = buffer.read(cx).snapshot().rope_for_version(version)
-    // let snapshot = buffer.read(cx).snapshot();
-    // let mut content = snapshot.as_rope().clone();
-    // }
+        let buffer = this.update(&mut cx, |this, _cx| {
+            this.opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
+        })??;
+
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+
+        let blame = this
+            .update(&mut cx, |this, cx| {
+                this.blame_buffer(&buffer, Some(version), cx)
+            })?
+            .await?;
+
+        Ok(proto::BlameBufferResponse {
+            entries: Default::default(),
+            messages: Default::default(),
+            permalinks: Default::default(),
+        })
+    }
+
+    // foreman start
+    // ./script/zed-local -2
 
     async fn handle_unshare_project(
         this: Model<Self>,

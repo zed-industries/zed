@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -21,6 +21,10 @@ lazy_static! {
 pub struct Oid(libgit::Oid);
 
 impl Oid {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let oid = libgit::Oid::from_bytes(bytes).context("failed to parse bytes into git oid")?;
+        Ok(Self(oid))
+    }
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_zero()
     }

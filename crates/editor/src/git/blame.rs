@@ -253,7 +253,7 @@ impl GitBlame {
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame = self.project.read(cx).blame_buffer(&self.buffer, cx);
+        let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let (entries, permalinks, messages) = cx

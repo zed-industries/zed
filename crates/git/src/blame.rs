@@ -126,8 +126,6 @@ pub struct BlameEntry {
 
     pub previous: Option<String>,
     pub filename: String,
-
-    pub permalink: Option<Url>,
 }
 
 impl BlameEntry {
