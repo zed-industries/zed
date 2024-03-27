@@ -234,7 +234,6 @@ impl LanguageServer {
         } else {
             process::Command::new(&binary.path)
                 .current_dir(working_dir)
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
                 .args(binary.arguments)
                 .envs(binary.env.unwrap_or_default())
                 .stdin(Stdio::piped())
