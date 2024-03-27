@@ -124,8 +124,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                         // hello«ˇ  "hello in a word"  »again.
                         // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
                         // In order to be able to accurately match and replace in this case, some cumbersome methods are used
-                        let mut chars_and_points =
-                            display_map.chars_at(range.start).into_iter().peekable();
+                        let mut chars_and_points = display_map.chars_at(range.start).peekable();
                         while let Some((ch, point)) = chars_and_points.next() {
                             if ch.to_string() == pair.start {
                                 let start = point.to_offset(&display_map, Bias::Left);
@@ -146,10 +145,8 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                             }
                         }
 
-                        let mut reverse_chars_and_points = display_map
-                            .reverse_chars_at(range.end)
-                            .into_iter()
-                            .peekable();
+                        let mut reverse_chars_and_points =
+                            display_map.reverse_chars_at(range.end).peekable();
                         while let Some((ch, point)) = reverse_chars_and_points.next() {
                             if ch.to_string() == pair.end {
                                 let mut start = point.to_offset(&display_map, Bias::Left);
@@ -228,8 +225,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             // hello«ˇ  "hello in a word"  »again.
                             // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
                             // In order to be able to accurately match and replace in this case, some cumbersome methods are used
-                            let mut chars_and_points =
-                                display_map.chars_at(range.start).into_iter().peekable();
+                            let mut chars_and_points = display_map.chars_at(range.start).peekable();
                             while let Some((ch, point)) = chars_and_points.next() {
                                 if ch.to_string() == will_replace_pair.start {
                                     let mut open_str = pair.start.clone();
@@ -251,10 +247,8 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                 }
                             }
 
-                            let mut reverse_chars_and_points = display_map
-                                .reverse_chars_at(range.end)
-                                .into_iter()
-                                .peekable();
+                            let mut reverse_chars_and_points =
+                                display_map.reverse_chars_at(range.end).peekable();
                             while let Some((ch, point)) = reverse_chars_and_points.next() {
                                 if ch.to_string() == will_replace_pair.end {
                                     let mut close_str = pair.end.clone();
@@ -334,8 +328,7 @@ pub fn check_and_move_to_valid_bracket_pair(
                                 && selection.end.row() == range.end.row())
                         {
                             valid = true;
-                            let mut chars_and_points =
-                                display_map.chars_at(range.start).into_iter().peekable();
+                            let mut chars_and_points = display_map.chars_at(range.start).peekable();
                             while let Some((ch, point)) = chars_and_points.next() {
                                 if ch.to_string() == pair.start {
                                     let cur_point = point.to_offset(&display_map, Bias::Left);
