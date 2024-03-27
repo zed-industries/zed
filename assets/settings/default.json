@@ -12,10 +12,8 @@
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
-    // Show Copilot icon in status bar
-    "copilot": true,
-    // Show Copilot icon in status bar
-    "supermaven": false
+    // Which inline completion provider to use.
+    "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Mono",

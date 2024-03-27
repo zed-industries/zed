@@ -165,9 +165,9 @@ impl LanguageSettings {
     }
 }
 
-/// The settings for [GitHub Copilot](https://github.com/features/copilot).
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 /// The provider that supplies inline completions.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum InlineCompletionProvider {
     None,
     #[default]
@@ -339,8 +339,8 @@ pub struct InlineCompletionSettingsContent {
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
-    /// Whether the Supermaven feature is enabled.
-    pub supermaven: Option<bool>,
+    /// Determines which inline completion provider to use.
+    pub inline_completion_provider: Option<InlineCompletionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -564,16 +564,11 @@ impl settings::Settings for AllLanguageSettings {
             languages.insert(language_name.clone(), language_settings);
         }
 
-        let mut copilot_enabled = default_value
+        let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
+        let mut inline_completion_provider = default_value
             .features
             .as_ref()
-            .and_then(|f| f.copilot)
-            .ok_or_else(Self::missing_default)?;
-        let mut supermaven_enabled = default_value
-            .features
-            .as_ref()
-            .and_then(|f| f.supermaven)
-            .ok_or_else(Self::missing_default)?;
+            .and_then(|f| f.inline_completion_provider);
         let mut completion_globs = default_value
             .inline_completions
             .as_ref()
@@ -583,10 +578,14 @@ impl settings::Settings for AllLanguageSettings {
         let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
-                copilot_enabled = copilot;
+                copilot_enabled = Some(copilot);
             }
-            if let Some(supermaven) = user_settings.features.as_ref().and_then(|f| f.supermaven) {
-                supermaven_enabled = supermaven;
+            if let Some(provider) = user_settings
+                .features
+                .as_ref()
+                .and_then(|f| f.inline_completion_provider)
+            {
+                inline_completion_provider = Some(provider);
             }
             if let Some(globs) = user_settings
                 .inline_completions
@@ -623,9 +622,9 @@ impl settings::Settings for AllLanguageSettings {
 
         Ok(Self {
             inline_completions: InlineCompletionSettings {
-                provider: if supermaven_enabled {
-                    InlineCompletionProvider::Supermaven
-                } else if copilot_enabled {
+                provider: if let Some(provider) = inline_completion_provider {
+                    provider
+                } else if copilot_enabled.unwrap_or(true) {
                     InlineCompletionProvider::Copilot
                 } else {
                     InlineCompletionProvider::None
