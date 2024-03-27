@@ -1118,74 +1118,7 @@ impl EditorElement {
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
                 if let Some(blame_entry) = blame_entry {
-                    let mut sha_color = cx
-                        .theme()
-                        .players()
-                        .color_for_participant(blame_entry.sha.into());
-                    // If the last color we used is the same as the one we get for this line, but
-                    // the commit SHAs are different, then we try again to get a different color.
-                    match last_used_color {
-                        Some((color, sha))
-                            if sha != blame_entry.sha && color.cursor == sha_color.cursor =>
-                        {
-                            let index: u32 = blame_entry.sha.into();
-                            sha_color = cx.theme().players().color_for_participant(index + 1);
-                        }
-                        _ => {}
-                    };
-                    last_used_color = Some((sha_color, blame_entry.sha));
-
-                    let relative_timestamp = match blame_entry.committer_offset_date_time() {
-                        Ok(timestamp) => time_format::format_localized_timestamp(
-                            timestamp,
-                            time::OffsetDateTime::now_utc(),
-                            cx.local_timezone(),
-                            time_format::TimestampFormat::Relative,
-                        ),
-                        Err(_) => "Error parsing date".to_string(),
-                    };
-
-                    let pretty_commit_id = format!("{}", blame_entry.sha);
-                    let short_commit_id =
-                        pretty_commit_id.clone().chars().take(6).collect::<String>();
-
-                    let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
-                    let name = if name.len() > 20 {
-                        format!("{}...", &name[..16])
-                    } else {
-                        name.to_string()
-                    };
-
-                    let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-                        let sha = format!("{}", blame_entry.sha);
-                        context_menu.entry("Copy commit SHA", None, move |cx| {
-                            cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
-                        })
-                    });
-
-                    let mut element = h_flex()
-                        .id(("blame", ix))
-                        .children([
-                            div()
-                                .text_color(sha_color.cursor)
-                                .child(short_commit_id)
-                                .mr_2(),
-                            div()
-                                .text_color(cx.theme().status().hint)
-                                .child(format!("{:20} {: >14}", name, relative_timestamp)),
-                        ])
-                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                        .when_some(blame_entry.permalink.as_ref(), |this, url| {
-                            let url = url.clone();
-                            this.cursor_pointer().on_click(move |_, cx| {
-                                cx.stop_propagation();
-                                cx.open_url(url.as_str())
-                            })
-                        })
-                        .tooltip(move |cx| {
-                            BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx)
-                        })
-                        .into_any();
+                    let mut element = render_blame_entry(ix, blame_entry, &mut last_used_color, cx);
 
                     let start_y = ix as f32 * line_height - (scroll_top % line_height);
                     let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
@@ -2902,6 +2835,77 @@ impl EditorElement {
         let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
     }
+}
+
+fn render_blame_entry(
+    ix: usize,
+    blame_entry: BlameEntry,
+    last_used_color: &mut Option<(PlayerColor, Oid)>,
+    cx: &mut ElementContext<'_>,
+) -> AnyElement {
+    let mut sha_color = cx
+        .theme()
+        .players()
+        .color_for_participant(blame_entry.sha.into());
+    // If the last color we used is the same as the one we get for this line, but
+    // the commit SHAs are different, then we try again to get a different color.
+    match *last_used_color {
+        Some((color, sha)) if sha != blame_entry.sha && color.cursor == sha_color.cursor => {
+            let index: u32 = blame_entry.sha.into();
+            sha_color = cx.theme().players().color_for_participant(index + 1);
+        }
+        _ => {}
+    };
+    last_used_color.replace((sha_color, blame_entry.sha));
+
+    let relative_timestamp = match blame_entry.committer_offset_date_time() {
+        Ok(timestamp) => time_format::format_localized_timestamp(
+            timestamp,
+            time::OffsetDateTime::now_utc(),
+            cx.local_timezone(),
+            time_format::TimestampFormat::Relative,
+        ),
+        Err(_) => "Error parsing date".to_string(),
+    };
+
+    let pretty_commit_id = format!("{}", blame_entry.sha);
+    let short_commit_id = pretty_commit_id.clone().chars().take(6).collect::<String>();
+
+    let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
+    let name = if name.len() > 20 {
+        format!("{}...", &name[..16])
+    } else {
+        name.to_string()
+    };
+
+    let context_menu = ContextMenu::build(cx, |context_menu, cx| {
+        let sha = format!("{}", blame_entry.sha);
+        context_menu.entry("Copy commit SHA", None, move |cx| {
+            cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+        })
+    });
+
+    h_flex()
+        .id(("blame", ix))
+        .children([
+            div()
+                .text_color(sha_color.cursor)
+                .child(short_commit_id)
+                .mr_2(),
+            div()
+                .text_color(cx.theme().status().hint)
+                .child(format!("{:20} {: >14}", name, relative_timestamp)),
+        ])
+        .hover(|style| style.bg(cx.theme().colors().element_hover))
+        .when_some(blame_entry.permalink.as_ref(), |this, url| {
+            let url = url.clone();
+            this.cursor_pointer().on_click(move |_, cx| {
+                cx.stop_propagation();
+                cx.open_url(url.as_str())
+            })
+        })
+        .tooltip(move |cx| BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx))
+        .into_any()
 }
 
 struct BlameEntryTooltip {
