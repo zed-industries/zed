@@ -1095,13 +1095,11 @@ impl EditorElement {
         cx: &mut ElementContext,
     ) -> (Option<Vec<AnyElement>>, Option<Pixels>) {
         let blamed_rows: Option<Vec<_>> = self.editor.update(cx, |editor, cx| {
-            let Some(blame) = editor.blame.as_ref() else {
-                return None;
-            };
-
-            Some(blame.update(cx, |this, cx| {
-                this.blame_for_rows(buffer_rows, cx).collect()
-            }))
+            editor.blame.as_ref().map(|blame| {
+                blame.update(cx, |this, cx| {
+                    this.blame_for_rows(buffer_rows, cx).collect()
+                })
+            })
         });
 
         let Some(blamed_rows) = blamed_rows else {
