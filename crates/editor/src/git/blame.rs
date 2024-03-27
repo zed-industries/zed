@@ -63,24 +63,26 @@ impl GitBlame {
             &(),
         );
 
-        // TODO: what to do with untitled buffers
-        let project_entry_id = buffer.read(cx).entry_id(cx);
+        let refresh_subscription = cx.subscribe(&project, {
+            let buffer = buffer.clone();
 
-        let refresh_subscription = cx.subscribe(&project, move |this, _, event, cx| match event {
-            project::Event::WorktreeUpdatedEntries(_, updated) => {
-                if updated
-                    .iter()
-                    .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
-                {
-                    log::debug!("Updated buffers. Regenerating blame data...",);
+            move |this, _, event, cx| match event {
+                project::Event::WorktreeUpdatedEntries(_, updated) => {
+                    let project_entry_id = buffer.read(cx).entry_id(cx);
+                    if updated
+                        .iter()
+                        .any(|(_, entry_id, _)| project_entry_id == Some(*entry_id))
+                    {
+                        log::debug!("Updated buffers. Regenerating blame data...",);
+                        this.generate(cx);
+                    }
+                }
+                project::Event::WorktreeUpdatedGitRepositories(_) => {
+                    log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
                 }
+                _ => {}
             }
-            project::Event::WorktreeUpdatedGitRepositories(_) => {
-                log::debug!("Status of git repositories updated. Regenerating blame data...",);
-                this.generate(cx);
-            }
-            _ => {}
         });
 
         let buffer_snapshot = buffer.read(cx).snapshot();
