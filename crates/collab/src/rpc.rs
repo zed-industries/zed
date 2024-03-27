@@ -3406,6 +3406,7 @@ async fn update_channel_message(
         reply_to_message_id,
         timestamp,
         deleted_mention_notification_ids,
+        updated_mention_notifications,
     } = session
         .db()
         .await
@@ -3455,6 +3456,15 @@ async fn update_channel_message(
                     connection,
                     proto::DeleteNotification {
                         notification_id: (*notification_id).to_proto(),
+                    },
+                )?;
+            }
+
+            for notification in &updated_mention_notifications {
+                session.peer.send(
+                    connection,
+                    proto::UpdateNotification {
+                        notification: Some(notification.clone()),
                     },
                 )?;
             }

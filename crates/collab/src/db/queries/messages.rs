@@ -2,6 +2,7 @@ use super::*;
 use rpc::Notification;
 use sea_orm::{SelectColumns, TryInsertResult};
 use time::OffsetDateTime;
+use util::ResultExt;
 
 impl Database {
     /// Inserts a record representing a user joining the chat for a given channel.
@@ -681,10 +682,14 @@ impl Database {
 
             // determine which notifications should be updated or deleted
             let mut deleted_notification_ids = HashSet::default();
-            let mut updated_notification_ids = HashSet::default();
+            let mut updated_mention_notifications = Vec::new();
             for notification in existing_notifications {
                 if update_mention_user_ids.contains(&notification.recipient_id.to_proto()) {
-                    updated_notification_ids.insert(notification.id);
+                    if let Some(notification) =
+                        self::notifications::model_to_proto(self, notification).log_err()
+                    {
+                        updated_mention_notifications.push(notification);
+                    }
                 } else {
                     deleted_notification_ids.insert(notification.id);
                 }
@@ -716,6 +721,7 @@ impl Database {
                 deleted_mention_notification_ids: deleted_notification_ids
                     .into_iter()
                     .collect::<Vec<_>>(),
+                updated_mention_notifications,
             })
         })
         .await
