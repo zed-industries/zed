@@ -10,7 +10,7 @@ use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let notification_store = cx.new_model(|cx| NotificationStore::new(client, user_store, cx));
