@@ -30,7 +30,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
-use git::blame::BlameEntry;
+use git::blame::Blame;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
@@ -7350,11 +7350,7 @@ impl Project {
             .local_git_repo(&project_path.path)
     }
 
-    pub fn blame_buffer(
-        &self,
-        buffer: &Model<Buffer>,
-        cx: &AppContext,
-    ) -> Task<Result<Vec<BlameEntry>>> {
+    pub fn blame_buffer(&self, buffer: &Model<Buffer>, cx: &AppContext) -> Task<Result<Blame>> {
         if self.is_local() {
             let blame_params = maybe!({
                 let buffer = buffer.read(cx);
@@ -7401,15 +7397,15 @@ impl Project {
 
     // RPC message handlers
 
-    fn handle_blame_buffer(&self, cx: &AppContext) {
-        let version: clock::Global = todo!();
-        let buffer: Model<Buffer> = todo!();
+    // fn handle_blame_buffer(&self, cx: &AppContext) {
+    // let version: clock::Global = todo!();
+    // let buffer: Model<Buffer> = todo!();
 
-        // buffer.update(cx, |buffer, cx| buffer.wait_for_version(version))
-        // let content = buffer.read(cx).snapshot().rope_for_version(version)
-        // let snapshot = buffer.read(cx).snapshot();
-        // let mut content = snapshot.as_rope().clone();
-    }
+    // buffer.update(cx, |buffer, cx| buffer.wait_for_version(version))
+    // let content = buffer.read(cx).snapshot().rope_for_version(version)
+    // let snapshot = buffer.read(cx).snapshot();
+    // let mut content = snapshot.as_rope().clone();
+    // }
 
     async fn handle_unshare_project(
         this: Model<Self>,

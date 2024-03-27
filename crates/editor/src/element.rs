@@ -4,7 +4,7 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{diff_hunk_to_display, DisplayDiffHunk},
+    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -18,10 +18,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::{
-    blame::{BlameEntry, Oid},
-    diff::DiffHunkStatus,
-};
+use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
@@ -1094,17 +1091,13 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         cx: &mut ElementContext,
     ) -> (Option<Vec<AnyElement>>, Option<Pixels>) {
-        let blamed_rows: Option<Vec<_>> = self.editor.update(cx, |editor, cx| {
-            editor.blame.as_ref().map(|blame| {
-                blame.update(cx, |this, cx| {
-                    this.blame_for_rows(buffer_rows, cx).collect()
-                })
-            })
-        });
-
-        let Some(blamed_rows) = blamed_rows else {
+        let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
             return (None, None);
         };
+
+        let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
+            blame.blame_for_rows(buffer_rows, cx).collect()
+        });
 
         let scroll_top = scroll_position.y * line_height;
         let start_x = em_width * 1;
@@ -1118,6 +1111,7 @@ impl EditorElement {
                 if let Some(blame_entry) = blame_entry {
                     let mut element = render_blame_entry(
                         ix,
+                        &blame,
                         blame_entry,
                         &mut last_used_color,
                         self.editor.clone(),
@@ -2843,6 +2837,7 @@ impl EditorElement {
 
 fn render_blame_entry(
     ix: usize,
+    blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: View<Editor>,
@@ -2863,7 +2858,7 @@ fn render_blame_entry(
     };
     last_used_color.replace((sha_color, blame_entry.sha));
 
-    let relative_timestamp = match blame_entry.committer_offset_date_time() {
+    let relative_timestamp = match blame_entry.author_offset_date_time() {
         Ok(timestamp) => time_format::format_localized_timestamp(
             timestamp,
             time::OffsetDateTime::now_utc(),
@@ -2876,12 +2871,15 @@ fn render_blame_entry(
     let pretty_commit_id = format!("{}", blame_entry.sha);
     let short_commit_id = pretty_commit_id.clone().chars().take(6).collect::<String>();
 
-    let name = blame_entry.committer.as_deref().unwrap_or("<no name>");
+    let name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = if name.len() > 20 {
         format!("{}...", &name[..16])
     } else {
         name.to_string()
     };
+
+    let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
+    let commit_message = blame.read(cx).message_for_entry(&blame_entry);
 
     h_flex()
         .id(("blame", ix))
@@ -2901,14 +2899,21 @@ fn render_blame_entry(
             }
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
-        .when_some(blame_entry.permalink.as_ref(), |this, url| {
+        .when_some(permalink, |this, url| {
             let url = url.clone();
             this.cursor_pointer().on_click(move |_, cx| {
                 cx.stop_propagation();
                 cx.open_url(url.as_str())
             })
         })
-        .tooltip(move |cx| BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx))
+        .tooltip(move |cx| {
+            BlameEntryTooltip::new(
+                sha_color.cursor,
+                commit_message.clone(),
+                blame_entry.clone(),
+                cx,
+            )
+        })
         .into_any()
 }
 
@@ -2933,24 +2938,35 @@ fn deploy_blame_entry_context_menu(
 
 struct BlameEntryTooltip {
     color: Hsla,
+    commit_message: Option<String>,
     blame_entry: BlameEntry,
 }
 
 impl BlameEntryTooltip {
-    fn new(color: Hsla, blame_entry: BlameEntry, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|_cx| Self { color, blame_entry }).into()
+    fn new(
+        color: Hsla,
+        commit_message: Option<String>,
+        blame_entry: BlameEntry,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.new_view(|_cx| Self {
+            color,
+            commit_message,
+            blame_entry,
+        })
+        .into()
     }
 }
 
 impl Render for BlameEntryTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let committer = self
+        let author = self
             .blame_entry
-            .committer
+            .author
             .clone()
             .unwrap_or("<no name>".to_string());
-        let committer_email = self.blame_entry.committer_mail.clone().unwrap_or_default();
-        let absolute_timestamp = match self.blame_entry.committer_offset_date_time() {
+        let author_email = self.blame_entry.author_mail.clone().unwrap_or_default();
+        let absolute_timestamp = match self.blame_entry.author_offset_date_time() {
             Ok(timestamp) => time_format::format_localized_timestamp(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
@@ -2960,7 +2976,13 @@ impl Render for BlameEntryTooltip {
             Err(_) => "Error parsing date".to_string(),
         };
 
-        let summary = self.blame_entry.summary.clone().unwrap_or_default();
+        let message = match &self.commit_message {
+            Some(message) => message.clone(),
+            None => {
+                println!("can't find commit message");
+                self.blame_entry.summary.clone().unwrap_or_default()
+            }
+        };
 
         let pretty_commit_id = format!("{}", self.blame_entry.sha);
 
@@ -2985,11 +3007,11 @@ impl Render for BlameEntryTooltip {
                             div()
                                 .child(format!(
                                     "{} {} - {}",
-                                    committer, committer_email, absolute_timestamp
+                                    author, author_email, absolute_timestamp
                                 ))
                                 .text_color(cx.theme().colors().text_muted),
                         )
-                        .child(div().child(summary)),
+                        .child(div().child(message)),
                 )
         })
     }

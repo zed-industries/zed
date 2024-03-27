@@ -56,7 +56,7 @@ pub trait GitRepository: Send {
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>>;
+    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -214,36 +214,16 @@ impl GitRepository for LibGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
+    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame> {
         let git_dir_path = self.path();
         let working_directory = git_dir_path.parent().with_context(|| {
             format!("failed to get git working directory for {:?}", git_dir_path)
         })?;
 
-        let output = git::blame::run_git_blame(&working_directory, path, &content)?;
-        let mut entries = git::blame::parse_git_blame(&output)?;
-        entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
-
         const REMOTE_NAME: &str = "origin";
-        if let Some(origin_url) = self.remote_url(REMOTE_NAME) {
-            let mut permalinks = HashMap::default();
-            for entry in entries.iter_mut() {
-                let permalink = permalinks.entry(entry.sha).or_insert_with(|| {
-                    git::permalink::build_permalink(git::permalink::BuildPermalinkParams {
-                        remote_url: &origin_url,
-                        sha: entry.sha.to_string().as_str(),
-                        path: &entry.filename,
-                        selection: None,
-                    })
-                });
+        let remote_url = self.remote_url(REMOTE_NAME);
 
-                if let Ok(url) = permalink {
-                    entry.permalink.replace(url.clone());
-                }
-            }
-        }
-
-        Ok(entries)
+        git::blame::Blame::for_path(working_directory, path, &content, remote_url)
     }
 }
 
@@ -355,13 +335,14 @@ impl GitRepository for FakeGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, _content: Rope) -> Result<Vec<git::blame::BlameEntry>> {
+    fn blame(&self, path: &Path, _content: Rope) -> Result<git::blame::Blame> {
         let state = self.state.lock();
-        state
+        let entries = state
             .blames
             .get(path)
             .with_context(|| format!("failed to get blame for {:?}", path))
-            .cloned()
+            .cloned()?;
+        Ok(git::blame::Blame::with_entries(entries))
     }
 }
 

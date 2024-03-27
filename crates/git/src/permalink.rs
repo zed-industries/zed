@@ -3,7 +3,7 @@ use std::ops::Range;
 use anyhow::{anyhow, Result};
 use url::Url;
 
-enum GitHostingProvider {
+pub(crate) enum GitHostingProvider {
     Github,
     Gitlab,
     Gitee,
@@ -61,8 +61,33 @@ pub struct BuildPermalinkParams<'a> {
 }
 
 pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
-    let BuildPermalinkParams {
-        remote_url,
+    let remote = parse_git_remote_url(params.remote_url)
+        .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+
+    Ok(build_permalink_for_remote(BuildPermalinkForRemoteParams {
+        remote: &remote,
+        sha: params.sha,
+        path: params.sha,
+        selection: params.selection,
+    }))
+}
+
+pub(crate) struct ParsedGitRemote<'a> {
+    pub provider: GitHostingProvider,
+    pub owner: &'a str,
+    pub repo: &'a str,
+}
+
+struct BuildPermalinkForRemoteParams<'a> {
+    pub remote: &'a ParsedGitRemote<'a>,
+    pub sha: &'a str,
+    pub path: &'a str,
+    pub selection: Option<Range<u32>>,
+}
+
+fn build_permalink_for_remote(params: BuildPermalinkForRemoteParams) -> Url {
+    let BuildPermalinkForRemoteParams {
+        remote,
         sha,
         path,
         selection,
@@ -72,8 +97,7 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
         provider,
         owner,
         repo,
-    } = parse_git_remote_url(remote_url)
-        .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+    } = remote;
 
     let path = match provider {
         GitHostingProvider::Github => format!("{owner}/{repo}/blob/{sha}/{path}"),
@@ -87,17 +111,36 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
 
     let mut permalink = provider.base_url().join(&path).unwrap();
     permalink.set_fragment(line_fragment.as_deref());
-
-    Ok(permalink)
+    permalink
 }
 
-struct ParsedGitRemote<'a> {
-    pub provider: GitHostingProvider,
-    pub owner: &'a str,
-    pub repo: &'a str,
+pub(crate) struct BuildCommitLinkParams<'a> {
+    pub remote: &'a ParsedGitRemote<'a>,
+    pub sha: &'a str,
 }
 
-fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
+pub(crate) fn build_commit_link(params: BuildCommitLinkParams) -> Url {
+    let BuildCommitLinkParams { sha, remote } = params;
+
+    let ParsedGitRemote {
+        provider,
+        owner,
+        repo,
+    } = remote;
+
+    let path = match provider {
+        GitHostingProvider::Github => format!("{owner}/{repo}/commits/{sha}"),
+        GitHostingProvider::Gitlab => format!("{owner}/{repo}/-/commit/{sha}"),
+        GitHostingProvider::Gitee => format!("{owner}/{repo}/commit/{sha}"),
+        GitHostingProvider::Bitbucket => format!("{owner}/{repo}/commits/{sha}"),
+        GitHostingProvider::Sourcehut => format!("~{owner}/{repo}/commit/{sha}"),
+        GitHostingProvider::Codeberg => format!("{owner}/{repo}/commit/{sha}"),
+    };
+
+    provider.base_url().join(&path).unwrap()
+}
+
+pub(crate) fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
     if url.starts_with("git@github.com:") || url.starts_with("https://github.com/") {
         let repo_with_owner = url
             .trim_start_matches("git@github.com:")

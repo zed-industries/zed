@@ -1,10 +1,12 @@
+use crate::commit::get_messages;
+use crate::permalink::{build_commit_link, parse_git_remote_url, BuildCommitLinkParams};
+use crate::Oid;
 use anyhow::{anyhow, Context, Result};
+use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::str::FromStr;
-use std::{fmt, ops::Range, path::Path};
+use std::{ops::Range, path::Path};
 use text::Rope;
 use time;
 use time::macros::format_description;
@@ -13,6 +15,59 @@ use time::UtcOffset;
 use url::Url;
 
 pub use git2 as libgit;
+
+pub struct Blame {
+    pub entries: Vec<BlameEntry>,
+    pub messages: HashMap<Oid, String>,
+    pub permalinks: HashMap<Oid, Url>,
+}
+
+impl Blame {
+    pub fn for_path(
+        working_directory: &Path,
+        path: &Path,
+        content: &Rope,
+        remote_url: Option<String>,
+    ) -> Result<Self> {
+        let output = run_git_blame(&working_directory, path, &content)?;
+        let mut entries = parse_git_blame(&output)?;
+        entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+
+        let mut permalinks = HashMap::default();
+        let mut unique_shas = HashSet::default();
+        let parsed_remote_url = remote_url.as_deref().map(parse_git_remote_url).flatten();
+
+        for entry in entries.iter_mut() {
+            unique_shas.insert(entry.sha);
+            if let Some(remote) = parsed_remote_url.as_ref() {
+                permalinks.entry(entry.sha).or_insert_with(|| {
+                    build_commit_link(BuildCommitLinkParams {
+                        remote,
+                        sha: entry.sha.to_string().as_str(),
+                    })
+                });
+            }
+        }
+
+        let shas = unique_shas.into_iter().collect::<Vec<_>>();
+        let messages =
+            get_messages(&working_directory, &shas).context("failed to get commit messages")?;
+
+        Ok(Self {
+            entries,
+            permalinks,
+            messages,
+        })
+    }
+
+    pub fn with_entries(entries: Vec<BlameEntry>) -> Self {
+        Self {
+            entries,
+            messages: HashMap::default(),
+            permalinks: HashMap::default(),
+        }
+    }
+}
 
 pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &Rope) -> Result<String> {
     let child = Command::new("git")
@@ -47,92 +102,6 @@ pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &Rope) -> 
     }
 
     Ok(String::from_utf8(output.stdout)?)
-}
-
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct Oid(libgit::Oid);
-
-impl Oid {
-    fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-}
-
-impl FromStr for Oid {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        libgit::Oid::from_str(s)
-            .map_err(|error| anyhow!("failed to parse git oid: {}", error))
-            .map(|oid| Self(oid))
-    }
-}
-
-impl fmt::Debug for Oid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl fmt::Display for Oid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl Serialize for Oid {
-    fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.0.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for Oid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        s.parse::<Oid>().map_err(serde::de::Error::custom)
-    }
-}
-
-impl Default for Oid {
-    fn default() -> Self {
-        Self(libgit::Oid::zero())
-    }
-}
-
-impl From<Oid> for u32 {
-    fn from(oid: Oid) -> Self {
-        let bytes = oid.0.as_bytes();
-        debug_assert!(bytes.len() > 4);
-
-        let mut u32_bytes: [u8; 4] = [0; 4];
-
-        for i in 0..4 {
-            u32_bytes[i] = bytes[i];
-        }
-
-        u32::from_ne_bytes(u32_bytes)
-    }
-}
-
-impl From<Oid> for usize {
-    fn from(oid: Oid) -> Self {
-        let bytes = oid.0.as_bytes();
-        debug_assert!(bytes.len() > 8);
-
-        let mut u64_bytes: [u8; 8] = [0; 8];
-
-        for i in 0..8 {
-            u64_bytes[i] = bytes[i];
-        }
-
-        u64::from_ne_bytes(u64_bytes) as usize
-    }
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
@@ -200,13 +169,11 @@ impl BlameEntry {
         })
     }
 
-    pub fn committer_offset_date_time(&self) -> Result<time::OffsetDateTime> {
-        if let (Some(committer_time), Some(committer_tz)) =
-            (self.committer_time, &self.committer_tz)
-        {
+    pub fn author_offset_date_time(&self) -> Result<time::OffsetDateTime> {
+        if let (Some(author_time), Some(author_tz)) = (self.author_time, &self.author_tz) {
             let format = format_description!("[offset_hour][offset_minute]");
-            let offset = UtcOffset::parse(committer_tz, &format)?;
-            let date_time_utc = OffsetDateTime::from_unix_timestamp(committer_time)?;
+            let offset = UtcOffset::parse(author_tz, &format)?;
+            let date_time_utc = OffsetDateTime::from_unix_timestamp(author_time)?;
 
             Ok(date_time_utc.to_offset(offset))
         } else {
@@ -254,7 +221,7 @@ impl BlameEntry {
 // More about `--incremental` output: https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-blame.html
 pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     let mut entries: Vec<BlameEntry> = Vec::new();
-    let mut index: HashMap<Oid, usize> = HashMap::new();
+    let mut index: HashMap<Oid, usize> = HashMap::default();
 
     let mut current_entry: Option<BlameEntry> = None;
 

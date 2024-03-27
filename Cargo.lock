@@ -4189,6 +4189,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clock",
+ "collections",
  "git2",
  "lazy_static",
  "log",

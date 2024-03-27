@@ -1626,7 +1626,10 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
-            show_git_blame: self.blame.is_some(),
+            show_git_blame: self
+                .blame
+                .as_ref()
+                .map_or(false, |blame| blame.read(cx).has_generated_entries()),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -8859,6 +8862,12 @@ impl Editor {
 
             let project = project.clone();
 
+            // cx.spawn(|this, cx| async move {
+            //     let blame = GitBlame::load(buffer, project, cx).await;
+            //     this.update(cx, |this, cx| {
+            //         this.blame = Some(...);
+            //     })
+            // })
             let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);

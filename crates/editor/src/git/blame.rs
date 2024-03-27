@@ -1,10 +1,15 @@
 use anyhow::Result;
-use git::blame::BlameEntry;
+use collections::HashMap;
+use git::{
+    blame::{Blame, BlameEntry},
+    Oid,
+};
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
+use url::Url;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -43,9 +48,12 @@ pub struct GitBlame {
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
+    permalinks: HashMap<Oid, Url>,
+    messages: HashMap<Oid, String>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
+    generated: bool,
     _refresh_subscription: Subscription,
 }
 
@@ -94,11 +102,26 @@ impl GitBlame {
             buffer_snapshot,
             entries,
             buffer_edits,
+            permalinks: HashMap::default(),
+            messages: HashMap::default(),
             task: Task::ready(Ok(())),
+            generated: false,
             _refresh_subscription: refresh_subscription,
         };
         this.generate(cx);
         this
+    }
+
+    pub fn has_generated_entries(&self) -> bool {
+        self.generated
+    }
+
+    pub fn permalink_for_entry(&self, entry: &BlameEntry) -> Option<Url> {
+        self.permalinks.get(&entry.sha).cloned()
+    }
+
+    pub fn message_for_entry(&self, entry: &BlameEntry) -> Option<String> {
+        self.messages.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
@@ -230,19 +253,23 @@ impl GitBlame {
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame_entries = self.project.read(cx).blame_buffer(&self.buffer, cx);
+        let blame = self.project.read(cx).blame_buffer(&self.buffer, cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let entries = cx
+            let (entries, permalinks, messages) = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
                     async move {
-                        let blame_entries = blame_entries.await?;
+                        let Blame {
+                            entries,
+                            permalinks,
+                            messages,
+                        } = blame.await?;
 
                         let mut current_row = 0;
                         let mut entries = SumTree::from_iter(
-                            blame_entries.into_iter().flat_map(|entry| {
+                            entries.into_iter().flat_map(|entry| {
                                 let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
 
                                 if entry.range.start > current_row {
@@ -274,7 +301,7 @@ impl GitBlame {
                             );
                         }
 
-                        anyhow::Ok(entries)
+                        anyhow::Ok((entries, permalinks, messages))
                     }
                 })
                 .await?;
@@ -283,6 +310,9 @@ impl GitBlame {
                 this.buffer_edits = buffer_edits;
                 this.buffer_snapshot = snapshot;
                 this.entries = entries;
+                this.permalinks = permalinks;
+                this.messages = messages;
+                this.generated = true;
                 cx.notify();
             })
         });
