@@ -219,29 +219,19 @@ impl LanguageServer {
             &binary.arguments
         );
 
+        let mut server_process = process::Command::new(&binary.path)
+            .current_dir(working_dir)
+            .args(binary.arguments)
+            .envs(binary.env.unwrap_or_default())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
 
-        let mut server = if cfg!(target_os = "windows") {
-            process::Command::new(&binary.path)
-                .current_dir(working_dir)
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .args(binary.arguments)
-                .envs(binary.env.unwrap_or_default())
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()?
-        } else {
-            process::Command::new(&binary.path)
-                .current_dir(working_dir)
-                .args(binary.arguments)
-                .envs(binary.env.unwrap_or_default())
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()?
-        };
+        #[cfg(target_os = "windows")]
+        server_process.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+        let mut server = server_process.spawn()?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
