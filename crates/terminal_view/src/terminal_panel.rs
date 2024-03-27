@@ -103,7 +103,7 @@ impl TerminalPanel {
                             })
                     })
                     .child(
-                        IconButton::new("hide_terminal", IconName::Close)
+                        IconButton::new("hide_terminal", IconName::Dash)
                             .icon_size(IconSize::Small)
                             .on_click(move |_, cx| {
                                 let dock = TerminalSettings::get_global(cx).dock;
