@@ -910,6 +910,11 @@ impl LanguageServer {
         &self.root_path
     }
 
+    /// Gets the id of the next request.
+    pub fn next_id(&self) -> &AtomicI32 {
+        &self.next_id
+    }
+
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
