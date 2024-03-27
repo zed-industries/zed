@@ -48,10 +48,12 @@ impl super::LspAdapter for VueLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(VueLspVersion {
-            vue_version: self
-                .node
-                .npm_package_latest_version("@vue/language-server")
-                .await?,
+            // TODO: Temporarily fixed to 1.8 as @vue/language-server 2.0 is not yet supported
+            // vue_version: self
+            //     .node
+            //     .npm_package_latest_version("@vue/language-server")
+            //     .await?,
+            vue_version: "1.8".to_string(),
             ts_version: self.node.npm_package_latest_version("typescript").await?,
         }) as Box<_>)
     }
