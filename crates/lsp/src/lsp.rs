@@ -220,7 +220,7 @@ impl LanguageServer {
         );
 
         let mut command = process::Command::new(&binary.path);
-        command 
+        command
             .current_dir(working_dir)
             .args(binary.arguments)
             .envs(binary.env.unwrap_or_default())
@@ -231,17 +231,6 @@ impl LanguageServer {
         #[cfg(windows)]
         command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         let mut server = command.spawn()?;
-
-        #[cfg(not(target_os = "windows"))]
-        let mut server = process::Command::new(&binary.path)
-            .current_dir(working_dir)
-            .args(binary.arguments)
-            .envs(binary.env.unwrap_or_default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
