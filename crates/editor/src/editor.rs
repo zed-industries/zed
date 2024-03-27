@@ -51,7 +51,7 @@ use debounced_delay::DebouncedDelay;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
-use element::LineWithInvisibles;
+use element::{BlameEntryContextMenu, LineWithInvisibles};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
@@ -398,6 +398,7 @@ pub struct Editor {
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
+    blame_entry_context_menu: Option<BlameEntryContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
@@ -1441,6 +1442,7 @@ impl Editor {
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
+            blame_entry_context_menu: None,
             completion_tasks: Default::default(),
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,

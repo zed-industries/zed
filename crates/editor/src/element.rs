@@ -25,9 +25,9 @@ use git::{
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity,
-    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    CursorStyle, DismissEvent, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler,
+    Entity, Hitbox, Hsla, InteractiveElement, IntoElement, Model, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
     Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
 };
@@ -1116,7 +1116,13 @@ impl EditorElement {
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
                 if let Some(blame_entry) = blame_entry {
-                    let mut element = render_blame_entry(ix, blame_entry, &mut last_used_color, cx);
+                    let mut element = render_blame_entry(
+                        ix,
+                        blame_entry,
+                        &mut last_used_color,
+                        self.editor.clone(),
+                        cx,
+                    );
 
                     let start_y = ix as f32 * line_height - (scroll_top % line_height);
                     let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
@@ -1776,6 +1782,18 @@ impl EditorElement {
         let mut element = overlay()
             .position(mouse_context_menu.position)
             .child(mouse_context_menu.context_menu.clone())
+            .anchor(AnchorCorner::TopLeft)
+            .snap_to_window()
+            .into_any();
+        element.layout(gpui::Point::default(), AvailableSpace::min_size(), cx);
+        Some(element)
+    }
+
+    fn layout_blame_entry_context_menu(&self, cx: &mut ElementContext) -> Option<AnyElement> {
+        let blame_entry_context_menu = self.editor.read(cx).blame_entry_context_menu.as_ref()?;
+        let mut element = overlay()
+            .position(blame_entry_context_menu.position)
+            .child(blame_entry_context_menu.context_menu.clone())
             .anchor(AnchorCorner::TopLeft)
             .snap_to_window()
             .into_any();
@@ -2683,6 +2701,16 @@ impl EditorElement {
         }
     }
 
+    fn paint_blame_entry_context_menu(
+        &mut self,
+        layout: &mut EditorLayout,
+        cx: &mut ElementContext,
+    ) {
+        if let Some(mouse_context_menu) = layout.blame_entry_context_menu.as_mut() {
+            mouse_context_menu.paint(cx);
+        }
+    }
+
     fn paint_scroll_wheel_listener(&mut self, layout: &EditorLayout, cx: &mut ElementContext) {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -2839,6 +2867,7 @@ fn render_blame_entry(
     ix: usize,
     blame_entry: BlameEntry,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
+    editor: View<Editor>,
     cx: &mut ElementContext<'_>,
 ) -> AnyElement {
     let mut sha_color = cx
@@ -2876,13 +2905,6 @@ fn render_blame_entry(
         name.to_string()
     };
 
-    let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-        let sha = format!("{}", blame_entry.sha);
-        context_menu.entry("Copy commit SHA", None, move |cx| {
-            cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
-        })
-    });
-
     h_flex()
         .id(("blame", ix))
         .children([
@@ -2894,6 +2916,12 @@ fn render_blame_entry(
                 .text_color(cx.theme().status().hint)
                 .child(format!("{:20} {: >14}", name, relative_timestamp)),
         ])
+        .on_mouse_down(MouseButton::Right, {
+            let blame_entry = blame_entry.clone();
+            move |event, cx| {
+                BlameEntryContextMenu::deploy(&blame_entry, editor.clone(), event.position, cx);
+            }
+        })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
         .when_some(blame_entry.permalink.as_ref(), |this, url| {
             let url = url.clone();
@@ -2904,6 +2932,47 @@ fn render_blame_entry(
         })
         .tooltip(move |cx| BlameEntryTooltip::new(sha_color.cursor, blame_entry.clone(), cx))
         .into_any()
+}
+
+pub struct BlameEntryContextMenu {
+    position: gpui::Point<Pixels>,
+    context_menu: View<ui::ContextMenu>,
+    _subscription: gpui::Subscription,
+}
+
+impl BlameEntryContextMenu {
+    fn deploy(
+        blame_entry: &BlameEntry,
+        editor: View<Editor>,
+        position: gpui::Point<Pixels>,
+        cx: &mut WindowContext<'_>,
+    ) {
+        let context_menu = ContextMenu::build(cx, move |this, _| {
+            let sha = format!("{}", blame_entry.sha);
+            this.entry("Copy commit SHA", None, move |cx| {
+                cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+            })
+        });
+
+        let context_menu_focus = context_menu.focus_handle(cx);
+        cx.focus(&context_menu_focus);
+
+        editor.update(cx, move |editor, cx| {
+            let subscription =
+                cx.subscribe(&context_menu, move |this, _, _event: &DismissEvent, cx| {
+                    this.blame_entry_context_menu.take();
+                    if context_menu_focus.contains_focused(cx) {
+                        this.focus(cx);
+                    }
+                });
+
+            editor.blame_entry_context_menu = Some(Self {
+                position,
+                context_menu,
+                _subscription: subscription,
+            });
+        });
+    }
 }
 
 struct BlameEntryTooltip {
@@ -3543,6 +3612,7 @@ impl Element for EditorElement {
                 }
 
                 let mouse_context_menu = self.layout_mouse_context_menu(cx);
+                let blame_entry_context_menu = self.layout_blame_entry_context_menu(cx);
 
                 let fold_indicators = if gutter_settings.folds {
                     cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
@@ -3625,6 +3695,7 @@ impl Element for EditorElement {
                     cursors,
                     selections,
                     mouse_context_menu,
+                    blame_entry_context_menu,
                     code_actions_indicator,
                     fold_indicators,
                     tab_invisible,
@@ -3676,6 +3747,7 @@ impl Element for EditorElement {
 
                 self.paint_scrollbar(layout, cx);
                 self.paint_mouse_context_menu(layout, cx);
+                self.paint_blame_entry_context_menu(layout, cx);
             });
         })
     }
@@ -3717,6 +3789,7 @@ pub struct EditorLayout {
     code_actions_indicator: Option<AnyElement>,
     fold_indicators: Vec<Option<AnyElement>>,
     mouse_context_menu: Option<AnyElement>,
+    blame_entry_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
 }
