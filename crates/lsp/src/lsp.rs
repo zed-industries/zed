@@ -219,17 +219,18 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        #[cfg(target_os = "windows")]
-        let mut server = process::Command::new(&binary.path)
+        let mut command = process::Command::new(&binary.path);
+        command 
             .current_dir(working_dir)
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .args(binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        let mut server = command.spawn()?;
 
         #[cfg(not(target_os = "windows"))]
         let mut server = process::Command::new(&binary.path)
