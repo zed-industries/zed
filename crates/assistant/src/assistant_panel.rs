@@ -42,7 +42,7 @@ use theme::ThemeSettings;
 use ui::{
     prelude::*,
     utils::{DateTimeType, FormatDistance},
-    ButtonLike, Tab, TabBar, Tooltip,
+    ButtonLike, Checkbox, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -2483,7 +2483,7 @@ impl Render for ConversationEditor {
         //
         // The ConversationEditor has two main segments
         //
-        // 1. Editor
+        // 1. Messages Editor
         // 2. Context
         //   - File Context (currently only the active file)
         //   - Project Diagnostics (Planned)
@@ -2522,8 +2522,21 @@ impl Render for ConversationEditor {
                             ElementId::Name(format!("llm-context-{}", entity_id).into());
 
                         let el = context.inline_render(cx);
+                        let entity_id = entity_id.clone();
 
-                        div().h_flex().child(el).child(div().id(element_id))
+                        div().h_flex().child(el).child(
+                            Checkbox::new(element_id, Selection::Selected).on_click(cx.listener(
+                                move |_this, _, _cx| {
+                                    dbg!(entity_id);
+                                },
+                            )), // .tooltip(|cx| Tooltip::text("Select this context", cx)),
+                                // IconButton::new(element_id, IconName::Check)
+                                //     .on_click(cx.listener(move |_this, _, _cx| {
+                                //         dbg!(entity_id);
+                                //     }))
+                                //     .selected(true)
+                                //     .tooltip(|cx| Tooltip::text("Select this context", cx)),
+                        )
                     });
 
             let file_context_container = div()
