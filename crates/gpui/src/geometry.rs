@@ -2480,6 +2480,13 @@ impl From<ScaledPixels> for f64 {
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg, PartialEq)]
 pub struct Rems(pub f32);
 
+impl Rems {
+    /// Convert this Rem value to pixels.
+    pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
+        *self * rem_size
+    }
+}
+
 impl Mul<Pixels> for Rems {
     type Output = Pixels;
 
@@ -2555,7 +2562,7 @@ impl AbsoluteLength {
     pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
         match self {
             AbsoluteLength::Pixels(pixels) => *pixels,
-            AbsoluteLength::Rems(rems) => *rems * rem_size,
+            AbsoluteLength::Rems(rems) => rems.to_pixels(rem_size),
         }
     }
 }
