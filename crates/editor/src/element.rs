@@ -52,7 +52,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::{h_flex, popover_menu, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
 use workspace::item::Item;
@@ -1087,23 +1087,17 @@ impl EditorElement {
 
     fn layout_blame_entries(
         &self,
-        display_rows: Range<u32>,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
         em_width: Pixels,
         scroll_position: gpui::Point<f32>,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
         cx: &mut ElementContext,
     ) -> (Option<Vec<AnyElement>>, Option<Pixels>) {
         let blamed_rows: Option<Vec<_>> = self.editor.update(cx, |editor, cx| {
             let Some(blame) = editor.blame.as_ref() else {
                 return None;
             };
-
-            // TODO: Pass this in
-            let buffer_rows = snapshot
-                .buffer_rows(display_rows.start)
-                .take(display_rows.len());
 
             Some(blame.update(cx, |this, cx| {
                 this.blame_for_rows(buffer_rows, cx).collect()
@@ -1255,7 +1249,7 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
-        snapshot: &EditorSnapshot,
+        buffer_rows: Vec<Option<u32>>,
         rows: &Range<u32>,
         relative_to: Option<u32>,
     ) -> HashMap<u32, u32> {
@@ -1265,12 +1259,6 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
-        let end = rows.end.max(relative_to);
-
-        let buffer_rows = snapshot
-            .buffer_rows(start)
-            .take(1 + (end - start) as usize)
-            .collect::<Vec<_>>();
 
         let head_idx = relative_to - start;
         let mut delta = 1;
@@ -1306,6 +1294,7 @@ impl EditorElement {
     fn layout_line_numbers(
         &self,
         rows: Range<u32>,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
         active_rows: &BTreeMap<u32, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
@@ -1344,13 +1333,11 @@ impl EditorElement {
             None
         };
 
-        let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
+        let buffer_rows = buffer_rows.collect::<Vec<_>>();
+        let relative_rows =
+            self.calculate_relative_line_numbers(buffer_rows.clone(), &rows, relative_to);
 
-        for (ix, row) in snapshot
-            .buffer_rows(rows.start)
-            .take((rows.end - rows.start) as usize)
-            .enumerate()
-        {
+        for (ix, row) in buffer_rows.into_iter().enumerate() {
             let display_row = rows.start + ix as u32;
             let (active, color) = if active_rows.contains_key(&display_row) {
                 (true, cx.theme().colors().editor_active_line_number)
@@ -3331,6 +3318,10 @@ impl Element for EditorElement {
                 let end_row =
                     1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
 
+                let buffer_rows = snapshot
+                    .buffer_rows(start_row)
+                    .take((start_row..end_row).len());
+
                 let start_anchor = if start_row == 0 {
                     Anchor::min()
                 } else {
@@ -3372,6 +3363,7 @@ impl Element for EditorElement {
 
                 let (line_numbers, fold_statuses) = self.layout_line_numbers(
                     start_row..end_row,
+                    buffer_rows.clone(),
                     &active_rows,
                     newest_selection_head,
                     &snapshot,
@@ -3381,12 +3373,11 @@ impl Element for EditorElement {
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
                 let (blamed_display_rows, blame_width) = self.layout_blame_entries(
-                    start_row..end_row,
+                    buffer_rows,
                     em_width,
                     scroll_position,
                     line_height,
                     &gutter_hitbox,
-                    &snapshot,
                     cx,
                 );
 
@@ -4178,6 +4169,7 @@ mod tests {
                     element
                         .layout_line_numbers(
                             0..6,
+                            (0..6).map(Some),
                             &Default::default(),
                             Some(DisplayPoint::new(0, 0)),
                             &snapshot,
@@ -4189,12 +4181,8 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
-        let relative_rows = window
-            .update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-                element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
-            })
-            .unwrap();
+        let relative_rows =
+            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..6), Some(3));
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
         assert_eq!(relative_rows[&2], 1);
@@ -4203,26 +4191,16 @@ mod tests {
         assert_eq!(relative_rows[&5], 2);
 
         // works if cursor is before screen
-        let relative_rows = window
-            .update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-
-                element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
-            })
-            .unwrap();
+        let relative_rows =
+            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(3..6), Some(1));
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
         assert_eq!(relative_rows[&4], 3);
         assert_eq!(relative_rows[&5], 4);
 
         // works if cursor is after screen
-        let relative_rows = window
-            .update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-
-                element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
-            })
-            .unwrap();
+        let relative_rows =
+            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..3), Some(6));
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
         assert_eq!(relative_rows[&1], 4);
