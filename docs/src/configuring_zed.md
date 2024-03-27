@@ -190,6 +190,82 @@ List of `string` values
 2. Position the dock to the right of the workspace like a side panel: `right`
 3. Position the dock full screen over the entire workspace: `expanded`
 
+## Editor Tabs
+
+- Description: Configuration for the editor tabs.
+- Setting: `tabs`
+- Default:
+
+```json
+"tabs": {
+  "placement": "top",
+  "close_position": "right",
+  "git_status": false
+},
+```
+
+### Placement
+
+- Description: Where to place the editor tab bar.
+- Setting: `placement`
+- Default: `top`
+
+**Options**
+
+1. Place the tab bar on top of the editor:
+
+```json
+{
+  "placement": "top"
+}
+```
+
+2. Place the tab bar at the bottom of the editor:
+
+```json
+{
+  "placement": "bottom"
+}
+```
+
+3. Hide the tab bar:
+
+```json
+{
+  "placement": "no"
+}
+```
+
+### Close Position
+
+- Description: Where to display close button within a tab.
+- Setting: `close_position`
+- Default: `right`
+
+**Options**
+
+1. Display the close button on the right:
+
+```json
+{
+  "close_position": "right"
+}
+```
+
+2. Display the close button on the left:
+
+```json
+{
+  "close_position": "left"
+}
+```
+
+### Git Status
+
+- Description: Whether or not to show Git file status in tab.
+- Setting: `git_status`
+- Default: false
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
