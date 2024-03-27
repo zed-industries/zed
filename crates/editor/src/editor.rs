@@ -10499,7 +10499,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
 
-        let multi_line_diagnostic = diagnostic.message.contains("\n");
+        let multi_line_diagnostic = diagnostic.message.contains('\n');
 
         let buttons = |diagnostic: &Diagnostic, block_id: usize| {
             if multi_line_diagnostic {
