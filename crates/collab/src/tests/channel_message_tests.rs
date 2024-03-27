@@ -598,4 +598,44 @@ async fn test_chat_editing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             }
         );
     });
+
+    // If we remove a mention from a message the corresponding mention notification
+    // should also be removed.
+
+    channel_chat_a
+        .update(cx_a, |c, cx| {
+            c.update_message(
+                msg_id,
+                MessageParams {
+                    text: "Updated body without a mention".into(),
+                    reply_to_message_id: None,
+                    mentions: vec![],
+                },
+                cx,
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    channel_chat_a.update(cx_a, |channel_chat, _| {
+        assert_eq!(
+            channel_chat.find_loaded_message(msg_id).unwrap().body,
+            "Updated body without a mention",
+        )
+    });
+    channel_chat_b.update(cx_b, |channel_chat, _| {
+        assert_eq!(
+            channel_chat.find_loaded_message(msg_id).unwrap().body,
+            "Updated body without a mention",
+        )
+    });
+    client_b.notification_store().read_with(cx_b, |store, _| {
+        // First notification is the channel invitation, second would be the mention
+        // notification, which should now be removed.
+        assert_eq!(store.notification_count(), 1);
+    });
 }
