@@ -13,8 +13,12 @@ use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{self, windows::CommandExt, Child},
+    process::{self, Child},
 };
+
+#[cfg(target_os = "windows")]
+use smoll::process::windows::CommandExt
+
 use std::{
     ffi::OsString,
     fmt,
@@ -215,16 +219,30 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut server = process::Command::new(&binary.path)
-            .current_dir(working_dir)
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .args(binary.arguments)
-            .envs(binary.env.unwrap_or_default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+
+        let mut server = if cfg!(target_os = "windows") {
+            process::Command::new(&binary.path)
+                .current_dir(working_dir)
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .args(binary.arguments)
+                .envs(binary.env.unwrap_or_default())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?
+        } else {
+            process::Command::new(&binary.path)
+                .current_dir(working_dir)
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .args(binary.arguments)
+                .envs(binary.env.unwrap_or_default())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?
+        };
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
