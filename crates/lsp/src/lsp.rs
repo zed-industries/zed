@@ -17,7 +17,7 @@ use smol::{
 };
 
 #[cfg(target_os = "windows")]
-use smol::process::windows::CommandExt
+use smol::process::windows::CommandExt;
 
 use std::{
     ffi::OsString,
