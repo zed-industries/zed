@@ -9142,6 +9142,7 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "editor",
+ "embed-manifest",
  "fuzzy",
  "gpui",
  "indoc",
