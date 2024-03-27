@@ -6612,21 +6612,23 @@ impl Project {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
-
+                let status = request.status(&buffer_handle, cx);
+                println!("{status:?}");
                 return cx.spawn(move |this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
-                    let request_method = R::LspRequest::METHOD;
+                    let _request_method = R::LspRequest::METHOD;
                     let id = language_server.next_id().load(SeqCst);
-                    if request.should_show_status() {
+
+                    if status.is_some() {
                         let _ = cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_start(
                                     language_server.server_id(),
                                     id.to_string(),
                                     LanguageServerProgress {
-                                        message: Some(request_method.to_string()),
+                                        message: status.clone(),
                                         percentage: None,
                                         last_update_at: Instant::now(),
                                     },
@@ -6637,7 +6639,7 @@ impl Project {
                     }
 
                     let result = language_server.request::<R::LspRequest>(lsp_params).await;
-                    if request.should_show_status() {
+                    if status.is_some() {
                         let _ = cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_end(
