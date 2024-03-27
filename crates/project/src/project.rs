@@ -5189,20 +5189,22 @@ impl Project {
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Hover>>> {
-        self.request_lsp(
+    ) -> Task<Result<Vec<Hover>>> {
+        let request_task = self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::Primary,
             GetHover { position },
             cx,
-        )
+        );
+        cx.spawn(|_, _| async move { request_task.await.map(|hover| hover.into_iter().collect()) })
     }
+
     pub fn hover<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Hover>>> {
+    ) -> Task<Result<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.hover_impl(buffer, position, cx)
     }

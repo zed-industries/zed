@@ -4978,11 +4978,16 @@ async fn test_lsp_hover(
         },
     );
 
-    let hover_info = project_b
+    let hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
         .await
-        .unwrap()
         .unwrap();
+    assert_eq!(
+        hovers.len(),
+        1,
+        "Expected exactly one hover but got: {hovers:?}"
+    );
+    let hover_info = hovers.into_iter().next().unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
         let snapshot = buffer.snapshot();
