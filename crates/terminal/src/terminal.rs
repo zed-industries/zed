@@ -595,7 +595,8 @@ pub struct Terminal {
 pub struct TaskState {
     pub id: TaskId,
     pub label: String,
-    pub completed: bool,
+    pub running: bool,
+    pub completed_successfully: Option<bool>,
     pub completion_rx: Receiver<()>,
 }
 
@@ -630,7 +631,7 @@ impl Terminal {
             }
             AlacTermEvent::Exit => match &mut self.task {
                 Some(task) => {
-                    task.completed = true;
+                    task.running = false;
                     self.completion_tx.try_send(()).ok();
                 }
                 None => cx.emit(Event::CloseTerminal),
@@ -649,8 +650,12 @@ impl Terminal {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
             }
-            AlacTermEvent::ChildExit(_) => {
-                // TODO: Handle child exit
+            AlacTermEvent::ChildExit(exit_code) => {
+                if let Some(task) = &mut self.task {
+                    task.completed_successfully = Some(*exit_code == 0);
+                    task.running = false;
+                    self.completion_tx.try_send(()).ok();
+                }
             }
         }
     }
@@ -1381,19 +1386,15 @@ impl Terminal {
     }
 
     pub fn wait_for_completed_task(&self, cx: &mut AppContext) -> Task<()> {
-        match self.task() {
-            Some(task) => {
-                if task.completed {
-                    Task::ready(())
-                } else {
-                    let mut completion_receiver = task.completion_rx.clone();
-                    cx.spawn(|_| async move {
-                        completion_receiver.next().await;
-                    })
-                }
+        if let Some(task) = self.task() {
+            if task.running {
+                let mut completion_receiver = task.completion_rx.clone();
+                return cx.spawn(|_| async move {
+                    completion_receiver.next().await;
+                });
             }
-            None => Task::ready(()),
         }
+        Task::ready(())
     }
 }
 

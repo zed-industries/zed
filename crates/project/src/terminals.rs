@@ -53,7 +53,8 @@ impl Project {
                 Some(TaskState {
                     id: spawn_task.id,
                     label: spawn_task.label,
-                    completed: false,
+                    running: true,
+                    completed_successfully: None,
                     completion_rx,
                 }),
                 Shell::WithArguments {
