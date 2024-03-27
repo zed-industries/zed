@@ -222,8 +222,18 @@ async fn test_remove_channel_message(
         .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
         .await
         .unwrap();
-    channel_chat_a
-        .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
+    let msg_id_2 = channel_chat_a
+        .update(cx_a, |c, cx| {
+            c.send_message(
+                MessageParams {
+                    text: "two @user_b".to_string(),
+                    mentions: vec![(4..12, client_b.id())],
+                    reply_to_message_id: None,
+                },
+                cx,
+            )
+            .unwrap()
+        })
         .await
         .unwrap();
     channel_chat_a
@@ -233,9 +243,23 @@ async fn test_remove_channel_message(
 
     // Clients A and B see all of the messages.
     executor.run_until_parked();
-    let expected_messages = &["one", "two", "three"];
+    let expected_messages = &["one", "two @user_b", "three"];
     assert_messages(&channel_chat_a, expected_messages, cx_a);
     assert_messages(&channel_chat_b, expected_messages, cx_b);
+
+    // Ensure that client B received a notification for the mention.
+    client_b.notification_store().read_with(cx_b, |store, _| {
+        assert_eq!(store.notification_count(), 2);
+        let entry = store.notification_at(0).unwrap();
+        assert_eq!(
+            entry.notification,
+            Notification::ChannelMessageMention {
+                message_id: msg_id_2,
+                sender_id: client_a.id(),
+                channel_id: channel_id.0,
+            }
+        );
+    });
 
     // Client A deletes one of their messages.
     channel_chat_a
@@ -261,6 +285,13 @@ async fn test_remove_channel_message(
         .await
         .unwrap();
     assert_messages(&channel_chat_c, expected_messages, cx_c);
+
+    // Ensure we remove the notifications when the message is removed
+    client_b.notification_store().read_with(cx_b, |store, _| {
+        // First notification is the channel invitation, second would be the mention
+        // notification, which should now be removed.
+        assert_eq!(store.notification_count(), 1);
+    });
 }
 
 #[track_caller]
