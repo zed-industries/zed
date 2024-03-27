@@ -220,8 +220,7 @@ impl GitRepository for LibGitRepository {
             format!("failed to get git working directory for {:?}", git_dir_path)
         })?;
 
-        // TODO: We don't need to allocate a string, we can just feed the rope to stdin.
-        let output = git::blame::run_git_blame(&working_directory, path, &content.to_string())?;
+        let output = git::blame::run_git_blame(&working_directory, path, &content)?;
         let mut entries = git::blame::parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 

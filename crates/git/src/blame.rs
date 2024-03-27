@@ -1,5 +1,4 @@
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,6 +6,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::{fmt, ops::Range, path::Path};
+use text::Rope;
 use time;
 use time::macros::format_description;
 use time::OffsetDateTime;
@@ -15,8 +15,8 @@ use url::Url;
 
 pub use git2 as libgit;
 
-pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &str) -> Result<String> {
-    let mut child = Command::new("git")
+pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &Rope) -> Result<String> {
+    let child = Command::new("git")
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
@@ -28,11 +28,15 @@ pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &str) -> R
         .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
-    if let Some(ref mut stdin) = child.stdin {
-        stdin
-            .write_all(contents.as_bytes())
-            .map_err(|e| anyhow!("Failed to write to git blame stdin: {}", e))?;
+    let mut stdin = child
+        .stdin
+        .as_ref()
+        .context("failed to get pipe to stdin of git blame command")?;
+
+    for chunk in contents.chunks() {
+        stdin.write_all(chunk.as_bytes())?;
     }
+    stdin.flush()?;
 
     let output = child
         .wait_with_output()
