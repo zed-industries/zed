@@ -94,12 +94,6 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct DuplicateLineUp {}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct DuplicateLineDown {}
-
 impl_actions!(
     editor,
     [
@@ -119,8 +113,6 @@ impl_actions!(
         MoveDownByLines,
         SelectUpByLines,
         SelectDownByLines,
-        DuplicateLineUp,
-        DuplicateLineDown,
     ]
 );
 
@@ -161,6 +153,8 @@ gpui::actions!(
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
         DisplayCursorNames,
+        DuplicateLineUp,
+        DuplicateLineDown,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
