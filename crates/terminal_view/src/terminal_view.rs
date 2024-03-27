@@ -20,7 +20,7 @@ use terminal::{
         term::{search::RegexSearch, TermMode},
     },
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
-    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
+    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
 };
 use terminal_element::TerminalElement;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
@@ -788,10 +788,19 @@ impl Item for TerminalView {
     ) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = if terminal.task().is_some() {
-            IconName::Play
-        } else {
-            IconName::Terminal
+        let icon = match terminal.task() {
+            Some(terminal_task) => match &terminal_task.status {
+                TaskStatus::Unknown => IconName::ExclamationTriangle,
+                TaskStatus::Running => IconName::Play,
+                TaskStatus::Completed { success } => {
+                    if *success {
+                        IconName::Check
+                    } else {
+                        IconName::XCircle
+                    }
+                }
+            },
+            None => IconName::Terminal,
         };
         h_flex()
             .gap_2()
@@ -829,7 +838,7 @@ impl Item for TerminalView {
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
         match self.terminal.read(cx).task() {
-            Some(task) => !task.completed,
+            Some(task) => task.status == TaskStatus::Running,
             None => self.has_bell(),
         }
     }
