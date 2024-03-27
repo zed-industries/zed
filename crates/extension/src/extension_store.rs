@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -22,7 +22,10 @@ use futures::{
     io::BufReader,
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use gpui::{actions, AppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
+use gpui::{
+    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
+    WeakModel,
+};
 use language::{
     ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
@@ -63,7 +66,7 @@ pub struct ExtensionStore {
     reload_tx: UnboundedSender<Option<Arc<str>>>,
     reload_complete_senders: Vec<oneshot::Sender<()>>,
     installed_dir: PathBuf,
-    outstanding_operations: HashMap<Arc<str>, ExtensionOperation>,
+    outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -73,17 +76,8 @@ pub struct ExtensionStore {
     tasks: Vec<Task<()>>,
 }
 
-#[derive(Clone)]
-pub enum ExtensionStatus {
-    NotInstalled,
-    Installing,
-    Upgrading,
-    Installed(Arc<str>),
-    Removing,
-}
-
 #[derive(Clone, Copy)]
-enum ExtensionOperation {
+pub enum ExtensionOperation {
     Upgrade,
     Install,
     Remove,
@@ -112,8 +106,8 @@ pub struct ExtensionIndex {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexEntry {
-    manifest: Arc<ExtensionManifest>,
-    dev: bool,
+    pub manifest: Arc<ExtensionManifest>,
+    pub dev: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
@@ -243,9 +237,19 @@ impl ExtensionStore {
         // Immediately load all of the extensions in the initial manifest. If the
         // index needs to be rebuild, then enqueue
         let load_initial_extensions = this.extensions_updated(extension_index, cx);
+        let mut reload_future = None;
         if extension_index_needs_rebuild {
-            let _ = this.reload(None, cx);
+            reload_future = Some(this.reload(None, cx));
         }
+
+        cx.spawn(|this, mut cx| async move {
+            if let Some(future) = reload_future {
+                future.await;
+            }
+            this.update(&mut cx, |this, cx| this.check_for_updates(cx))
+                .ok();
+        })
+        .detach();
 
         // Perform all extension loading in a single task to ensure that we
         // never attempt to simultaneously load/unload extensions from multiple
@@ -336,16 +340,12 @@ impl ExtensionStore {
         self.installed_dir.clone()
     }
 
-    pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
-        match self.outstanding_operations.get(extension_id) {
-            Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
-            Some(ExtensionOperation::Remove) => ExtensionStatus::Removing,
-            Some(ExtensionOperation::Upgrade) => ExtensionStatus::Upgrading,
-            None => match self.extension_index.extensions.get(extension_id) {
-                Some(extension) => ExtensionStatus::Installed(extension.manifest.version.clone()),
-                None => ExtensionStatus::NotInstalled,
-            },
-        }
+    pub fn outstanding_operations(&self) -> &BTreeMap<Arc<str>, ExtensionOperation> {
+        &self.outstanding_operations
+    }
+
+    pub fn installed_extensions(&self) -> &BTreeMap<Arc<str>, ExtensionIndexEntry> {
+        &self.extension_index.extensions
     }
 
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
@@ -377,6 +377,81 @@ impl ExtensionStore {
             query.push(("filter", search));
         }
 
+        self.fetch_extensions_with_query(query, cx)
+    }
+
+    pub fn fetch_extensions_with_update_available(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        let version = CURRENT_SCHEMA_VERSION.to_string();
+        let mut query = vec![("max_schema_version", version.as_str())];
+        let extension_ids = self
+            .extension_index
+            .extensions
+            .keys()
+            .map(|id| id.as_ref())
+            .collect::<Vec<_>>()
+            .join(",");
+        query.push(("ids", &extension_ids));
+
+        let task = self.fetch_extensions_with_query(query, cx);
+        cx.spawn(move |this, mut cx| async move {
+            let extensions = task.await?;
+            this.update(&mut cx, |this, _cx| {
+                extensions
+                    .into_iter()
+                    .filter(|extension| {
+                        this.extension_index.extensions.get(&extension.id).map_or(
+                            true,
+                            |installed_extension| {
+                                installed_extension.manifest.version != extension.manifest.version
+                            },
+                        )
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    pub fn check_for_updates(&mut self, cx: &mut ModelContext<Self>) {
+        let task = self.fetch_extensions_with_update_available(cx);
+        cx.spawn(move |this, mut cx| async move {
+            Self::upgrade_extensions(this, task.await?, &mut cx).await
+        })
+        .detach();
+    }
+
+    async fn upgrade_extensions(
+        this: WeakModel<Self>,
+        extensions: Vec<ExtensionMetadata>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        for extension in extensions {
+            let task = this.update(cx, |this, cx| {
+                if let Some(installed_extension) =
+                    this.extension_index.extensions.get(&extension.id)
+                {
+                    if installed_extension.manifest.version == extension.manifest.version {
+                        return None;
+                    }
+                }
+
+                Some(this.upgrade_extension(extension.id, extension.manifest.version, cx))
+            })?;
+
+            if let Some(task) = task {
+                task.await.log_err();
+            }
+        }
+        anyhow::Ok(())
+    }
+
+    fn fetch_extensions_with_query(
+        &self,
+        query: Vec<(&str, &str)>,
+        cx: &mut ModelContext<'_, ExtensionStore>,
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url("/extensions", &query);
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
@@ -411,6 +486,7 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Install, cx)
+            .detach_and_log_err(cx);
     }
 
     fn install_or_upgrade_extension_at_endpoint(
@@ -419,15 +495,16 @@ impl ExtensionStore {
         url: Url,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            hash_map::Entry::Occupied(_) => return,
-            hash_map::Entry::Vacant(e) => e.insert(operation),
+            btree_map::Entry::Occupied(_) => return Task::ready(Ok(())),
+            btree_map::Entry::Vacant(e) => e.insert(operation),
         };
+        cx.notify();
 
         cx.spawn(move |this, mut cx| async move {
             let _finish = util::defer({
@@ -477,7 +554,6 @@ impl ExtensionStore {
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
     }
 
     pub fn install_latest_extension(
@@ -500,7 +576,8 @@ impl ExtensionStore {
             url,
             ExtensionOperation::Install,
             cx,
-        );
+        )
+        .detach_and_log_err(cx);
     }
 
     pub fn upgrade_extension(
@@ -508,7 +585,7 @@ impl ExtensionStore {
         extension_id: Arc<str>,
         version: Arc<str>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
     }
 
@@ -518,7 +595,7 @@ impl ExtensionStore {
         version: Arc<str>,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         log::info!("installing extension {extension_id} {version}");
         let Some(url) = self
             .http_client
@@ -528,10 +605,10 @@ impl ExtensionStore {
             )
             .log_err()
         else {
-            return;
+            return Task::ready(Ok(()));
         };
 
-        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx);
+        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
@@ -539,8 +616,8 @@ impl ExtensionStore {
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            hash_map::Entry::Occupied(_) => return,
-            hash_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
+            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
         cx.spawn(move |this, mut cx| async move {
@@ -589,8 +666,8 @@ impl ExtensionStore {
 
             if !this.update(&mut cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
-                    hash_map::Entry::Occupied(_) => return false,
-                    hash_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
+                    btree_map::Entry::Occupied(_) => return false,
+                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
                 };
                 cx.notify();
                 true
@@ -657,8 +734,8 @@ impl ExtensionStore {
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            hash_map::Entry::Occupied(_) => return,
-            hash_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Upgrade),
+            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Upgrade),
         };
 
         cx.notify();
