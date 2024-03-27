@@ -6,7 +6,7 @@ use smol::channel::bounded;
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    SpawnTask, TaskState, Terminal, TerminalBuilder,
+    SpawnTask, TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;
 
@@ -53,8 +53,7 @@ impl Project {
                 Some(TaskState {
                     id: spawn_task.id,
                     label: spawn_task.label,
-                    running: true,
-                    completed_successfully: None,
+                    status: TaskStatus::Running,
                     completion_rx,
                 }),
                 Shell::WithArguments {
