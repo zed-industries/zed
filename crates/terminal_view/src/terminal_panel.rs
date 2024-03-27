@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, ToggleBottomDock, ToggleLeftDock, ToggleRightDock, Workspace,
 };
 
 use anyhow::Result;
@@ -102,6 +102,20 @@ impl TerminalPanel {
                                 Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
                             })
                     })
+                    .child(
+                        IconButton::new("hide_terminal", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .on_click(move |_, cx| {
+                                let dock = TerminalSettings::get_global(cx).dock;
+                                let positon = match dock {
+                                    TerminalDockPosition::Bottom => ToggleBottomDock.boxed_clone(),
+                                    TerminalDockPosition::Left => ToggleLeftDock.boxed_clone(),
+                                    TerminalDockPosition::Right => ToggleRightDock.boxed_clone(),
+                                };
+                                cx.dispatch_action(positon);
+                            })
+                            .tooltip(move |cx| Tooltip::text("Hide Terminal", cx)),
+                    )
                     .into_any_element()
             });
 
