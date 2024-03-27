@@ -2,8 +2,8 @@ use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
-    UniformListScrollHandle, View, ViewContext, WindowContext,
+    EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton, MouseUpEvent, Render,
+    Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use head::Head;
 use std::{sync::Arc, time::Duration};
@@ -401,6 +401,16 @@ impl<D: PickerDelegate> Picker<D> {
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                 this.handle_click(ix, event.down.modifiers.command, cx)
             }))
+            // As of this writing, GPUI intercepts `ctrl-[mouse-event]`s on macOS
+            // and produces right mouse button events. This matches platforms norms
+            // but means that UIs which depend on holding ctrl down (such as the tab
+            // switcher) can't be clicked on. Hence, this handler.
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseUpEvent, cx| {
+                    this.handle_click(ix, event.modifiers.command, cx)
+                }),
+            )
             .children(
                 self.delegate
                     .render_match(ix, ix == self.delegate.selected_index(), cx),
