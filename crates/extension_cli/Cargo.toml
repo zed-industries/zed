@@ -1,0 +1,30 @@
+[package]
+name = "extension_cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "zed-extension"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+env_logger.workspace = true
+fs.workspace = true
+extension.workspace = true
+language.workspace = true
+log.workspace = true
+rpc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+theme.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tree-sitter.workspace = true
+wasmtime.workspace = true

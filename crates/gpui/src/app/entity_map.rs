@@ -394,7 +394,7 @@ impl<T: 'static> Model<T> {
     ///
     /// The update function receives a context appropriate for its environment.
     /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating an a `WindowContext`, it receives a `ViewContext`.
+    /// When updating in a `WindowContext`, it receives a `ViewContext`.
     pub fn update<C, R>(
         &self,
         cx: &mut C,

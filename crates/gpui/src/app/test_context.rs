@@ -1,7 +1,7 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Empty, Entity,
-    EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
+    AvailableSpace, BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, Empty,
+    Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
     TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
@@ -51,14 +51,6 @@ impl Context for TestAppContext {
         app.update_model(handle, update)
     }
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
-    {
-        let mut lock = self.app.borrow_mut();
-        lock.update_window(window, f)
-    }
-
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
@@ -69,6 +61,14 @@ impl Context for TestAppContext {
     {
         let app = self.app.borrow();
         app.read_model(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        let mut lock = self.app.borrow_mut();
+        lock.update_window(window, f)
     }
 
     fn read_window<T, R>(
@@ -173,7 +173,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
 
         // Some tests rely on the window size matching the bounds of the test display
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -186,7 +186,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -209,7 +209,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -309,7 +309,7 @@ impl TestAppContext {
     /// sets the global in this context.
     pub fn set_global<G: Global>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
-        lock.set_global(global);
+        lock.update(|cx| cx.set_global(global))
     }
 
     /// updates the global in this context. (panics if `has_global` would return false)
@@ -318,7 +318,7 @@ impl TestAppContext {
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
         let mut lock = self.app.borrow_mut();
-        lock.update_global(update)
+        lock.update(|cx| cx.update_global(update))
     }
 
     /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
@@ -665,6 +665,7 @@ impl VisualTestContext {
             modifiers,
             button: MouseButton::Left,
             click_count: 1,
+            first_mouse: false,
         });
         self.simulate_event(MouseUpEvent {
             position,

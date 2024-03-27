@@ -31,10 +31,7 @@ use gpui::{
 use ignore::IgnoreStack;
 use itertools::Itertools;
 use language::{
-    proto::{
-        deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
-        serialize_version,
-    },
+    proto::{deserialize_version, serialize_fingerprint, serialize_line_ending, serialize_version},
     Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint,
     Unclipped,
 };
@@ -82,6 +79,17 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
+/// A set of local or remote files that are being opened as part of a project.
+/// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
+/// Stores git repositories data and the diagnostics for the file(s).
+///
+/// Has an absolute path, and may be set to be visible in Zed UI or not.
+/// May correspond to a directory or a single file.
+/// Possible examples:
+/// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
+/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+///
+/// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
     Local(LocalWorktree),
     Remote(RemoteWorktree),
@@ -1620,7 +1628,7 @@ impl RemoteWorktree {
                 })
                 .await?;
             let version = deserialize_version(&response.version);
-            let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
+            let fingerprint = RopeFingerprint::default();
             let mtime = response.mtime.map(|mtime| mtime.into());
 
             buffer_handle.update(&mut cx, |buffer, cx| {
@@ -4225,6 +4233,9 @@ impl BackgroundScanner {
         let mut entries_by_id_edits = Vec::new();
         let mut entries_by_path_edits = Vec::new();
         let path = job.abs_path.strip_prefix(&snapshot.abs_path).unwrap();
+        let repo = snapshot
+            .local_repo_for_path(path)
+            .map_or(None, |local_repo| Some(local_repo.1));
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
@@ -4259,6 +4270,15 @@ impl BackgroundScanner {
                 let mut path_entry = snapshot.entries_by_id.get(&entry.id, &()).unwrap().clone();
                 path_entry.scan_id = snapshot.scan_id;
                 path_entry.is_ignored = entry.is_ignored;
+                if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
+                    if let Some(repo) = repo {
+                        if let Some(mtime) = &entry.mtime {
+                            let repo_path = RepoPath(entry.path.to_path_buf());
+                            let repo = repo.repo_ptr.lock();
+                            entry.git_status = repo.status(&repo_path, *mtime);
+                        }
+                    }
+                }
                 entries_by_id_edits.push(Edit::Insert(path_entry));
                 entries_by_path_edits.push(Edit::Insert(entry));
             }

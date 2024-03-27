@@ -2,14 +2,18 @@ use itertools::Itertools;
 use smallvec::SmallVec;
 use std::rc::Rc;
 use uuid::Uuid;
-use windows::Win32::{Foundation::*, Graphics::Gdi::*};
+use windows::{
+    core::*,
+    Win32::{Foundation::*, Graphics::Gdi::*},
+};
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Point, Size};
 
 #[derive(Debug)]
 pub(crate) struct WindowsDisplay {
+    pub handle: HMONITOR,
     pub display_id: DisplayId,
-    bounds: Bounds<GlobalPixels>,
+    bounds: Bounds<DevicePixels>,
     uuid: Uuid,
 }
 
@@ -25,19 +29,46 @@ impl WindowsDisplay {
         let uuid = generate_uuid(&info.szDevice);
 
         Some(WindowsDisplay {
+            handle: screen,
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: GlobalPixels(size.left as f32),
-                    y: GlobalPixels(size.top as f32),
+                    x: DevicePixels(size.left as i32),
+                    y: DevicePixels(size.top as i32),
                 },
                 size: Size {
-                    width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.bottom - size.top) as f32),
+                    width: DevicePixels((size.right - size.left) as i32),
+                    height: DevicePixels((size.bottom - size.top) as i32),
                 },
             },
             uuid,
         })
+    }
+
+    pub fn new_with_handle(monitor: HMONITOR) -> Self {
+        let info = get_monitor_info(monitor).expect("unable to get monitor info");
+        let size = info.monitorInfo.rcMonitor;
+        let uuid = generate_uuid(&info.szDevice);
+        let display_id = available_monitors()
+            .iter()
+            .position(|handle| handle.0 == monitor.0)
+            .unwrap();
+
+        WindowsDisplay {
+            handle: monitor,
+            display_id: DisplayId(display_id as _),
+            bounds: Bounds {
+                origin: Point {
+                    x: DevicePixels(size.left as i32),
+                    y: DevicePixels(size.top as i32),
+                },
+                size: Size {
+                    width: DevicePixels((size.right - size.left) as i32),
+                    height: DevicePixels((size.bottom - size.top) as i32),
+                },
+            },
+            uuid,
+        }
     }
 
     fn new_with_handle_and_id(handle: HMONITOR, display_id: DisplayId) -> Self {
@@ -46,15 +77,16 @@ impl WindowsDisplay {
         let uuid = generate_uuid(&info.szDevice);
 
         WindowsDisplay {
+            handle,
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: GlobalPixels(size.left as f32),
-                    y: GlobalPixels(size.top as f32),
+                    x: DevicePixels(size.left as i32),
+                    y: DevicePixels(size.top as i32),
                 },
                 size: Size {
-                    width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.bottom - size.top) as f32),
+                    width: DevicePixels((size.right - size.left) as i32),
+                    height: DevicePixels((size.bottom - size.top) as i32),
                 },
             },
             uuid,
@@ -72,17 +104,7 @@ impl WindowsDisplay {
             );
             return None;
         }
-        let Some(display_id) = available_monitors()
-            .iter()
-            .position(|handle| handle.0 == monitor.0)
-        else {
-            return None;
-        };
-
-        Some(WindowsDisplay::new_with_handle_and_id(
-            monitor,
-            DisplayId(display_id as _),
-        ))
+        Some(WindowsDisplay::new_with_handle(monitor))
     }
 
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
@@ -97,6 +119,24 @@ impl WindowsDisplay {
             })
             .collect()
     }
+
+    pub(crate) fn frequency(&self) -> Option<u32> {
+        available_monitors()
+            .get(self.display_id.0 as usize)
+            .and_then(|hmonitor| get_monitor_info(*hmonitor).ok())
+            .and_then(|info| {
+                let mut devmode = DEVMODEW::default();
+                unsafe {
+                    EnumDisplaySettingsW(
+                        PCWSTR(info.szDevice.as_ptr()),
+                        ENUM_CURRENT_SETTINGS,
+                        &mut devmode,
+                    )
+                }
+                .as_bool()
+                .then(|| devmode.dmDisplayFrequency)
+            })
+    }
 }
 
 impl PlatformDisplay for WindowsDisplay {
@@ -108,7 +148,7 @@ impl PlatformDisplay for WindowsDisplay {
         Ok(self.uuid)
     }
 
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.bounds
     }
 }

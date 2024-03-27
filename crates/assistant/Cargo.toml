@@ -5,18 +5,16 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-[lints]
-workspace = true
-
 [lib]
 path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
-ai.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
+client.workspace = true
 collections.workspace = true
+command_palette_hooks.workspace = true
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -26,12 +24,13 @@ language.workspace = true
 log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
+open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
+parking_lot.workspace = true
 project.workspace = true
 regex.workspace = true
 schemars.workspace = true
 search.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -45,7 +44,6 @@ uuid.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-ai = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true

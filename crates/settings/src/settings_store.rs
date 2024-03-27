@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext, Global};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -479,7 +479,28 @@ impl SettingsStore {
             merge_schema(target_schema, setting_schema.schema);
         }
 
-        fn merge_schema(target: &mut SchemaObject, source: SchemaObject) {
+        fn merge_schema(target: &mut SchemaObject, mut source: SchemaObject) {
+            let source_subschemas = source.subschemas();
+            let target_subschemas = target.subschemas();
+            if let Some(all_of) = source_subschemas.all_of.take() {
+                target_subschemas
+                    .all_of
+                    .get_or_insert(Vec::new())
+                    .extend(all_of);
+            }
+            if let Some(any_of) = source_subschemas.any_of.take() {
+                target_subschemas
+                    .any_of
+                    .get_or_insert(Vec::new())
+                    .extend(any_of);
+            }
+            if let Some(one_of) = source_subschemas.one_of.take() {
+                target_subschemas
+                    .one_of
+                    .get_or_insert(Vec::new())
+                    .extend(one_of);
+            }
+
             if let Some(source) = source.object {
                 let target_properties = &mut target.object().properties;
                 for (key, value) in source.properties {

@@ -92,6 +92,12 @@
   // Whether to automatically type closing characters for you. For example,
   // when you type (, Zed will automatically add a closing ) at the correct position.
   "use_autoclose": true,
+  // Controls how the editor handles the autoclosed characters.
+  // When set to `false`(default), skipping over and auto-removing of the closing characters
+  // happen only for auto-inserted characters.
+  // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
+  // no matter how they were inserted.
+  "always_treat_brackets_as_autoclosed": false,
   // Controls whether copilot provides suggestion immediately
   // or waits for a `copilot::Toggle`
   "show_copilot_suggestions": true,
@@ -237,6 +243,10 @@
     "default_width": 380
   },
   "assistant": {
+    // Version of this setting.
+    "version": "1",
+    // Whether the assistant is enabled.
+    "enabled": true,
     // Whether to show the assistant panel button in the status bar.
     "button": true,
     // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
@@ -245,28 +255,16 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // Deprecated: Please use `provider.api_url` instead.
-    // The default OpenAI API endpoint to use when starting new conversations.
-    "openai_api_url": "https://api.openai.com/v1",
-    // Deprecated: Please use `provider.default_model` instead.
-    // The default OpenAI model to use when starting new conversations. This
-    // setting can take three values:
-    //
-    // 1. "gpt-3.5-turbo-0613""
-    // 2. "gpt-4-0613""
-    // 3. "gpt-4-1106-preview"
-    "default_open_ai_model": "gpt-4-1106-preview",
+    // AI provider.
     "provider": {
-      "type": "openai",
-      // The default OpenAI API endpoint to use when starting new conversations.
-      "api_url": "https://api.openai.com/v1",
-      // The default OpenAI model to use when starting new conversations. This
+      "name": "openai",
+      // The default model to use when starting new conversations. This
       // setting can take three values:
       //
-      // 1. "gpt-3.5-turbo-0613""
-      // 2. "gpt-4-0613""
-      // 3. "gpt-4-1106-preview"
-      "default_model": "gpt-4-1106-preview"
+      // 1. "gpt-3.5-turbo"
+      // 2. "gpt-4"
+      // 3. "gpt-4-turbo-preview"
+      "default_model": "gpt-4-turbo-preview"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -505,10 +503,6 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  // Difference settings for semantic_index
-  "semantic_index": {
-    "enabled": true
-  },
   // Settings specific to our elixir integration
   "elixir": {
     // Change the LSP zed uses for elixir.
@@ -592,6 +586,9 @@
       "tab_size": 2
     },
     "OCaml Interface": {
+      "tab_size": 2
+    },
+    "Prisma": {
       "tab_size": 2
     }
   },

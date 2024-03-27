@@ -8,8 +8,8 @@ use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
-    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext,
+    px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
+    MouseDownEvent, TestAppContext,
 };
 use language::{
     language_settings::{AllLanguageSettings, Formatter},
@@ -20,6 +20,7 @@ use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
+    SearchResult,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -4772,8 +4773,15 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Some((buffer, ranges)) = search_rx.next().await {
-        results.entry(buffer).or_insert(ranges);
+    while let Some(result) = search_rx.next().await {
+        match result {
+            SearchResult::Buffer { buffer, ranges } => {
+                results.entry(buffer).or_insert(ranges);
+            }
+            SearchResult::LimitReached => {
+                panic!("Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call.")
+            }
+        };
     }
 
     let mut ranges_by_path = results
@@ -5883,6 +5891,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         position: new_tab_button_bounds.center(),
         modifiers: Modifiers::default(),
         click_count: 1,
+        first_mouse: false,
     });
 
     // regression test that the right click menu for tabs does not open.
@@ -5894,6 +5903,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         position: tab_bounds.center(),
         modifiers: Modifiers::default(),
         click_count: 1,
+        first_mouse: false,
     });
     assert!(cx.debug_bounds("MENU_ITEM-Close").is_some());
 }

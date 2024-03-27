@@ -13,8 +13,8 @@ use rpc::proto;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, platform_titlebar, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator,
-    Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
+    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -58,8 +58,7 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        platform_titlebar("collab-titlebar")
-            .titlebar_bg(cx.theme().colors().title_bar_background)
+        TitleBar::new("collab-titlebar")
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {
@@ -68,8 +67,6 @@ impl Render for CollabTitlebarItem {
                     }
                 })
             })
-            .px_2()
-            .justify_between()
             // left side
             .child(
                 h_flex()
@@ -692,7 +689,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle.boxed_clone())
+                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
                             .separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
@@ -716,7 +713,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle.boxed_clone())
+                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
                     })
                     .into()
                 })

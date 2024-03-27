@@ -125,7 +125,7 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui_macros::{register_action, test, IntoElement, Render};
-use image_cache::*;
+pub use image_cache::*;
 pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;
@@ -261,6 +261,10 @@ pub trait EventEmitter<E: Any>: 'static {}
 pub trait BorrowAppContext {
     /// Set a global value on the context.
     fn set_global<T: Global>(&mut self, global: T);
+    /// Updates the global state of the given type.
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: Global;
 }
 
 impl<C> BorrowAppContext for C
@@ -269,6 +273,16 @@ where
 {
     fn set_global<G: Global>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
+    }
+
+    fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
+    where
+        G: Global,
+    {
+        let mut global = self.borrow_mut().lease_global::<G>();
+        let result = f(&mut global, self);
+        self.borrow_mut().end_global_lease(global);
+        result
     }
 }
 
@@ -293,4 +307,18 @@ impl<T> Flatten<T> for Result<T> {
 /// A marker trait for types that can be stored in GPUI's global state.
 ///
 /// Implement this on types you want to store in the context as a global.
-pub trait Global: 'static {}
+pub trait Global: 'static + Sized {
+    /// Access the global of the implementing type. Panics if a global for that type has not been assigned.
+    fn get(cx: &AppContext) -> &Self {
+        cx.global()
+    }
+
+    /// Updates the global of the implementing type with a closure. Unlike `global_mut`, this method provides
+    /// your closure with mutable access to the `AppContext` and the global simultaneously.
+    fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
+    where
+        C: BorrowAppContext,
+    {
+        cx.update_global(f)
+    }
+}

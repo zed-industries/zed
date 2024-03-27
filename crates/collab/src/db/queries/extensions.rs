@@ -1,23 +1,50 @@
+use chrono::Utc;
+
 use super::*;
 
 impl Database {
     pub async fn get_extensions(
         &self,
         filter: Option<&str>,
+        max_schema_version: i32,
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
         self.transaction(|tx| async move {
-            let mut condition = Condition::all();
+            let mut condition = Condition::all().add(
+                extension::Column::LatestVersion
+                    .into_expr()
+                    .eq(extension_version::Column::Version.into_expr()),
+            );
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
             }
 
             let extensions = extension::Entity::find()
+                .inner_join(extension_version::Entity)
+                .select_also(extension_version::Entity)
                 .filter(condition)
+                .filter(extension_version::Column::SchemaVersion.lte(max_schema_version))
                 .order_by_desc(extension::Column::TotalDownloadCount)
                 .order_by_asc(extension::Column::Name)
                 .limit(Some(limit as u64))
+                .all(&*tx)
+                .await?;
+
+            Ok(extensions
+                .into_iter()
+                .filter_map(|(extension, version)| {
+                    Some(metadata_from_extension_and_version(extension, version?))
+                })
+                .collect())
+        })
+        .await
+    }
+
+    pub async fn get_extension(&self, extension_id: &str) -> Result<Option<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let extension = extension::Entity::find()
+                .filter(extension::Column::ExternalId.eq(extension_id))
                 .filter(
                     extension::Column::LatestVersion
                         .into_expr()
@@ -25,29 +52,33 @@ impl Database {
                 )
                 .inner_join(extension_version::Entity)
                 .select_also(extension_version::Entity)
-                .all(&*tx)
+                .one(&*tx)
                 .await?;
 
-            Ok(extensions
-                .into_iter()
-                .filter_map(|(extension, latest_version)| {
-                    let version = latest_version?;
-                    Some(ExtensionMetadata {
-                        id: extension.external_id,
-                        name: extension.name,
-                        version: version.version,
-                        authors: version
-                            .authors
-                            .split(',')
-                            .map(|author| author.trim().to_string())
-                            .collect::<Vec<_>>(),
-                        description: version.description,
-                        repository: version.repository,
-                        published_at: version.published_at,
-                        download_count: extension.total_download_count as u64,
-                    })
-                })
-                .collect())
+            Ok(extension.and_then(|(extension, version)| {
+                Some(metadata_from_extension_and_version(extension, version?))
+            }))
+        })
+        .await
+    }
+
+    pub async fn get_extension_version(
+        &self,
+        extension_id: &str,
+        version: &str,
+    ) -> Result<Option<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let extension = extension::Entity::find()
+                .filter(extension::Column::ExternalId.eq(extension_id))
+                .filter(extension_version::Column::Version.eq(version))
+                .inner_join(extension_version::Entity)
+                .select_also(extension_version::Entity)
+                .one(&*tx)
+                .await?;
+
+            Ok(extension.and_then(|(extension, version)| {
+                Some(metadata_from_extension_and_version(extension, version?))
+            }))
         })
         .await
     }
@@ -135,6 +166,8 @@ impl Database {
                         authors: ActiveValue::Set(version.authors.join(", ")),
                         repository: ActiveValue::Set(version.repository.clone()),
                         description: ActiveValue::Set(version.description.clone()),
+                        schema_version: ActiveValue::Set(version.schema_version),
+                        wasm_api_version: ActiveValue::Set(version.wasm_api_version.clone()),
                         download_count: ActiveValue::NotSet,
                     }
                 }))
@@ -203,4 +236,36 @@ impl Database {
         })
         .await
     }
+}
+
+fn metadata_from_extension_and_version(
+    extension: extension::Model,
+    version: extension_version::Model,
+) -> ExtensionMetadata {
+    ExtensionMetadata {
+        id: extension.external_id.into(),
+        manifest: rpc::ExtensionApiManifest {
+            name: extension.name,
+            version: version.version.into(),
+            authors: version
+                .authors
+                .split(',')
+                .map(|author| author.trim().to_string())
+                .collect::<Vec<_>>(),
+            description: Some(version.description),
+            repository: version.repository,
+            schema_version: Some(version.schema_version),
+            wasm_api_version: version.wasm_api_version,
+        },
+
+        published_at: convert_time_to_chrono(version.published_at),
+        download_count: extension.total_download_count as u64,
+    }
+}
+
+pub fn convert_time_to_chrono(time: time::PrimitiveDateTime) -> chrono::DateTime<Utc> {
+    chrono::DateTime::from_naive_utc_and_offset(
+        chrono::NaiveDateTime::from_timestamp_opt(time.assume_utc().unix_timestamp(), 0).unwrap(),
+        Utc,
+    )
 }

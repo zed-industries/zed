@@ -1,6 +1,6 @@
 // todo(linux): remove
 #![cfg_attr(target_os = "linux", allow(dead_code))]
-// todo("windows"): remove
+// todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
@@ -23,9 +23,9 @@ mod windows;
 
 use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels,
-    GlyphId, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, Keymap,
+    LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -118,6 +118,8 @@ pub(crate) trait Platform: 'static {
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
+    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
+    fn clear_recent_documents(&self) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -127,7 +129,6 @@ pub(crate) trait Platform: 'static {
     fn app_version(&self) -> Result<SemanticVersion>;
     fn app_path(&self) -> Result<PathBuf>;
     fn local_timezone(&self) -> UtcOffset;
-    fn double_click_interval(&self) -> Duration;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
@@ -151,7 +152,7 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     fn uuid(&self) -> Result<Uuid>;
 
     /// Get the bounds for this display
-    fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn bounds(&self) -> Bounds<DevicePixels>;
 }
 
 /// An opaque identifier for a hardware display
@@ -167,11 +168,11 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
-    fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn bounds(&self) -> Bounds<DevicePixels>;
     fn is_maximized(&self) -> bool;
+    fn is_minimized(&self) -> bool;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
-    fn titlebar_height(&self) -> Pixels;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Rc<dyn PlatformDisplay>;
     fn mouse_position(&self) -> Point<Pixels>;
@@ -187,6 +188,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[&str],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
+    fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
     fn show_character_palette(&self);
@@ -205,8 +207,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
-
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    #[cfg(target_os = "windows")]
+    fn get_raw_handle(&self) -> windows::HWND;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -504,8 +508,9 @@ pub trait InputHandler: 'static {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
+    /// The bounds of the window in screen coordinates.
     /// None -> inherit, Some(bounds) -> set bounds
-    pub bounds: Option<Bounds<GlobalPixels>>,
+    pub bounds: Option<Bounds<DevicePixels>>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -525,7 +530,8 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
-    /// The display to create the window on
+    /// The display to create the window on, if this is None,
+    /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
 }
 
@@ -533,7 +539,7 @@ pub struct WindowOptions {
 #[derive(Debug)]
 pub(crate) struct WindowParams {
     ///
-    pub bounds: Bounds<GlobalPixels>,
+    pub bounds: Bounds<DevicePixels>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -548,7 +554,6 @@ pub(crate) struct WindowParams {
 
     pub show: bool,
 
-    /// The display to create the window on
     pub display_id: Option<DisplayId>,
 }
 
@@ -594,10 +599,6 @@ pub enum WindowKind {
     /// use sparingly!
     PopUp,
 }
-
-/// Platform level interface
-/// bounds: Bounds<GlobalPixels>
-/// fullscreen: bool
 
 /// The appearance of the window, as defined by the operating system.
 ///

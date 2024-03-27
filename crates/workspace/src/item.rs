@@ -564,7 +564,7 @@ impl<T: Item> ItemHandle for View<T> {
         }
 
         cx.defer(|workspace, cx| {
-            workspace.serialize_workspace(cx);
+            workspace.serialize_workspace(cx).detach();
         });
     }
 
@@ -913,7 +913,7 @@ pub mod test {
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
-                workspace_id: 0,
+                workspace_id: Default::default(),
                 focus_handle: cx.focus_handle(),
             }
         }

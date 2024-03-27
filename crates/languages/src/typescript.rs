@@ -18,10 +18,9 @@ use std::{
     sync::Arc,
 };
 use util::{
-    async_maybe,
     fs::remove_matching,
-    github::{github_release_with_tag, GitHubLspBinaryVersion},
-    ResultExt,
+    github::{build_tarball_url, GitHubLspBinaryVersion},
+    maybe, ResultExt,
 };
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -71,22 +70,33 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<TypeScriptVersions>().unwrap();
+        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+        let package_name = "typescript";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                package_name,
+                &server_path,
+                &container_dir,
+                latest_version.typescript_version.as_str(),
+            )
+            .await;
+
+        if should_install_language_server {
             self.node
                 .npm_install_packages(
                     &container_dir,
                     &[
-                        ("typescript", version.typescript_version.as_str()),
+                        (package_name, latest_version.typescript_version.as_str()),
                         (
                             "typescript-language-server",
-                            version.server_version.as_str(),
+                            latest_version.server_version.as_str(),
                         ),
                     ],
                 )
@@ -153,8 +163,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true,
             "tsserver": {
                 "path": "node_modules/typescript/lib",
@@ -169,7 +182,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                 "includeInlayFunctionLikeReturnTypeHints": true,
                 "includeInlayEnumMemberValueHints": true,
             }
-        }))
+        })))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -185,7 +198,7 @@ async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
         let new_server_path = container_dir.join(TypeScriptLspAdapter::NEW_SERVER_PATH);
         if new_server_path.exists() {
@@ -216,8 +229,13 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
+    const CURRENT_VERSION: &'static str = "release/2.4.4";
+
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: &'static str = "eslint";
+
+    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
+        &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
 
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
@@ -255,6 +273,9 @@ impl LspAdapter for EsLintLspAdapter {
         }
 
         let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
+        let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
+            .iter()
+            .any(|file| workspace_root.join(file).is_file());
 
         json!({
             "": {
@@ -271,7 +292,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "problems": {},
                 "codeActionOnSave": code_action_on_save,
                 "experimental": {
-                    "useFlatConfig": workspace_root.join("eslint.config.js").is_file(),
+                    "useFlatConfig": use_flat_config,
                 },
             }
         })
@@ -283,19 +304,13 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        // We're using this hardcoded release tag, because ESLint's API changed with
-        // >= 2.3 and we haven't upgraded yet.
-        let release = github_release_with_tag(
-            "microsoft/vscode-eslint",
-            "release/2.2.20-Insider",
-            delegate.http_client(),
-        )
-        .await?;
+        let url = build_tarball_url("microsoft/vscode-eslint", Self::CURRENT_VERSION)?;
+
         Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.tag_name,
-            url: release.tarball_url,
+            name: Self::CURRENT_VERSION.into(),
+            url,
         }))
     }
 
@@ -356,25 +371,13 @@ impl LspAdapter for EsLintLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_eslint_server_binary(container_dir, &*self.node).await
     }
-
-    async fn label_for_completion(
-        &self,
-        _item: &lsp::CompletionItem,
-        _language: &Arc<language::Language>,
-    ) -> Option<language::CodeLabel> {
-        None
-    }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        None
-    }
 }
 
 async fn get_cached_eslint_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         // This is unfortunate but we don't know what the version is to build a path directly
         let mut dir = fs::read_dir(&container_dir).await?;
         let first = dir.next().await.ok_or(anyhow!("missing first file"))??;

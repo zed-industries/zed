@@ -1,6 +1,7 @@
 use crate::{
-    ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry, ExtensionIndexThemeEntry,
-    ExtensionManifest, ExtensionStore, GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION,
+    Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
+    ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
+    RELOAD_DEBOUNCE_DURATION,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
@@ -145,6 +146,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-ruby".into(),
                         name: "Zed Ruby".into(),
                         version: "1.0.0".into(),
+                        schema_version: 0,
                         description: None,
                         authors: Vec::new(),
                         repository: None,
@@ -169,6 +171,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-monokai".into(),
                         name: "Zed Monokai".into(),
                         version: "2.0.0".into(),
+                        schema_version: 0,
                         description: None,
                         authors: vec![],
                         repository: None,
@@ -259,6 +262,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            None,
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
@@ -324,6 +328,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 id: "zed-gruvbox".into(),
                 name: "Zed Gruvbox".into(),
                 version: "1.0.0".into(),
+                schema_version: 0,
                 description: None,
                 authors: vec![],
                 repository: None,
@@ -377,6 +382,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            None,
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
@@ -534,6 +540,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             Some(cache_dir),
             fs.clone(),
             http_client.clone(),
+            None,
             node_runtime,
             language_registry.clone(),
             theme_registry.clone(),
@@ -553,6 +560,15 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
                 _ => (),
             }
         }
+    });
+
+    extension_store.update(cx, |_, cx| {
+        cx.subscribe(&extension_store, |_, _, event, _| {
+            if matches!(event, Event::ExtensionFailedToLoad(_)) {
+                panic!("extension failed to load");
+            }
+        })
+        .detach();
     });
 
     extension_store
@@ -599,7 +615,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             ),
             (
                 LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloaded
+                LanguageServerBinaryStatus::None
             )
         ]
     );

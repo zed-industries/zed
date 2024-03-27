@@ -12,7 +12,6 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     sync::Arc,
-    time::Duration,
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
@@ -241,6 +240,10 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
+    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
+
+    fn clear_recent_documents(&self) {}
+
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
@@ -297,10 +300,6 @@ impl Platform for TestPlatform {
 
     fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-
-    fn double_click_interval(&self) -> std::time::Duration {
-        Duration::from_millis(500)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {

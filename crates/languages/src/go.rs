@@ -5,8 +5,10 @@ use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
+use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
 use serde_json::json;
+use settings::Settings;
 use smol::{fs, process};
 use std::{
     any::Any,
@@ -19,7 +21,7 @@ use std::{
         Arc,
     },
 };
-use util::{async_maybe, fs::remove_matching, github::latest_github_release, ResultExt};
+use util::{fs::remove_matching, github::latest_github_release, maybe, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -28,6 +30,10 @@ fn server_binary_arguments() -> Vec<OsString> {
 #[derive(Copy, Clone)]
 pub struct GoLspAdapter;
 
+impl GoLspAdapter {
+    const SERVER_NAME: &'static str = "gopls";
+}
+
 lazy_static! {
     static ref GOPLS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
 }
@@ -35,7 +41,7 @@ lazy_static! {
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("gopls".into())
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
     async fn fetch_latest_server_version(
@@ -57,15 +63,38 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: &AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let env = delegate.shell_env().await;
-        let path = delegate.which("gopls".as_ref()).await?;
-        Some(LanguageServerBinary {
-            path,
-            arguments: server_binary_arguments(),
-            env: Some(env),
-        })
+        let configured_binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.binary.clone())
+        });
+
+        if let Ok(Some(BinarySettings {
+            path: Some(path),
+            arguments,
+        })) = configured_binary
+        {
+            Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            })
+        } else {
+            let env = delegate.shell_env().await;
+            let path = delegate.which("gopls".as_ref()).await?;
+            Some(LanguageServerBinary {
+                path,
+                arguments: server_binary_arguments(),
+                env: Some(env),
+            })
+        }
     }
 
     fn will_fetch_server(
@@ -189,8 +218,11 @@ impl super::LspAdapter for GoLspAdapter {
             })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "usePlaceholders": true,
             "hints": {
                 "assignVariableTypes": true,
@@ -201,7 +233,7 @@ impl super::LspAdapter for GoLspAdapter {
                 "parameterNames": true,
                 "rangeVariableTypes": true
             }
-        }))
+        })))
     }
 
     async fn label_for_completion(
@@ -365,7 +397,7 @@ impl super::LspAdapter for GoLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

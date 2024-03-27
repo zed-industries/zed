@@ -15,7 +15,8 @@ use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, MemoryEvent, SettingEvent,
+    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
+    SettingEvent,
 };
 use tempfile::NamedTempFile;
 use util::http::{self, HttpClient, HttpClientWithUrl, Method};
@@ -261,7 +262,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &str,
+        model: String,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
@@ -324,6 +325,13 @@ impl Telemetry {
         });
 
         self.report_event(event)
+    }
+
+    pub fn report_extension_event(self: &Arc<Self>, extension_id: Arc<str>, version: Arc<str>) {
+        self.report_event(Event::Extension(ExtensionEvent {
+            extension_id,
+            version,
+        }))
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
@@ -470,7 +478,11 @@ impl Telemetry {
 
                     let request = http::Request::builder()
                         .method(Method::POST)
-                        .uri(this.http_client.build_zed_api_url("/telemetry/events"))
+                        .uri(
+                            this.http_client
+                                .build_zed_api_url("/telemetry/events", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "text/plain")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());

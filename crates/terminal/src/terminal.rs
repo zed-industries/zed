@@ -39,7 +39,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::TaskId;
+use task::{static_source::RevealStrategy, TaskId};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -70,7 +70,10 @@ actions!(
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
+#[cfg(target_os = "macos")]
 const SCROLL_MULTIPLIER: f32 = 4.;
+#[cfg(not(target_os = "macos"))]
+const SCROLL_MULTIPLIER: f32 = 1.;
 const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
@@ -289,6 +292,7 @@ pub struct SpawnTask {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    pub reveal: RevealStrategy,
 }
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
@@ -306,13 +310,19 @@ impl TerminalBuilder {
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
-        env: HashMap<String, String>,
+        mut env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
+        // TODO: Properly set the current locale,
+        env.entry("LC_ALL".to_string())
+            .or_insert_with(|| "en_US.UTF-8".to_string());
+
+        env.insert("ZED_TERM".to_string(), "true".to_string());
+
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
@@ -328,19 +338,12 @@ impl TerminalBuilder {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
                 hold: false,
+                env: env.into_iter().collect(),
             }
         };
 
-        // First, setup Alacritty's env
+        // Setup Alacritty's env
         setup_env();
-
-        // Then setup configured environment variables
-        for (key, value) in env {
-            std::env::set_var(key, value);
-        }
-        //TODO: Properly set the current locale,
-        std::env::set_var("LC_ALL", "en_US.UTF-8");
-        std::env::set_var("ZED_TERM", "true");
 
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
@@ -645,6 +648,9 @@ impl Terminal {
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+            }
+            AlacTermEvent::ChildExit(_) => {
+                // TODO: Handle child exit
             }
         }
     }

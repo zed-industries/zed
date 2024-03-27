@@ -20,7 +20,7 @@ use sqlez_macros::sql;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;
@@ -57,7 +57,7 @@ pub async fn open_db<M: Migrator + 'static>(
     let release_channel_name = release_channel.dev_name();
     let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
 
-    let connection = async_maybe!({
+    let connection = maybe!(async {
         smol::fs::create_dir_all(&main_db_dir)
             .await
             .context("Could not create db directory")

@@ -16,6 +16,9 @@ pub const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
+/// One or many panes, arranged in a horizontal or vertical axis due to a split.
+/// Panes have all their tabs and capabilities preserved, and can be split again or resized.
+/// Single-pane group is a regular pane.
 #[derive(Clone)]
 pub struct PaneGroup {
     pub(crate) root: Member,

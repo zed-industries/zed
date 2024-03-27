@@ -37,7 +37,7 @@ git submodule update --init --recursive
 
 If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
 
-- Install [Postgres](https://www.postgresql.org/download/linux/)
+- Install [Postgres](https://www.postgresql.org/download/windows/)
 - Install [Livekit](https://github.com/livekit/livekit-cli) and [Foreman](https://theforeman.org/manuals/3.9/quickstart_guide.html)
 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:

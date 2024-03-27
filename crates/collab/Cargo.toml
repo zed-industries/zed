@@ -13,8 +13,9 @@ workspace = true
 [[bin]]
 name = "collab"
 
-[[bin]]
-name = "seed"
+[features]
+sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
+test-support = ["sqlite"]
 
 [dependencies]
 anyhow.workspace = true
@@ -31,10 +32,12 @@ collections.workspace = true
 dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true
+google_ai.workspace = true
 hex.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
 nanoid = "0.4"
+open_ai.workspace = true
 parking_lot.workspace = true
 prometheus = "0.13"
 prost.workspace = true
@@ -54,7 +57,7 @@ rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true
-tokio = { version = "1", features = ["full"] }
+tokio.workspace = true
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
@@ -80,7 +83,6 @@ git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
-lazy_static.workspace = true
 live_kit_client = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true

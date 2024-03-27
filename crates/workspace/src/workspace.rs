@@ -26,13 +26,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, DragMoveEvent, Element,
-    ElementContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
-    GlobalPixels, InteractiveElement, IntoElement, KeyContext, Keystroke, LayoutId, ManagedView,
-    Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render,
-    SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext, WindowHandle, WindowOptions,
+    actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
+    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
+    LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
+    Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -53,6 +51,10 @@ use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::Settings;
 use shared_screen::SharedScreen;
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -72,7 +74,11 @@ use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::Label;
+use ui::{
+    div, Context as _, Div, Element, ElementContext, InteractiveElement as _, IntoElement, Label,
+    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
+    WindowContext,
+};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -83,11 +89,11 @@ use crate::persistence::{
 };
 
 lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
+    static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
         .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<GlobalPixels>> = env::var("ZED_WINDOW_POSITION")
+    static ref ZED_WINDOW_POSITION: Option<Point<DevicePixels>> = env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var);
@@ -235,8 +241,22 @@ pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
 
-pub type WorkspaceId = i64;
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkspaceId(i64);
 
+impl StaticColumnCount for WorkspaceId {}
+impl Bind for WorkspaceId {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.0.bind(statement, start_index)
+    }
+}
+impl Column for WorkspaceId {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        i64::column(statement, start_index)
+            .map(|(i, next_index)| (Self(i), next_index))
+            .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
+    }
+}
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
@@ -418,6 +438,7 @@ impl AppState {
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
         use node_runtime::FakeNodeRuntime;
         use settings::SettingsStore;
+        use ui::Context as _;
 
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -508,6 +529,12 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+/// Collects everything project-related for a certain window opened.
+/// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
+///
+/// A `Workspace` usually consists of 1 or more projects, a central pane group, 3 docks and a status bar.
+/// The `Workspace` owns everybody's state and serves as a default, "global context",
+/// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
@@ -578,7 +605,16 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
-                    this.serialize_workspace(cx);
+                    let workspace_serialization = this.serialize_workspace(cx);
+                    cx.spawn(|workspace, mut cx| async move {
+                        workspace_serialization.await;
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                workspace.refresh_recent_documents(cx)
+                            })?
+                            .await
+                    })
+                    .detach_and_log_err(cx)
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -709,11 +745,7 @@ impl Workspace {
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |_, cx| {
                 if let Some(display) = cx.display() {
-                    // Transform fixed bounds to be stored in terms of the containing display
-                    let mut window_bounds = cx.window_bounds();
-                    let display_bounds = display.bounds();
-                    window_bounds.origin.x -= display_bounds.origin.x;
-                    window_bounds.origin.y -= display_bounds.origin.y;
+                    let window_bounds = cx.window_bounds();
                     let fullscreen = cx.is_fullscreen();
 
                     if let Some(display_uuid) = display.uuid().log_err() {
@@ -724,7 +756,7 @@ impl Workspace {
                             cx.background_executor()
                                 .spawn(DB.set_fullscreen(workspace_id, true))
                                 .detach_and_log_err(cx);
-                        } else {
+                        } else if !cx.is_minimized() {
                             cx.background_executor()
                                 .spawn(DB.set_fullscreen(workspace_id, false))
                                 .detach_and_log_err(cx);
@@ -748,15 +780,15 @@ impl Workspace {
                 ThemeSettings::reload_current_theme(cx);
             }),
             cx.observe(&left_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
+                this.serialize_workspace(cx).detach();
                 cx.notify();
             }),
             cx.observe(&bottom_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
+                this.serialize_workspace(cx).detach();
                 cx.notify();
             }),
             cx.observe(&right_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
+                this.serialize_workspace(cx).detach();
                 cx.notify();
             }),
             cx.on_release(|this, window, cx| {
@@ -855,7 +887,7 @@ impl Workspace {
             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
                 serialized_workspace.id
             } else {
-                DB.next_id().await.unwrap_or(0)
+                DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
             let window = if let Some(window) = requesting_window {
@@ -866,36 +898,26 @@ impl Workspace {
                 })?;
                 window
             } else {
-                let window_bounds_override = window_bounds_env_override(&cx);
+                let window_bounds_override = window_bounds_env_override();
 
                 let (bounds, display, fullscreen) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None, false)
-                } else if let Some((serialized_display, mut bounds, fullscreen)) =
-                    serialized_workspace.as_ref().and_then(|workspace| {
-                        Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
-                    })
-                {
-                    // Stored bounds are relative to the containing display.
-                    // So convert back to global coordinates if that screen still exists
-                    let screen_bounds = cx
-                        .update(|cx| {
-                            cx.displays()
-                                .into_iter()
-                                .find(|display| display.uuid().ok() == Some(serialized_display))
-                        })
-                        .ok()
-                        .flatten()
-                        .map(|screen| screen.bounds());
-
-                    if let Some(screen_bounds) = screen_bounds {
-                        bounds.origin.x += screen_bounds.origin.x;
-                        bounds.origin.y += screen_bounds.origin.y;
-                    }
-
-                    (Some(bounds), Some(serialized_display), fullscreen)
                 } else {
-                    let display = DB.last_monitor().log_err().flatten();
-                    (None, display, false)
+                    let restorable_bounds = serialized_workspace
+                        .as_ref()
+                        .and_then(|workspace| {
+                            Some((workspace.display?, workspace.bounds?, workspace.fullscreen))
+                        })
+                        .or_else(|| {
+                            let (display, bounds, fullscreen) = DB.last_window().log_err()?;
+                            Some((display?, bounds?.0, fullscreen.unwrap_or(false)))
+                        });
+
+                    if let Some((serialized_display, bounds, fullscreen)) = restorable_bounds {
+                        (Some(bounds), Some(serialized_display), fullscreen)
+                    } else {
+                        (None, None, false)
+                    }
                 };
 
                 // Use the serialized workspace to construct the new window
@@ -913,10 +935,6 @@ impl Workspace {
                 })?
             };
 
-            window
-                .update(&mut cx, |_, cx| cx.activate_window())
-                .log_err();
-
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
@@ -925,6 +943,14 @@ impl Workspace {
                 .await
                 .unwrap_or_default();
 
+            window
+                .update(&mut cx, |workspace, cx| {
+                    workspace
+                        .refresh_recent_documents(cx)
+                        .detach_and_log_err(cx);
+                    cx.activate_window()
+                })
+                .log_err();
             Ok((window, opened_items))
         })
     }
@@ -1764,7 +1790,7 @@ impl Workspace {
         }
 
         cx.notify();
-        self.serialize_workspace(cx);
+        self.serialize_workspace(cx).detach();
     }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
@@ -1778,7 +1804,7 @@ impl Workspace {
 
         cx.focus_self();
         cx.notify();
-        self.serialize_workspace(cx);
+        self.serialize_workspace(cx).detach();
     }
 
     /// Transfer focus to the panel of the given type.
@@ -1823,7 +1849,7 @@ impl Workspace {
                     self.active_pane.update(cx, |pane, cx| pane.focus(cx))
                 }
 
-                self.serialize_workspace(cx);
+                self.serialize_workspace(cx).detach();
                 cx.notify();
                 return panel;
             }
@@ -2377,7 +2403,7 @@ impl Workspace {
             }
         }
 
-        self.serialize_workspace(cx);
+        self.serialize_workspace(cx).detach();
     }
 
     pub fn split_pane(
@@ -3333,12 +3359,12 @@ impl Workspace {
             cx.background_executor()
                 .timer(Duration::from_millis(100))
                 .await;
-            this.update(&mut cx, |this, cx| this.serialize_workspace(cx))
+            this.update(&mut cx, |this, cx| this.serialize_workspace(cx).detach())
                 .log_err();
         }));
     }
 
-    fn serialize_workspace(&self, cx: &mut WindowContext) {
+    fn serialize_workspace(&self, cx: &mut WindowContext) -> Task<()> {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
@@ -3441,7 +3467,6 @@ impl Workspace {
             if !location.paths().is_empty() {
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
                 let docks = build_serialized_docks(self, cx);
-
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
                     location,
@@ -3451,11 +3476,37 @@ impl Workspace {
                     docks,
                     fullscreen: cx.is_fullscreen(),
                 };
-
-                cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace))
-                    .detach();
+                return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
             }
         }
+        Task::ready(())
+    }
+
+    fn refresh_recent_documents(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        if !self.project.read(cx).is_local() {
+            return Task::ready(Ok(()));
+        }
+        cx.spawn(|cx| async move {
+            let recents = WORKSPACE_DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default();
+            let mut unique_paths = HashMap::default();
+            for (id, workspace) in &recents {
+                for path in workspace.paths().iter() {
+                    unique_paths.insert(path.clone(), id);
+                }
+            }
+            let current_paths = unique_paths
+                .into_iter()
+                .sorted_by_key(|(_, id)| *id)
+                .map(|(path, _)| path)
+                .collect::<Vec<_>>();
+            cx.update(|cx| {
+                cx.clear_recent_documents();
+                cx.add_recent_documents(&current_paths);
+            })
+        })
     }
 
     pub(crate) fn load_workspace(
@@ -3539,7 +3590,9 @@ impl Workspace {
             })?;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-            workspace.update(&mut cx, |workspace, cx| workspace.serialize_workspace(cx))?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.serialize_workspace(cx).detach()
+            })?;
 
             Ok(opened_items)
         })
@@ -3632,7 +3685,7 @@ impl Workspace {
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
-        let workspace = Self::new(0, project, app_state, cx);
+        let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
         workspace
     }
@@ -3682,14 +3735,11 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<Bounds<GlobalPixels>> {
-    let display_origin = cx
-        .update(|cx| Some(cx.displays().first()?.bounds().origin))
-        .ok()??;
+fn window_bounds_env_override() -> Option<Bounds<DevicePixels>> {
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
-            origin: display_origin + position,
+            origin: position,
             size,
         })
 }
@@ -4588,12 +4638,14 @@ pub fn join_hosted_project(
             )
             .await?;
 
-            let window_bounds_override = window_bounds_env_override(&cx);
+            let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
-                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
                 })
             })?
         };
@@ -4647,12 +4699,14 @@ pub fn join_in_room_project(
                 })?
                 .await?;
 
-            let window_bounds_override = window_bounds_env_override(&cx);
+            let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.bounds = window_bounds_override;
                 cx.open_window(options, |cx| {
-                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
                 })
             })?
         };
@@ -4739,18 +4793,18 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn parse_pixel_position_env_var(value: &str) -> Option<Point<GlobalPixels>> {
+fn parse_pixel_position_env_var(value: &str) -> Option<Point<DevicePixels>> {
     let mut parts = value.split(',');
     let x: usize = parts.next()?.parse().ok()?;
     let y: usize = parts.next()?.parse().ok()?;
-    Some(point((x as f64).into(), (y as f64).into()))
+    Some(point((x as i32).into(), (y as i32).into()))
 }
 
-fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
+fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
-    Some(size((width as f64).into(), (height as f64).into()))
+    Some(size((width as i32).into(), (height as i32).into()))
 }
 
 struct DisconnectedOverlay;
@@ -4766,7 +4820,7 @@ impl Element for DisconnectedOverlay {
             .bg(background)
             .absolute()
             .left_0()
-            .top(cx.titlebar_height())
+            .top(ui::TitleBar::height(cx))
             .size_full()
             .flex()
             .items_center()
@@ -4822,7 +4876,10 @@ mod tests {
         },
     };
     use fs::FakeFs;
-    use gpui::{px, DismissEvent, Empty, TestAppContext, VisualTestContext};
+    use gpui::{
+        px, BorrowAppContext, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView,
+        Render, TestAppContext, VisualTestContext,
+    };
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
@@ -5799,6 +5856,8 @@ mod tests {
     }
 
     mod register_project_item_tests {
+        use ui::Context as _;
+
         use super::*;
 
         const TEST_PNG_KIND: &str = "TestPngItemView";

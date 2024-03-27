@@ -59,7 +59,7 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::GlobalPixels>);
+pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::DevicePixels>);
 
 impl StaticColumnCount for SerializedWindowsBounds {
     fn column_count() -> usize {
@@ -73,10 +73,10 @@ impl Bind for SerializedWindowsBounds {
 
         statement.bind(
             &(
-                SerializedGlobalPixels(self.0.origin.x),
-                SerializedGlobalPixels(self.0.origin.y),
-                SerializedGlobalPixels(self.0.size.width),
-                SerializedGlobalPixels(self.0.size.height),
+                SerializedDevicePixels(self.0.origin.x),
+                SerializedDevicePixels(self.0.origin.y),
+                SerializedDevicePixels(self.0.size.width),
+                SerializedDevicePixels(self.0.size.height),
             ),
             next_index,
         )
@@ -89,10 +89,10 @@ impl Column for SerializedWindowsBounds {
         let bounds = match window_state.as_str() {
             "Fixed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                let x: f64 = x;
-                let y: f64 = y;
-                let width: f64 = width;
-                let height: f64 = height;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
                 SerializedWindowsBounds(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
@@ -106,17 +106,16 @@ impl Column for SerializedWindowsBounds {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct SerializedGlobalPixels(gpui::GlobalPixels);
-impl sqlez::bindable::StaticColumnCount for SerializedGlobalPixels {}
+struct SerializedDevicePixels(gpui::DevicePixels);
+impl sqlez::bindable::StaticColumnCount for SerializedDevicePixels {}
 
-impl sqlez::bindable::Bind for SerializedGlobalPixels {
+impl sqlez::bindable::Bind for SerializedDevicePixels {
     fn bind(
         &self,
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: f64 = self.0.into();
-        let this: f32 = this as _;
+        let this: i32 = self.0.into();
         this.bind(statement, start_index)
     }
 }
@@ -421,8 +420,8 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub fn last_monitor() -> Result<Option<Uuid>> {
-            SELECT display
+        pub fn last_window() -> Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
+            SELECT display, window_state, window_x, window_y, window_width, window_height, fullscreen
             FROM workspaces
             WHERE workspace_location IS NOT NULL
             ORDER BY timestamp DESC
@@ -753,7 +752,7 @@ mod tests {
         .unwrap();
 
         let mut workspace_1 = SerializedWorkspace {
-            id: 1,
+            id: WorkspaceId(1),
             location: (["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -763,7 +762,7 @@ mod tests {
         };
 
         let workspace_2 = SerializedWorkspace {
-            id: 2,
+            id: WorkspaceId(2),
             location: (["/tmp"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -862,7 +861,7 @@ mod tests {
         );
 
         let workspace = SerializedWorkspace {
-            id: 5,
+            id: WorkspaceId(5),
             location: (["/tmp", "/tmp2"]).into(),
             center_group,
             bounds: Default::default(),
@@ -891,7 +890,7 @@ mod tests {
         let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
 
         let workspace_1 = SerializedWorkspace {
-            id: 1,
+            id: WorkspaceId(1),
             location: (["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -901,7 +900,7 @@ mod tests {
         };
 
         let mut workspace_2 = SerializedWorkspace {
-            id: 2,
+            id: WorkspaceId(2),
             location: (["/tmp"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -938,7 +937,7 @@ mod tests {
 
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
-            id: 3,
+            id: WorkspaceId(3),
             location: (&["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
@@ -972,7 +971,7 @@ mod tests {
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
-            id: 4,
+            id: WorkspaceId(4),
             location: workspace_id.into(),
             center_group: center_group.clone(),
             bounds: Default::default(),

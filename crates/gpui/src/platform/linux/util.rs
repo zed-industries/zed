@@ -1,6 +1,7 @@
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
-use crate::{Keystroke, Modifiers};
+use super::DOUBLE_CLICK_DISTANCE;
+use crate::{Keystroke, Modifiers, Pixels, Point};
 
 impl Keystroke {
     pub(super) fn from_xkb(state: &State, modifiers: Modifiers, keycode: Keycode) -> Self {
@@ -91,5 +92,37 @@ impl Keystroke {
             key,
             ime_key,
         }
+    }
+}
+
+pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
+    let diff = a - b;
+    diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{px, Point};
+
+    #[test]
+    fn test_is_within_click_distance() {
+        let zero = Point::new(px(0.0), px(0.0));
+        assert_eq!(
+            is_within_click_distance(zero, Point::new(px(5.0), px(5.0))),
+            true
+        );
+        assert_eq!(
+            is_within_click_distance(zero, Point::new(px(-4.9), px(5.0))),
+            true
+        );
+        assert_eq!(
+            is_within_click_distance(Point::new(px(3.0), px(2.0)), Point::new(px(-2.0), px(-2.0))),
+            true
+        );
+        assert_eq!(
+            is_within_click_distance(zero, Point::new(px(5.0), px(5.1))),
+            false
+        );
     }
 }

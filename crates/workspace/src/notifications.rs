@@ -184,7 +184,7 @@ impl LanguageServerPrompt {
     }
 
     async fn select_option(this: View<Self>, ix: usize, mut cx: AsyncWindowContext) {
-        util::async_maybe!({
+        util::maybe!(async move {
             let potential_future = this.update(&mut cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
             });
@@ -285,6 +285,8 @@ pub mod simple_message_notification {
         message: SharedString,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<SharedString>,
+        secondary_click_message: Option<SharedString>,
+        secondary_on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -298,6 +300,8 @@ pub mod simple_message_notification {
                 message: message.into(),
                 on_click: None,
                 click_message: None,
+                secondary_on_click: None,
+                secondary_click_message: None,
             }
         }
 
@@ -314,6 +318,22 @@ pub mod simple_message_notification {
             F: 'static + Fn(&mut ViewContext<Self>),
         {
             self.on_click = Some(Arc::new(on_click));
+            self
+        }
+
+        pub fn with_secondary_click_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.secondary_click_message = Some(message.into());
+            self
+        }
+
+        pub fn on_secondary_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Fn(&mut ViewContext<Self>),
+        {
+            self.secondary_on_click = Some(Arc::new(on_click));
             self
         }
 
@@ -339,16 +359,30 @@ pub mod simple_message_notification {
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
                         ),
                 )
-                .children(self.click_message.iter().map(|message| {
-                    Button::new(message.clone(), message.clone()).on_click(cx.listener(
-                        |this, _, cx| {
-                            if let Some(on_click) = this.on_click.as_ref() {
-                                (on_click)(cx)
-                            };
-                            this.dismiss(cx)
-                        },
-                    ))
-                }))
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .children(self.click_message.iter().map(|message| {
+                            Button::new(message.clone(), message.clone()).on_click(cx.listener(
+                                |this, _, cx| {
+                                    if let Some(on_click) = this.on_click.as_ref() {
+                                        (on_click)(cx)
+                                    };
+                                    this.dismiss(cx)
+                                },
+                            ))
+                        }))
+                        .children(self.secondary_click_message.iter().map(|message| {
+                            Button::new(message.clone(), message.clone())
+                                .style(ButtonStyle::Filled)
+                                .on_click(cx.listener(|this, _, cx| {
+                                    if let Some(on_click) = this.secondary_on_click.as_ref() {
+                                        (on_click)(cx)
+                                    };
+                                    this.dismiss(cx)
+                                }))
+                        })),
+                )
         }
     }
 }

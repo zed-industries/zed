@@ -9,13 +9,13 @@ mod indicator;
 mod keybinding;
 mod label;
 mod list;
-mod platform_titlebar;
 mod popover;
 mod popover_menu;
 mod right_click_menu;
 mod stack;
 mod tab;
 mod tab_bar;
+mod title_bar;
 mod tooltip;
 
 #[cfg(feature = "stories")]
@@ -32,13 +32,13 @@ pub use indicator::*;
 pub use keybinding::*;
 pub use label::*;
 pub use list::*;
-pub use platform_titlebar::*;
 pub use popover::*;
 pub use popover_menu::*;
 pub use right_click_menu::*;
 pub use stack::*;
 pub use tab::*;
 pub use tab_bar::*;
+pub use title_bar::*;
 pub use tooltip::*;
 
 #[cfg(feature = "stories")]

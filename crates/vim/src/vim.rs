@@ -39,6 +39,7 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
+use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
@@ -89,8 +90,8 @@ pub fn init(cx: &mut AppContext) {
     // Any time settings change, update vim mode to match. The Vim struct
     // will be initialized as disabled by default, so we filter its commands
     // out when starting up.
-    cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
-        filter.hidden_namespaces.insert("vim");
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        filter.hide_namespace(Vim::NAMESPACE);
     });
     cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
         vim.set_enabled(VimModeSetting::get_global(cx).0, cx)
@@ -200,6 +201,9 @@ struct Vim {
 impl Global for Vim {}
 
 impl Vim {
+    /// The namespace for Vim actions.
+    const NAMESPACE: &'static str = "vim";
+
     fn read(cx: &mut AppContext) -> &Self {
         cx.global::<Self>()
     }
@@ -662,21 +666,23 @@ impl Vim {
             return;
         }
         if !enabled {
-            let _ = cx.remove_global::<CommandPaletteInterceptor>();
-            cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
-                filter.hidden_namespaces.insert("vim");
+            CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
+                interceptor.clear();
+            });
+            CommandPaletteFilter::update_global(cx, |filter, _| {
+                filter.hide_namespace(Self::NAMESPACE);
             });
             *self = Default::default();
             return;
         }
 
         self.enabled = true;
-        cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
-            filter.hidden_namespaces.remove("vim");
+        CommandPaletteFilter::update_global(cx, |filter, _| {
+            filter.show_namespace(Self::NAMESPACE);
         });
-        cx.set_global::<CommandPaletteInterceptor>(CommandPaletteInterceptor(Box::new(
-            command::command_interceptor,
-        )));
+        CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
+            interceptor.set(Box::new(command::command_interceptor));
+        });
 
         if let Some(active_window) = cx
             .active_window()

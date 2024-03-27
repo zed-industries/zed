@@ -12,7 +12,7 @@ use editor::{
     Editor,
 };
 use futures::StreamExt;
-use gpui::{TestAppContext, VisualContext, VisualTestContext};
+use gpui::{BorrowAppContext, TestAppContext, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
@@ -30,7 +30,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::Workspace;
+use workspace::{Workspace, WorkspaceId};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -73,8 +73,14 @@ async fn test_host_disconnect(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let workspace_b =
-        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
+    let workspace_b = cx_b.add_window(|cx| {
+        Workspace::new(
+            WorkspaceId::default(),
+            project_b.clone(),
+            client_b.app_state.clone(),
+            cx,
+        )
+    });
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 

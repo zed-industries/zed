@@ -213,6 +213,14 @@ impl Modifiers {
         }
     }
 
+    /// helper method for Modifiers with just control
+    pub fn control() -> Modifiers {
+        Modifiers {
+            control: true,
+            ..Default::default()
+        }
+    }
+
     /// helper method for Modifiers with just shift
     pub fn shift() -> Modifiers {
         Modifiers {
@@ -228,5 +236,14 @@ impl Modifiers {
             command: true,
             ..Default::default()
         }
+    }
+
+    /// Checks if this Modifiers is a subset of another Modifiers
+    pub fn is_subset_of(&self, other: &Modifiers) -> bool {
+        (other.control || !self.control)
+            && (other.alt || !self.alt)
+            && (other.shift || !self.shift)
+            && (other.command || !self.command)
+            && (other.function || !self.function)
     }
 }

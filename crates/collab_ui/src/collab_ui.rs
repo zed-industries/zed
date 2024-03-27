@@ -13,7 +13,7 @@ use call::{report_call_event_for_room, ActiveCall};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
-    actions, point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, Task, WindowContext,
+    actions, point, AppContext, DevicePixels, Pixels, PlatformDisplay, Size, Task, WindowContext,
     WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
@@ -97,13 +97,13 @@ fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
     window_size: Size<Pixels>,
 ) -> WindowOptions {
-    let notification_margin_width = GlobalPixels::from(16.);
-    let notification_margin_height = GlobalPixels::from(-0.) - GlobalPixels::from(48.);
+    let notification_margin_width = DevicePixels::from(16);
+    let notification_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
 
     let screen_bounds = screen.bounds();
-    let size: Size<GlobalPixels> = window_size.into();
+    let size: Size<DevicePixels> = window_size.into();
 
-    let bounds = gpui::Bounds::<GlobalPixels> {
+    let bounds = gpui::Bounds::<DevicePixels> {
         origin: screen_bounds.upper_right()
             - point(
                 size.width + notification_margin_width,

@@ -22,7 +22,7 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
+    px, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
     PromptLevel, Size, WindowAppearance, WindowParams,
 };
 
@@ -43,7 +43,6 @@ struct WaylandWindowInner {
     renderer: BladeRenderer,
     bounds: Bounds<u32>,
     scale: f32,
-    fullscreen: bool,
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
 }
@@ -102,7 +101,6 @@ impl WaylandWindowInner {
             renderer: BladeRenderer::new(gpu, extent),
             bounds,
             scale: 1.0,
-            fullscreen: false,
             input_handler: None,
 
             // On wayland, decorations are by default provided by the client
@@ -118,6 +116,7 @@ pub(crate) struct WaylandWindowState {
     pub(crate) toplevel: Arc<xdg_toplevel::XdgToplevel>,
     pub(crate) outputs: RefCell<HashSet<ObjectId>>,
     viewport: Option<wp_viewport::WpViewport>,
+    fullscreen: RefCell<bool>,
 }
 
 impl WaylandWindowState {
@@ -136,6 +135,7 @@ impl WaylandWindowState {
             outputs: RefCell::new(HashSet::default()),
             toplevel,
             viewport,
+            fullscreen: RefCell::new(false),
         }
     }
 
@@ -197,7 +197,6 @@ impl WaylandWindowState {
     }
 
     pub fn resize(&self, width: Option<NonZeroU32>, height: Option<NonZeroU32>) {
-        let scale = self.inner.borrow_mut().scale;
         self.set_size_and_scale(width, height, None);
     }
 
@@ -210,7 +209,7 @@ impl WaylandWindowState {
         if let Some(ref mut fun) = callbacks.fullscreen {
             fun(fullscreen)
         }
-        self.inner.borrow_mut().fullscreen = fullscreen;
+        self.fullscreen.replace(fullscreen);
     }
 
     /// Notifies the window of the state of the decorations.
@@ -275,17 +274,22 @@ impl HasDisplayHandle for WaylandWindow {
 
 impl PlatformWindow for WaylandWindow {
     // todo(linux)
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         unimplemented!()
     }
 
     // todo(linux)
     fn is_maximized(&self) -> bool {
-        unimplemented!()
+        false
+    }
+
+    // todo(linux)
+    fn is_minimized(&self) -> bool {
+        false
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        let inner = self.0.inner.borrow_mut();
+        let inner = self.0.inner.borrow();
         Size {
             width: Pixels(inner.bounds.size.width as f32),
             height: Pixels(inner.bounds.size.height as f32),
@@ -293,12 +297,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        self.0.inner.borrow_mut().scale
-    }
-
-    // todo(linux)
-    fn titlebar_height(&self) -> Pixels {
-        unimplemented!()
+        self.0.inner.borrow().scale
     }
 
     // todo(linux)
@@ -347,6 +346,11 @@ impl PlatformWindow for WaylandWindow {
         // todo(linux)
     }
 
+    // todo(linux)
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0.toplevel.set_title(title.to_string());
     }
@@ -368,7 +372,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        if !self.0.inner.borrow().fullscreen {
+        if !(*self.0.fullscreen.borrow()) {
             self.0.toplevel.set_fullscreen(None);
         } else {
             self.0.toplevel.unset_fullscreen();
@@ -376,7 +380,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn is_fullscreen(&self) -> bool {
-        self.0.inner.borrow_mut().fullscreen
+        *self.0.fullscreen.borrow()
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -421,12 +425,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut inner = self.0.inner.borrow_mut();
-        inner.renderer.draw(scene);
+        self.0.inner.borrow_mut().renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let inner = self.0.inner.borrow_mut();
+        let inner = self.0.inner.borrow();
         inner.renderer.sprite_atlas().clone()
     }
 }

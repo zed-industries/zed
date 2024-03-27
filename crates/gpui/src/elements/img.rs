@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    point, size, Bounds, DevicePixels, Element, ElementContext, Hitbox, ImageData,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, SharedUri, Size,
-    StyleRefinement, Styled, UriOrPath,
+    point, px, size, AbsoluteLength, Bounds, DefiniteLength, DevicePixels, Element, ElementContext,
+    Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels,
+    SharedUri, Size, StyleRefinement, Styled, UriOrPath,
 };
 use futures::FutureExt;
 #[cfg(target_os = "macos")]
@@ -50,6 +50,12 @@ impl From<Arc<PathBuf>> for ImageSource {
     }
 }
 
+impl From<PathBuf> for ImageSource {
+    fn from(value: PathBuf) -> Self {
+        Self::File(value.into())
+    }
+}
+
 impl From<Arc<ImageData>> for ImageSource {
     fn from(value: Arc<ImageData>) -> Self {
         Self::Data(value)
@@ -63,11 +69,50 @@ impl From<CVImageBuffer> for ImageSource {
     }
 }
 
+impl ImageSource {
+    fn data(&self, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
+        match self {
+            ImageSource::Uri(_) | ImageSource::File(_) => {
+                let uri_or_path: UriOrPath = match self {
+                    ImageSource::Uri(uri) => uri.clone().into(),
+                    ImageSource::File(path) => path.clone().into(),
+                    _ => unreachable!(),
+                };
+
+                let image_future = cx.image_cache.get(uri_or_path.clone(), cx);
+                if let Some(data) = image_future
+                    .clone()
+                    .now_or_never()
+                    .and_then(|result| result.ok())
+                {
+                    return Some(data);
+                } else {
+                    cx.spawn(|mut cx| async move {
+                        if image_future.await.ok().is_some() {
+                            cx.on_next_frame(|cx| cx.refresh());
+                        }
+                    })
+                    .detach();
+
+                    return None;
+                }
+            }
+
+            ImageSource::Data(data) => {
+                return Some(data.clone());
+            }
+            #[cfg(target_os = "macos")]
+            ImageSource::Surface(_) => None,
+        }
+    }
+}
+
 /// An image element.
 pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     grayscale: bool,
+    object_fit: ObjectFit,
 }
 
 /// Create a new image element.
@@ -76,6 +121,82 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         interactivity: Interactivity::default(),
         source: source.into(),
         grayscale: false,
+        object_fit: ObjectFit::Contain,
+    }
+}
+
+/// How to fit the image into the bounds of the element.
+pub enum ObjectFit {
+    /// The image will be stretched to fill the bounds of the element.
+    Fill,
+    /// The image will be scaled to fit within the bounds of the element.
+    Contain,
+    /// The image will be scaled to cover the bounds of the element.
+    Cover,
+    /// The image will maintain its original size.
+    None,
+}
+
+impl ObjectFit {
+    /// Get the bounds of the image within the given bounds.
+    pub fn get_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+        image_size: Size<DevicePixels>,
+    ) -> Bounds<Pixels> {
+        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
+        let image_ratio = image_size.width / image_size.height;
+        let bounds_ratio = bounds.size.width / bounds.size.height;
+
+        match self {
+            ObjectFit::Fill => bounds,
+            ObjectFit::Contain => {
+                let new_size = if bounds_ratio > image_ratio {
+                    size(
+                        image_size.width * (bounds.size.height / image_size.height),
+                        bounds.size.height,
+                    )
+                } else {
+                    size(
+                        bounds.size.width,
+                        image_size.height * (bounds.size.width / image_size.width),
+                    )
+                };
+
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                    ),
+                    size: new_size,
+                }
+            }
+            ObjectFit::Cover => {
+                let new_size = if bounds_ratio > image_ratio {
+                    size(
+                        bounds.size.width,
+                        image_size.height * (bounds.size.width / image_size.width),
+                    )
+                } else {
+                    size(
+                        image_size.width * (bounds.size.height / image_size.height),
+                        bounds.size.height,
+                    )
+                };
+
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                    ),
+                    size: new_size,
+                }
+            }
+            ObjectFit::None => Bounds {
+                origin: bounds.origin,
+                size: image_size,
+            },
+        }
     }
 }
 
@@ -85,6 +206,11 @@ impl Img {
         self.grayscale = grayscale;
         self
     }
+    /// Set the object fit for the image.
+    pub fn object_fit(mut self, object_fit: ObjectFit) -> Self {
+        self.object_fit = object_fit;
+        self
+    }
 }
 
 impl Element for Img {
@@ -92,9 +218,25 @@ impl Element for Img {
     type AfterLayout = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        let layout_id = self
-            .interactivity
-            .before_layout(cx, |style, cx| cx.request_layout(&style, []));
+        let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
+            if let Some(data) = self.source.data(cx) {
+                let image_size = data.size();
+                match (style.size.width, style.size.height) {
+                    (Length::Auto, Length::Auto) => {
+                        style.size = Size {
+                            width: Length::Definite(DefiniteLength::Absolute(
+                                AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
+                            )),
+                            height: Length::Definite(DefiniteLength::Absolute(
+                                AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
+                            )),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            cx.request_layout(&style, [])
+        });
         (layout_id, ())
     }
 
@@ -119,46 +261,29 @@ impl Element for Img {
         self.interactivity
             .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
-                match source {
-                    ImageSource::Uri(_) | ImageSource::File(_) => {
-                        let uri_or_path: UriOrPath = match source {
-                            ImageSource::Uri(uri) => uri.into(),
-                            ImageSource::File(path) => path.into(),
-                            _ => unreachable!(),
-                        };
 
-                        let image_future = cx.image_cache.get(uri_or_path.clone(), cx);
-                        if let Some(data) = image_future
-                            .clone()
-                            .now_or_never()
-                            .and_then(|result| result.ok())
-                        {
-                            let new_bounds = preserve_aspect_ratio(bounds, data.size());
-                            cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
-                                .log_err();
-                        } else {
-                            cx.spawn(|mut cx| async move {
-                                if image_future.await.ok().is_some() {
-                                    cx.on_next_frame(|cx| cx.refresh());
-                                }
-                            })
-                            .detach();
-                        }
-                    }
-
-                    ImageSource::Data(data) => {
-                        let new_bounds = preserve_aspect_ratio(bounds, data.size());
-                        cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
+                match source.data(cx) {
+                    Some(data) => {
+                        let bounds = self.object_fit.get_bounds(bounds, data.size());
+                        cx.paint_image(bounds, corner_radii, data, self.grayscale)
                             .log_err();
                     }
-
-                    #[cfg(target_os = "macos")]
-                    ImageSource::Surface(surface) => {
-                        let size = size(surface.width().into(), surface.height().into());
-                        let new_bounds = preserve_aspect_ratio(bounds, size);
-                        // TODO: Add support for corner_radii and grayscale.
-                        cx.paint_surface(new_bounds, surface);
+                    #[cfg(not(target_os = "macos"))]
+                    None => {
+                        // No renderable image loaded yet. Do nothing.
                     }
+                    #[cfg(target_os = "macos")]
+                    None => match source {
+                        ImageSource::Surface(surface) => {
+                            let size = size(surface.width().into(), surface.height().into());
+                            let new_bounds = self.object_fit.get_bounds(bounds, size);
+                            // TODO: Add support for corner_radii and grayscale.
+                            cx.paint_surface(new_bounds, surface);
+                        }
+                        _ => {
+                            // No renderable image loaded yet. Do nothing.
+                        }
+                    },
                 }
             })
     }
@@ -181,31 +306,5 @@ impl Styled for Img {
 impl InteractiveElement for Img {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
-    }
-}
-
-fn preserve_aspect_ratio(bounds: Bounds<Pixels>, image_size: Size<DevicePixels>) -> Bounds<Pixels> {
-    let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
-    let image_ratio = image_size.width / image_size.height;
-    let bounds_ratio = bounds.size.width / bounds.size.height;
-
-    let new_size = if bounds_ratio > image_ratio {
-        size(
-            image_size.width * (bounds.size.height / image_size.height),
-            bounds.size.height,
-        )
-    } else {
-        size(
-            bounds.size.width,
-            image_size.height * (bounds.size.width / image_size.width),
-        )
-    };
-
-    Bounds {
-        origin: point(
-            bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-            bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-        ),
-        size: new_size,
     }
 }

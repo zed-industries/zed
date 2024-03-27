@@ -590,6 +590,7 @@ impl LanguageServer {
                                     "additionalTextEdits".to_string(),
                                 ],
                             }),
+                            insert_replace_support: Some(true),
                             ..Default::default()
                         }),
                         completion_list: Some(CompletionListCapability {
