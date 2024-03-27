@@ -480,6 +480,13 @@ impl Database {
         Ok(results)
     }
 
+    fn get_notification_kind_id_by_name(&self, notification_kind: &str) -> Option<i32> {
+        self.notification_kinds_by_id
+            .iter()
+            .find(|(_, kind)| **kind == notification_kind)
+            .map(|kind| kind.0 .0)
+    }
+
     /// Removes the channel message with the given ID.
     pub async fn remove_channel_message(
         &self,
@@ -531,11 +538,8 @@ impl Database {
                 }
             }
 
-            let notification_kind_id = self
-                .notification_kinds_by_id
-                .iter()
-                .find(|(_, kind)| **kind == "ChannelMessageMention")
-                .map(|kind| kind.0 .0);
+            let notification_kind_id =
+                self.get_notification_kind_id_by_name("ChannelMessageMention");
 
             let existing_notifications = notification::Entity::find()
                 .filter(notification::Column::EntityId.eq(message_id))
