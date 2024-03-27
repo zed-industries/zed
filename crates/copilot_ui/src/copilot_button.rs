@@ -103,7 +103,7 @@ impl Render for CopilotButton {
         div().child(
             popover_menu("copilot")
                 .menu(move |cx| match status {
-                    Status::Authorized => {
+                    Status::Authorized | Status::Disabled => {
                         Some(this.update(cx, |this, cx| this.build_copilot_menu(cx)))
                     }
                     _ => Some(this.update(cx, |this, cx| this.build_copilot_start_menu(cx))),
@@ -159,7 +159,11 @@ impl CopilotButton {
                 menu = menu.entry(
                     format!(
                         "{} Suggestions for {}",
-                        if language_enabled { "Hide" } else { "Show" },
+                        if language_enabled {
+                            "Disable"
+                        } else {
+                            "Enable"
+                        },
                         language.name()
                     ),
                     None,
@@ -176,7 +180,7 @@ impl CopilotButton {
                 menu = menu.entry(
                     format!(
                         "{} Suggestions for This Path",
-                        if path_enabled { "Hide" } else { "Show" }
+                        if path_enabled { "Disable" } else { "Enable" }
                     ),
                     None,
                     move |cx| {
@@ -198,14 +202,15 @@ impl CopilotButton {
             }
 
             let globally_enabled = settings.copilot_enabled(None, None);
+            let fs_clone_for_first_use = fs.clone();
             menu.entry(
                 if globally_enabled {
-                    "Hide Suggestions for All Files"
+                    "Disable Globally"
                 } else {
-                    "Show Suggestions for All Files"
+                    "Enable Globally"
                 },
                 None,
-                move |cx| toggle_copilot_globally(fs.clone(), cx),
+                move |cx| toggle_copilot_globally(fs_clone_for_first_use.clone(), cx),
             )
             .separator()
             .link(
@@ -215,6 +220,7 @@ impl CopilotButton {
                 }
                 .boxed_clone(),
             )
+            .entry("Hide", None, move |cx| hide_copilot(fs.clone(), cx))
             .action("Sign Out", SignOut.boxed_clone())
         })
     }
