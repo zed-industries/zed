@@ -102,66 +102,84 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.move_with(|map, selection| {
-                        let original_head = selection.head();
-                        pair_object.expand_selection(map, selection, true);
-                        let not_found = original_head == selection.head();
-                        let is_inner =
-                            selection.start < original_head && selection.end > original_head;
-                        let is_same_row = selection.start.row() == original_head.row()
-                            && selection.end.row() == original_head.row();
-
-                        // Only surround within the current cursor and the next pair of surrounds that match the current row should be handled
-                        if not_found || (!is_inner && !is_same_row) {
-                            selection.start = original_head;
-                            selection.end = original_head;
-                        }
-                    });
-                });
 
                 let (display_map, display_selections) = editor.selections.all_display(cx);
-                let edits = display_selections
-                    .into_iter()
-                    .map(|selection| {
-                        let offset_range = selection
-                            .map(|p| p.to_offset(&display_map, Bias::Left))
-                            .range();
-                        let mut select_text = editor
-                            .buffer()
-                            .read(cx)
-                            .snapshot(cx)
-                            .text_for_range(offset_range.clone())
-                            .collect::<String>();
-                        if let Some(pos) = select_text.find(pair.start.as_str()) {
-                            select_text.remove(pos);
-                        }
-                        if let Some(pos) = select_text.rfind(pair.end.as_str()) {
-                            select_text.remove(pos);
-                        }
-                        if surround {
-                            select_text = select_text.trim_matches(' ').to_string();
-                        }
-                        (offset_range, select_text)
-                    })
-                    .collect::<Vec<_>>();
+                let mut edits = Vec::new();
+                let mut anchors = Vec::new();
 
-                let stable_anchors = editor
-                    .selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| {
-                        let start = selection.start.bias_left(&display_map.buffer_snapshot);
-                        start..start
-                    })
-                    .collect::<Vec<_>>();
+                for selection in &display_selections {
+                    let start = selection.start.to_offset(&display_map, Bias::Left);
+                    if let Some(range) =
+                        pair_object.range(&display_map, selection.clone().head(), true)
+                    {
+                        if !pair_object.is_multiline() {
+                            let is_same_row = selection.start.row() == range.start.row()
+                                && selection.end.row() == range.end.row();
+                            if !is_same_row {
+                                anchors.push(start..start);
+                                continue;
+                            }
+                        }
+                        // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
+                        // hello«ˇ  "hello in a word"  »again.
+                        // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
+                        // In order to be able to accurately match and replace in this case, some cumbersome methods are used
+                        let mut chars_and_points =
+                            display_map.chars_at(range.start).into_iter().peekable();
+                        while let Some((ch, point)) = chars_and_points.next() {
+                            if ch.to_string() == pair.start {
+                                let start = point.to_offset(&display_map, Bias::Left);
+                                let mut end = start + 1;
+                                if surround {
+                                    match chars_and_points.peek() {
+                                        Some((next_ch, _)) => {
+                                            if next_ch.to_string() == " " {
+                                                end += 1;
+                                            }
+                                        }
+                                        None => {}
+                                    }
+                                }
+                                edits.push((start..end, ""));
+                                anchors.push(start..start);
+                                break;
+                            }
+                        }
+
+                        let mut reverse_chars_and_points = display_map
+                            .reverse_chars_at(range.end)
+                            .into_iter()
+                            .peekable();
+                        while let Some((ch, point)) = reverse_chars_and_points.next() {
+                            if ch.to_string() == pair.end {
+                                let mut start = point.to_offset(&display_map, Bias::Left);
+                                let end = start + 1;
+                                if surround {
+                                    match reverse_chars_and_points.peek() {
+                                        Some((next_ch, _)) => {
+                                            if next_ch.to_string() == " " {
+                                                start -= 1;
+                                            }
+                                        }
+                                        None => {}
+                                    }
+                                }
+                                edits.push((start..end, ""));
+                                break;
+                            }
+                        }
+                    } else {
+                        anchors.push(start..start);
+                    }
+                }
+
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges(anchors);
+                });
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, cx, |s| {
-                    s.select_anchor_ranges(stable_anchors);
-                });
             });
         });
     });
@@ -175,70 +193,92 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                 editor.transact(cx, |editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.move_with(|map, selection| {
-                            target.expand_selection(map, selection, true);
-                        });
-                    });
-
-                    let input_text = text.to_string();
                     let pair = match find_surround_pair(&all_support_surround_pair(), text.deref())
                     {
                         Some(pair) => pair,
-                        None => return,
+                        None => BracketPair {
+                            start: text.to_string(),
+                            end: text.to_string(),
+                            close: true,
+                            newline: false,
+                        },
                     };
-                    let surround = pair.end != input_text;
+                    let surround = pair.end != text.to_string();
+
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
+                    let mut anchors = Vec::new();
+
                     for selection in &selections {
-                        let selection = selection.clone();
-                        let offset_range = selection
-                            .map(|p| p.to_offset(&display_map, Bias::Left))
-                            .range();
-                        let mut select_text = editor
-                            .buffer()
-                            .read(cx)
-                            .snapshot(cx)
-                            .text_for_range(offset_range.clone())
-                            .collect::<String>();
-                        // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
-                        // hello«ˇ  "hello in a word"  »again.
-                        // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
-                        // In order to be able to accurately match and replace in this case, some cumbersome methods are used
-                        if let Some(pos) = select_text.find(will_replace_pair.start.as_str()) {
-                            select_text.replace_range(pos..pos + 1, pair.start.as_str());
-                            if let Some(space_pos) = select_text.find(' ') {
-                                if surround {
-                                    if space_pos != pos + 1 {
-                                        select_text.replace_range(pos + 1..pos + 1, " ");
-                                    }
-                                } else {
-                                    if space_pos == pos + 1 {
-                                        select_text.remove(space_pos);
-                                    }
+                        let start = selection.start.to_offset(&display_map, Bias::Left);
+                        if let Some(range) =
+                            target.range(&display_map, selection.clone().head(), true)
+                        {
+                            // If the current parenthesis object is single-line,
+                            // then we need to filter whether it is the current line or not
+                            if !target.is_multiline() {
+                                let is_same_row = selection.start.row() == range.start.row()
+                                    && selection.end.row() == range.end.row();
+                                if !is_same_row {
+                                    anchors.push(start..start);
+                                    continue;
                                 }
-                            } else if pos + 1 < select_text.len() && surround {
-                                select_text.replace_range(pos + 1..pos + 1, " ");
                             }
-                        }
-                        if let Some(pos) = select_text.rfind(will_replace_pair.end.as_str()) {
-                            select_text.replace_range(pos..pos + 1, pair.end.as_str());
-                            if let Some(space_pos) = select_text.rfind(' ') {
-                                if surround {
-                                    if space_pos != pos - 1 {
-                                        select_text.replace_range(pos..pos, " ");
+                            // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
+                            // hello«ˇ  "hello in a word"  »again.
+                            // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
+                            // In order to be able to accurately match and replace in this case, some cumbersome methods are used
+                            let mut chars_and_points =
+                                display_map.chars_at(range.start).into_iter().peekable();
+                            while let Some((ch, point)) = chars_and_points.next() {
+                                if ch.to_string() == will_replace_pair.start {
+                                    let mut open_str = pair.start.clone();
+                                    let start = point.to_offset(&display_map, Bias::Left);
+                                    let mut end = start + 1;
+                                    match chars_and_points.peek() {
+                                        Some((next_ch, _)) => {
+                                            if next_ch.to_string() != " " && surround {
+                                                open_str.push_str(" ");
+                                            } else if next_ch.to_string() == " " && !surround {
+                                                end += 1;
+                                            }
+                                        }
+                                        None => {}
                                     }
-                                } else {
-                                    if space_pos == pos - 1 {
-                                        select_text.remove(space_pos);
-                                    }
+                                    edits.push((start..end, open_str));
+                                    anchors.push(start..start);
+                                    break;
                                 }
-                            } else if pos - 1 > 0 && surround {
-                                select_text.replace_range(pos - 1..pos - 1, " ");
                             }
+
+                            let mut reverse_chars_and_points = display_map
+                                .reverse_chars_at(range.end)
+                                .into_iter()
+                                .peekable();
+                            while let Some((ch, point)) = reverse_chars_and_points.next() {
+                                if ch.to_string() == will_replace_pair.end {
+                                    let mut close_str = pair.end.clone();
+                                    let mut start = point.to_offset(&display_map, Bias::Left);
+                                    let end = start + 1;
+                                    match reverse_chars_and_points.peek() {
+                                        Some((next_ch, _)) => {
+                                            if next_ch.to_string() != " " && surround {
+                                                close_str.insert_str(0, " ")
+                                            } else if next_ch.to_string() == " " && !surround {
+                                                start -= 1;
+                                            }
+                                        }
+                                        None => {}
+                                    }
+                                    edits.push((start..end, close_str));
+                                    break;
+                                }
+                            }
+                        } else {
+                            anchors.push(start..start);
                         }
-                        edits.push((offset_range, select_text));
                     }
+
                     let stable_anchors = editor
                         .selections
                         .disjoint_anchors()
@@ -248,8 +288,9 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             start..start
                         })
                         .collect::<Vec<_>>();
+
                     editor.buffer().update(cx, |buffer, cx| {
-                        buffer.edit(edits, None, cx);
+                        buffer.edit(edits.clone(), None, cx);
                     });
                     editor.set_clip_at_line_ends(true, cx);
                     editor.change_selections(None, cx, |s| {
@@ -261,34 +302,57 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
     }
 }
 
-pub fn is_valid_bracket_part(vim: &mut Vim, object: Object, cx: &mut WindowContext) -> bool {
+/// Checks if any of the current cursors are surrounded by a valid pair of brackets.
+///
+/// This method supports multiple cursors and checks each cursor for a valid pair of brackets.
+/// A pair of brackets is considered valid if it is well-formed and properly closed.
+///
+/// If a valid pair of brackets is found, the method returns `true` and the cursor is automatically moved to the start of the bracket pair.
+/// If no valid pair of brackets is found for any cursor, the method returns `false`.
+pub fn check_and_move_to_valid_bracket_pair(
+    vim: &mut Vim,
+    object: Object,
+    cx: &mut WindowContext,
+) -> bool {
     let mut valid = false;
-
-    if let Some(_) = object_to_bracket_pair(object) {
+    if let Some(pair) = object_to_bracket_pair(object) {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
+                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let mut anchors = Vec::new();
 
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.move_with(|map, selection| {
-                        let original_head = selection.head();
-                        object.expand_selection(map, selection, true);
-
-                        // Only surround within the current cursor and the next pair of surrounds that match the current row should be handled
-                        let not_found = original_head == selection.head();
-                        let is_inner =
-                            selection.start < original_head && selection.end > original_head;
-                        let is_same_row = selection.start.row() == original_head.row()
-                            && selection.end.row() == original_head.row();
-                        if not_found || (!is_inner && !is_same_row) {
-                            selection.start = original_head;
-                            selection.end = original_head;
-                        } else {
-                            // Jumps the cursor to the current matching location
-                            selection.end = selection.start;
+                for selection in &selections {
+                    let start = selection.start.to_offset(&display_map, Bias::Left);
+                    if let Some(range) = object.range(&display_map, selection.clone().head(), true)
+                    {
+                        // If the current parenthesis object is single-line,
+                        // then we need to filter whether it is the current line or not
+                        if object.is_multiline()
+                            || (!object.is_multiline()
+                                && selection.start.row() == range.start.row()
+                                && selection.end.row() == range.end.row())
+                        {
                             valid = true;
+                            let mut chars_and_points =
+                                display_map.chars_at(range.start).into_iter().peekable();
+                            while let Some((ch, point)) = chars_and_points.next() {
+                                if ch.to_string() == pair.start {
+                                    let cur_point = point.to_offset(&display_map, Bias::Left);
+                                    anchors.push(cur_point..cur_point);
+                                    break;
+                                }
+                            }
+                        } else {
+                            anchors.push(start..start)
                         }
-                    });
+                    } else {
+                        anchors.push(start..start)
+                    }
+                }
+
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges(anchors);
                 });
                 editor.set_clip_at_line_ends(true, cx);
             });
@@ -655,6 +719,22 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+            The [quick] brown
+            fox jumps over
+            the ˇlazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the \"laˇzy\" dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "s", "\""]);
         cx.assert_state(
             indoc! {"
             The [quˇick] brown

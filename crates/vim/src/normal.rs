@@ -15,7 +15,7 @@ use crate::{
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
-    surrounds::{is_valid_bracket_part, SurroundsType},
+    surrounds::{check_and_move_to_valid_bracket_pair, SurroundsType},
     Vim,
 };
 use collections::HashSet;
@@ -209,7 +209,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
             Some(Operator::ChangeSurrounds { target: None }) => {
-                if is_valid_bracket_part(vim, object, cx) {
+                if check_and_move_to_valid_bracket_pair(vim, object, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
                     });
