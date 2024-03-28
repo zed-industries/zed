@@ -75,9 +75,9 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, Context as _, Div, Element, ElementContext, InteractiveElement as _, IntoElement, Label,
-    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
-    WindowContext,
+    div, Context as _, Div, Element, ElementContext, FluentBuilder as _, InteractiveElement as _,
+    IntoElement, Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
+    VisualContext as _, WindowContext,
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -520,6 +520,7 @@ pub enum Event {
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
     SpawnTask(SpawnInTerminal),
+    ZoomChanged,
 }
 
 pub enum OpenVisible {
@@ -1913,6 +1914,7 @@ impl Workspace {
         if self.zoomed_position != dock_to_reveal {
             self.zoomed = None;
             self.zoomed_position = None;
+            cx.emit(Event::ZoomChanged);
         }
 
         cx.notify();
@@ -2341,6 +2343,7 @@ impl Workspace {
             self.zoomed = None;
         }
         self.zoomed_position = None;
+        cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(cx);
 
         cx.notify();
@@ -2390,6 +2393,7 @@ impl Workspace {
                     if pane.read(cx).has_focus(cx) {
                         self.zoomed = Some(pane.downgrade().into());
                         self.zoomed_position = None;
+                        cx.emit(Event::ZoomChanged);
                     }
                     cx.notify();
                 }
@@ -2398,6 +2402,7 @@ impl Workspace {
                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
                 if self.zoomed_position.is_none() {
                     self.zoomed = None;
+                    cx.emit(Event::ZoomChanged);
                 }
                 cx.notify();
             }
@@ -3918,9 +3923,9 @@ impl Render for Workspace {
                         .absolute()
                         .size_full()
                     })
-                    .on_drag_move(
-                        cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
-                            match e.drag(cx).0 {
+                    .when(self.zoomed.is_none(), |this| {
+                        this.on_drag_move(cx.listener(
+                            |workspace, e: &DragMoveEvent<DraggedDock>, cx| match e.drag(cx).0 {
                                 DockPosition::Left => {
                                     let size = workspace.bounds.left() + e.event.position.x;
                                     workspace.left_dock.update(cx, |left_dock, cx| {
@@ -3939,9 +3944,9 @@ impl Render for Workspace {
                                         bottom_dock.resize_active_panel(Some(size), cx);
                                     });
                                 }
-                            }
-                        }),
-                    )
+                            },
+                        ))
+                    })
                     .child(
                         div()
                             .flex()
