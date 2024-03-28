@@ -2,6 +2,16 @@ use collections::HashMap;
 use smallvec::SmallVec;
 const SEARCH_HISTORY_LIMIT: usize = 20;
 
+/// Determines the behavior to use when inserting a new query into the search history.
+#[derive(Default, Debug, Clone, PartialEq)]
+pub enum QueryInsertionBehavior {
+    #[default]
+    /// Always insert the query to the search history.
+    AlwaysInsert,
+    /// Replace the previous query in the search history, if the new query contains the previous query.
+    ReplacePreviousIfContains,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SearchHistorySelectionHandle(usize);
 
@@ -9,11 +19,15 @@ pub struct SearchHistorySelectionHandle(usize);
 pub struct SearchHistory {
     history: SmallVec<[String; SEARCH_HISTORY_LIMIT]>,
     selected: HashMap<SearchHistorySelectionHandle, Option<usize>>,
+    insertion_behavior: QueryInsertionBehavior,
 }
 
 impl SearchHistory {
-    pub fn new_with_handle() -> (Self, SearchHistorySelectionHandle) {
+    pub fn new_with_handle(
+        insertion_behavior: QueryInsertionBehavior,
+    ) -> (Self, SearchHistorySelectionHandle) {
         let mut search_history = SearchHistory::default();
+        search_history.insertion_behavior = insertion_behavior;
         let handle = search_history.new_handle();
         (search_history, handle)
     }
@@ -32,6 +46,16 @@ impl SearchHistory {
         if let Some(selected) = self.selected.get(&handle) {
             if let Some(selected_ix) = selected {
                 if search_string == self.history[*selected_ix] {
+                    return;
+                }
+            }
+        }
+
+        if self.insertion_behavior == QueryInsertionBehavior::ReplacePreviousIfContains {
+            if let Some(previously_searched) = self.history.last_mut() {
+                if search_string.contains(previously_searched.as_str()) {
+                    *previously_searched = search_string;
+                    self.selected.insert(handle, Some(self.history.len() - 1));
                     return;
                 }
             }
@@ -99,8 +123,8 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut search_history = SearchHistory::default();
-        let handle = search_history.new_handle();
+        let (mut search_history, handle) =
+            SearchHistory::new_with_handle(QueryInsertionBehavior::ReplacePreviousIfContains);
 
         assert_eq!(
             search_history.current(handle),
@@ -123,6 +147,15 @@ mod tests {
             "Should not add a duplicate"
         );
         assert_eq!(search_history.current(handle), Some("rust"));
+
+        // check if new string containing the previous string replaces it
+        search_history.add(handle, "rustlang".to_string());
+        assert_eq!(
+            search_history.history.len(),
+            1,
+            "Should replace previous item if it's a substring"
+        );
+        assert_eq!(search_history.current(handle), Some("rustlang"));
 
         // push enough items to test SEARCH_HISTORY_LIMIT
         for i in 0..SEARCH_HISTORY_LIMIT * 2 {
