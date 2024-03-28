@@ -5293,7 +5293,6 @@ dependencies = [
  "theme",
  "toml 0.8.10",
  "tree-sitter",
- "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
  "tree-sitter-clojure",
@@ -10152,15 +10151,6 @@ dependencies = [
  "cc",
  "regex",
  "wasmtime-c-api-impl",
-]
-
-[[package]]
-name = "tree-sitter-bash"
-version = "0.20.4"
-source = "git+https://github.com/tree-sitter/tree-sitter-bash?rev=7331995b19b8f8aba2d5e26deb51d2195c18bc94#7331995b19b8f8aba2d5e26deb51d2195c18bc94"
-dependencies = [
- "cc",
- "tree-sitter",
 ]
 
 [[package]]
