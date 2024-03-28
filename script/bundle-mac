@@ -112,6 +112,40 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
+GIT_VERSION="v2.43.3"
+GIT_VERSION_SHA="fa29823"
+
+function download_git() {
+    local architecture=$1
+    local target_directory=$2
+
+    if ! command -v curl &> /dev/null; then
+        echo "curl is not installed. Please install curl to continue."
+        exit 1
+    fi
+
+    tmp_dir=$(mktemp -d)
+    pushd "$tmp_dir"
+
+    case "$architecture" in
+        aarch64-apple-darwin)
+            url="https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz"
+            ;;
+        x86_64-apple-darwin)
+            url="https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz"
+            ;;
+        *)
+            echo "Unsupported architecture: $architecture"
+            exit 1
+            ;;
+    esac
+
+    curl --silent --fail --location "$url" | tar -xvz -f - bin/git
+    mv bin/git "${target_directory}/"
+    popd
+    rm -rf "$tmp_dir"
+}
+
 function prepare_binaries() {
     local architecture=$1
     local app_path=$2
@@ -156,6 +190,9 @@ function sign_binaries() {
         cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
     fi
 
+    echo "Downloading git binary for $architecture"
+    download_git "$architecture" "${app_path}/Contents/MacOS"
+
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
     cp crates/${zed_crate}/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
 
@@ -172,6 +209,7 @@ function sign_binaries() {
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
         /usr/bin/codesign --deep --force --timestamp --sign "Zed Industries, Inc." "${app_path}/Contents/Frameworks/WebRTC.framework" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/${zed_crate}" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
 
