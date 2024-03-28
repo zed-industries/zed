@@ -38,6 +38,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
+use ::git::permalink::{build_permalink, BuildPermalinkParams};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -56,6 +57,7 @@ pub use element::{
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
@@ -92,8 +94,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use project::Item;
-use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
@@ -432,6 +433,9 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
+    show_git_blame: bool,
+    blame: Option<Model<GitBlame>>,
+    blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -443,6 +447,7 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    show_git_blame: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -450,11 +455,14 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
+
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
+    pub git_blame_entries_width: Option<Pixels>,
 }
 
 impl Default for GutterDimensions {
@@ -464,6 +472,7 @@ impl Default for GutterDimensions {
             right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
+            git_blame_entries_width: None,
         }
     }
 }
@@ -1471,6 +1480,9 @@ impl Editor {
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
+            show_git_blame: false,
+            blame: None,
+            blame_subscription: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1616,6 +1628,10 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
+            show_git_blame: self
+                .blame
+                .as_ref()
+                .map_or(false, |blame| blame.read(cx).has_generated_entries()),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -8832,9 +8848,42 @@ impl Editor {
         }
     }
 
-    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        use git::permalink::{build_permalink, BuildPermalinkParams};
+    pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
+        if !self.show_git_blame {
+            if let Err(error) = self.show_git_blame_internal(cx) {
+                log::error!("failed to toggle on 'git blame': {}", error);
+                return;
+            }
+            self.show_git_blame = true
+        } else {
+            self.blame_subscription.take();
+            self.blame.take();
+            self.show_git_blame = false
+        }
 
+        cx.notify();
+    }
+
+    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
+        if let Some(project) = self.project.as_ref() {
+            let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+                anyhow::bail!("git blame not available in multi buffers")
+            };
+
+            let project = project.clone();
+            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+            self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
+            self.blame = Some(blame);
+        }
+
+        Ok(())
+    }
+
+    pub fn blame(&self) -> Option<&Model<GitBlame>> {
+        self.blame.as_ref()
+    }
+
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         let (path, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
             let project = project_handle.read(cx);
@@ -8867,7 +8916,12 @@ impl Editor {
             remote_url: &origin_url,
             sha: &sha,
             path: &path,
-            selection: selection.map(|selection| selection.range()),
+            selection: selection.map(|selection| {
+                let range = selection.range();
+                let start = range.start.row;
+                let end = range.end.row;
+                start..end
+            }),
         })
     }
 
@@ -9978,7 +10032,12 @@ impl EditorSnapshot {
             0.0.into()
         };
 
-        let left_padding = if gutter_settings.code_actions {
+        let git_blame_entries_width = self
+            .show_git_blame
+            .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
+
+        let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
+        left_padding += if gutter_settings.code_actions {
             em_width * 3.0
         } else if show_git_gutter && gutter_settings.line_numbers {
             em_width * 2.0
@@ -10003,6 +10062,7 @@ impl EditorSnapshot {
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
+            git_blame_entries_width,
         }
     }
 }

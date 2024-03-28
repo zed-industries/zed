@@ -77,7 +77,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
 
-    let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
+    let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
 
     project.update(cx, |project, cx| {
         let tree = project.worktrees().next().unwrap().read(cx);
@@ -2844,7 +2844,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
+    let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
     let rpc = project.update(cx, |p, _| p.client.clone());
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {

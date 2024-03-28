@@ -3295,6 +3295,8 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
+ "time",
+ "time_format",
  "tree-sitter-html",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -3942,6 +3944,7 @@ dependencies = [
  "collections",
  "fsevent",
  "futures 0.3.28",
+ "git",
  "git2",
  "gpui",
  "lazy_static",
@@ -4249,14 +4252,21 @@ dependencies = [
 name = "git"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clock",
+ "collections",
  "git2",
  "lazy_static",
  "log",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
  "smol",
  "sum_tree",
  "text",
+ "time",
  "unindent",
+ "url",
 ]
 
 [[package]]
@@ -7178,6 +7188,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "fuzzy",
+ "git",
  "git2",
  "globset",
  "gpui",

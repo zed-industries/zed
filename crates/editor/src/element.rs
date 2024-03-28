@@ -4,12 +4,12 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{diff_hunk_to_display, DisplayDiffHunk},
+    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     items::BufferSearchHighlights,
-    mouse_context_menu,
+    mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
@@ -18,15 +18,15 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use git::diff::DiffHunkStatus;
+use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
-    AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
-    TextStyleRefinement, View, ViewContext, WindowContext,
+    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity,
+    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
+    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -49,8 +49,8 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::prelude::*;
-use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
+use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -301,6 +301,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -1082,6 +1083,64 @@ impl EditorElement {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn layout_blame_entries(
+        &self,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
+        em_width: Pixels,
+        scroll_position: gpui::Point<f32>,
+        line_height: Pixels,
+        gutter_hitbox: &Hitbox,
+        max_width: Option<Pixels>,
+        cx: &mut ElementContext,
+    ) -> Option<Vec<AnyElement>> {
+        let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
+            return None;
+        };
+
+        let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
+            blame.blame_for_rows(buffer_rows, cx).collect()
+        });
+
+        let width = if let Some(max_width) = max_width {
+            AvailableSpace::Definite(max_width)
+        } else {
+            AvailableSpace::MaxContent
+        };
+        let scroll_top = scroll_position.y * line_height;
+        let start_x = em_width * 1;
+
+        let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+
+        let shaped_lines = blamed_rows
+            .into_iter()
+            .enumerate()
+            .flat_map(|(ix, blame_entry)| {
+                if let Some(blame_entry) = blame_entry {
+                    let mut element = render_blame_entry(
+                        ix,
+                        &blame,
+                        blame_entry,
+                        &mut last_used_color,
+                        self.editor.clone(),
+                        cx,
+                    );
+
+                    let start_y = ix as f32 * line_height - (scroll_top % line_height);
+                    let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
+
+                    element.layout(absolute_offset, size(width, AvailableSpace::MinContent), cx);
+
+                    Some(element)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Some(shaped_lines)
+    }
+
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -1108,19 +1167,26 @@ impl EditorElement {
         );
         let indicator_size = button.measure(available_space, cx);
 
-        let mut x = Pixels::ZERO;
+        let blame_width = gutter_dimensions
+            .git_blame_entries_width
+            .unwrap_or(Pixels::ZERO);
+
+        let mut x = blame_width;
+        let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
+            - indicator_size.width
+            - blame_width;
+        x += available_width / 2.;
+
         let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
-        // Center indicator.
-        x +=
-            (gutter_dimensions.margin + gutter_dimensions.left_padding - indicator_size.width) / 2.;
         y += (line_height - indicator_size.height) / 2.;
+
         button.layout(gutter_hitbox.origin + point(x, y), available_space, cx);
         Some(button)
     }
 
     fn calculate_relative_line_numbers(
         &self,
-        snapshot: &EditorSnapshot,
+        buffer_rows: Vec<Option<u32>>,
         rows: &Range<u32>,
         relative_to: Option<u32>,
     ) -> HashMap<u32, u32> {
@@ -1130,12 +1196,6 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
-        let end = rows.end.max(relative_to);
-
-        let buffer_rows = snapshot
-            .buffer_rows(start)
-            .take(1 + (end - start) as usize)
-            .collect::<Vec<_>>();
 
         let head_idx = relative_to - start;
         let mut delta = 1;
@@ -1171,6 +1231,7 @@ impl EditorElement {
     fn layout_line_numbers(
         &self,
         rows: Range<u32>,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
         active_rows: &BTreeMap<u32, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
@@ -1209,13 +1270,11 @@ impl EditorElement {
             None
         };
 
-        let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
+        let buffer_rows = buffer_rows.collect::<Vec<_>>();
+        let relative_rows =
+            self.calculate_relative_line_numbers(buffer_rows.clone(), &rows, relative_to);
 
-        for (ix, row) in snapshot
-            .buffer_rows(rows.start)
-            .take((rows.end - rows.start) as usize)
-            .enumerate()
-        {
+        for (ix, row) in buffer_rows.into_iter().enumerate() {
             let display_row = rows.start + ix as u32;
             let (active, color) = if active_rows.contains_key(&display_row) {
                 (true, cx.theme().colors().editor_active_line_number)
@@ -1986,6 +2045,10 @@ impl EditorElement {
             Self::paint_diff_hunks(layout, cx);
         }
 
+        if layout.blamed_display_rows.is_some() {
+            self.paint_blamed_display_rows(layout, cx);
+        }
+
         for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = layout.gutter_hitbox.origin
@@ -2115,6 +2178,18 @@ impl EditorElement {
                     Edges::default(),
                     transparent_black(),
                 ));
+            }
+        })
+    }
+
+    fn paint_blamed_display_rows(&self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        let Some(blamed_display_rows) = layout.blamed_display_rows.take() else {
+            return;
+        };
+
+        cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+            for mut blame_element in blamed_display_rows.into_iter() {
+                blame_element.paint(cx);
             }
         })
     }
@@ -2766,6 +2841,188 @@ impl EditorElement {
     }
 }
 
+fn render_blame_entry(
+    ix: usize,
+    blame: &gpui::Model<GitBlame>,
+    blame_entry: BlameEntry,
+    last_used_color: &mut Option<(PlayerColor, Oid)>,
+    editor: View<Editor>,
+    cx: &mut ElementContext<'_>,
+) -> AnyElement {
+    let mut sha_color = cx
+        .theme()
+        .players()
+        .color_for_participant(blame_entry.sha.into());
+    // If the last color we used is the same as the one we get for this line, but
+    // the commit SHAs are different, then we try again to get a different color.
+    match *last_used_color {
+        Some((color, sha)) if sha != blame_entry.sha && color.cursor == sha_color.cursor => {
+            let index: u32 = blame_entry.sha.into();
+            sha_color = cx.theme().players().color_for_participant(index + 1);
+        }
+        _ => {}
+    };
+    last_used_color.replace((sha_color, blame_entry.sha));
+
+    let relative_timestamp = match blame_entry.author_offset_date_time() {
+        Ok(timestamp) => time_format::format_localized_timestamp(
+            timestamp,
+            time::OffsetDateTime::now_utc(),
+            cx.local_timezone(),
+            time_format::TimestampFormat::Relative,
+        ),
+        Err(_) => "Error parsing date".to_string(),
+    };
+
+    let pretty_commit_id = format!("{}", blame_entry.sha);
+    let short_commit_id = pretty_commit_id.clone().chars().take(6).collect::<String>();
+
+    let name = blame_entry.author.as_deref().unwrap_or("<no name>");
+    let name = if name.len() > 20 {
+        format!("{}...", &name[..16])
+    } else {
+        name.to_string()
+    };
+
+    let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
+    let commit_message = blame.read(cx).message_for_entry(&blame_entry);
+
+    h_flex()
+        .id(("blame", ix))
+        .children([
+            div()
+                .text_color(sha_color.cursor)
+                .child(short_commit_id)
+                .mr_2(),
+            div()
+                .text_color(cx.theme().status().hint)
+                .child(format!("{:20} {: >14}", name, relative_timestamp)),
+        ])
+        .on_mouse_down(MouseButton::Right, {
+            let blame_entry = blame_entry.clone();
+            move |event, cx| {
+                deploy_blame_entry_context_menu(&blame_entry, editor.clone(), event.position, cx);
+            }
+        })
+        .hover(|style| style.bg(cx.theme().colors().element_hover))
+        .when_some(permalink, |this, url| {
+            let url = url.clone();
+            this.cursor_pointer().on_click(move |_, cx| {
+                cx.stop_propagation();
+                cx.open_url(url.as_str())
+            })
+        })
+        .tooltip(move |cx| {
+            BlameEntryTooltip::new(
+                sha_color.cursor,
+                commit_message.clone(),
+                blame_entry.clone(),
+                cx,
+            )
+        })
+        .into_any()
+}
+
+fn deploy_blame_entry_context_menu(
+    blame_entry: &BlameEntry,
+    editor: View<Editor>,
+    position: gpui::Point<Pixels>,
+    cx: &mut WindowContext<'_>,
+) {
+    let context_menu = ContextMenu::build(cx, move |this, _| {
+        let sha = format!("{}", blame_entry.sha);
+        this.entry("Copy commit SHA", None, move |cx| {
+            cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+        })
+    });
+
+    editor.update(cx, move |editor, cx| {
+        editor.mouse_context_menu = Some(MouseContextMenu::new(position, context_menu, cx));
+        cx.notify();
+    });
+}
+
+struct BlameEntryTooltip {
+    color: Hsla,
+    commit_message: Option<String>,
+    blame_entry: BlameEntry,
+}
+
+impl BlameEntryTooltip {
+    fn new(
+        color: Hsla,
+        commit_message: Option<String>,
+        blame_entry: BlameEntry,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.new_view(|_cx| Self {
+            color,
+            commit_message,
+            blame_entry,
+        })
+        .into()
+    }
+}
+
+impl Render for BlameEntryTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let author = self
+            .blame_entry
+            .author
+            .clone()
+            .unwrap_or("<no name>".to_string());
+        let author_email = self.blame_entry.author_mail.clone().unwrap_or_default();
+        let absolute_timestamp = match self.blame_entry.author_offset_date_time() {
+            Ok(timestamp) => time_format::format_localized_timestamp(
+                timestamp,
+                time::OffsetDateTime::now_utc(),
+                cx.local_timezone(),
+                time_format::TimestampFormat::Absolute,
+            ),
+            Err(_) => "Error parsing date".to_string(),
+        };
+
+        let message = match &self.commit_message {
+            Some(message) => message.clone(),
+            None => {
+                println!("can't find commit message");
+                self.blame_entry.summary.clone().unwrap_or_default()
+            }
+        };
+
+        let pretty_commit_id = format!("{}", self.blame_entry.sha);
+
+        tooltip_container(cx, move |this, cx| {
+            this.occlude()
+                .on_mouse_move(|_, cx| cx.stop_propagation())
+                .child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .child(
+                                    div()
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .child("Commit")
+                                        .pr_2(),
+                                )
+                                .child(
+                                    div().text_color(self.color).child(pretty_commit_id.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .child(format!(
+                                    "{} {} - {}",
+                                    author, author_email, absolute_timestamp
+                                ))
+                                .text_color(cx.theme().colors().text_muted),
+                        )
+                        .child(div().child(message)),
+                )
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LineWithInvisibles {
     pub line: ShapedLine,
@@ -3124,6 +3381,10 @@ impl Element for EditorElement {
                 let end_row =
                     1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
 
+                let buffer_rows = snapshot
+                    .buffer_rows(start_row)
+                    .take((start_row..end_row).len());
+
                 let start_anchor = if start_row == 0 {
                     Anchor::min()
                 } else {
@@ -3165,6 +3426,7 @@ impl Element for EditorElement {
 
                 let (line_numbers, fold_statuses) = self.layout_line_numbers(
                     start_row..end_row,
+                    buffer_rows.clone(),
                     &active_rows,
                     newest_selection_head,
                     &snapshot,
@@ -3172,6 +3434,16 @@ impl Element for EditorElement {
                 );
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
+
+                let blamed_display_rows = self.layout_blame_entries(
+                    buffer_rows,
+                    em_width,
+                    scroll_position,
+                    line_height,
+                    &gutter_hitbox,
+                    gutter_dimensions.git_blame_entries_width,
+                    cx,
+                );
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -3400,6 +3672,7 @@ impl Element for EditorElement {
                     redacted_ranges,
                     line_numbers,
                     display_hunks,
+                    blamed_display_rows,
                     folds,
                     blocks,
                     cursors,
@@ -3486,6 +3759,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
+    blamed_display_rows: Option<Vec<AnyElement>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
@@ -3958,6 +4232,7 @@ mod tests {
                     element
                         .layout_line_numbers(
                             0..6,
+                            (0..6).map(Some),
                             &Default::default(),
                             Some(DisplayPoint::new(0, 0)),
                             &snapshot,
@@ -3969,12 +4244,8 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
-        let relative_rows = window
-            .update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-                element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
-            })
-            .unwrap();
+        let relative_rows =
+            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..6), Some(3));
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
         assert_eq!(relative_rows[&2], 1);
@@ -3983,26 +4254,16 @@ mod tests {
         assert_eq!(relative_rows[&5], 2);
 
         // works if cursor is before screen
-        let relative_rows = window
-            .update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-
-                element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
-            })
-            .unwrap();
+        let relative_rows =
+            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(3..6), Some(1));
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
         assert_eq!(relative_rows[&4], 3);
         assert_eq!(relative_rows[&5], 4);
 
         // works if cursor is after screen
-        let relative_rows = window
-            .update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-
-                element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
-            })
-            .unwrap();
+        let relative_rows =
+            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..3), Some(6));
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
         assert_eq!(relative_rows[&1], 4);

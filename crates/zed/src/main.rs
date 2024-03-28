@@ -92,7 +92,16 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    let fs = Arc::new(RealFs);
+    let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+        app.path_for_auxiliary_executable("git")
+            .context("could not find git binary path")
+            .log_err()
+    } else {
+        None
+    };
+    log::info!("Using git binary path: {:?}", git_binary_path);
+
+    let fs = Arc::new(RealFs::new(git_binary_path));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),

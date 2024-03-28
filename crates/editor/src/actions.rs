@@ -244,6 +244,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         Tab,
         TabPrev,
+        ToggleGitBlame,
         ToggleInlayHints,
         ToggleLineNumbers,
         ToggleSoftWrap,

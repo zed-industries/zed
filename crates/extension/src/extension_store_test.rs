@@ -449,7 +449,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let cache_dir = root_dir.join("target");
     let gleam_extension_dir = root_dir.join("extensions").join("gleam");
 
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let extensions_dir = temp_tree(json!({
         "installed": {},
         "work": {}
