@@ -7,7 +7,7 @@ use crate::{
     NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -15,6 +15,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
+    items::AssistantContext,
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
     ToPoint,
@@ -23,11 +24,12 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
+    AsyncAppContext, AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, HighlightStyle,
+    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
@@ -709,18 +711,22 @@ impl AssistantPanel {
         });
     }
 
-    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
+    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> Result<View<ConversationEditor>> {
+        let workspace = self
+            .workspace
+            .upgrade()
+            .ok_or_else(|| anyhow!("workspace dropped"))?;
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
                 self.model.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
-                self.workspace.clone(),
+                workspace,
                 cx,
             )
         });
         self.show_conversation(editor.clone(), cx);
-        editor
+        Ok(editor)
     }
 
     fn show_conversation(
@@ -989,11 +995,15 @@ impl AssistantPanel {
             .await?;
 
             this.update(&mut cx, |this, cx| {
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ConversationEditor::for_conversation(conversation, fs, workspace, cx)
                 });
                 this.show_conversation(editor, cx);
-            })?;
+                anyhow::Ok(())
+            })??;
             Ok(())
         })
     }
@@ -1267,6 +1277,7 @@ struct Summary {
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
+    inline_context: HashMap<EntityId, Box<dyn AssistantContext>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1288,6 +1299,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        inline_context: HashMap<EntityId, Box<dyn AssistantContext>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1321,6 +1333,7 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
+            inline_context,
         };
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
@@ -1422,6 +1435,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
+                inline_context: Default::default(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1603,7 +1617,7 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let request = LanguageModelRequest {
+        let mut request = LanguageModelRequest {
             model: self.model.clone(),
             messages: self
                 .messages(cx)
@@ -1613,6 +1627,24 @@ impl Conversation {
             stop: vec![],
             temperature: 1.0,
         };
+
+        if self.inline_context.is_empty() {
+            return request;
+        }
+
+        // If there is context to include, build up a prompt to include it in a system message
+        let s: String = self
+            .inline_context
+            .iter()
+            .map(|(_entity_id, context)| context.text_for_llm(cx))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::System,
+            content: s,
+        });
+
         request
     }
 
@@ -2002,17 +2034,43 @@ impl ConversationEditor {
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx.new_model(|cx| Conversation::new(model, language_registry, cx));
+        let context_for_llm = Self::llm_context(&workspace, cx);
+        let conversation =
+            cx.new_model(|cx| Conversation::new(model, language_registry, context_for_llm, cx));
         Self::for_conversation(conversation, fs, workspace, cx)
+    }
+
+    fn llm_context(
+        workspace: &View<Workspace>,
+        cx: &mut WindowContext,
+    ) -> HashMap<EntityId, Box<dyn AssistantContext>> {
+        workspace
+            .update(cx, |workspace, cx| {
+                // TODO: Project Diagnostics from the workspace
+                // let project = workspace.project();
+                // project.update(cx, |project, cx| {
+                //     //     let summaries = project.diagnostic_summaries(true, cx);
+                //     //     // Note: this is now stale data
+                // });
+
+                workspace.active_item_as::<Editor>(cx).map(|editor| {
+                    (
+                        editor.entity_id(),
+                        Box::new(editor) as Box<dyn AssistantContext>,
+                    )
+                })
+            })
+            .into_iter()
+            .collect()
     }
 
     fn for_conversation(
         conversation: Model<Conversation>,
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.new_view(|cx| {
@@ -2027,6 +2085,7 @@ impl ConversationEditor {
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
+            cx.observe(&workspace, Self::handle_workspace_notify),
         ];
 
         let mut this = Self {
@@ -2035,7 +2094,7 @@ impl ConversationEditor {
             blocks: Default::default(),
             scroll_position: None,
             fs,
-            workspace,
+            workspace: workspace.downgrade(),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2169,6 +2228,14 @@ impl ConversationEditor {
             }
             _ => {}
         }
+    }
+
+    fn handle_workspace_notify(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
+        let updated_llm_context = Self::llm_context(&workspace, cx);
+
+        self.conversation.update(cx, |conversation, _cx| {
+            conversation.inline_context = updated_llm_context;
+        });
     }
 
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
@@ -2332,15 +2399,17 @@ impl ConversationEditor {
 
         if let Some(text) = text {
             panel.update(cx, |panel, cx| {
-                let conversation = panel
+                if let Some(conversation) = panel
                     .active_conversation_editor()
                     .cloned()
-                    .unwrap_or_else(|| panel.new_conversation(cx));
-                conversation.update(cx, |conversation, cx| {
-                    conversation
-                        .editor
-                        .update(cx, |editor, cx| editor.insert(&text, cx))
-                });
+                    .or_else(|| panel.new_conversation(cx).log_err())
+                {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&text, cx))
+                    });
+                };
             });
         }
     }
@@ -2411,7 +2480,17 @@ impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        div()
+        //
+        // The ConversationEditor has two main segments
+        //
+        // 1. Editor
+        // 2. Context
+        //   - File Context (currently only the active file)
+        //   - Project Diagnostics (Planned)
+        //   - Deep Code Context (Planned, for query and other tools for the model)
+        //
+
+        let mut main_ui_container = div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
             .capture_action(cx.listener(ConversationEditor::save))
@@ -2420,14 +2499,56 @@ impl Render for ConversationEditor {
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
             .size_full()
-            .relative()
+            .v_flex()
             .child(
                 div()
-                    .size_full()
+                    .flex_grow()
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
-            )
+            );
+
+        let conversation = self.conversation.read(cx);
+
+        if !conversation.inline_context.is_empty() {
+            // In the future we'll need some way to group on the file context, project diagnostics, etc.
+            // For now, we'll just render the file context as is.
+            let file_context_items =
+                conversation
+                    .inline_context
+                    .iter()
+                    .map(|(entity_id, context)| {
+                        let element_id =
+                            ElementId::Name(format!("llm-context-{}", entity_id).into());
+
+                        let el = context.inline_render(cx);
+
+                        div().h_flex().child(el).child(div().id(element_id))
+                    });
+
+            let file_context_container = div()
+                .p_4()
+                .v_flex()
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .child(Icon::new(IconName::File))
+                        .child(
+                            div()
+                                .h_6()
+                                .child(Label::new("File Context"))
+                                .ml_1()
+                                .font_weight(FontWeight::SEMIBOLD),
+                        ),
+                )
+                .child(div().ml_4().children(file_context_items));
+
+            main_ui_container =
+                main_ui_container.child(div().flex_shrink().child(file_context_container));
+        }
+
+        main_ui_container
     }
 }
 
@@ -2799,8 +2920,9 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, Default::default(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -2931,8 +3053,9 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, Default::default(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3030,8 +3153,9 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, Default::default(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3115,8 +3239,14 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                Default::default(),
+                cx,
+            )
+        });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);
