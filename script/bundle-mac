@@ -117,14 +117,21 @@ GIT_VERSION_SHA="fa29823"
 
 function download_and_unpack() {
     local url=$1
-    local target_path=$2
+    local path_to_unpack=$2
+    local target_path=$3
+
+    temp_dir=$(mktemp -d)
 
     if ! command -v curl &> /dev/null; then
         echo "curl is not installed. Please install curl to continue."
         exit 1
     fi
 
-    curl --silent --fail --location "$url" | tar -xvz -f - $target_path
+    curl --silent --fail --location "$url" | tar -xvz -C "$temp_dir" -f - $path_to_unpack
+
+    mv "$temp_dir/$path_to_unpack" "$target_path"
+
+    rm -rf "$temp_dir"
 }
 
 function download_git() {
@@ -136,15 +143,15 @@ function download_git() {
 
     case "$architecture" in
         aarch64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git ./git
             ;;
         x86_64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git
             ;;
         universal)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git-arm64
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git-x64
-            lipo -create bin/git-arm64 bin/git-x64 -output bin/git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git ./git_arm64
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git_x64
+            lipo -create ./git_arm64 ./git_x64 -output ./git
             ;;
         *)
             echo "Unsupported architecture: $architecture"
@@ -152,8 +159,9 @@ function download_git() {
             ;;
     esac
 
-    mv bin/git "${target_binary}"
     popd
+
+    mv "${tmp_dir}/git" "${target_binary}"
     rm -rf "$tmp_dir"
 }
 
@@ -175,10 +183,10 @@ function prepare_binaries() {
     gzip target/${architecture}/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs for $architecture"
-    # upload_to_blob_store_public \
-    #     "zed-debug-symbols" \
-    #     target/${architecture}/${target_dir}/Zed.dwarf.gz \
-    #     "$channel/Zed-$version-${architecture}.dwarf.gz"
+    upload_to_blob_store_public \
+        "zed-debug-symbols" \
+        target/${architecture}/${target_dir}/Zed.dwarf.gz \
+        "$channel/Zed-$version-${architecture}.dwarf.gz"
 
     cp target/${architecture}/${target_dir}/${binary_name} "${app_path}/Contents/MacOS/${zed_crate}"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
