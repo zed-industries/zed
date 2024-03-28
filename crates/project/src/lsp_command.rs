@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use futures::future;
-use gpui::{AppContext, AsyncAppContext, Model};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext};
 use language::{
     language_settings::{language_settings, InlayHintKind},
     point_from_lsp, point_to_lsp, prepare_completion_documentation,
@@ -40,6 +40,11 @@ pub trait LspCommand: 'static + Sized + Send {
 
     fn check_capabilities(&self, _: &lsp::ServerCapabilities) -> bool {
         true
+    }
+
+    #[allow(unused_variables)]
+    fn status(&self, buffer: &Buffer) -> Option<String> {
+        None
     }
 
     fn to_lsp(
@@ -893,6 +898,13 @@ impl LspCommand for GetReferences {
     type Response = Vec<Location>;
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
+
+    fn status(&self, buffer: &Buffer) -> Option<String> {
+        return Some(
+            "Finding references to ".to_owned()
+                + &buffer.chars_at(self.position).next().unwrap().to_string(),
+        );
+    }
 
     fn to_lsp(
         &self,
