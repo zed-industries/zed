@@ -530,8 +530,7 @@ impl BufferSearchBar {
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
-        let mut search_history = SearchHistory::default();
-        let search_history_selection_handle = search_history.new_handle();
+        let (search_history, search_history_selection_handle) = SearchHistory::new_with_handle();
 
         Self {
             query_editor,

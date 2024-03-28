@@ -12,6 +12,12 @@ pub struct SearchHistory {
 }
 
 impl SearchHistory {
+    pub fn new_with_handle() -> (Self, SearchHistorySelectionHandle) {
+        let mut search_history = SearchHistory::default();
+        let handle = search_history.new_handle();
+        (search_history, handle)
+    }
+
     pub fn new_handle(&mut self) -> SearchHistorySelectionHandle {
         let handle = SearchHistorySelectionHandle(self.selected.len());
         self.selected.insert(handle, None);
