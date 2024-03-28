@@ -1,4 +1,4 @@
-use gpui::{Action, AnyView, IntoElement, Render, VisualContext};
+use gpui::{anchored, Action, AnyView, IntoElement, Render, VisualContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -91,15 +91,17 @@ pub fn tooltip_container<V>(
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
     // padding to avoid mouse cursor
-    div().pl_2().pt_2p5().child(
-        v_flex()
-            .elevation_2(cx)
-            .font(ui_font)
-            .text_ui()
-            .text_color(cx.theme().colors().text)
-            .py_1()
-            .px_2()
-            .map(|el| f(el, cx)),
+    anchored().child(
+        div().pl_2().pt_2p5().child(
+            v_flex()
+                .elevation_2(cx)
+                .font(ui_font)
+                .text_ui()
+                .text_color(cx.theme().colors().text)
+                .py_1()
+                .px_2()
+                .map(|el| f(el, cx)),
+        ),
     )
 }
 
