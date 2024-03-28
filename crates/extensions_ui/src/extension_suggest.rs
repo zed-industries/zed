@@ -1,10 +1,8 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use db::kvp::KEY_VALUE_STORE;
-
 use editor::Editor;
 use extension::ExtensionStore;
 use gpui::{Entity, Model, VisualContext};
@@ -12,52 +10,90 @@ use language::Buffer;
 use ui::ViewContext;
 use workspace::{notifications::simple_message_notification, Workspace};
 
-pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
+fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
     static SUGGESTED: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
-    SUGGESTED
-        .get_or_init(|| {
-            [
-                ("astro", "astro"),
-                ("beancount", "beancount"),
-                ("dockerfile", "Dockerfile"),
-                ("elisp", "el"),
-                ("fish", "fish"),
-                ("git-firefly", ".gitconfig"),
-                ("git-firefly", ".gitignore"),
-                ("git-firefly", "COMMIT_EDITMSG"),
-                ("git-firefly", "EDIT_DESCRIPTION"),
-                ("git-firefly", "git-rebase-todo"),
-                ("git-firefly", "MERGE_MSG"),
-                ("git-firefly", "NOTES_EDITMSG"),
-                ("git-firefly", "TAG_EDITMSG"),
-                ("gleam", "gleam"),
-                ("graphql", "gql"),
-                ("graphql", "graphql"),
-                ("haskell", "hs"),
-                ("java", "java"),
-                ("kotlin", "kt"),
-                ("latex", "tex"),
-                ("make", "Makefile"),
-                ("nix", "nix"),
-                ("prisma", "prisma"),
-                ("purescript", "purs"),
-                ("r", "r"),
-                ("r", "R"),
-                ("sql", "sql"),
-                ("svelte", "svelte"),
-                ("swift", "swift"),
-                ("toml", "Cargo.lock"),
-                ("toml", "toml"),
-                ("templ", "templ"),
-                ("wgsl", "wgsl"),
-                ("zig", "zig"),
-            ]
-            .into_iter()
-            .map(|(name, file)| (file, name.into()))
-            .collect::<HashMap<&str, Arc<str>>>()
+    SUGGESTED.get_or_init(|| {
+        [
+            ("astro", "astro"),
+            ("beancount", "beancount"),
+            ("dockerfile", "Dockerfile"),
+            ("elisp", "el"),
+            ("fish", "fish"),
+            ("git-firefly", ".gitconfig"),
+            ("git-firefly", ".gitignore"),
+            ("git-firefly", "COMMIT_EDITMSG"),
+            ("git-firefly", "EDIT_DESCRIPTION"),
+            ("git-firefly", "MERGE_MSG"),
+            ("git-firefly", "NOTES_EDITMSG"),
+            ("git-firefly", "TAG_EDITMSG"),
+            ("git-firefly", "git-rebase-todo"),
+            ("gleam", "gleam"),
+            ("graphql", "gql"),
+            ("graphql", "graphql"),
+            ("haskell", "hs"),
+            ("java", "java"),
+            ("kotlin", "kt"),
+            ("latex", "tex"),
+            ("make", "Makefile"),
+            ("nix", "nix"),
+            ("prisma", "prisma"),
+            ("purescript", "purs"),
+            ("r", "r"),
+            ("r", "R"),
+            ("sql", "sql"),
+            ("svelte", "svelte"),
+            ("swift", "swift"),
+            ("templ", "templ"),
+            ("toml", "Cargo.lock"),
+            ("toml", "toml"),
+            ("wgsl", "wgsl"),
+            ("zig", "zig"),
+        ]
+        .into_iter()
+        .map(|(name, file)| (file, name.into()))
+        .collect()
+    })
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct SuggestedExtension {
+    pub extension_id: Arc<str>,
+    pub file_name_or_extension: Arc<str>,
+}
+
+/// Returns the suggested extension for the given [`Path`].
+fn suggested_extension(path: impl AsRef<Path>) -> Option<SuggestedExtension> {
+    let path = path.as_ref();
+
+    let file_extension: Option<Arc<str>> = path
+        .extension()
+        .and_then(|extension| Some(extension.to_str()?.into()));
+    let file_name: Option<Arc<str>> = path
+        .file_name()
+        .and_then(|file_name| Some(file_name.to_str()?.into()));
+
+    let (file_name_or_extension, extension_id) = None
+        // We suggest against file names first, as these suggestions will be more
+        // specific than ones based on the file extension.
+        .or_else(|| {
+            file_name.clone().zip(
+                file_name
+                    .as_deref()
+                    .and_then(|file_name| suggested_extensions().get(file_name)),
+            )
         })
-        .get(file_extension_or_name)
-        .map(|str| str.clone())
+        .or_else(|| {
+            file_extension.clone().zip(
+                file_extension
+                    .as_deref()
+                    .and_then(|file_extension| suggested_extensions().get(file_extension)),
+            )
+        })?;
+
+    Some(SuggestedExtension {
+        extension_id: extension_id.clone(),
+        file_name_or_extension,
+    })
 }
 
 fn language_extension_key(extension_id: &str) -> String {
@@ -65,25 +101,22 @@ fn language_extension_key(extension_id: &str) -> String {
 }
 
 pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
-    let Some(file_name_or_extension) = buffer.read(cx).file().and_then(|file| {
-        Some(match file.path().extension() {
-            Some(extension) => extension.to_str()?.to_string(),
-            None => file.path().to_str()?.to_string(),
-        })
-    }) else {
+    let Some(file) = buffer.read(cx).file().cloned() else {
         return;
     };
 
-    let Some(extension_id) = suggested_extension(&file_name_or_extension) else {
+    let Some(SuggestedExtension {
+        extension_id,
+        file_name_or_extension,
+    }) = suggested_extension(file.path())
+    else {
         return;
     };
 
     let key = language_extension_key(&extension_id);
-    let value = KEY_VALUE_STORE.read_kvp(&key);
-
-    if value.is_err() || value.unwrap().is_some() {
+    let Ok(None) = KEY_VALUE_STORE.read_kvp(&key) else {
         return;
-    }
+    };
 
     cx.on_next_frame(move |workspace, cx| {
         let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
@@ -97,8 +130,8 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
         workspace.show_notification(buffer.entity_id().as_u64() as usize, cx, |cx| {
             cx.new_view(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
-                    "Do you want to install the recommended '{}' extension?",
-                    file_name_or_extension
+                    "Do you want to install the recommended '{}' extension for '{}' files?",
+                    extension_id, file_name_or_extension
                 ))
                 .with_click_message("Yes")
                 .on_click({
@@ -121,4 +154,48 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
             })
         });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn test_suggested_extension() {
+        assert_eq!(
+            suggested_extension("Cargo.toml"),
+            Some(SuggestedExtension {
+                extension_id: "toml".into(),
+                file_name_or_extension: "toml".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension("Cargo.lock"),
+            Some(SuggestedExtension {
+                extension_id: "toml".into(),
+                file_name_or_extension: "Cargo.lock".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension("Dockerfile"),
+            Some(SuggestedExtension {
+                extension_id: "dockerfile".into(),
+                file_name_or_extension: "Dockerfile".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension("a/b/c/d/.gitignore"),
+            Some(SuggestedExtension {
+                extension_id: "git-firefly".into(),
+                file_name_or_extension: ".gitignore".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension("a/b/c/d/test.gleam"),
+            Some(SuggestedExtension {
+                extension_id: "gleam".into(),
+                file_name_or_extension: "gleam".into()
+            })
+        );
+    }
 }
