@@ -27,10 +27,24 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center)
     }
 
-    /// scrolls so the neweset cursor is near the top
+    /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused)
+    }
+
+    /// scrolls the minimal amount to (try) and fit all cursors onscreen
+    /// while guaranteeing an amount of margin from the top and bottom
+    /// of the screen, regardless of user configured scroll margin
+    pub fn fit_margin() -> Self {
+        Self::Strategy(AutoscrollStrategy::FitMargin)
+    }
+
+    /// scrolls the minimal amount to fit the newest cursor onscreen
+    /// while guaranteeing an amount of margin from the top and bottom
+    /// of the screen, regardless of user configured scroll margin
+    pub fn newest_margin() -> Self {
+        Self::Strategy(AutoscrollStrategy::NewestMargin)
     }
 }
 
@@ -41,6 +55,8 @@ pub enum AutoscrollStrategy {
     #[default]
     Center,
     Focused,
+    FitMargin,
+    NewestMargin,
     Top,
     Bottom,
 }
@@ -119,7 +135,7 @@ impl Editor {
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
         } else {
-            ((visible_lines - (target_bottom - target_top)) / 2.0).floor()
+            ((visible_lines - (target_bottom - target_top)) / 6.0).floor()
         };
 
         let strategy = match autoscroll {
@@ -142,8 +158,20 @@ impl Editor {
         };
 
         match strategy {
-            AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+            AutoscrollStrategy::Fit
+            | AutoscrollStrategy::Newest
+            | AutoscrollStrategy::FitMargin
+            | AutoscrollStrategy::NewestMargin => {
+                let margin = if matches!(
+                    strategy,
+                    AutoscrollStrategy::FitMargin | AutoscrollStrategy::NewestMargin
+                ) && !matches!(self.mode, EditorMode::AutoHeight { .. })
+                {
+                    margin.max(self.scroll_manager.vertical_scroll_margin)
+                } else {
+                    margin.min(self.scroll_manager.vertical_scroll_margin)
+                };
+
                 let target_top = (target_top - margin).max(0.0);
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;

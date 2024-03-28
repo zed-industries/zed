@@ -2048,20 +2048,17 @@ impl Editor {
         let start;
         let end;
         let mode;
-        let auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
                 end = start;
                 mode = SelectMode::Character;
-                auto_scroll = true;
             }
             2 => {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start..end);
-                auto_scroll = true;
             }
             3 => {
                 let position = display_map
@@ -2075,17 +2072,15 @@ impl Editor {
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start..end);
-                auto_scroll = true;
             }
             _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
                 mode = SelectMode::All;
-                auto_scroll = false;
             }
         }
 
-        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
+        self.change_selections(None, cx, |s| {
             if !add {
                 s.clear_disjoint();
             } else if click_count > 1 {
@@ -6776,7 +6771,7 @@ impl Editor {
         self.select_next_match_internal(
             &display_map,
             action.replace_newest,
-            Some(Autoscroll::newest()),
+            Some(Autoscroll::newest_margin()),
             cx,
         )?;
         Ok(())
@@ -6828,7 +6823,7 @@ impl Editor {
 
                 if let Some(next_selected_range) = next_selected_range {
                     self.unfold_ranges([next_selected_range.clone()], false, true, cx);
-                    self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::newest_margin()), cx, |s| {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
                         }
@@ -6909,7 +6904,7 @@ impl Editor {
                     true,
                     cx,
                 );
-                self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                self.change_selections(Some(Autoscroll::newest_margin()), cx, |s| {
                     s.select(selections);
                 });
             } else if let Some(selected_text) = selected_text {
@@ -7348,7 +7343,7 @@ impl Editor {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::fit_margin()), cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(jump_to, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
@@ -7395,7 +7390,7 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 if self.activate_diagnostics(group_id, cx) {
-                    self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    self.change_selections(Some(Autoscroll::fit_margin()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
                             start: primary_range.start,
@@ -7502,7 +7497,7 @@ impl Editor {
             .dedup();
 
         if let Some(hunk) = hunks.next() {
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            self.change_selections(Some(Autoscroll::fit_margin()), cx, |s| {
                 let row = hunk.start_display_row();
                 let point = DisplayPoint::new(row, 0);
                 s.select_display_ranges([point..point]);
@@ -7654,7 +7649,7 @@ impl Editor {
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            editor.change_selections(Some(Autoscroll::fit_margin()), cx, |s| {
                                 s.select_ranges([range]);
                             });
                         } else {
@@ -7674,7 +7669,7 @@ impl Editor {
                                     // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
                                     target_editor.change_selections(
-                                        Some(Autoscroll::fit()),
+                                        Some(Autoscroll::fit_margin()),
                                         cx,
                                         |s| {
                                             s.select_ranges([range]);
@@ -7883,7 +7878,7 @@ impl Editor {
                     let range = editor.range_for_match(&range);
 
                     if Some(&target.buffer) == editor.buffer().read(cx).as_singleton().as_ref() {
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::fit_margin()), cx, |s| {
                             s.select_ranges([range]);
                         });
                     } else {
@@ -7897,9 +7892,13 @@ impl Editor {
                                     )
                                 });
                             target_editor.update(cx, |target_editor, cx| {
-                                target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                    s.select_ranges([range]);
-                                })
+                                target_editor.change_selections(
+                                    Some(Autoscroll::fit_margin()),
+                                    cx,
+                                    |s| {
+                                        s.select_ranges([range]);
+                                    },
+                                )
                             })
                         })
                     }
@@ -8146,7 +8145,7 @@ impl Editor {
                             }),
                             disposition: BlockDisposition::Below,
                         }],
-                        Some(Autoscroll::fit()),
+                        Some(Autoscroll::fit_margin()),
                         cx,
                     )[0];
                     this.pending_rename = Some(RenameState {
@@ -8225,7 +8224,7 @@ impl Editor {
 
         self.remove_blocks(
             [rename.block_id].into_iter().collect(),
-            Some(Autoscroll::fit()),
+            Some(Autoscroll::fit_margin()),
             cx,
         );
         self.clear_highlights::<Rename>(cx);
@@ -8592,7 +8591,7 @@ impl Editor {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
 
             if auto_scroll {
-                self.request_autoscroll(Autoscroll::fit(), cx);
+                self.request_autoscroll(Autoscroll::fit_margin(), cx);
             }
 
             cx.notify();
@@ -8611,7 +8610,7 @@ impl Editor {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
             if auto_scroll {
-                self.request_autoscroll(Autoscroll::fit(), cx);
+                self.request_autoscroll(Autoscroll::fit_margin(), cx);
             }
 
             cx.notify();
@@ -9436,7 +9435,7 @@ impl Editor {
                 for (buffer, ranges) in new_selections_by_buffer {
                     let editor = workspace.open_project_item::<Self>(pane.clone(), buffer, cx);
                     editor.update(cx, |editor, cx| {
-                        editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::newest_margin()), cx, |s| {
                             s.select_ranges(ranges);
                         });
                     });
@@ -9477,7 +9476,7 @@ impl Editor {
                 };
 
                 let nav_history = editor.nav_history.take();
-                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::newest_margin()), cx, |s| {
                     s.select_ranges([cursor..cursor]);
                 });
                 editor.nav_history = nav_history;
