@@ -1,29 +1,13 @@
-use editor::{Editor, MultiBuffer};
-use gpui::{AnyElement, AppContext, FontWeight, Model, View};
-use language::Buffer;
-use workspace::Workspace;
-
-use std::path::PathBuf;
-use ui::{prelude::*, Checkbox};
+use editor::MultiBuffer;
+use gpui::{AppContext, Model};
 
 use crate::{LanguageModelRequestMessage, Role};
-
-/// This trait allows the assistant panel (or any LLM utility) to
-/// * create a text based representation for large language model consumption
-/// * render a mini view of the item for humans
-
-pub trait AssistantContext {
-    fn text_for_llm(&self, cx: &AppContext) -> String;
-}
 
 #[derive(Default)]
 pub struct InlineContext {
     active_buffer: Option<Model<MultiBuffer>>,
     active_buffer_enabled: bool,
 }
-
-// In the future we'll need some way to group on the file context, project diagnostics, etc.
-// For now, we'll just render the file context as is.
 
 impl InlineContext {
     pub fn new() -> Self {
