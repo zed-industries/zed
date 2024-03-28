@@ -1,4 +1,5 @@
 use chrono::Utc;
+use sea_orm::sea_query::IntoCondition;
 
 use super::*;
 
@@ -10,35 +11,81 @@ impl Database {
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
         self.transaction(|tx| async move {
-            let mut condition = Condition::all().add(
-                extension::Column::LatestVersion
-                    .into_expr()
-                    .eq(extension_version::Column::Version.into_expr()),
-            );
+            let mut condition = Condition::all()
+                .add(
+                    extension::Column::LatestVersion
+                        .into_expr()
+                        .eq(extension_version::Column::Version.into_expr()),
+                )
+                .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
             }
 
-            let extensions = extension::Entity::find()
-                .inner_join(extension_version::Entity)
-                .select_also(extension_version::Entity)
-                .filter(condition)
-                .filter(extension_version::Column::SchemaVersion.lte(max_schema_version))
-                .order_by_desc(extension::Column::TotalDownloadCount)
-                .order_by_asc(extension::Column::Name)
-                .limit(Some(limit as u64))
-                .all(&*tx)
-                .await?;
-
-            Ok(extensions
-                .into_iter()
-                .filter_map(|(extension, version)| {
-                    Some(metadata_from_extension_and_version(extension, version?))
-                })
-                .collect())
+            self.get_extensions_where(condition, Some(limit as u64), &tx)
+                .await
         })
         .await
+    }
+
+    pub async fn get_extensions_by_ids(
+        &self,
+        ids: &[&str],
+        max_schema_version: i32,
+    ) -> Result<Vec<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let condition = Condition::all()
+                .add(
+                    extension::Column::LatestVersion
+                        .into_expr()
+                        .eq(extension_version::Column::Version.into_expr()),
+                )
+                .add(extension::Column::ExternalId.is_in(ids.iter().copied()))
+                .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
+
+            self.get_extensions_where(condition, None, &tx).await
+        })
+        .await
+    }
+
+    /// Returns all of the versions for the extension with the given ID.
+    pub async fn get_extension_versions(
+        &self,
+        extension_id: &str,
+    ) -> Result<Vec<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let condition = extension::Column::ExternalId
+                .eq(extension_id)
+                .into_condition();
+
+            self.get_extensions_where(condition, None, &tx).await
+        })
+        .await
+    }
+
+    async fn get_extensions_where(
+        &self,
+        condition: Condition,
+        limit: Option<u64>,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<ExtensionMetadata>> {
+        let extensions = extension::Entity::find()
+            .inner_join(extension_version::Entity)
+            .select_also(extension_version::Entity)
+            .filter(condition)
+            .order_by_desc(extension::Column::TotalDownloadCount)
+            .order_by_asc(extension::Column::Name)
+            .limit(limit)
+            .all(tx)
+            .await?;
+
+        Ok(extensions
+            .into_iter()
+            .filter_map(|(extension, version)| {
+                Some(metadata_from_extension_and_version(extension, version?))
+            })
+            .collect())
     }
 
     pub async fn get_extension(&self, extension_id: &str) -> Result<Option<ExtensionMetadata>> {
