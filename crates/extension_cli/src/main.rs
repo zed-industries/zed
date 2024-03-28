@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(engine)?;
 

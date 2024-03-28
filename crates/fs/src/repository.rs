@@ -1,7 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::HashMap;
+use git::blame::Blame;
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
+use rope::Rope;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -53,6 +55,8 @@ pub trait GitRepository: Send {
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
+
+    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -61,9 +65,23 @@ impl std::fmt::Debug for dyn GitRepository {
     }
 }
 
-impl GitRepository for LibGitRepository {
+pub struct RealGitRepository {
+    pub repository: LibGitRepository,
+    pub git_binary_path: PathBuf,
+}
+
+impl RealGitRepository {
+    pub fn new(repository: LibGitRepository, git_binary_path: Option<PathBuf>) -> Self {
+        Self {
+            repository,
+            git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
+        }
+    }
+}
+
+impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
-        if let Ok(mut index) = self.index() {
+        if let Ok(mut index) = self.repository.index() {
             _ = index.read(false);
         }
     }
@@ -85,7 +103,7 @@ impl GitRepository for LibGitRepository {
             Ok(Some(String::from_utf8(content)?))
         }
 
-        match logic(self, relative_file_path) {
+        match logic(&self.repository, relative_file_path) {
             Ok(value) => return value,
             Err(err) => log::error!("Error loading head text: {:?}", err),
         }
@@ -93,18 +111,18 @@ impl GitRepository for LibGitRepository {
     }
 
     fn remote_url(&self, name: &str) -> Option<String> {
-        let remote = self.find_remote(name).ok()?;
+        let remote = self.repository.find_remote(name).ok()?;
         remote.url().map(|url| url.to_string())
     }
 
     fn branch_name(&self) -> Option<String> {
-        let head = self.head().log_err()?;
+        let head = self.repository.head().log_err()?;
         let branch = String::from_utf8_lossy(head.shorthand_bytes());
         Some(branch.to_string())
     }
 
     fn head_sha(&self) -> Option<String> {
-        let head = self.head().ok()?;
+        let head = self.repository.head().ok()?;
         head.target().map(|oid| oid.to_string())
     }
 
@@ -115,7 +133,7 @@ impl GitRepository for LibGitRepository {
         options.pathspec(path_prefix);
         options.show(StatusShow::Index);
 
-        if let Some(statuses) = self.statuses(Some(&mut options)).log_err() {
+        if let Some(statuses) = self.repository.statuses(Some(&mut options)).log_err() {
             for status in statuses.iter() {
                 let path = RepoPath(PathBuf::try_from_bytes(status.path_bytes()).unwrap());
                 let status = status.status();
@@ -132,7 +150,7 @@ impl GitRepository for LibGitRepository {
     fn unstaged_status(&self, path: &RepoPath, mtime: SystemTime) -> Option<GitFileStatus> {
         // If the file has not changed since it was added to the index, then
         // there can't be any changes.
-        if matches_index(self, path, mtime) {
+        if matches_index(&self.repository, path, mtime) {
             return None;
         }
 
@@ -144,7 +162,7 @@ impl GitRepository for LibGitRepository {
         options.include_unmodified(true);
         options.show(StatusShow::Workdir);
 
-        let statuses = self.statuses(Some(&mut options)).log_err()?;
+        let statuses = self.repository.statuses(Some(&mut options)).log_err()?;
         let status = statuses.get(0).and_then(|s| read_status(s.status()));
         status
     }
@@ -160,17 +178,17 @@ impl GitRepository for LibGitRepository {
         // If the file has not changed since it was added to the index, then
         // there's no need to examine the working directory file: just compare
         // the blob in the index to the one in the HEAD commit.
-        if matches_index(self, path, mtime) {
+        if matches_index(&self.repository, path, mtime) {
             options.show(StatusShow::Index);
         }
 
-        let statuses = self.statuses(Some(&mut options)).log_err()?;
+        let statuses = self.repository.statuses(Some(&mut options)).log_err()?;
         let status = statuses.get(0).and_then(|s| read_status(s.status()));
         status
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
-        let local_branches = self.branches(Some(BranchType::Local))?;
+        let local_branches = self.repository.branches(Some(BranchType::Local))?;
         let valid_branches = local_branches
             .filter_map(|branch| {
                 branch.ok().and_then(|(branch, _)| {
@@ -192,11 +210,11 @@ impl GitRepository for LibGitRepository {
         Ok(valid_branches)
     }
     fn change_branch(&self, name: &str) -> Result<()> {
-        let revision = self.find_branch(name, BranchType::Local)?;
+        let revision = self.repository.find_branch(name, BranchType::Local)?;
         let revision = revision.get();
         let as_tree = revision.peel_to_tree()?;
-        self.checkout_tree(as_tree.as_object(), None)?;
-        self.set_head(
+        self.repository.checkout_tree(as_tree.as_object(), None)?;
+        self.repository.set_head(
             revision
                 .name()
                 .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
@@ -204,10 +222,28 @@ impl GitRepository for LibGitRepository {
         Ok(())
     }
     fn create_branch(&self, name: &str) -> Result<()> {
-        let current_commit = self.head()?.peel_to_commit()?;
-        self.branch(name, &current_commit, false)?;
+        let current_commit = self.repository.head()?.peel_to_commit()?;
+        self.repository.branch(name, &current_commit, false)?;
 
         Ok(())
+    }
+
+    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame> {
+        let git_dir_path = self.repository.path();
+        let working_directory = git_dir_path.parent().with_context(|| {
+            format!("failed to get git working directory for {:?}", git_dir_path)
+        })?;
+
+        const REMOTE_NAME: &str = "origin";
+        let remote_url = self.remote_url(REMOTE_NAME);
+
+        git::blame::Blame::for_path(
+            &self.git_binary_path,
+            working_directory,
+            path,
+            &content,
+            remote_url,
+        )
     }
 }
 
@@ -251,6 +287,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone, Default)]
 pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
+    pub blames: HashMap<PathBuf, Blame>,
     pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
     pub branch_name: Option<String>,
 }
@@ -316,6 +353,15 @@ impl GitRepository for FakeGitRepository {
         let mut state = self.state.lock();
         state.branch_name = Some(name.to_owned());
         Ok(())
+    }
+
+    fn blame(&self, path: &Path, _content: Rope) -> Result<git::blame::Blame> {
+        let state = self.state.lock();
+        state
+            .blames
+            .get(path)
+            .with_context(|| format!("failed to get blame for {:?}", path))
+            .cloned()
     }
 }
 

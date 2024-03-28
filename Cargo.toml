@@ -280,6 +280,8 @@ tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
 time = { version = "0.3", features = [
+    "macros",
+    "parsing",
     "serde",
     "serde-well-known",
     "formatting",

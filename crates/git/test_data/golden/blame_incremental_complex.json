@@ -1,0 +1,781 @@
+[
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 5,
+      "end": 8
+    },
+    "original_line_number": 6,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 11,
+      "end": 13
+    },
+    "original_line_number": 12,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 17,
+      "end": 18
+    },
+    "original_line_number": 18,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 20,
+      "end": 27
+    },
+    "original_line_number": 21,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 30,
+      "end": 31
+    },
+    "original_line_number": 31,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 33,
+      "end": 34
+    },
+    "original_line_number": 34,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206",
+    "range": {
+      "start": 85,
+      "end": 101
+    },
+    "original_line_number": 86,
+    "author": "Mahdy M. Karam",
+    "author_mail": "<64036912+mmkaram@users.noreply.github.com>",
+    "author_time": 1708621949,
+    "author_tz": "-0800",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1708621949,
+    "committer_tz": "-0700",
+    "summary": "Add option to either use system clipboard or vim clipboard (#7936)",
+    "previous": "c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 0,
+      "end": 2
+    },
+    "original_line_number": 1,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 3,
+      "end": 4
+    },
+    "original_line_number": 4,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 9,
+      "end": 11
+    },
+    "original_line_number": 7,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 13,
+      "end": 17
+    },
+    "original_line_number": 10,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 18,
+      "end": 20
+    },
+    "original_line_number": 15,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 27,
+      "end": 30
+    },
+    "original_line_number": 19,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 31,
+      "end": 33
+    },
+    "original_line_number": 22,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 34,
+      "end": 36
+    },
+    "original_line_number": 25,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 40,
+      "end": 41
+    },
+    "original_line_number": 31,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 66,
+      "end": 71
+    },
+    "original_line_number": 57,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "3635d2dcedd83f1b6702f33ca2673317f7fa4695",
+    "range": {
+      "start": 101,
+      "end": 119
+    },
+    "original_line_number": 78,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1707520689,
+    "author_tz": "-0700",
+    "committer": "GitHub",
+    "committer_mail": "<noreply@github.com>",
+    "committer_time": 1707520689,
+    "committer_tz": "-0700",
+    "summary": "Highlight selections on vim yank (#7638)",
+    "previous": "efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "b65cf6d2d9576171edb407f5bbaa231c33af1f71",
+    "range": {
+      "start": 4,
+      "end": 5
+    },
+    "original_line_number": 3,
+    "author": "Max Brunsfeld",
+    "author_mail": "<maxbrunsfeld@gmail.com>",
+    "author_time": 1705619094,
+    "author_tz": "-0800",
+    "committer": "Max Brunsfeld",
+    "committer_mail": "<maxbrunsfeld@gmail.com>",
+    "committer_time": 1705619205,
+    "committer_tz": "-0800",
+    "summary": "Merge branch 'main' into language-api-docs",
+    "previous": "6457ccf9ece3b36a37e675783abee9748a443115 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "b65cf6d2d9576171edb407f5bbaa231c33af1f71",
+    "range": {
+      "start": 120,
+      "end": 128
+    },
+    "original_line_number": 51,
+    "author": "Max Brunsfeld",
+    "author_mail": "<maxbrunsfeld@gmail.com>",
+    "author_time": 1705619094,
+    "author_tz": "-0800",
+    "committer": "Max Brunsfeld",
+    "committer_mail": "<maxbrunsfeld@gmail.com>",
+    "committer_time": 1705619205,
+    "committer_tz": "-0800",
+    "summary": "Merge branch 'main' into language-api-docs",
+    "previous": "6457ccf9ece3b36a37e675783abee9748a443115 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "b02bd9bce1db3a68dcd606718fa02709020860af",
+    "range": {
+      "start": 60,
+      "end": 61
+    },
+    "original_line_number": 29,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1694798044,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1694798044,
+    "committer_tz": "-0600",
+    "summary": "Fix Y on last line with no trailing new line",
+    "previous": "7c77baa7c17eea106330622e70513ea9389d50a1 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "b02bd9bce1db3a68dcd606718fa02709020860af",
+    "range": {
+      "start": 64,
+      "end": 65
+    },
+    "original_line_number": 33,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1694798044,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1694798044,
+    "committer_tz": "-0600",
+    "summary": "Fix Y on last line with no trailing new line",
+    "previous": "7c77baa7c17eea106330622e70513ea9389d50a1 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 44,
+      "end": 45
+    },
+    "original_line_number": 13,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692855942,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692856812,
+    "committer_tz": "-0600",
+    "summary": "vim: Fix linewise copy of last line with no trailing newline",
+    "previous": "26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 52,
+      "end": 60
+    },
+    "original_line_number": 21,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692855942,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692856812,
+    "committer_tz": "-0600",
+    "summary": "vim: Fix linewise copy of last line with no trailing newline",
+    "previous": "26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 61,
+      "end": 64
+    },
+    "original_line_number": 29,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692855942,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692856812,
+    "committer_tz": "-0600",
+    "summary": "vim: Fix linewise copy of last line with no trailing newline",
+    "previous": "26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 65,
+      "end": 66
+    },
+    "original_line_number": 33,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692855942,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692856812,
+    "committer_tz": "-0600",
+    "summary": "vim: Fix linewise copy of last line with no trailing newline",
+    "previous": "26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "e4794e3134b6449e36ed2771a8849046489cc252",
+    "range": {
+      "start": 74,
+      "end": 77
+    },
+    "original_line_number": 37,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692855942,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692856812,
+    "committer_tz": "-0600",
+    "summary": "vim: Fix linewise copy of last line with no trailing newline",
+    "previous": "26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "33d7fe02ee560f6ed57d1425c43e60aef3b66e64",
+    "range": {
+      "start": 42,
+      "end": 43
+    },
+    "original_line_number": 10,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692644159,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692732477,
+    "committer_tz": "-0600",
+    "summary": "Rewrite paste",
+    "previous": "31db5e4f62e8fca75aa0870f903ae044524c3580 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "33d7fe02ee560f6ed57d1425c43e60aef3b66e64",
+    "range": {
+      "start": 46,
+      "end": 52
+    },
+    "original_line_number": 14,
+    "author": "Conrad Irwin",
+    "author_mail": "<conrad@zed.dev>",
+    "author_time": 1692644159,
+    "author_tz": "-0600",
+    "committer": "Conrad Irwin",
+    "committer_mail": "<conrad@zed.dev>",
+    "committer_time": 1692732477,
+    "committer_tz": "-0600",
+    "summary": "Rewrite paste",
+    "previous": "31db5e4f62e8fca75aa0870f903ae044524c3580 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "868c46062008bb0bcab2d41a38b4295996b9b958",
+    "range": {
+      "start": 80,
+      "end": 81
+    },
+    "original_line_number": 20,
+    "author": "Max Brunsfeld",
+    "author_mail": "<maxbrunsfeld@gmail.com>",
+    "author_time": 1659072896,
+    "author_tz": "-0700",
+    "committer": "Max Brunsfeld",
+    "committer_mail": "<maxbrunsfeld@gmail.com>",
+    "committer_time": 1659073230,
+    "committer_tz": "-0700",
+    "summary": ":art: Rename and simplify some autoindent stuff",
+    "previous": "7a26fa18c7fee3fe031b991e18b55fd8f9c4eb1b crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "e93c49f4f02b3edaddae6a6a4cc0ac433f242357",
+    "range": {
+      "start": 36,
+      "end": 37
+    },
+    "original_line_number": 5,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653424557,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Unify visual line_mode and non line_mode operators",
+    "previous": "11569a869a72f786a9798c53266e28c05c79f824 crates/vim/src/utils.rs",
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 2,
+      "end": 3
+    },
+    "original_line_number": 1,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 8,
+      "end": 9
+    },
+    "original_line_number": 4,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 37,
+      "end": 40
+    },
+    "original_line_number": 7,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 41,
+      "end": 42
+    },
+    "original_line_number": 10,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 43,
+      "end": 44
+    },
+    "original_line_number": 11,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 45,
+      "end": 46
+    },
+    "original_line_number": 14,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 71,
+      "end": 74
+    },
+    "original_line_number": 15,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 77,
+      "end": 80
+    },
+    "original_line_number": 18,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 81,
+      "end": 85
+    },
+    "original_line_number": 21,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  },
+  {
+    "sha": "082036161fd3815c831ceedfd28ba15b0ed6eb9f",
+    "range": {
+      "start": 119,
+      "end": 120
+    },
+    "original_line_number": 26,
+    "author": "Kaylee Simmons",
+    "author_mail": "<kay@the-simmons.net>",
+    "author_time": 1653007350,
+    "author_tz": "-0700",
+    "committer": "Kaylee Simmons",
+    "committer_mail": "<kay@the-simmons.net>",
+    "committer_time": 1653609725,
+    "committer_tz": "-0700",
+    "summary": "Enable copy and paste in vim mode",
+    "previous": null,
+    "filename": "crates/vim/src/utils.rs"
+  }
+]

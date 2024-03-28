@@ -277,8 +277,8 @@ pub struct LocalRepositoryEntry {
 }
 
 impl LocalRepositoryEntry {
-    pub fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
-        self.repo_ptr.lock().load_index_text(relative_file_path)
+    pub fn repo(&self) -> &Arc<Mutex<dyn GitRepository>> {
+        &self.repo_ptr
     }
 }
 
