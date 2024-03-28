@@ -35,6 +35,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::str::FromStr;
 use std::{
     cmp::Ordering,
     path::{self, Path, PathBuf},
@@ -43,6 +44,7 @@ use std::{
 };
 use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
+use util::SemanticVersion;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
     maybe,
@@ -439,7 +441,12 @@ impl ExtensionStore {
                 if let Some(installed_extension) =
                     this.extension_index.extensions.get(&extension.id)
                 {
-                    if installed_extension.manifest.version == extension.manifest.version {
+                    let installed_version =
+                        SemanticVersion::from_str(&installed_extension.manifest.version).ok()?;
+                    let latest_version =
+                        SemanticVersion::from_str(&extension.manifest.version).ok()?;
+
+                    if installed_version >= latest_version {
                         return None;
                     }
                 }
