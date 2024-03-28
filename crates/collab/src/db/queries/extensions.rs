@@ -11,17 +11,19 @@ impl Database {
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
         self.transaction(|tx| async move {
-            let mut condition = Condition::all().add(
-                extension::Column::LatestVersion
-                    .into_expr()
-                    .eq(extension_version::Column::Version.into_expr()),
-            );
+            let mut condition = Condition::all()
+                .add(
+                    extension::Column::LatestVersion
+                        .into_expr()
+                        .eq(extension_version::Column::Version.into_expr()),
+                )
+                .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
             }
 
-            self.get_extensions_where(condition, max_schema_version, Some(limit as u64), &tx)
+            self.get_extensions_where(condition, Some(limit as u64), &tx)
                 .await
         })
         .await
@@ -39,10 +41,10 @@ impl Database {
                         .into_expr()
                         .eq(extension_version::Column::Version.into_expr()),
                 )
-                .add(extension::Column::ExternalId.is_in(ids.iter().copied()));
+                .add(extension::Column::ExternalId.is_in(ids.iter().copied()))
+                .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
 
-            self.get_extensions_where(condition, max_schema_version, None, &tx)
-                .await
+            self.get_extensions_where(condition, None, &tx).await
         })
         .await
     }
@@ -56,10 +58,8 @@ impl Database {
             let condition = extension::Column::ExternalId
                 .eq(extension_id)
                 .into_condition();
-            let max_schema_version = 1_000;
 
-            self.get_extensions_where(condition, max_schema_version, None, &tx)
-                .await
+            self.get_extensions_where(condition, None, &tx).await
         })
         .await
     }
@@ -67,7 +67,6 @@ impl Database {
     async fn get_extensions_where(
         &self,
         condition: Condition,
-        max_schema_version: i32,
         limit: Option<u64>,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<ExtensionMetadata>> {
@@ -75,7 +74,6 @@ impl Database {
             .inner_join(extension_version::Entity)
             .select_also(extension_version::Entity)
             .filter(condition)
-            .filter(extension_version::Column::SchemaVersion.lte(max_schema_version))
             .order_by_desc(extension::Column::TotalDownloadCount)
             .order_by_asc(extension::Column::Name)
             .limit(limit)
