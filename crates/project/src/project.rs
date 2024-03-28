@@ -5200,7 +5200,11 @@ impl Project {
 
             let mut hover_responses = self
                 .language_servers_for_buffer(buffer.read(cx), cx)
-                .filter(|(_, server)| server.capabilities().hover_provider.is_some())
+                .filter(|(_, server)| match server.capabilities().hover_provider {
+                    Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+                    Some(lsp::HoverProviderCapability::Options(_)) => true,
+                    None => false,
+                })
                 .filter(|(adapter, _)| {
                     scope
                         .as_ref()
