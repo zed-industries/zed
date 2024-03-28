@@ -1,4 +1,4 @@
-use gpui::{overlay, Action, AnyView, IntoElement, Render, VisualContext};
+use gpui::{Action, AnyView, IntoElement, Render, VisualContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
