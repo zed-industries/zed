@@ -44,8 +44,6 @@ impl TomlExtension {
             }
         );
 
-        println!("release {} asset {asset_name}", release.version);
-
         let asset = release
             .assets
             .iter()
