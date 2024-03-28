@@ -1,4 +1,5 @@
 use chrono::Utc;
+use sea_orm::sea_query::IntoCondition;
 
 use super::*;
 
@@ -39,6 +40,23 @@ impl Database {
                         .eq(extension_version::Column::Version.into_expr()),
                 )
                 .add(extension::Column::ExternalId.is_in(ids.iter().copied()));
+
+            self.get_extensions_where(condition, max_schema_version, None, &tx)
+                .await
+        })
+        .await
+    }
+
+    /// Returns all of the versions for the extension with the given ID.
+    pub async fn get_extension_versions(
+        &self,
+        extension_id: &str,
+    ) -> Result<Vec<ExtensionMetadata>> {
+        self.transaction(|tx| async move {
+            let condition = extension::Column::ExternalId
+                .eq(extension_id)
+                .into_condition();
+            let max_schema_version = 1_000;
 
             self.get_extensions_where(condition, max_schema_version, None, &tx)
                 .await
