@@ -1,4 +1,5 @@
 use crate::{
+    assistant_context::InlineContext,
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
@@ -15,10 +16,9 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
-    items::AssistantContext,
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
-    ToPoint,
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MultiBufferSnapshot,
+    ToOffset as _, ToPoint,
 };
 use fs::Fs;
 use futures::StreamExt;
@@ -1277,7 +1277,7 @@ struct Summary {
 struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
-    inline_context: HashMap<EntityId, Box<dyn AssistantContext>>,
+    inline_context: InlineContext,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1299,7 +1299,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
-        inline_context: HashMap<EntityId, Box<dyn AssistantContext>>,
+        inline_context: InlineContext,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1628,23 +1628,8 @@ impl Conversation {
             temperature: 1.0,
         };
 
-        if self.inline_context.is_empty() {
-            return request;
-        }
-
-        // If there is context to include, build up a prompt to include it in a system message
-        let s: String = self
-            .inline_context
-            .iter()
-            .map(|(_entity_id, context)| context.text_for_llm(cx))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::System,
-            content: s,
-        });
-
+        let context_message = self.inline_context.message(cx);
+        request.messages.extend(context_message);
         request
     }
 
@@ -2037,34 +2022,9 @@ impl ConversationEditor {
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let context_for_llm = Self::llm_context(&workspace, cx);
-        let conversation =
-            cx.new_model(|cx| Conversation::new(model, language_registry, context_for_llm, cx));
+        let conversation = cx
+            .new_model(|cx| Conversation::new(model, language_registry, InlineContext::new(), cx));
         Self::for_conversation(conversation, fs, workspace, cx)
-    }
-
-    fn llm_context(
-        workspace: &View<Workspace>,
-        cx: &mut WindowContext,
-    ) -> HashMap<EntityId, Box<dyn AssistantContext>> {
-        workspace
-            .update(cx, |workspace, cx| {
-                // TODO: Project Diagnostics from the workspace
-                // let project = workspace.project();
-                // project.update(cx, |project, cx| {
-                //     //     let summaries = project.diagnostic_summaries(true, cx);
-                //     //     // Note: this is now stale data
-                // });
-
-                workspace.active_item_as::<Editor>(cx).map(|editor| {
-                    (
-                        editor.entity_id(),
-                        Box::new(editor) as Box<dyn AssistantContext>,
-                    )
-                })
-            })
-            .into_iter()
-            .collect()
     }
 
     fn for_conversation(
@@ -2231,10 +2191,13 @@ impl ConversationEditor {
     }
 
     fn handle_workspace_notify(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
-        let updated_llm_context = Self::llm_context(&workspace, cx);
-
-        self.conversation.update(cx, |conversation, _cx| {
-            conversation.inline_context = updated_llm_context;
+        let active_buffer = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.inline_context.set_active_buffer(active_buffer);
+            // cx.notify();
         });
     }
 
@@ -2474,6 +2437,116 @@ impl ConversationEditor {
             .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Conversation".into())
     }
+
+    fn render_inline_context(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+        let active_buffer = self
+            .conversation
+            .read(cx)
+            .inline_context
+            .active_buffer()?
+            .clone();
+
+        Some(
+            div().flex_shrink().child(
+                div()
+                    .p_4()
+                    .v_flex()
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .child(Icon::new(IconName::File))
+                            .child(
+                                div()
+                                    .h_6()
+                                    .child(Label::new("File Context"))
+                                    .ml_1()
+                                    .font_weight(FontWeight::SEMIBOLD),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .ml_4()
+                            .child(self.render_active_buffer(active_buffer, cx)),
+                    ),
+            ),
+        )
+    }
+
+    fn render_active_buffer(
+        &self,
+        buffer: Model<MultiBuffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl Element {
+        let buffer = buffer.read(cx);
+        let icon_path;
+        let path;
+        let focused;
+        if let Some(singleton) = buffer.as_singleton() {
+            let singleton = singleton.read(cx);
+
+            let language = singleton
+                .language()
+                .map(|l| l.name().to_string())
+                .unwrap_or_default();
+
+            icon_path = match language.to_lowercase().as_str() {
+                "rust" => "icons/file_icons/rust.svg".into(),
+                "python" => "icons/file_icons/python.svg".into(),
+                "typescript" => "icons/file_icons/typescript.svg".into(),
+                "javascript" => "icons/file_icons/javascript.svg".into(),
+                _ => "icons/file_icons/file.svg".into(),
+            };
+            path = singleton.file().map(|file| file.full_path(cx));
+            focused = false;
+        } else {
+            icon_path = SharedString::from("icons/file_icons/file.svg");
+            path = None;
+            focused = false;
+        }
+
+        let file_name = path.map_or("Untitled".to_string(), |path| {
+            path.to_string_lossy().to_string()
+        });
+        let file_name_text_color = if focused {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+
+        let enabled = self
+            .conversation
+            .read(cx)
+            .inline_context
+            .active_buffer_enabled();
+        div()
+            .h_flex()
+            .child(Icon::from_path(icon_path))
+            .child(
+                div()
+                    .h_6()
+                    .child(Label::new(file_name).color(file_name_text_color))
+                    .ml_1(),
+            )
+            .child(
+                Checkbox::new(
+                    "active-file",
+                    if enabled {
+                        Selection::Selected
+                    } else {
+                        Selection::Unselected
+                    },
+                )
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .inline_context
+                            .set_active_buffer_enabled(!enabled);
+                        cx.notify();
+                    })
+                })),
+            )
+    }
 }
 
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
@@ -2490,7 +2563,7 @@ impl Render for ConversationEditor {
         //   - Deep Code Context (Planned, for query and other tools for the model)
         //
 
-        let mut main_ui_container = div()
+        div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
             .capture_action(cx.listener(ConversationEditor::save))
@@ -2506,62 +2579,8 @@ impl Render for ConversationEditor {
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
-            );
-
-        let conversation = self.conversation.read(cx);
-
-        if !conversation.inline_context.is_empty() {
-            // In the future we'll need some way to group on the file context, project diagnostics, etc.
-            // For now, we'll just render the file context as is.
-            let file_context_items =
-                conversation
-                    .inline_context
-                    .iter()
-                    .map(|(entity_id, context)| {
-                        let element_id =
-                            ElementId::Name(format!("llm-context-{}", entity_id).into());
-
-                        let el = context.inline_render(cx);
-                        let entity_id = entity_id.clone();
-
-                        div().h_flex().child(el).child(
-                            Checkbox::new(element_id, Selection::Selected).on_click(cx.listener(
-                                move |_this, _, _cx| {
-                                    dbg!(entity_id);
-                                },
-                            )), // .tooltip(|cx| Tooltip::text("Select this context", cx)),
-                                // IconButton::new(element_id, IconName::Check)
-                                //     .on_click(cx.listener(move |_this, _, _cx| {
-                                //         dbg!(entity_id);
-                                //     }))
-                                //     .selected(true)
-                                //     .tooltip(|cx| Tooltip::text("Select this context", cx)),
-                        )
-                    });
-
-            let file_context_container = div()
-                .p_4()
-                .v_flex()
-                .child(
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .child(Icon::new(IconName::File))
-                        .child(
-                            div()
-                                .h_6()
-                                .child(Label::new("File Context"))
-                                .ml_1()
-                                .font_weight(FontWeight::SEMIBOLD),
-                        ),
-                )
-                .child(div().ml_4().children(file_context_items));
-
-            main_ui_container =
-                main_ui_container.child(div().flex_shrink().child(file_context_container));
-        }
-
-        main_ui_container
+            )
+            .children(self.render_inline_context(cx))
     }
 }
 

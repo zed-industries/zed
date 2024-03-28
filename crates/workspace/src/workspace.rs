@@ -517,6 +517,7 @@ impl DelayedDebouncedEditAction {
 
 pub enum Event {
     PaneAdded(View<Pane>),
+    ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
     SpawnTask(SpawnInTerminal),
@@ -2751,6 +2752,7 @@ impl Workspace {
         let active_entry = self.active_project_path(cx);
         self.project
             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+
         self.update_window_title(cx);
     }
 
