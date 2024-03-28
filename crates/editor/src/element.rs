@@ -1406,6 +1406,7 @@ impl EditorElement {
         let render_block = |block: &TransformBlock,
                             available_space: Size<AvailableSpace>,
                             block_id: usize,
+                            block_row_start: u32,
                             cx: &mut ElementContext| {
             let mut element = match block {
                 TransformBlock::Custom(block) => {
@@ -1440,6 +1441,7 @@ impl EditorElement {
                     buffer,
                     range,
                     starts_new_buffer,
+                    height,
                     ..
                 } => {
                     let include_root = self
@@ -1455,6 +1457,7 @@ impl EditorElement {
                         position: Point,
                         anchor: text::Anchor,
                         path: ProjectPath,
+                        line_offset_from_top: u32,
                     }
 
                     let jump_data = project::File::from_dyn(buffer.file()).map(|file| {
@@ -1466,12 +1469,29 @@ impl EditorElement {
                             .primary
                             .as_ref()
                             .map_or(range.context.start, |primary| primary.start);
+
+                        let excerpt_start = range.context.start;
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+                            0
+                        } else {
+                            let excerpt_start_row =
+                                language::ToPoint::to_point(&jump_anchor, buffer).row;
+                            jump_position.row - excerpt_start_row
+                        };
+
+                        let line_offset_from_top =
+                            block_row_start + *height as u32 + offset_from_excerpt_start
+                                - snapshot
+                                    .scroll_anchor
+                                    .scroll_position(&snapshot.display_snapshot)
+                                    .y as u32;
 
                         JumpData {
                             position: jump_position,
                             anchor: jump_anchor,
                             path: jump_path,
+                            line_offset_from_top,
                         }
                     });
 
@@ -1541,6 +1561,7 @@ impl EditorElement {
                                                         jump_data.path.clone(),
                                                         jump_data.position,
                                                         jump_data.anchor,
+                                                        jump_data.line_offset_from_top,
                                                         cx,
                                                     );
                                                 }
@@ -1599,6 +1620,7 @@ impl EditorElement {
                                                             path.clone(),
                                                             jump_data.position,
                                                             jump_data.anchor,
+                                                            jump_data.line_offset_from_top,
                                                             cx,
                                                         );
                                                     }
@@ -1631,6 +1653,7 @@ impl EditorElement {
                                             path.clone(),
                                             jump_data.position,
                                             jump_data.anchor,
+                                            jump_data.line_offset_from_top,
                                             cx,
                                         );
                                     }
@@ -1663,7 +1686,7 @@ impl EditorElement {
                 AvailableSpace::MinContent,
                 AvailableSpace::Definite(block.height() as f32 * line_height),
             );
-            let (element, element_size) = render_block(block, available_space, block_id, cx);
+            let (element, element_size) = render_block(block, available_space, block_id, row, cx);
             block_id += 1;
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
@@ -1691,7 +1714,7 @@ impl EditorElement {
                 AvailableSpace::Definite(width),
                 AvailableSpace::Definite(block.height() as f32 * line_height),
             );
-            let (element, _) = render_block(block, available_space, block_id, cx);
+            let (element, _) = render_block(block, available_space, block_id, row, cx);
             block_id += 1;
             blocks.push(BlockLayout {
                 row,
