@@ -1,9 +1,10 @@
-use crate::{common_prefix, ResponseItem, Supermaven};
+use crate::{ResponseItem, Supermaven};
 use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, Global, Model, ModelContext, Task};
-use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
-use std::path::PathBuf;
+use language::{
+    language_settings::all_language_settings, Anchor, Buffer, OffsetRangeExt, ToOffset,
+};
 
 pub struct SupermavenCompletionProvider {
     pending_refresh: Task<Result<()>>,
@@ -56,7 +57,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         direction: Direction,
         cx: &mut ModelContext<Self>,
     ) {
-        // implement cycling
+        // todo!(implement cycling)
         // match direction {
         //     Direction::Prev => {
         //         self.active_completion_index = if self.active_completion_index == 0 {
@@ -84,52 +85,49 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         // todo!("discard")
     }
 
-    fn active_completion_text(
-        &self,
+    fn active_completion_text<'a>(
+        &'a self,
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
-        cx: &AppContext,
-    ) -> Option<String> {
-        struct Candidate {
-            prefix_len: usize,
-            text: String,
-        }
-
+        cx: &'a AppContext,
+    ) -> Option<&'a str> {
+        let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
-        // let cursor_offset = cursor_position.to_offset(buffer);
-        let mut candidate: Option<Candidate> = None;
-        for completion in Supermaven::get(cx).completions() {
-            let mut completion_start = completion.start.to_offset(buffer);
-            let completion_text = completion
-                .completion
-                .iter()
-                .map(|completion| {
-                    if let ResponseItem::Text { text } = completion {
-                        text.as_str()
-                    } else {
-                        ""
-                    }
-                })
-                .collect::<String>();
-            let prefix_len =
-                common_prefix(buffer.chars_at(completion_start), completion_text.chars());
+        let cursor_offset = cursor_position.to_offset(buffer);
+        let mut candidate: Option<&str> = None;
+        for completion in Supermaven::get(cx).completions(buffer_id) {
+            let mut completion_range = completion.range.to_offset(buffer);
 
-            // completion_start += prefix_len;
+            let prefix_len = common_prefix(
+                buffer.chars_for_range(completion_range.clone()),
+                completion.text.chars(),
+            );
+            completion_range.start += prefix_len;
+            let suffix_len = common_prefix(
+                buffer.reversed_chars_for_range(completion_range.clone()),
+                completion.text[prefix_len..].chars().rev(),
+            );
+            completion_range.end = completion_range.end.saturating_sub(suffix_len);
 
-            let completion_text = &completion_text[prefix_len..];
-            if prefix_len != 0 && !completion_text.trim().is_empty() {
-                if candidate.as_ref().map_or(true, |candidate| {
-                    (prefix_len, completion_text.len())
-                        >= (candidate.prefix_len, candidate.text.len())
-                }) {
-                    candidate = Some(Candidate {
-                        prefix_len,
-                        text: completion_text.to_string(),
-                    });
-                }
+            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+            if completion_range.is_empty()
+                && completion_range.start == cursor_offset
+                && !completion_text.trim().is_empty()
+                && candidate
+                    .as_ref()
+                    .map_or(true, |candidate| completion_text.len() >= candidate.len())
+            {
+                candidate = Some(completion_text);
             }
         }
 
-        candidate.map(|candidate| candidate.text)
+        candidate
     }
+}
+
+fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
+    a.zip(b)
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum()
 }

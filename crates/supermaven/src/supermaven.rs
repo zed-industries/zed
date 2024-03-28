@@ -2,15 +2,15 @@ mod messages;
 mod supermaven_completion_provider;
 
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap};
+use collections::BTreeMap;
 use futures::{
     channel::{mpsc, oneshot},
     io::BufReader,
     AsyncBufReadExt, StreamExt,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Bounds, Global, GlobalPixels, InteractiveText, Model, Render,
-    StyledText, Task, ViewContext,
+    AppContext, AsyncAppContext, Bounds, EntityId, Global, GlobalPixels, InteractiveText, Model,
+    Render, StyledText, Task, ViewContext,
 };
 use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use messages::*;
@@ -27,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
+use std::{future::Future, ops::Range, path::PathBuf, process::Stdio};
 pub use supermaven_completion_provider::*;
 use ui::prelude::*;
 use util::ResultExt;
@@ -139,6 +140,7 @@ impl Supermaven {
             ..
         } = self
         {
+            let buffer_id = buffer.entity_id();
             let buffer = buffer.read(cx);
             let path = buffer
                 .file()
@@ -154,8 +156,10 @@ impl Supermaven {
             states.insert(
                 state_id,
                 CompletionState {
-                    start: cursor_position.bias_left(buffer),
+                    buffer_id,
+                    range: cursor_position.bias_left(buffer)..cursor_position.bias_right(buffer),
                     completion: Vec::new(),
+                    text: String::new(),
                 },
             );
             let _ = outgoing_tx.unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
@@ -177,9 +181,13 @@ impl Supermaven {
         }
     }
 
-    pub fn completions(&self) -> impl Iterator<Item = &CompletionState> {
+    pub fn completions(&self, buffer_id: EntityId) -> impl Iterator<Item = &CompletionState> {
         let completions = if let Self::Started { states, .. } = self {
-            Some(states.values())
+            Some(
+                states
+                    .values()
+                    .filter(move |state| state.buffer_id == buffer_id),
+            )
         } else {
             None
         };
@@ -250,6 +258,11 @@ impl Supermaven {
                 {
                     let state_id = SupermavenStateId(response.state_id.parse().unwrap());
                     if let Some(state) = states.get_mut(&state_id) {
+                        for item in &response.items {
+                            if let ResponseItem::Text { text } = item {
+                                state.text.push_str(text);
+                            }
+                        }
                         state.completion.extend(response.items);
                         for update_tx in update_txs.drain(..) {
                             let _ = update_tx.send(());
@@ -272,8 +285,10 @@ pub struct SupermavenStateId(usize);
 
 #[allow(dead_code)]
 pub struct CompletionState {
-    start: Anchor,
+    buffer_id: EntityId,
+    range: Range<Anchor>,
     completion: Vec<ResponseItem>,
+    text: String,
 }
 
 struct ActivationRequestPrompt {
@@ -297,16 +312,6 @@ impl Render for ActivationRequestPrompt {
             move |_, cx| cx.open_url(&activate_url)
         })
     }
-}
-
-pub(crate) fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(
-    a: T1,
-    b: T2,
-) -> usize {
-    a.zip(b)
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum()
 }
 
 // #[cfg(test)]
