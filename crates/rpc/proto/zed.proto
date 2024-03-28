@@ -205,7 +205,9 @@ message Envelope {
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
         UpdateChannelMessage update_channel_message = 170;
-        ChannelMessageUpdate channel_message_update = 171;  // current max
+        ChannelMessageUpdate channel_message_update = 171;
+
+        UpdateNotification update_notification = 172;  // current max
     }
 
     reserved 158 to 161;
@@ -1710,6 +1712,10 @@ message GetNotificationsResponse {
 
 message DeleteNotification {
     uint64 notification_id = 1;
+}
+
+message UpdateNotification {
+    Notification notification = 1;
 }
 
 message MarkNotificationRead {
