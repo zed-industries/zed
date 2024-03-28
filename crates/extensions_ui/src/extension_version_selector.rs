@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
@@ -10,7 +11,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::update_settings_file;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
-use util::ResultExt;
+use util::{ResultExt, SemanticVersion};
 use workspace::ModalView;
 
 pub struct ExtensionVersionSelector {
@@ -52,8 +53,18 @@ impl ExtensionVersionSelectorDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
         weak_view: WeakView<ExtensionVersionSelector>,
-        extension_versions: Vec<ExtensionMetadata>,
+        mut extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
+        extension_versions.sort_unstable_by(|a, b| {
+            let a_version = SemanticVersion::from_str(&a.manifest.version);
+            let b_version = SemanticVersion::from_str(&b.manifest.version);
+
+            match (a_version, b_version) {
+                (Ok(a_version), Ok(b_version)) => b_version.cmp(&a_version),
+                _ => b.published_at.cmp(&a.published_at),
+            }
+        });
+
         let matches = extension_versions
             .iter()
             .map(|extension| StringMatch {
