@@ -8,11 +8,11 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
-    AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
-    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakFocusHandle, WeakView, WindowContext,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
+    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, Model, MouseButton,
+    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
+    View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -1567,7 +1567,11 @@ impl Pane {
             .bottom_0()
             .right_0()
             .size_0()
-            .child(overlay().anchor(AnchorCorner::TopRight).child(menu.clone()))
+            .child(deferred(
+                anchored()
+                    .anchor(AnchorCorner::TopRight)
+                    .child(menu.clone()),
+            ))
     }
 
     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
