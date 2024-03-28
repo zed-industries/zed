@@ -9450,6 +9450,7 @@ impl Editor {
         path: ProjectPath,
         position: Point,
         anchor: language::Anchor,
+        offset_from_top: u32,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace();
@@ -9477,9 +9478,13 @@ impl Editor {
                 };
 
                 let nav_history = editor.nav_history.take();
-                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                    s.select_ranges([cursor..cursor]);
-                });
+                editor.change_selections(
+                    Some(Autoscroll::target(offset_from_top as usize)),
+                    cx,
+                    |s| {
+                        s.select_ranges([cursor..cursor]);
+                    },
+                );
                 editor.nav_history = nav_history;
 
                 anyhow::Ok(())
