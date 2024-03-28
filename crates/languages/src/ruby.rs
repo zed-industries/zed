@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
+use serde_json::json;
 use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
@@ -9,7 +10,31 @@ pub struct RubyLanguageServer;
 #[async_trait(?Send)]
 impl LspAdapter for RubyLanguageServer {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("solargraph".into())
+        LanguageServerName("ruby-lsp".into())
+    }
+
+    fn initialization_options(&self) -> Option<serde_json::Value> {
+        // We disable diagnostics because ruby-lsp uses pull-based diagnostics,
+        // which Zed doesn't support yet.
+        Some(json!({
+            "enabledFeatures": {
+              "diagnostics": false
+            },
+            "experimentalFeaturesEnabled": true
+        }))
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let env = delegate.shell_env().await;
+        let path = delegate.which("ruby-lsp".as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: Some(env),
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -25,7 +50,9 @@ impl LspAdapter for RubyLanguageServer {
         _container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        Err(anyhow!("solargraph must be installed manually"))
+        Err(anyhow!(
+            "ruby-lsp must be installed manually. Install it with `gem install ruby-lsp`."
+        ))
     }
 
     async fn cached_server_binary(
