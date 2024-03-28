@@ -16,6 +16,7 @@ use url::Url;
 
 pub use git2 as libgit;
 
+#[derive(Debug, Clone, Default)]
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
@@ -58,14 +59,6 @@ impl Blame {
             permalinks,
             messages,
         })
-    }
-
-    pub fn with_entries(entries: Vec<BlameEntry>) -> Self {
-        Self {
-            entries,
-            messages: HashMap::default(),
-            permalinks: HashMap::default(),
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use collections::HashMap;
-use git::blame::BlameEntry;
+use git::blame::Blame;
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
 use rope::Rope;
@@ -267,7 +267,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone, Default)]
 pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
-    pub blames: HashMap<PathBuf, Vec<BlameEntry>>,
+    pub blames: HashMap<PathBuf, Blame>,
     pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
     pub branch_name: Option<String>,
 }
@@ -337,12 +337,11 @@ impl GitRepository for FakeGitRepository {
 
     fn blame(&self, path: &Path, _content: Rope) -> Result<git::blame::Blame> {
         let state = self.state.lock();
-        let entries = state
+        state
             .blames
             .get(path)
             .with_context(|| format!("failed to get blame for {:?}", path))
-            .cloned()?;
-        Ok(git::blame::Blame::with_entries(entries))
+            .cloned()
     }
 }
 

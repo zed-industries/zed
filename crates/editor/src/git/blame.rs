@@ -387,14 +387,17 @@ mod tests {
             Path::new("/my-repo/.git"),
             vec![(
                 Path::new("file.txt"),
-                vec![
-                    blame_entry("1b1b1b", 0..1),
-                    blame_entry("0d0d0d", 1..2),
-                    blame_entry("3a3a3a", 2..3),
-                    blame_entry("3a3a3a", 5..6),
-                    blame_entry("0d0d0d", 6..7),
-                    blame_entry("3a3a3a", 7..8),
-                ],
+                Blame {
+                    entries: vec![
+                        blame_entry("1b1b1b", 0..1),
+                        blame_entry("0d0d0d", 1..2),
+                        blame_entry("3a3a3a", 2..3),
+                        blame_entry("3a3a3a", 5..6),
+                        blame_entry("0d0d0d", 6..7),
+                        blame_entry("3a3a3a", 7..8),
+                    ],
+                    ..Default::default()
+                },
             )],
         );
         let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
@@ -468,7 +471,13 @@ mod tests {
 
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
-            vec![(Path::new("file.txt"), vec![blame_entry("1b1b1b", 0..4)])],
+            vec![(
+                Path::new("file.txt"),
+                Blame {
+                    entries: vec![blame_entry("1b1b1b", 0..4)],
+                    ..Default::default()
+                },
+            )],
         );
 
         let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
@@ -611,7 +620,13 @@ mod tests {
         log::info!("initial blame entries: {:?}", blame_entries);
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
-            vec![(Path::new("file.txt"), blame_entries)],
+            vec![(
+                Path::new("file.txt"),
+                Blame {
+                    entries: blame_entries,
+                    ..Default::default()
+                },
+            )],
         );
 
         let project = Project::test(fs.clone(), ["/my-repo".as_ref()], cx).await;
@@ -647,7 +662,13 @@ mod tests {
 
                     fs.set_blame_for_repo(
                         Path::new("/my-repo/.git"),
-                        vec![(Path::new("file.txt"), blame_entries)],
+                        vec![(
+                            Path::new("file.txt"),
+                            Blame {
+                                entries: blame_entries,
+                                ..Default::default()
+                            },
+                        )],
                     );
                 }
                 _ => {

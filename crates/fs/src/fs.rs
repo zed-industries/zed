@@ -824,17 +824,13 @@ impl FakeFs {
         });
     }
 
-    pub fn set_blame_for_repo(
-        &self,
-        dot_git: &Path,
-        blame_entries: Vec<(&Path, Vec<git::blame::BlameEntry>)>,
-    ) {
+    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(&Path, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
             state.blames.extend(
-                blame_entries
+                blames
                     .into_iter()
-                    .map(|(path, entries)| (path.to_path_buf(), entries)),
+                    .map(|(path, blame)| (path.to_path_buf(), blame)),
             );
         });
     }

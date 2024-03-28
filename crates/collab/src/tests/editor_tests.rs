@@ -2010,17 +2010,36 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             }),
         )
         .await;
+
+    let blame = git::blame::Blame {
+        entries: vec![
+            blame_entry("1b1b1b", 0..1),
+            blame_entry("0d0d0d", 1..2),
+            blame_entry("3a3a3a", 2..3),
+            blame_entry("4c4c4c", 3..4),
+        ],
+        permalinks: [
+            ("1b1b1b", "http://example.com/codehost/idx-0"),
+            ("0d0d0d", "http://example.com/codehost/idx-1"),
+            ("3a3a3a", "http://example.com/codehost/idx-2"),
+            ("4c4c4c", "http://example.com/codehost/idx-3"),
+        ]
+        .into_iter()
+        .map(|(sha, url)| (sha.parse().unwrap(), url.parse().unwrap()))
+        .collect(),
+        messages: [
+            ("1b1b1b", "message for idx-0"),
+            ("0d0d0d", "message for idx-1"),
+            ("3a3a3a", "message for idx-2"),
+            ("4c4c4c", "message for idx-3"),
+        ]
+        .into_iter()
+        .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
+        .collect(),
+    };
     client_a.fs().set_blame_for_repo(
         Path::new("/my-repo/.git"),
-        vec![(
-            Path::new("file.txt"),
-            vec![
-                blame_entry("1b1b1b", 0..1),
-                blame_entry("0d0d0d", 1..2),
-                blame_entry("3a3a3a", 2..3),
-                blame_entry("4c4c4c", 3..4),
-            ],
-        )],
+        vec![(Path::new("file.txt"), blame)],
     );
 
     let (project_a, worktree_id) = client_a.build_local_project("/my-repo", cx_a).await;
@@ -2062,6 +2081,45 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             entries,
             vec![
                 Some(blame_entry("1b1b1b", 0..1)),
+                Some(blame_entry("0d0d0d", 1..2)),
+                Some(blame_entry("3a3a3a", 2..3)),
+                Some(blame_entry("4c4c4c", 3..4)),
+            ]
+        );
+
+        blame.update(cx, |blame, cx| {
+            for (idx, entry) in entries.iter().flatten().enumerate() {
+                assert_eq!(
+                    blame.permalink_for_entry(entry).unwrap().to_string(),
+                    format!("http://example.com/codehost/idx-{}", idx)
+                );
+                assert_eq!(
+                    blame.message_for_entry(entry).unwrap(),
+                    format!("message for idx-{}", idx)
+                );
+            }
+        });
+    });
+
+    editor_b.update(cx_b, |editor_b, cx| {
+        editor_b.edit([(Point::new(0, 3)..Point::new(0, 3), "FOO")], cx);
+    });
+
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    editor_b.update(cx_b, |editor_b, cx| {
+        let blame = editor_b.blame().expect("editor_b should have blame now");
+        let entries = blame.update(cx, |blame, cx| {
+            blame
+                .blame_for_rows((0..4).map(Some), cx)
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            entries,
+            vec![
+                None,
                 Some(blame_entry("0d0d0d", 1..2)),
                 Some(blame_entry("3a3a3a", 2..3)),
                 Some(blame_entry("4c4c4c", 3..4)),
