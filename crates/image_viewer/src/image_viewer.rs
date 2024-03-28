@@ -73,15 +73,23 @@ impl Item for ImageView {
     fn tab_content(
         &self,
         _detail: Option<usize>,
-        _selected: bool,
+        selected: bool,
         _cx: &WindowContext,
     ) -> AnyElement {
-        self.path
+        let title = self
+            .path
             .file_name()
             .unwrap_or_else(|| self.path.as_os_str())
             .to_string_lossy()
-            .to_string()
-            .into_any_element()
+            .to_string();
+        h_flex()
+            .gap_2()
+            .child(Label::new(lab).color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
+            .into_any()
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
