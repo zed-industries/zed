@@ -2767,10 +2767,12 @@ impl Render for CollabPanel {
                 self.render_signed_in(cx)
             })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay()
-                    .position(*position)
-                    .anchor(gpui::AnchorCorner::TopLeft)
-                    .child(menu.clone())
+                overlay(|anchored| {
+                    anchored
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .child(menu.clone())
+                })
             }))
     }
 }

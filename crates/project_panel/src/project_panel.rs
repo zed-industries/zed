@@ -1585,10 +1585,12 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    overlay()
-                        .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
-                        .child(menu.clone())
+                    overlay(|anchored| {
+                        anchored
+                            .position(*position)
+                            .anchor(gpui::AnchorCorner::TopLeft)
+                            .child(menu.clone())
+                    })
                 }))
         } else {
             v_flex()

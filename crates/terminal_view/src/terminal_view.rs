@@ -765,10 +765,12 @@ impl Render for TerminalView {
                 )),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay()
-                    .position(*position)
-                    .anchor(gpui::AnchorCorner::TopLeft)
-                    .child(menu.clone())
+                overlay(|anchored| {
+                    anchored
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .child(menu.clone())
+                })
             }))
     }
 }

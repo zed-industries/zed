@@ -176,17 +176,19 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             let mut menu_layout_id = None;
 
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                let mut overlay = overlay().snap_to_window().anchor(this.anchor);
+                let mut element = overlay(|anchored| {
+                    let mut anchored = anchored.snap_to_window().anchor(this.anchor);
 
-                if let Some(child_bounds) = element_state.child_bounds {
-                    overlay = overlay.position(
-                        this.resolved_attach().corner(child_bounds) + this.resolved_offset(cx),
-                    );
-                }
+                    if let Some(child_bounds) = element_state.child_bounds {
+                        anchored = anchored.position(
+                            this.resolved_attach().corner(child_bounds) + this.resolved_offset(cx),
+                        );
+                    }
 
-                let mut element = overlay
-                    .child(div().occlude().child(menu.clone()))
-                    .into_any();
+                    anchored.child(div().occlude().child(menu.clone()))
+                })
+                .into_any();
+
                 menu_layout_id = Some(element.before_layout(cx));
                 element
             });

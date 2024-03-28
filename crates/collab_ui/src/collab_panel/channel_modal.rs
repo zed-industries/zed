@@ -408,11 +408,11 @@ impl PickerDelegate for ChannelModalDelegate {
                             .when(is_me, |el| el.child(Label::new("You").color(Color::Muted)))
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
-                                    Some(
-                                        overlay()
+                                    Some(overlay(|anchored| {
+                                        anchored
                                             .anchor(gpui::AnchorCorner::TopRight)
-                                            .child(menu.clone()),
-                                    )
+                                            .child(menu.clone())
+                                    }))
                                 } else {
                                     None
                                 },

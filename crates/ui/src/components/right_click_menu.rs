@@ -103,15 +103,17 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let mut menu_layout_id = None;
 
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                let mut overlay = overlay().snap_to_window();
-                if let Some(anchor) = this.anchor {
-                    overlay = overlay.anchor(anchor);
-                }
-                overlay = overlay.position(*element_state.position.borrow());
+                let mut element = overlay(|anchored| {
+                    let mut anchored = anchored.snap_to_window();
+                    if let Some(anchor) = this.anchor {
+                        anchored = anchored.anchor(anchor);
+                    }
+                    anchored
+                        .position(*element_state.position.borrow())
+                        .child(div().occlude().child(menu.clone()))
+                })
+                .into_any();
 
-                let mut element = overlay
-                    .child(div().occlude().child(menu.clone()))
-                    .into_any();
                 menu_layout_id = Some(element.before_layout(cx));
                 element
             });

@@ -1573,7 +1573,9 @@ impl Pane {
             .bottom_0()
             .right_0()
             .size_0()
-            .child(overlay().anchor(AnchorCorner::TopRight).child(menu.clone()))
+            .child(overlay(|anchored| {
+                anchored.anchor(AnchorCorner::TopRight).child(menu.clone())
+            }))
     }
 
     fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
