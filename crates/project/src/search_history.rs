@@ -15,14 +15,6 @@ impl SearchHistory {
             }
         }
 
-        if let Some(previously_searched) = self.history.last_mut() {
-            if search_string.contains(previously_searched.as_str()) {
-                *previously_searched = search_string;
-                self.selected = Some(self.history.len() - 1);
-                return;
-            }
-        }
-
         self.history.push(search_string);
         if self.history.len() > SEARCH_HISTORY_LIMIT {
             self.history.remove(0);
