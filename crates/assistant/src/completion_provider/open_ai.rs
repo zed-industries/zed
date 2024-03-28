@@ -114,6 +114,7 @@ impl OpenAiCompletionProvider {
         let api_url = self.api_url.clone();
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            // TODO here it might be nice to have an assistant setting for timeout, including NOT setting one to get NO TIMEOUT in isahc library used in util/http.rs
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             let stream = response
