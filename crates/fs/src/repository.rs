@@ -56,7 +56,7 @@ pub trait GitRepository: Send {
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame>;
+    fn blame(&self, git_binary: &Path, path: &Path, content: Rope) -> Result<git::blame::Blame>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -214,7 +214,7 @@ impl GitRepository for LibGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame> {
+    fn blame(&self, git_binary: &Path, path: &Path, content: Rope) -> Result<git::blame::Blame> {
         let git_dir_path = self.path();
         let working_directory = git_dir_path.parent().with_context(|| {
             format!("failed to get git working directory for {:?}", git_dir_path)
@@ -223,7 +223,7 @@ impl GitRepository for LibGitRepository {
         const REMOTE_NAME: &str = "origin";
         let remote_url = self.remote_url(REMOTE_NAME);
 
-        git::blame::Blame::for_path(working_directory, path, &content, remote_url)
+        git::blame::Blame::for_path(git_binary, working_directory, path, &content, remote_url)
     }
 }
 
@@ -335,7 +335,7 @@ impl GitRepository for FakeGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, _content: Rope) -> Result<git::blame::Blame> {
+    fn blame(&self, _git_binary: &Path, path: &Path, _content: Rope) -> Result<git::blame::Blame> {
         let state = self.state.lock();
         state
             .blames

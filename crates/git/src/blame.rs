@@ -25,12 +25,13 @@ pub struct Blame {
 
 impl Blame {
     pub fn for_path(
+        git_binary: &Path,
         working_directory: &Path,
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
     ) -> Result<Self> {
-        let output = run_git_blame(&working_directory, path, &content)?;
+        let output = run_git_blame(git_binary, working_directory, path, &content)?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -62,8 +63,13 @@ impl Blame {
     }
 }
 
-fn run_git_blame(working_directory: &Path, path: &Path, contents: &Rope) -> Result<String> {
-    let child = Command::new("git")
+fn run_git_blame(
+    git_binary: &Path,
+    working_directory: &Path,
+    path: &Path,
+    contents: &Rope,
+) -> Result<String> {
+    let child = Command::new(git_binary)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
