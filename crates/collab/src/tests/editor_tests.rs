@@ -2048,6 +2048,17 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .await
         .unwrap();
 
+    // Create editor_a
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "file.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
     // Join the project as client B.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
@@ -2087,7 +2098,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             ]
         );
 
-        blame.update(cx, |blame, cx| {
+        blame.update(cx, |blame, _| {
             for (idx, entry) in entries.iter().flatten().enumerate() {
                 assert_eq!(
                     blame.permalink_for_entry(entry).unwrap().to_string(),
@@ -2101,6 +2112,8 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         });
     });
 
+    // editor_b updates the file, which gets sent to client_a, which updates git blame,
+    // which gets back to client_b.
     editor_b.update(cx_b, |editor_b, cx| {
         editor_b.edit([(Point::new(0, 3)..Point::new(0, 3), "FOO")], cx);
     });
@@ -2121,6 +2134,33 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             vec![
                 None,
                 Some(blame_entry("0d0d0d", 1..2)),
+                Some(blame_entry("3a3a3a", 2..3)),
+                Some(blame_entry("4c4c4c", 3..4)),
+            ]
+        );
+    });
+
+    // Now editor_a also updates the file
+    editor_a.update(cx_a, |editor_a, cx| {
+        editor_a.edit([(Point::new(1, 3)..Point::new(1, 3), "FOO")], cx);
+    });
+
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+
+    editor_b.update(cx_b, |editor_b, cx| {
+        let blame = editor_b.blame().expect("editor_b should have blame now");
+        let entries = blame.update(cx, |blame, cx| {
+            blame
+                .blame_for_rows((0..4).map(Some), cx)
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            entries,
+            vec![
+                None,
+                None,
                 Some(blame_entry("3a3a3a", 2..3)),
                 Some(blame_entry("4c4c4c", 3..4)),
             ]
