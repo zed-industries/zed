@@ -5221,6 +5221,7 @@ impl Project {
             cx.spawn(|_, _| async move {
                 let mut hovers = Vec::with_capacity(hover_responses.len());
                 while let Some(hover_response) = hover_responses.next().await {
+                    // TODO kb one faulty langserver will spoil all hovers?
                     if let Some(hover) = hover_response? {
                         hovers.push(hover);
                     }

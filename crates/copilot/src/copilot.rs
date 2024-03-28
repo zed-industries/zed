@@ -376,6 +376,7 @@ impl Copilot {
         use node_runtime::FakeNodeRuntime;
 
         let (server, fake_server) = FakeLanguageServer::new(
+            LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/copilot".into(),
                 arguments: vec![],

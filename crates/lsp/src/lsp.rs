@@ -1108,6 +1108,7 @@ pub struct FakeLanguageServer {
 impl FakeLanguageServer {
     /// Construct a fake language server.
     pub fn new(
+        server_id: LanguageServerId,
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
@@ -1117,8 +1118,8 @@ impl FakeLanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
-        let server = LanguageServer::new_internal(
-            LanguageServerId(0),
+        let mut server = LanguageServer::new_internal(
+            server_id,
             stdin_writer,
             stdout_reader,
             None::<async_pipe::PipeReader>,
@@ -1129,30 +1130,35 @@ impl FakeLanguageServer {
             cx.clone(),
             |_| {},
         );
+        server.name = name.as_str().into();
         let fake = FakeLanguageServer {
             binary,
-            server: Arc::new(LanguageServer::new_internal(
-                LanguageServerId(0),
-                stdout_writer,
-                stdin_reader,
-                None::<async_pipe::PipeReader>,
-                Arc::new(Mutex::new(None)),
-                None,
-                Path::new("/"),
-                None,
-                cx,
-                move |msg| {
-                    notifications_tx
-                        .try_send((
-                            msg.method.to_string(),
-                            msg.params
-                                .map(|raw_value| raw_value.get())
-                                .unwrap_or("null")
-                                .to_string(),
-                        ))
-                        .ok();
-                },
-            )),
+            server: Arc::new({
+                let mut server = LanguageServer::new_internal(
+                    server_id,
+                    stdout_writer,
+                    stdin_reader,
+                    None::<async_pipe::PipeReader>,
+                    Arc::new(Mutex::new(None)),
+                    None,
+                    Path::new("/"),
+                    None,
+                    cx,
+                    move |msg| {
+                        notifications_tx
+                            .try_send((
+                                msg.method.to_string(),
+                                msg.params
+                                    .map(|raw_value| raw_value.get())
+                                    .unwrap_or("null")
+                                    .to_string(),
+                            ))
+                            .ok();
+                    },
+                );
+                server.name = name.as_str().into();
+                server
+            }),
             notifications_rx,
         };
         fake.handle_request::<request::Initialize, _, _>({
@@ -1350,6 +1356,7 @@ mod tests {
             release_channel::init("0.0.0", cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/language-server".into(),
                 arguments: vec![],
