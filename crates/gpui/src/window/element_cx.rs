@@ -12,6 +12,7 @@
 //! to call the paint and layout methods on elements. These have been included as they're often useful
 //! for taking manual control of the layouting or painting of specialized elements.
 
+use futures::FutureExt;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
@@ -29,7 +30,7 @@ use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 
 use crate::{
-    prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
+    prelude::*, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace, Bounds, BoxShadow,
     ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
     DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
     GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
@@ -663,6 +664,25 @@ impl<'a> ElementContext<'a> {
         let result = f(self);
         self.window_mut().next_frame.element_offset_stack.pop();
         result
+    }
+
+    /// Asynchronously load an asset and call a function with the loaded asset.
+    pub fn with_asset<A: Asset + 'static>(
+        &mut self,
+        source: A::Source,
+        f: impl FnOnce(A::Output, &mut Self),
+    ) {
+        let future = A::load(&source, self);
+        if let Some(data) = future.clone().now_or_never().and_then(|result| result.ok()) {
+            f(data, self);
+        } else {
+            self.spawn(|mut cx| async move {
+                if future.await.is_ok() {
+                    cx.on_next_frame(|cx| cx.refresh());
+                }
+            })
+            .detach();
+        };
     }
 
     /// Obtain the current element offset.

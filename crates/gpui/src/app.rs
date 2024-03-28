@@ -28,8 +28,8 @@ use util::{
 };
 
 use crate::{
-    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
-    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
+    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
@@ -219,7 +219,7 @@ pub struct AppContext {
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
     asset_source: Arc<dyn AssetSource>,
-    pub(crate) image_cache: ImageCache,
+    pub(crate) asset_cache: AssetCache,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -280,7 +280,7 @@ impl AppContext {
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_source,
-                image_cache: ImageCache::new(http_client),
+                asset_cache: AssetCache::new(http_client),
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -633,6 +633,11 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Returns the asset cache.
+    pub fn asset_cache(&self) -> &AssetCache {
+        &self.asset_cache
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {

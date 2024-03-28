@@ -53,7 +53,7 @@ impl SvgRenderer {
 }
 
 /// Returns the global font database used for SVG rendering.
-fn svg_fontdb() -> &'static resvg::usvg::fontdb::Database {
+pub(crate) fn svg_fontdb() -> &'static resvg::usvg::fontdb::Database {
     static FONTDB: OnceLock<resvg::usvg::fontdb::Database> = OnceLock::new();
     FONTDB.get_or_init(|| {
         let mut fontdb = resvg::usvg::fontdb::Database::new();
