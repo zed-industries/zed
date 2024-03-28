@@ -3758,19 +3758,17 @@ impl Editor {
             let actions = if let Ok(code_actions) = project.update(&mut cx, |project, cx| {
                 project.code_actions(&start_buffer, start..end, cx)
             }) {
-                code_actions.await.log_err()
+                code_actions.await
             } else {
-                None
+                Vec::new()
             };
 
             this.update(&mut cx, |this, cx| {
-                this.available_code_actions = actions.and_then(|actions| {
-                    if actions.is_empty() {
-                        None
-                    } else {
-                        Some((start_buffer, actions.into()))
-                    }
-                });
+                this.available_code_actions = if actions.is_empty() {
+                    None
+                } else {
+                    Some((start_buffer, actions.into()))
+                };
                 cx.notify();
             })
             .log_err();

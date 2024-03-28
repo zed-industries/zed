@@ -5607,13 +5607,54 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
-        self.request_lsp(
-            buffer_handle.clone(),
-            LanguageServerToQuery::Primary,
-            GetCodeActions { range, kinds: None },
-            cx,
-        )
+    ) -> Task<Vec<CodeAction>> {
+        if self.is_local() {
+            let snapshot = buffer_handle.read(cx).snapshot();
+            let offset = range.start.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let mut hover_responses = self
+                .language_servers_for_buffer(buffer_handle.read(cx), cx)
+                .filter(|(_, server)| GetCodeActions::supports_code_actions(server.capabilities()))
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .map(|server_id| {
+                    self.request_lsp(
+                        buffer_handle.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetCodeActions {
+                            range: range.clone(),
+                            kinds: None,
+                        },
+                        cx,
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+
+            cx.spawn(|_, _| async move {
+                let mut hovers = Vec::with_capacity(hover_responses.len());
+                while let Some(hover_response) = hover_responses.next().await {
+                    hovers.extend(hover_response.log_err().unwrap_or_default());
+                }
+                hovers
+            })
+        } else if self.is_remote() {
+            let request_task = self.request_lsp(
+                buffer_handle.clone(),
+                LanguageServerToQuery::Primary,
+                GetCodeActions { range, kinds: None },
+                cx,
+            );
+            cx.spawn(|_, _| async move { request_task.await.log_err().unwrap_or_default() })
+        } else {
+            log::error!("cannot fetch actions: project does not have a remote id");
+            Task::ready(Vec::new())
+        }
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
@@ -5621,7 +5662,7 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Vec<CodeAction>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.code_actions_impl(buffer_handle, range, cx)
