@@ -1,7 +1,10 @@
 (comment) @comment
+(stylesheet) @text
 
 [
+  (id_name)
   (tag_name)
+  (class_name)
   (nesting_selector)
   (universal_selector)
 ] @tag
@@ -32,8 +35,6 @@
 (pseudo_class_selector (class_name) @attribute)
 
 [
-  (class_name)
-  (id_name)
   (namespace_name)
   (property_name)
   (feature_name)
@@ -75,4 +76,17 @@
 [
   ","
   ":"
+  ";"
+  "."
+  "#"
+  "::"
 ] @punctuation.delimiter
+
+[
+  "("
+  ")"
+  "{"
+  "}"
+  "["
+  "]"
+] @punctuation.bracket

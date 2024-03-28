@@ -14,6 +14,12 @@
 ] @constant
 
 [
+  ":"
+  ","
+  "\""
+] @punctuation.delimiter
+
+[
   "{"
   "}"
   "["
