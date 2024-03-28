@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
+use extension::ExtensionStore;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Task, View, WeakView,
@@ -139,8 +140,21 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, _cx: &mut ViewContext<Picker<Self>>) {
-        // TODO
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        if self.matches.is_empty() {
+            self.dismissed(cx);
+            return;
+        }
+
+        let candidate_id = self.matches[self.selected_index].candidate_id;
+        let extension_version = &self.extension_versions[candidate_id];
+
+        let extension_store = ExtensionStore::global(cx);
+        extension_store.update(cx, |store, cx| {
+            let extension_id = extension_version.id.clone();
+            let version = extension_version.manifest.version.clone();
+            store.install_extension(extension_id, version, cx);
+        });
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
