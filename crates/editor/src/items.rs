@@ -1,4 +1,3 @@
-use crate::EditorLanguageModelContext;
 use crate::{
     editor_settings::SeedQuerySetting, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll,
     Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
@@ -952,90 +951,6 @@ impl Item for Editor {
                 })
             })
             .unwrap_or_else(|error| Task::ready(Err(error)))
-    }
-}
-
-/// This trait allows the assistant panel (or any LLM utility) to
-/// * create a text based representation for large language model consumption
-/// * render a mini view of the item for humans
-pub trait AssistantContext {
-    fn text_for_llm(&self, cx: &AppContext) -> String;
-    fn inline_render(&self, cx: &AppContext) -> AnyElement;
-}
-
-impl AssistantContext for View<Editor> {
-    fn text_for_llm(&self, cx: &AppContext) -> String {
-        let editor = self.read(cx);
-        let buffer = editor.buffer.read(cx);
-
-        if let Some(singleton) = buffer.as_singleton() {
-            let singleton = singleton.read(cx);
-
-            let filename = singleton
-                .file()
-                .map(|file| file.path().to_string_lossy())
-                .unwrap_or("Untitled".into());
-
-            let text = singleton.text();
-
-            let language = singleton
-                .language()
-                .map(|l| {
-                    // TODO: Find out the markdown code fence block name. In some cases the name
-                    // doesn't match the code fence block name, which the model will later copy.
-                    // For example, "Shell Script" is a language name whereas the code fence block
-                    // name is "shell", "bash", or "sh".
-                    let name = l.name();
-                    name.to_string()
-                })
-                .unwrap_or_default();
-
-            let markdown =
-                format!("User's active file `{filename}`:\n\n```{language}\n{text}```\n\n");
-
-            return markdown;
-        }
-        return "".into();
-    }
-
-    fn inline_render(&self, cx: &AppContext) -> AnyElement {
-        let editor = self.read(cx);
-        let buffer = editor.buffer.read(cx);
-
-        let el = if let Some(singleton) = buffer.as_singleton() {
-            let singleton = singleton.read(cx);
-
-            let language = singleton
-                .language()
-                .map(|l| l.name().to_string())
-                .unwrap_or_default();
-
-            let icon_path = match language.to_lowercase().as_str() {
-                "rust" => "icons/file_icons/rust.svg",
-                "python" => "icons/file_icons/python.svg",
-                "typescript" => "icons/file_icons/typescript.svg",
-                "javascript" => "icons/file_icons/javascript.svg",
-                _ => "icons/file_icons/file.svg",
-            };
-
-            EditorLanguageModelContext {
-                icon_path: icon_path.into(),
-                path: singleton.file().map(|file| file.full_path(cx)),
-                selection_ranges: vec![],
-                focused: false,
-            }
-            .into_any_element()
-        } else {
-            EditorLanguageModelContext {
-                icon_path: "icons/file_icons/file.svg".into(),
-                path: None,
-                selection_ranges: vec![],
-                focused: false,
-            }
-            .into_any_element()
-        };
-
-        el
     }
 }
 
