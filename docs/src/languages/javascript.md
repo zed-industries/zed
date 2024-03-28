@@ -85,3 +85,19 @@ You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
   }
 }
 ```
+
+#### Configure ESLint's `workingDirectories`:
+
+You can configure ESLint's `workingDirectories` setting (requires Zed `0.130.x`):
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "workingDirectories": ["./client", "./server"]
+      }
+    }
+  }
+}
+```
