@@ -162,7 +162,6 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             update_settings_file::<ExtensionSettings>(self.fs.clone(), cx, {
                 let extension_id = extension_id.clone();
                 move |settings| {
-                    println!("writing to settings file");
                     settings.auto_update_extensions.insert(extension_id, false);
                 }
             });
