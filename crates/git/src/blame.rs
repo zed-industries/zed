@@ -37,7 +37,7 @@ impl Blame {
 
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
-        let parsed_remote_url = remote_url.as_deref().map(parse_git_remote_url).flatten();
+        let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);

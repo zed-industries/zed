@@ -88,10 +88,7 @@ impl From<Oid> for u32 {
         debug_assert!(bytes.len() > 4);
 
         let mut u32_bytes: [u8; 4] = [0; 4];
-
-        for i in 0..4 {
-            u32_bytes[i] = bytes[i];
-        }
+        u32_bytes.copy_from_slice(&bytes[..4]);
 
         u32::from_ne_bytes(u32_bytes)
     }
@@ -103,10 +100,7 @@ impl From<Oid> for usize {
         debug_assert!(bytes.len() > 8);
 
         let mut u64_bytes: [u8; 8] = [0; 8];
-
-        for i in 0..8 {
-            u64_bytes[i] = bytes[i];
-        }
+        u64_bytes.copy_from_slice(&bytes[..8]);
 
         u64::from_ne_bytes(u64_bytes) as usize
     }

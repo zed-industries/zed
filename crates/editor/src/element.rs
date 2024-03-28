@@ -1082,6 +1082,7 @@ impl EditorElement {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
         buffer_rows: impl Iterator<Item = Option<u32>>,
@@ -1128,6 +1129,7 @@ impl EditorElement {
                     let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
 
                     element.layout(absolute_offset, size(width, AvailableSpace::MinContent), cx);
+
                     Some(element)
                 } else {
                     None
