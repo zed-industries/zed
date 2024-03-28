@@ -12,17 +12,16 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent, EventEmitter,
-    FocusableView, FontStyle, FontWeight, InteractiveElement, KeyContext, ParentElement, Point,
-    Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, canvas, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
+    FontWeight, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use settings::Settings;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, ToggleButton, Tooltip};
+use ui::{popover_menu, prelude::*, ContextMenu, ToggleButton, Tooltip};
 use util::ResultExt as _;
 use workspace::{
     item::{Item, ItemEvent},
@@ -118,7 +117,6 @@ pub struct ExtensionsPage {
     filtered_remote_extension_indices: Vec<usize>,
     query_editor: View<Editor>,
     query_contains_error: bool,
-    context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
 }
@@ -157,7 +155,6 @@ impl ExtensionsPage {
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
                 extension_fetch_task: None,
-                context_menu: None,
                 _subscriptions: subscriptions,
                 query_editor,
             };
@@ -417,8 +414,10 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut ViewContext<Self>,
     ) -> ExtensionCard {
+        let this = cx.view().clone();
         let status = Self::extension_status(&extension.id, cx);
 
+        let extension_id = extension.id.clone();
         let (install_or_uninstall_button, upgrade_button) =
             self.buttons_for_entry(extension, &status, cx);
         let repository_url = extension.manifest.repository.clone();
@@ -499,42 +498,33 @@ impl ExtensionsPage {
                                 .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
                             )
                             .child(
-                                IconButton::new(
-                                    SharedString::from(format!("more-{}", extension.id)),
-                                    IconName::Ellipsis,
-                                )
-                                .icon_color(Color::Accent)
-                                .icon_size(IconSize::Small)
-                                .style(ButtonStyle::Filled)
-                                .on_click(cx.listener({
-                                    let extension_id = extension.id.clone();
-                                    move |this, event: &ClickEvent, cx| {
-                                        this.deploy_context_menu(
-                                            event.down.position,
+                                popover_menu(SharedString::from(format!("more-{}", extension.id)))
+                                    .trigger(
+                                        IconButton::new(
+                                            SharedString::from(format!("more-{}", extension.id)),
+                                            IconName::Ellipsis,
+                                        )
+                                        .icon_color(Color::Accent)
+                                        .icon_size(IconSize::Small)
+                                        .style(ButtonStyle::Filled),
+                                    )
+                                    .menu(move |cx| {
+                                        Some(Self::render_remote_extension_context_menu(
+                                            &this,
                                             extension_id.clone(),
                                             cx,
-                                        )
-                                    }
-                                }))
-                                .tooltip(move |cx| Tooltip::text("More...", cx)),
+                                        ))
+                                    }),
                             ),
                     ),
             )
     }
 
-    fn deploy_context_menu(
-        &mut self,
-        position: Point<Pixels>,
+    fn render_remote_extension_context_menu(
+        this: &View<Self>,
         extension_id: Arc<str>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        // HACK: Open the version list directly until we can fix the context menu.
-        if true {
-            self.show_extension_version_list(extension_id.clone(), cx);
-            return;
-        }
-
-        let this = cx.view().clone();
+        cx: &mut WindowContext,
+    ) -> View<ContextMenu> {
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
             context_menu.entry(
                 "Install Another Version...",
@@ -545,19 +535,7 @@ impl ExtensionsPage {
             )
         });
 
-        cx.focus_view(&context_menu);
-        let subscription =
-            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
-                if this.context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(cx)
-                }) {
-                    cx.focus_self();
-                }
-                this.context_menu.take();
-                cx.notify();
-            });
-
-        self.context_menu = Some((context_menu, position, subscription));
+        context_menu
     }
 
     fn show_extension_version_list(&mut self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
