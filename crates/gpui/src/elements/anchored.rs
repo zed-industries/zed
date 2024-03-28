@@ -9,11 +9,10 @@ use crate::{
 /// The state that the anchored element element uses to track its children.
 pub struct AnchoredState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
-    offset: Point<Pixels>,
 }
 
 /// An anchored element that can be used to display UI that
-/// floats on top of other UI elements.
+/// will avoid overflowing the window bounds.
 pub struct Anchored {
     children: SmallVec<[AnyElement; 2]>,
     anchor_corner: AnchorCorner,
@@ -80,21 +79,15 @@ impl Element for Anchored {
             .map(|child| child.before_layout(cx))
             .collect::<SmallVec<_>>();
 
-        let overlay_style = Style {
+        let anchored_style = Style {
             position: Position::Absolute,
             display: Display::Flex,
             ..Style::default()
         };
 
-        let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
+        let layout_id = cx.request_layout(&anchored_style, child_layout_ids.iter().copied());
 
-        (
-            layout_id,
-            AnchoredState {
-                child_layout_ids,
-                offset: Point::default(),
-            },
-        )
+        (layout_id, AnchoredState { child_layout_ids })
     }
 
     fn after_layout(
@@ -171,12 +164,6 @@ impl Element for Anchored {
 
         let offset = desired.origin - bounds.origin;
         let offset = point(offset.x.round(), offset.y.round());
-
-        before_layout.offset = cx.element_offset() + offset;
-        before_layout.offset = point(
-            before_layout.offset.x.round(),
-            before_layout.offset.y.round(),
-        );
 
         cx.with_element_offset(offset, |cx| {
             for child in &mut self.children {
