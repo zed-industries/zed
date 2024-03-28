@@ -69,7 +69,6 @@ tree-sitter-regex.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-scheme.workspace = true
-tree-sitter-toml.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-vue.workspace = true
 tree-sitter-yaml.workspace = true
