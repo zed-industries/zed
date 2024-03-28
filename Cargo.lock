@@ -3548,6 +3548,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "picker",
  "project",
  "serde",
  "settings",

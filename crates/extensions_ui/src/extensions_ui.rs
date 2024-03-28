@@ -1,7 +1,11 @@
 mod components;
 mod extension_suggest;
+mod extension_version_selector;
 
 use crate::components::ExtensionCard;
+use crate::extension_version_selector::{
+    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
+};
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -104,6 +108,7 @@ impl ExtensionFilter {
 }
 
 pub struct ExtensionsPage {
+    workspace: WeakView<Workspace>,
     list: UniformListScrollHandle,
     telemetry: Arc<Telemetry>,
     is_fetching_extensions: bool,
@@ -142,6 +147,7 @@ impl ExtensionsPage {
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let mut this = Self {
+                workspace: workspace.weak_handle(),
                 list: UniformListScrollHandle::new(),
                 telemetry: workspace.client().telemetry().clone(),
                 is_fetching_extensions: false,
@@ -522,10 +528,16 @@ impl ExtensionsPage {
         extension_id: Arc<str>,
         cx: &mut ViewContext<Self>,
     ) {
+        // HACK: Open the version list directly until we can fix the context menu.
+        if true {
+            self.show_extension_version_list(extension_id.clone(), cx);
+            return;
+        }
+
         let this = cx.view().clone();
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
             context_menu.entry(
-                "Install Other Version",
+                "Install Another Version...",
                 None,
                 cx.handler_for(&this, move |this, cx| {
                     this.show_extension_version_list(extension_id.clone(), cx)
@@ -548,7 +560,37 @@ impl ExtensionsPage {
         self.context_menu = Some((context_menu, position, subscription));
     }
 
-    fn show_extension_version_list(&mut self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {}
+    fn show_extension_version_list(&mut self, extension_id: Arc<str>, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        cx.spawn(move |this, mut cx| async move {
+            let extension_versions_task = this.update(&mut cx, |_, cx| {
+                let extension_store = ExtensionStore::global(cx);
+
+                extension_store.update(cx, |store, cx| {
+                    store.fetch_extension_versions(&extension_id, cx)
+                })
+            })?;
+
+            let extension_versions = extension_versions_task.await?;
+
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| {
+                    let delegate = ExtensionVersionSelectorDelegate::new(
+                        cx.view().downgrade(),
+                        extension_versions,
+                    );
+
+                    ExtensionVersionSelector::new(delegate, cx)
+                });
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 
     fn buttons_for_entry(
         &self,
