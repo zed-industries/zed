@@ -2445,29 +2445,27 @@ impl ConversationEditor {
             .clone();
 
         Some(
-            div().flex_shrink().child(
-                div()
-                    .p_4()
-                    .v_flex()
-                    .child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .child(Icon::new(IconName::File))
-                            .child(
-                                div()
-                                    .h_6()
-                                    .child(Label::new("File Context"))
-                                    .ml_1()
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .ml_4()
-                            .child(self.render_active_buffer(active_buffer, cx)),
-                    ),
-            ),
+            div()
+                .p_4()
+                .v_flex()
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .child(Icon::new(IconName::File))
+                        .child(
+                            div()
+                                .h_6()
+                                .child(Label::new("File Context"))
+                                .ml_1()
+                                .font_weight(FontWeight::SEMIBOLD),
+                        ),
+                )
+                .child(
+                    div()
+                        .ml_4()
+                        .child(self.render_active_buffer(active_buffer, cx)),
+                ),
         )
     }
 
@@ -2578,7 +2576,7 @@ impl Render for ConversationEditor {
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
-            .children(self.render_embedded_scope(cx))
+            .child(div().flex_shrink().children(self.render_embedded_scope(cx)))
     }
 }
 
