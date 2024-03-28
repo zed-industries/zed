@@ -165,6 +165,10 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let extension_version = &self.extension_versions[candidate_id];
 
+        if !extension::is_version_compatible(extension_version) {
+            return;
+        }
+
         let extension_store = ExtensionStore::global(cx);
         extension_store.update(cx, |store, cx| {
             let extension_id = extension_version.id.clone();
@@ -196,21 +200,38 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let version_match = &self.matches[ix];
         let extension_version = &self.extension_versions[version_match.candidate_id];
 
+        let is_version_compatible = extension::is_version_compatible(extension_version);
+        let disabled = !is_version_compatible;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(HighlightedLabel::new(
-                    version_match.string.clone(),
-                    version_match.positions.clone(),
-                ))
-                .end_slot(Label::new(
-                    extension_version
-                        .published_at
-                        .format("%Y-%m-%d")
-                        .to_string(),
-                )),
+                .disabled(disabled)
+                .child(
+                    HighlightedLabel::new(
+                        version_match.string.clone(),
+                        version_match.positions.clone(),
+                    )
+                    .when(disabled, |label| label.color(Color::Muted)),
+                )
+                .end_slot(
+                    h_flex()
+                        .gap_2()
+                        .when(!is_version_compatible, |this| {
+                            this.child(Label::new("Incompatible").color(Color::Muted))
+                        })
+                        .child(
+                            Label::new(
+                                extension_version
+                                    .published_at
+                                    .format("%Y-%m-%d")
+                                    .to_string(),
+                            )
+                            .when(disabled, |label| label.color(Color::Muted)),
+                        ),
+                ),
         )
     }
 }

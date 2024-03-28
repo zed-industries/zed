@@ -5,6 +5,7 @@ use language::LanguageServerName;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -31,8 +32,15 @@ pub struct OldExtensionManifest {
     pub grammars: BTreeMap<Arc<str>, PathBuf>,
 }
 
+/// The schema version of the [`ExtensionManifest`].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct SchemaVersion(pub i32);
+
+impl fmt::Display for SchemaVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl SchemaVersion {
     pub const ZERO: Self = Self(0);

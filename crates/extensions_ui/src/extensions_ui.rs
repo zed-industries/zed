@@ -578,10 +578,14 @@ impl ExtensionsPage {
         status: &ExtensionStatus,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
+        let is_compatible = extension::is_version_compatible(&extension);
+        let disabled = !is_compatible;
+
         match status.clone() {
             ExtensionStatus::NotInstalled => (
-                Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
-                    cx.listener({
+                Button::new(SharedString::from(extension.id.clone()), "Install")
+                    .disabled(disabled)
+                    .on_click(cx.listener({
                         let extension_id = extension.id.clone();
                         let version = extension.manifest.version.clone();
                         move |this, _, cx| {
@@ -591,8 +595,7 @@ impl ExtensionsPage {
                                 store.install_extension(extension_id.clone(), version.clone(), cx)
                             });
                         }
-                    }),
-                ),
+                    })),
                 None,
             ),
             ExtensionStatus::Installing => (
@@ -622,8 +625,9 @@ impl ExtensionsPage {
                     None
                 } else {
                     Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade").on_click(
-                            cx.listener({
+                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                            .disabled(disabled)
+                            .on_click(cx.listener({
                                 let extension_id = extension.id.clone();
                                 let version = extension.manifest.version.clone();
                                 move |this, _, cx| {
@@ -640,8 +644,7 @@ impl ExtensionsPage {
                                             .detach_and_log_err(cx)
                                     });
                                 }
-                            }),
-                        ),
+                            })),
                     )
                 },
             ),
