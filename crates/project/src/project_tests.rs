@@ -11,7 +11,9 @@ use lsp::Url;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::{os, task::Poll};
+#[cfg(not(windows))]
+use std::os;
+use std::task::Poll;
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 use worktree::WorktreeModelHandle as _;
@@ -75,7 +77,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
 
-    let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
+    let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
 
     project.update(cx, |project, cx| {
         let tree = project.worktrees().next().unwrap().read(cx);
@@ -2842,7 +2844,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
+    let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
     let rpc = project.update(cx, |p, _| p.client.clone());
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
