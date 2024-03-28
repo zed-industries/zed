@@ -115,24 +115,36 @@ echo "Bundled ${app_path}"
 GIT_VERSION="v2.43.3"
 GIT_VERSION_SHA="fa29823"
 
-function download_git() {
-    local architecture=$1
-    local target_directory=$2
+function download_and_unpack() {
+    local url=$1
+    local target_path=$2
 
     if ! command -v curl &> /dev/null; then
         echo "curl is not installed. Please install curl to continue."
         exit 1
     fi
 
+    curl --silent --fail --location "$url" | tar -xvz -f - $target_path
+}
+
+function download_git() {
+    local architecture=$1
+    local target_binary=$2
+
     tmp_dir=$(mktemp -d)
     pushd "$tmp_dir"
 
     case "$architecture" in
         aarch64-apple-darwin)
-            url="https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz"
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git
             ;;
         x86_64-apple-darwin)
-            url="https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz"
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git
+            ;;
+        universal)
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git-arm64
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git-x64
+            lipo -create bin/git-arm64 bin/git-x64 -output bin/git
             ;;
         *)
             echo "Unsupported architecture: $architecture"
@@ -140,8 +152,7 @@ function download_git() {
             ;;
     esac
 
-    curl --silent --fail --location "$url" | tar -xvz -f - bin/git
-    mv bin/git "${target_directory}/"
+    mv bin/git "${target_binary}"
     popd
     rm -rf "$tmp_dir"
 }
@@ -150,7 +161,7 @@ function prepare_binaries() {
     local architecture=$1
     local app_path=$2
 
-    echo "Unpacks dSYMs for $architecture"
+    echo "Unpacking dSYMs for $architecture"
     dsymutil --flat target/${architecture}/${target_dir}/Zed
     version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
     if [ "$channel" == "nightly" ]; then
@@ -164,23 +175,19 @@ function prepare_binaries() {
     gzip target/${architecture}/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs for $architecture"
-    upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        target/${architecture}/${target_dir}/Zed.dwarf.gz \
-        "$channel/Zed-$version-${architecture}.dwarf.gz"
+    # upload_to_blob_store_public \
+    #     "zed-debug-symbols" \
+    #     target/${architecture}/${target_dir}/Zed.dwarf.gz \
+    #     "$channel/Zed-$version-${architecture}.dwarf.gz"
 
     cp target/${architecture}/${target_dir}/${binary_name} "${app_path}/Contents/MacOS/${zed_crate}"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 }
 
-if [ "$local_arch" = false ]; then
-    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
-    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
-fi
-
 function sign_binaries() {
     local app_path=$1
     local architecture=$2
+    local architecture_dir=$3
     echo "Copying WebRTC.framework into the frameworks folder"
     mkdir "${app_path}/Contents/Frameworks"
     if [ "$local_arch" = false ]; then
@@ -190,8 +197,8 @@ function sign_binaries() {
         cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
     fi
 
-    echo "Downloading git binary for $architecture"
-    download_git "$architecture" "${app_path}/Contents/MacOS"
+    echo "Downloading git binary"
+    download_git "${architecture}" "${app_path}/Contents/MacOS/git"
 
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
     cp crates/${zed_crate}/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
@@ -271,7 +278,7 @@ function sign_binaries() {
             fi
         fi
     else
-        dmg_target_directory="target/${architecture}/${target_dir}"
+        dmg_target_directory="target/${architecture_dir}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
         dmg_file_path="${dmg_target_directory}/Zed.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
@@ -341,9 +348,12 @@ function sign_binaries() {
 }
 
 if [ "$local_arch" = true ]; then
-    sign_binaries "$app_path" "$local_target_triple"
+    sign_binaries "$app_path" "$local_target_triple" "$local_target_triple"
 else
     # Create universal binary
+    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
+    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
+
     cp -R "$app_path_x64" target/release/
     app_path=target/release/$(basename "$app_path_x64")
     lipo \
@@ -356,8 +366,8 @@ else
         target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
         -output \
         "${app_path}/Contents/MacOS/cli"
-    sign_binaries "$app_path" "."
+    sign_binaries "$app_path" "universal" "."
 
-    sign_binaries "$app_path_x64" "x86_64-apple-darwin"
-    sign_binaries "$app_path_aarch64" "aarch64-apple-darwin"
+    sign_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
+    sign_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
 fi
