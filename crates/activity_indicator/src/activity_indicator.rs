@@ -1,5 +1,6 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
+use extension::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
     actions, svg, AppContext, CursorStyle, EventEmitter, InteractiveElement as _, Model,
@@ -285,6 +286,15 @@ impl ActivityIndicator {
                     })),
                 },
                 AutoUpdateStatus::Idle => Default::default(),
+            };
+        }
+
+        let extension_store = ExtensionStore::global(cx).read(cx);
+        if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
+            return Content {
+                icon: Some(DOWNLOAD_ICON),
+                message: format!("Updating {extension_id} extension…"),
+                on_click: None,
             };
         }
 

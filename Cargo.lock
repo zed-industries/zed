@@ -9,6 +9,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "editor",
+ "extension",
  "futures 0.3.28",
  "gpui",
  "language",
