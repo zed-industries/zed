@@ -19,7 +19,7 @@ use gpui::{
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
     repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Snapshot, Worktree, WorktreeId,
+    Worktree, WorktreeId,
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
@@ -1274,11 +1274,17 @@ impl ProjectPanel {
                     && entry.kind.is_dir()
                     && !self.unfolded_dir_ids.contains(&entry.id)
                 {
-                    let is_omitted = ProjectPanel::should_omit_entry(&snapshot, entry);
-
-                    if is_omitted {
-                        entry_iter.advance();
-                        continue;
+                    if let Some(root_path) = snapshot.root_entry() {
+                        let mut child_entries = snapshot.child_entries(&entry.path);
+                        if let Some(child) = child_entries.next() {
+                            if entry.path != root_path.path
+                                && child_entries.next().is_none()
+                                && child.kind.is_dir()
+                            {
+                                entry_iter.advance();
+                                continue;
+                            }
+                        }
                     }
                 }
 
@@ -1362,23 +1368,6 @@ impl ProjectPanel {
                 entry_id,
             });
         }
-    }
-
-    fn should_omit_entry(snapshot: &Snapshot, entry: &Entry) -> bool {
-        if let Some(root_path) = snapshot.root_entry() {
-            if entry.path == root_path.path {
-                return false;
-            }
-        }
-
-        let mut child_entries = snapshot.child_entries(&entry.path);
-        if let Some(child) = child_entries.next() {
-            if child_entries.next().is_none() {
-                return child.kind.is_dir();
-            }
-        }
-
-        false
     }
 
     fn expand_entry(
