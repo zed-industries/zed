@@ -14,7 +14,7 @@ use crate::{
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
     HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, GIT_BLAME_GUTTER_WIDTH_CHARS, MAX_LINE_LEN,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -1089,16 +1089,22 @@ impl EditorElement {
         scroll_position: gpui::Point<f32>,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
+        max_width: Option<Pixels>,
         cx: &mut ElementContext,
-    ) -> (Option<Vec<AnyElement>>, Option<Pixels>) {
+    ) -> Option<Vec<AnyElement>> {
         let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
-            return (None, None);
+            return None;
         };
 
         let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
             blame.blame_for_rows(buffer_rows, cx).collect()
         });
 
+        let width = if let Some(max_width) = max_width {
+            AvailableSpace::Definite(max_width)
+        } else {
+            AvailableSpace::MaxContent
+        };
         let scroll_top = scroll_position.y * line_height;
         let start_x = em_width * 1;
 
@@ -1121,11 +1127,7 @@ impl EditorElement {
                     let start_y = ix as f32 * line_height - (scroll_top % line_height);
                     let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
 
-                    element.layout(
-                        absolute_offset,
-                        size(AvailableSpace::MaxContent, AvailableSpace::MinContent),
-                        cx,
-                    );
+                    element.layout(absolute_offset, size(width, AvailableSpace::MinContent), cx);
                     Some(element)
                 } else {
                     None
@@ -1133,9 +1135,7 @@ impl EditorElement {
             })
             .collect();
 
-        let blame_width = GIT_BLAME_GUTTER_WIDTH_CHARS * em_width;
-
-        (Some(shaped_lines), Some(blame_width))
+        Some(shaped_lines)
     }
 
     fn layout_code_actions_indicator(
@@ -1143,7 +1143,6 @@ impl EditorElement {
         line_height: Pixels,
         newest_selection_head: DisplayPoint,
         scroll_pixel_position: gpui::Point<Pixels>,
-        blame_width: Option<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         cx: &mut ElementContext,
@@ -1165,10 +1164,14 @@ impl EditorElement {
         );
         let indicator_size = button.measure(available_space, cx);
 
-        let mut x = blame_width.unwrap_or(Pixels::ZERO);
+        let blame_width = gutter_dimensions
+            .git_blame_entries_width
+            .unwrap_or(Pixels::ZERO);
+
+        let mut x = blame_width;
         let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
             - indicator_size.width
-            - blame_width.unwrap_or(Pixels::ZERO);
+            - blame_width;
         x += available_width / 2.;
 
         let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
@@ -3429,12 +3432,13 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let (blamed_display_rows, blame_width) = self.layout_blame_entries(
+                let blamed_display_rows = self.layout_blame_entries(
                     buffer_rows,
                     em_width,
                     scroll_position,
                     line_height,
                     &gutter_hitbox,
+                    gutter_dimensions.git_blame_entries_width,
                     cx,
                 );
 
@@ -3565,7 +3569,6 @@ impl Element for EditorElement {
                                 line_height,
                                 newest_selection_head,
                                 scroll_pixel_position,
-                                blame_width,
                                 &gutter_dimensions,
                                 &gutter_hitbox,
                                 cx,

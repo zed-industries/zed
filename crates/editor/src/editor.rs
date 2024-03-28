@@ -455,13 +455,14 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
-pub(crate) const GIT_BLAME_GUTTER_WIDTH_CHARS: Pixels = Pixels(53.0);
+const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
 
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
+    pub git_blame_entries_width: Option<Pixels>,
 }
 
 impl Default for GutterDimensions {
@@ -471,6 +472,7 @@ impl Default for GutterDimensions {
             right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
+            git_blame_entries_width: None,
         }
     }
 }
@@ -10019,7 +10021,6 @@ impl EditorSnapshot {
             ProjectSettings::get_global(cx).git.git_gutter,
             Some(GitGutterSetting::TrackedFiles)
         );
-        let show_git_blame = self.show_git_blame;
         let gutter_settings = EditorSettings::get_global(cx).gutter;
 
         let line_gutter_width = if gutter_settings.line_numbers {
@@ -10030,8 +10031,12 @@ impl EditorSnapshot {
             0.0.into()
         };
 
-        let left_padding = if show_git_blame {
-            em_width * GIT_BLAME_GUTTER_WIDTH_CHARS
+        let git_blame_entries_width = self
+            .show_git_blame
+            .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
+
+        let left_padding = if let Some(blame_width) = git_blame_entries_width {
+            blame_width
         } else if gutter_settings.code_actions {
             em_width * 3.0
         } else if show_git_gutter && gutter_settings.line_numbers {
@@ -10057,6 +10062,7 @@ impl EditorSnapshot {
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
+            git_blame_entries_width,
         }
     }
 }
