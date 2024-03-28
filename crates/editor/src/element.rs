@@ -20,13 +20,13 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, fill, outline, point, px, quad, relative, size, svg, transparent_black, Action,
-    AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
-    TextStyleRefinement, View, ViewContext, WindowContext,
+    anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask,
+    Corners, CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler,
+    Entity, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
+    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -49,8 +49,8 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
+use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
-use ui::{overlay, prelude::*};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -1719,14 +1719,15 @@ impl EditorElement {
 
     fn layout_mouse_context_menu(&self, cx: &mut ElementContext) -> Option<AnyElement> {
         let mouse_context_menu = self.editor.read(cx).mouse_context_menu.as_ref()?;
-        let mut element = overlay(|overlay| {
-            overlay
+        let mut element = deferred(
+            anchored()
                 .position(mouse_context_menu.position)
                 .child(mouse_context_menu.context_menu.clone())
                 .anchor(AnchorCorner::TopLeft)
-                .snap_to_window()
-        })
+                .snap_to_window(),
+        )
         .into_any();
+
         element.layout(gpui::Point::default(), AvailableSpace::min_size(), cx);
         Some(element)
     }

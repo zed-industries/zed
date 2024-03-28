@@ -14,12 +14,12 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, fill, list, point, prelude::*, px, AnyElement, AppContext,
-    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset,
-    ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WhiteSpace,
+    actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
+    AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
+    IntoElement, ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -33,9 +33,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    overlay, prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color,
-    ContextMenu, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
-    Tooltip,
+    prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
+    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2768,12 +2767,12 @@ impl Render for CollabPanel {
                 self.render_signed_in(cx)
             })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay(|anchored| {
-                    anchored
+                deferred(
+                    anchored()
                         .position(*position)
                         .anchor(gpui::AnchorCorner::TopLeft)
-                        .child(menu.clone())
-                })
+                        .child(menu.clone()),
+                )
             }))
     }
 }

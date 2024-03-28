@@ -10,11 +10,11 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use gpui::{
-    actions, div, impl_actions, px, uniform_list, Action, AppContext, AssetSource,
-    AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
-    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{overlay, prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
+use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
@@ -1585,12 +1585,12 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    overlay(|anchored| {
-                        anchored
+                    deferred(
+                        anchored()
                             .position(*position)
                             .anchor(gpui::AnchorCorner::TopLeft)
-                            .child(menu.clone())
-                    })
+                            .child(menu.clone()),
+                    )
                 }))
         } else {
             v_flex()

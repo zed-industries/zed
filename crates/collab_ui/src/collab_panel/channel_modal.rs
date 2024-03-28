@@ -5,12 +5,13 @@ use client::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusableView, Model,
-    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    actions, anchored, deferred, div, AppContext, ClipboardItem, DismissEvent, EventEmitter,
+    FocusableView, Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{overlay, prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
+use ui::{prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 
@@ -407,11 +408,11 @@ impl PickerDelegate for ChannelModalDelegate {
                             .when(is_me, |el| el.child(Label::new("You").color(Color::Muted)))
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
-                                    Some(overlay(|anchored| {
-                                        anchored
+                                    Some(deferred(
+                                        anchored()
                                             .anchor(gpui::AnchorCorner::TopRight)
-                                            .child(menu.clone())
-                                    }))
+                                            .child(menu.clone()),
+                                    ))
                                 } else {
                                     None
                                 },

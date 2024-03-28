@@ -1,12 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    div, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element, ElementContext,
-    ElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, ManagedView, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    anchored, deferred, div, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
+    Element, ElementContext, ElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
+    ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
+    WindowContext,
 };
-
-use super::overlay;
 
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
@@ -105,16 +104,14 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let mut menu_layout_id = None;
 
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                let mut element = overlay(|anchored| {
-                    let mut anchored = anchored.snap_to_window();
-                    if let Some(anchor) = this.anchor {
-                        anchored = anchored.anchor(anchor);
-                    }
-                    anchored
-                        .position(*element_state.position.borrow())
-                        .child(div().occlude().child(menu.clone()))
-                })
-                .into_any();
+                let mut anchored = anchored().snap_to_window();
+                if let Some(anchor) = this.anchor {
+                    anchored = anchored.anchor(anchor);
+                }
+                anchored = anchored.position(*element_state.position.borrow());
+
+                let mut element =
+                    deferred(anchored.child(div().occlude().child(menu.clone()))).into_any();
 
                 menu_layout_id = Some(element.before_layout(cx));
                 element

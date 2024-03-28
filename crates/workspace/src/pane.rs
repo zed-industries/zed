@@ -8,11 +8,11 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, impl_actions, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
-    AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
-    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakFocusHandle, WeakView, WindowContext,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
+    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, Model, MouseButton,
+    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
+    View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -32,8 +32,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    overlay, prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
+    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
@@ -1573,9 +1573,11 @@ impl Pane {
             .bottom_0()
             .right_0()
             .size_0()
-            .child(overlay(|anchored| {
-                anchored.anchor(AnchorCorner::TopRight).child(menu.clone())
-            }))
+            .child(deferred(
+                anchored()
+                    .anchor(AnchorCorner::TopRight)
+                    .child(menu.clone()),
+            ))
     }
 
     fn tab_details(&self, cx: &AppContext) -> Vec<usize> {

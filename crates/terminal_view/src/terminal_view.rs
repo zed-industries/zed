@@ -6,9 +6,9 @@ use collections::HashSet;
 use editor::{scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
-    Render, Styled, Subscription, Task, View, VisualContext, WeakView,
+    anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -23,7 +23,7 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_flex, overlay, prelude::*, ContextMenu, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
@@ -765,12 +765,12 @@ impl Render for TerminalView {
                 )),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay(|anchored| {
-                    anchored
+                deferred(
+                    anchored()
                         .position(*position)
                         .anchor(gpui::AnchorCorner::TopLeft)
-                        .child(menu.clone())
-                })
+                        .child(menu.clone()),
+                )
             }))
     }
 }
