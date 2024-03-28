@@ -1,3 +1,4 @@
+mod anchored;
 mod animation;
 mod canvas;
 mod deferred;
@@ -9,6 +10,7 @@ mod svg;
 mod text;
 mod uniform_list;
 
+pub use anchored::*;
 pub use animation::*;
 pub use canvas::*;
 pub use deferred::*;
