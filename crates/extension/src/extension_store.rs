@@ -14,7 +14,6 @@ use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-use extension_settings::ExtensionSettings;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -56,6 +55,7 @@ use wasm_host::{WasmExtension, WasmHost};
 pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
 };
+pub use extension_settings::ExtensionSettings;
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);

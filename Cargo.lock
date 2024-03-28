@@ -3545,6 +3545,7 @@ dependencies = [
  "db",
  "editor",
  "extension",
+ "fs",
  "fuzzy",
  "gpui",
  "language",

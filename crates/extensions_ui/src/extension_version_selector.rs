@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
-use extension::ExtensionStore;
+use extension::{ExtensionSettings, ExtensionStore};
+use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Task, View, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use settings::update_settings_file;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::ModalView;
@@ -39,6 +41,7 @@ impl ExtensionVersionSelector {
 }
 
 pub struct ExtensionVersionSelectorDelegate {
+    fs: Arc<dyn Fs>,
     view: WeakView<ExtensionVersionSelector>,
     extension_versions: Vec<ExtensionMetadata>,
     selected_index: usize,
@@ -47,6 +50,7 @@ pub struct ExtensionVersionSelectorDelegate {
 
 impl ExtensionVersionSelectorDelegate {
     pub fn new(
+        fs: Arc<dyn Fs>,
         weak_view: WeakView<ExtensionVersionSelector>,
         extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
@@ -61,6 +65,7 @@ impl ExtensionVersionSelectorDelegate {
             .collect();
 
         Self {
+            fs,
             view: weak_view,
             extension_versions,
             selected_index: 0,
@@ -153,6 +158,15 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         extension_store.update(cx, |store, cx| {
             let extension_id = extension_version.id.clone();
             let version = extension_version.manifest.version.clone();
+
+            update_settings_file::<ExtensionSettings>(self.fs.clone(), cx, {
+                let extension_id = extension_id.clone();
+                move |settings| {
+                    println!("writing to settings file");
+                    settings.auto_update_extensions.insert(extension_id, false);
+                }
+            });
+
             store.install_extension(extension_id, version, cx);
         });
     }
