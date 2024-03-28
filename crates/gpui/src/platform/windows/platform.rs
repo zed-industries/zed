@@ -722,9 +722,7 @@ impl Platform for WindowsPlatform {
                         (*credentials).CredentialBlobSize as usize,
                     )
                 };
-                let mut password: Vec<u8> = Vec::with_capacity(credential_blob.len());
-                password.resize(password.capacity(), 0);
-                password.clone_from_slice(&credential_blob);
+                let password = credential_blob.to_vec();
                 unsafe { CredFree(credentials as *const c_void) };
                 Ok(Some((username, password)))
             }

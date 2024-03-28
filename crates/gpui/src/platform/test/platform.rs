@@ -125,9 +125,8 @@ impl Platform for TestPlatform {
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        // todo("windows")
         #[cfg(target_os = "windows")]
-        unimplemented!()
+        return Arc::new(crate::platform::windows::WindowsTextSystem::new());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

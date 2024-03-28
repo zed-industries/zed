@@ -11,7 +11,9 @@ use lsp::Url;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::{os, task::Poll};
+#[cfg(not(windows))]
+use std::os;
+use std::task::Poll;
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 use worktree::WorktreeModelHandle as _;
