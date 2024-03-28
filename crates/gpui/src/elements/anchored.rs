@@ -169,13 +169,16 @@ impl Element for Anchored {
             desired.origin.y = limits.origin.y;
         }
 
-        before_layout.offset = cx.element_offset() + desired.origin - bounds.origin;
+        let offset = desired.origin - bounds.origin;
+        let offset = point(offset.x.round(), offset.y.round());
+
+        before_layout.offset = cx.element_offset() + offset;
         before_layout.offset = point(
             before_layout.offset.x.round(),
             before_layout.offset.y.round(),
         );
 
-        cx.with_element_offset(before_layout.offset, |cx| {
+        cx.with_element_offset(offset, |cx| {
             for child in &mut self.children {
                 child.after_layout(cx);
             }
