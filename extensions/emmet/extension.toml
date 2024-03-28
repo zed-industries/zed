@@ -4,7 +4,7 @@ description = "Emmet support"
 version = "0.0.1"
 schema_version = 1
 authors = []
-repository = "https://github.com/zed-extensions/emmet"
+repository = "https://github.com/zed-industries/zed"
 
 [language_servers.emmet-language-server]
 name = "Emmet Language Server"
