@@ -57,12 +57,13 @@ pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
 };
 pub use extension_settings::ExtensionSettings;
+pub use wasm_host::wit::is_supported_wasm_api_version;
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Zed.
-const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+pub const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
 pub struct ExtensionStore {
     builder: Arc<ExtensionBuilder>,

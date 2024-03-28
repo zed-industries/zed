@@ -28,6 +28,11 @@ fn wasi_view(state: &mut WasmState) -> &mut WasmState {
     state
 }
 
+/// Returns whether the given Wasm API version is supported by the Wasm host.
+pub fn is_supported_wasm_api_version(version: SemanticVersion) -> bool {
+    v0_0_1::VERSION <= version && version <= v0_0_4::VERSION
+}
+
 pub enum Extension {
     V004(v0_0_4::Extension),
     V001(v0_0_1::Extension),

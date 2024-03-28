@@ -4,7 +4,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
 use std::sync::{Arc, OnceLock};
+use util::SemanticVersion;
 use wasmtime::component::{Linker, Resource};
+
+pub const VERSION: SemanticVersion = SemanticVersion {
+    major: 0,
+    minor: 0,
+    patch: 1,
+};
 
 wasmtime::component::bindgen!({
     async: true,
