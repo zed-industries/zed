@@ -800,9 +800,8 @@ impl EditorElement {
                 let start_x = content_origin.x
                     + line_layout.x_for_index(display_range.start.column() as usize)
                     - scroll_pixel_position.x;
-                let start_y = content_origin.y
-                    + (row - scroll_pixel_position.row) as f32 * line_height
-                    - scroll_pixel_position.y_offset;
+                let start_y =
+                    content_origin.y + scroll_pixel_position.offset_for_row(row, line_height);
                 let end_x = content_origin.x
                     + line_layout.x_for_index(display_range.end.column() as usize)
                     - scroll_pixel_position.x;
@@ -905,9 +904,8 @@ impl EditorElement {
                     };
 
                     let x = cursor_character_x - scroll_pixel_position.x;
-                    let y = (cursor_position.row() - scroll_pixel_position.row) as f32
-                        * line_height
-                        - scroll_pixel_position.y_offset;
+                    let y =
+                        scroll_pixel_position.offset_for_row(cursor_position.row(), line_height);
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1111,8 +1109,7 @@ impl EditorElement {
         let indicator_size = button.measure(available_space, cx);
 
         let mut x = Pixels::ZERO;
-        let mut y = (newest_selection_head.row() - scroll_pixel_position.row) as f32 * line_height
-            - scroll_pixel_position.y_offset;
+        let mut y = scroll_pixel_position.offset_for_row(newest_selection_head.row(), line_height);
         // Center indicator.
         x +=
             (gutter_dimensions.margin + gutter_dimensions.left_padding - indicator_size.width) / 2.;
@@ -1661,8 +1658,7 @@ impl EditorElement {
             let mut origin = hitbox.origin
                 + point(
                     Pixels::ZERO,
-                    (block.row - scroll_pixel_position.row) as f32 * line_height
-                        - scroll_pixel_position.y_offset,
+                    scroll_pixel_position.offset_for_row(block.row, line_height),
                 );
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_pixel_position.x, Pixels::ZERO);
@@ -1703,8 +1699,7 @@ impl EditorElement {
 
         let cursor_row_layout = &line_layouts[(position.row() - start_row) as usize].line;
         let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = (position.row() + 1 - scroll_pixel_position.row) as f32 * line_height
-            - scroll_pixel_position.y_offset;
+        let y = scroll_pixel_position.offset_for_row(position.row() + 1, line_height);
         let mut list_origin = content_origin + point(x, y);
         let list_width = context_menu_size.width;
         let list_height = context_menu_size.height;
@@ -1787,8 +1782,7 @@ impl EditorElement {
         // Compute Hovered Point
         let x =
             hovered_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = (position.row() - scroll_pixel_position.row) as f32 * line_height
-            - scroll_pixel_position.y_offset;
+        let y = scroll_pixel_position.offset_for_row(position.row(), line_height);
         let hovered_point = content_origin + point(x, y);
 
         let mut overall_height = Pixels::ZERO;
@@ -1876,9 +1870,8 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (*start_row - scroll_top.row) as f32
-                                    * layout.position_map.line_height
-                                - scroll_top.y_offset,
+                                + scroll_top
+                                    .offset_for_row(*start_row, layout.position_map.line_height),
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -1894,9 +1887,10 @@ impl EditorElement {
                         let origin = point(
                             layout.hitbox.origin.x,
                             layout.hitbox.origin.y
-                                + (highlight_row_start - scroll_top.row) as f32
-                                    * layout.position_map.line_height
-                                - scroll_top.y_offset,
+                                + scroll_top.offset_for_row(
+                                    highlight_row_start,
+                                    layout.position_map.line_height,
+                                ),
                         );
                         let size = size(
                             layout.hitbox.size.width,
@@ -2545,9 +2539,10 @@ impl EditorElement {
                 line_height: layout.position_map.line_height,
                 corner_radius,
                 start_y: layout.content_origin.y
-                    + (row_range.start - layout.position_map.scroll_position.row) as f32
-                        * layout.position_map.line_height
-                    - layout.position_map.scroll_position.y_offset,
+                    + layout
+                        .position_map
+                        .scroll_position
+                        .offset_for_row(row_range.start, layout.position_map.line_height),
                 lines: row_range
                     .into_iter()
                     .map(|row| {
@@ -2898,8 +2893,10 @@ impl LineWithInvisibles {
         cx: &mut ElementContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = line_height * (row - layout.position_map.scroll_position.row) as f32
-            - layout.position_map.scroll_position.y_offset;
+        let line_y = layout
+            .position_map
+            .scroll_position
+            .offset_for_row(row, line_height);
 
         self.line
             .paint(
@@ -3554,6 +3551,13 @@ struct ScrollPosition {
     /// Pixel height of the non-full line preceding the top row.
     y_offset: Pixels,
     x: Pixels,
+}
+
+impl ScrollPosition {
+    fn offset_for_row(&self, row: u32, line_height: Pixels) -> Pixels {
+        let extended: i64 = row as _;
+        (extended - self.row as i64) as f32 * line_height - self.y_offset
+    }
 }
 
 struct PositionMap {
