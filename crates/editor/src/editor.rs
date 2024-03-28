@@ -8876,6 +8876,10 @@ impl Editor {
         Ok(())
     }
 
+    pub fn blame(&self) -> Option<&Model<GitBlame>> {
+        self.blame.as_ref()
+    }
+
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         let (path, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();

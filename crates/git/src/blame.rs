@@ -69,7 +69,7 @@ impl Blame {
     }
 }
 
-pub fn run_git_blame(working_directory: &Path, path: &Path, contents: &Rope) -> Result<String> {
+fn run_git_blame(working_directory: &Path, path: &Path, contents: &Rope) -> Result<String> {
     let child = Command::new("git")
         .current_dir(working_directory)
         .arg("blame")
@@ -217,7 +217,7 @@ impl BlameEntry {
 //    filename index.js
 //
 // More about `--incremental` output: https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-blame.html
-pub fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
+fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
     let mut entries: Vec<BlameEntry> = Vec::new();
     let mut index: HashMap<Oid, usize> = HashMap::default();
 
