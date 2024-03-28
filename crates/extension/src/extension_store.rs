@@ -51,19 +51,41 @@ use util::{
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
-use wasm_host::{WasmExtension, WasmHost};
+use wasm_host::{wit::is_supported_wasm_api_version, WasmExtension, WasmHost};
 
 pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
 };
 pub use extension_settings::ExtensionSettings;
-pub use wasm_host::wit::is_supported_wasm_api_version;
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Zed.
-pub const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+
+/// Returns whether the given extension version is compatible with this version of Zed.
+pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
+    let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
+    if CURRENT_SCHEMA_VERSION.0 < schema_version {
+        return false;
+    }
+
+    if let Some(wasm_api_version) = extension_version
+        .manifest
+        .wasm_api_version
+        .as_ref()
+        .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
+    {
+        return false;
+
+        if !is_supported_wasm_api_version(wasm_api_version) {
+            return false;
+        }
+    }
+
+    true
+}
 
 pub struct ExtensionStore {
     builder: Arc<ExtensionBuilder>,

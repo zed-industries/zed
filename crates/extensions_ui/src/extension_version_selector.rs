@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
-use extension::{ExtensionSettings, ExtensionStore, CURRENT_SCHEMA_VERSION};
+use extension::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -82,27 +82,6 @@ impl ExtensionVersionSelectorDelegate {
             selected_index: 0,
             matches,
         }
-    }
-
-    /// Returns whether the given extension version is compatible with this version of Zed.
-    fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
-        let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
-        if CURRENT_SCHEMA_VERSION.0 < schema_version {
-            return false;
-        }
-
-        if let Some(wasm_api_version) = extension_version
-            .manifest
-            .wasm_api_version
-            .as_ref()
-            .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
-        {
-            if !extension::is_supported_wasm_api_version(wasm_api_version) {
-                return false;
-            }
-        }
-
-        true
     }
 }
 
@@ -186,7 +165,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let extension_version = &self.extension_versions[candidate_id];
 
-        if !Self::is_version_compatible(extension_version) {
+        if !extension::is_version_compatible(extension_version) {
             return;
         }
 
@@ -221,7 +200,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let version_match = &self.matches[ix];
         let extension_version = &self.extension_versions[version_match.candidate_id];
 
-        let is_version_compatible = Self::is_version_compatible(extension_version);
+        let is_version_compatible = extension::is_version_compatible(extension_version);
         let disabled = !is_version_compatible;
 
         Some(
