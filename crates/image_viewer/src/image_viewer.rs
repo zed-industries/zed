@@ -84,7 +84,7 @@ impl Item for ImageView {
             .to_string();
         h_flex()
             .gap_2()
-            .child(Label::new(lab).color(if selected {
+            .child(Label::new(title).color(if selected {
                 Color::Default
             } else {
                 Color::Muted
