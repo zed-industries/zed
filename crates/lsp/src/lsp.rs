@@ -206,6 +206,7 @@ impl LanguageServer {
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
     ) -> Result<Self> {
+        let root_path = &root_path.canonicalize()?;
         let working_dir = if root_path.is_dir() {
             root_path
         } else {
