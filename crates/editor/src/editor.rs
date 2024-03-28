@@ -2679,7 +2679,7 @@ impl Editor {
             }
 
             drop(snapshot);
-            let had_active_copilot_completion = this.has_active_inline_completion(cx);
+            let had_active_inline_completion = this.has_active_inline_completion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
             if brace_inserted {
@@ -2695,7 +2695,7 @@ impl Editor {
                 }
             }
 
-            if had_active_copilot_completion {
+            if had_active_inline_completion {
                 this.refresh_inline_completion(true, cx);
                 if !this.has_active_inline_completion(cx) {
                     this.trigger_completion_on_input(&text, cx);
@@ -4008,7 +4008,7 @@ impl Editor {
         if !self.show_inline_completions
             || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
         {
-            self.clear_inline_completion(cx);
+            self.discard_inline_completion(cx);
             return None;
         }
 
@@ -4207,13 +4207,6 @@ impl Editor {
             }
         }
 
-        self.discard_inline_completion(cx);
-    }
-
-    fn clear_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(old_completion) = self.active_inline_completion.take() {
-            self.splice_inlays(vec![old_completion.id], Vec::new(), cx);
-        }
         self.discard_inline_completion(cx);
     }
 

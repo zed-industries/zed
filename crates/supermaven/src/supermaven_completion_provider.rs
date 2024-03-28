@@ -1,18 +1,21 @@
 use crate::{ResponseItem, Supermaven};
 use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
+use futures::StreamExt;
 use gpui::{AppContext, Global, Model, ModelContext, Task};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, OffsetRangeExt, ToOffset,
 };
 
 pub struct SupermavenCompletionProvider {
+    show_inline_completions: bool,
     pending_refresh: Task<Result<()>>,
 }
 
 impl SupermavenCompletionProvider {
     pub fn new() -> Self {
         Self {
+            show_inline_completions: false,
             pending_refresh: Task::ready(Ok(())),
         }
     }
@@ -38,15 +41,16 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("refresh");
-
-        let refresh = Supermaven::update(cx, |supermaven, cx| {
+        let mut updates = Supermaven::update(cx, |supermaven, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
         });
 
+        self.show_inline_completions = true;
         self.pending_refresh = cx.spawn(|this, mut cx| async move {
-            refresh.await;
-            this.update(&mut cx, |this, cx| cx.notify())
+            while let Some(()) = updates.next().await {
+                this.update(&mut cx, |this, cx| cx.notify())?;
+            }
+            Ok(())
         });
     }
 
@@ -78,11 +82,13 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 
     fn accept(&mut self, cx: &mut ModelContext<Self>) {
-        // todo!("accept!")
+        self.pending_refresh = Task::ready(Ok(()));
+        self.show_inline_completions = false;
     }
 
     fn discard(&mut self, cx: &mut ModelContext<Self>) {
-        // todo!("discard")
+        self.pending_refresh = Task::ready(Ok(()));
+        self.show_inline_completions = false;
     }
 
     fn active_completion_text<'a>(
@@ -91,6 +97,10 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         cursor_position: Anchor,
         cx: &'a AppContext,
     ) -> Option<&'a str> {
+        if !self.show_inline_completions {
+            return None;
+        }
+
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let cursor_offset = cursor_position.to_offset(buffer);
