@@ -11,27 +11,22 @@ use crate::{elixir::elixir_task_context, rust::RustContextProvider};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
-mod astro;
 mod c;
 mod clojure;
 mod csharp;
 mod css;
 mod dart;
 mod deno;
-mod dockerfile;
 mod elixir;
 mod elm;
 mod erlang;
 mod go;
-mod haskell;
 mod html;
 mod json;
 mod lua;
 mod nu;
 mod ocaml;
 mod php;
-mod prisma;
-mod purescript;
 mod python;
 mod ruby;
 mod rust;
@@ -41,7 +36,6 @@ mod toml;
 mod typescript;
 mod vue;
 mod yaml;
-mod zig;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -66,14 +60,12 @@ pub fn init(
     DenoSettings::register(cx);
 
     languages.register_native_grammars([
-        ("astro", tree_sitter_astro::language()),
         ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
         ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
-        ("dockerfile", tree_sitter_dockerfile::language()),
         ("elixir", tree_sitter_elixir::language()),
         ("elm", tree_sitter_elm::language()),
         (
@@ -85,7 +77,6 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("haskell", tree_sitter_haskell::language()),
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("html", tree_sitter_html::language()),
@@ -101,9 +92,7 @@ pub fn init(
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
         ("php", tree_sitter_php::language_php()),
-        ("prisma", tree_sitter_prisma_io::language()),
         ("proto", tree_sitter_proto::language()),
-        ("purescript", tree_sitter_purescript::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
         ("regex", tree_sitter_regex::language()),
@@ -115,7 +104,6 @@ pub fn init(
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
-        ("zig", tree_sitter_zig::language()),
         ("dart", tree_sitter_dart::language()),
     ]);
 
@@ -176,13 +164,6 @@ pub fn init(
             );
         };
     }
-    language!(
-        "astro",
-        vec![
-            Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!("bash");
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
@@ -194,13 +175,6 @@ pub fn init(
             Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
-    );
-
-    language!(
-        "dockerfile",
-        vec![Arc::new(dockerfile::DockerfileLspAdapter::new(
-            node_runtime.clone(),
-        ))]
     );
 
     match &ElixirSettings::get(None, cx).lsp {
@@ -236,7 +210,6 @@ pub fn init(
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
-    language!("zig", vec![Arc::new(zig::ZlsAdapter)]);
     language!(
         "heex",
         vec![
@@ -316,7 +289,6 @@ pub fn init(
         }
     }
 
-    language!("haskell", vec![Arc::new(haskell::HaskellLanguageServer {})]);
     language!(
         "html",
         vec![
@@ -348,12 +320,6 @@ pub fn init(
         ]
     );
     language!(
-        "purescript",
-        vec![Arc::new(purescript::PurescriptLspAdapter::new(
-            node_runtime.clone(),
-        ))]
-    );
-    language!(
         "elm",
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
@@ -373,14 +339,12 @@ pub fn init(
         vec![Arc::new(terraform::TerraformLspAdapter)]
     );
     language!("hcl", vec![]);
-    language!(
-        "prisma",
-        vec![Arc::new(prisma::PrismaLspAdapter::new(
-            node_runtime.clone(),
-        ))]
-    );
     language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 
+    languages.register_secondary_lsp_adapter(
+        "Astro".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
     languages.register_secondary_lsp_adapter(
         "Svelte".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),

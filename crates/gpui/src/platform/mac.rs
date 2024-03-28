@@ -22,7 +22,7 @@ mod text_system;
 mod window;
 mod window_appearance;
 
-use crate::{px, size, GlobalPixels, Pixels, Size};
+use crate::{px, size, DevicePixels, Pixels, Size};
 use cocoa::{
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
@@ -122,9 +122,9 @@ impl From<NSRect> for Size<Pixels> {
     }
 }
 
-impl From<NSRect> for Size<GlobalPixels> {
+impl From<NSRect> for Size<DevicePixels> {
     fn from(rect: NSRect) -> Self {
         let NSSize { width, height } = rect.size;
-        size(width.into(), height.into())
+        size(DevicePixels(width as i32), DevicePixels(height as i32))
     }
 }

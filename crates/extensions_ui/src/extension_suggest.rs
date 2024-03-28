@@ -17,6 +17,7 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
     SUGGESTED
         .get_or_init(|| {
             [
+                ("astro", "astro"),
                 ("beancount", "beancount"),
                 ("dockerfile", "Dockerfile"),
                 ("elisp", "el"),
@@ -32,11 +33,14 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
                 ("gleam", "gleam"),
                 ("graphql", "gql"),
                 ("graphql", "graphql"),
+                ("haskell", "hs"),
                 ("java", "java"),
                 ("kotlin", "kt"),
                 ("latex", "tex"),
                 ("make", "Makefile"),
                 ("nix", "nix"),
+                ("prisma", "prisma"),
+                ("purescript", "purs"),
                 ("r", "r"),
                 ("r", "R"),
                 ("sql", "sql"),
@@ -44,6 +48,7 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
                 ("swift", "swift"),
                 ("templ", "templ"),
                 ("wgsl", "wgsl"),
+                ("zig", "zig"),
             ]
             .into_iter()
             .map(|(name, file)| (file, name.into()))

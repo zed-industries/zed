@@ -7,8 +7,8 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, Context, Entity, SharedString, TestAppContext, View, VisualContext,
-    VisualTestContext,
+    point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
+    View, VisualContext, VisualTestContext,
 };
 use language::Capability;
 use live_kit_client::MacOSDisplay;

@@ -1,4 +1,4 @@
-#![cfg_attr(target_os = "linux", allow(dead_code))]
+#![cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;

@@ -73,6 +73,10 @@ impl<'a> MarkdownParser<'a> {
         return self.peek(0);
     }
 
+    fn current_event(&self) -> Option<&Event> {
+        return self.current().map(|(event, _)| event);
+    }
+
     fn is_text_like(event: &Event) -> bool {
         match event {
             Event::Text(_)
@@ -202,7 +206,7 @@ impl<'a> MarkdownParser<'a> {
                 }
 
                 Event::HardBreak => {
-                    break;
+                    text.push('\n');
                 }
 
                 Event::Text(t) => {
@@ -448,20 +452,22 @@ impl<'a> MarkdownParser<'a> {
                     inside_list_item = true;
 
                     // Check for task list marker (`- [ ]` or `- [x]`)
-                    if let Some(next) = self.current() {
-                        match next.0 {
-                            Event::TaskListMarker(checked) => {
-                                task_item = Some(checked);
-                                self.cursor += 1;
-                            }
-                            _ => {}
+                    if let Some(event) = self.current_event() {
+                        // If there is a linebreak in between two list items the task list marker will actually be the first element of the paragraph
+                        if event == &Event::Start(Tag::Paragraph) {
+                            self.cursor += 1;
+                        }
+
+                        if let Some(Event::TaskListMarker(checked)) = self.current_event() {
+                            task_item = Some(*checked);
+                            self.cursor += 1;
                         }
                     }
 
-                    if let Some(next) = self.current() {
+                    if let Some(event) = self.current_event() {
                         // This is a plain list item.
                         // For example `- some text` or `1. [Docs](./docs.md)`
-                        if MarkdownParser::is_text_like(&next.0) {
+                        if MarkdownParser::is_text_like(event) {
                             let text = self.parse_text(false);
                             let block = ParsedMarkdownElement::Paragraph(text);
                             current_list_items.push(Box::new(block));
@@ -471,6 +477,11 @@ impl<'a> MarkdownParser<'a> {
                                 current_list_items.push(Box::new(block));
                             }
                         }
+                    }
+
+                    // If there is a linebreak in between two list items the task list marker will actually be the first element of the paragraph
+                    if self.current_event() == Some(&Event::End(TagEnd::Paragraph)) {
+                        self.cursor += 1;
                     }
                 }
                 Event::End(TagEnd::Item) => {
@@ -819,6 +830,29 @@ Some other content
                     list_item(1, Task(true), vec![p("Checked", 13..16)]),
                 ],
                 0..25
+            ),]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_with_linebreak_is_handled_correctly() {
+        let parsed = parse(
+            "\
+- [ ] Task 1
+
+- [x] Task 2
+",
+        )
+        .await;
+
+        assert_eq!(
+            parsed.children,
+            vec![list(
+                vec![
+                    list_item(1, Task(false), vec![p("Task 1", 2..5)]),
+                    list_item(1, Task(true), vec![p("Task 2", 16..19)]),
+                ],
+                0..27
             ),]
         );
     }

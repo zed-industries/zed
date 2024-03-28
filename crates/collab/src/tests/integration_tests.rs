@@ -8,8 +8,8 @@ use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
-    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext,
+    px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
+    MouseDownEvent, TestAppContext,
 };
 use language::{
     language_settings::{AllLanguageSettings, Formatter},
@@ -4978,11 +4978,16 @@ async fn test_lsp_hover(
         },
     );
 
-    let hover_info = project_b
+    let hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
         .await
-        .unwrap()
         .unwrap();
+    assert_eq!(
+        hovers.len(),
+        1,
+        "Expected exactly one hover but got: {hovers:?}"
+    );
+    let hover_info = hovers.into_iter().next().unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
         let snapshot = buffer.snapshot();
@@ -5891,6 +5896,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         position: new_tab_button_bounds.center(),
         modifiers: Modifiers::default(),
         click_count: 1,
+        first_mouse: false,
     });
 
     // regression test that the right click menu for tabs does not open.
@@ -5902,6 +5908,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         position: tab_bounds.center(),
         modifiers: Modifiers::default(),
         click_count: 1,
+        first_mouse: false,
     });
     assert!(cx.debug_bounds("MENU_ITEM-Close").is_some());
 }

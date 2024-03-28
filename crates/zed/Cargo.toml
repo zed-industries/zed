@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.129.0"
+version = "0.130.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -77,6 +77,7 @@ serde_json.workspace = true
 settings.workspace = true
 simplelog = "0.9"
 smol.workspace = true
+tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 terminal_view.workspace = true
@@ -91,6 +92,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
+embed-manifest = "1.4.0"
 winresource = "0.1"
 
 [dev-dependencies]

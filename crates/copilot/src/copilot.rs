@@ -797,7 +797,7 @@ impl Copilot {
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
-            Err(error) => return Task::ready(Err(error)),
+            Err(_) => return Task::ready(Ok(())),
         };
         let request =
             server

@@ -11,7 +11,7 @@
       "ctrl->": "zed::IncreaseBufferFontSize",
       "ctrl-<": "zed::DecreaseBufferFontSize",
       "ctrl-shift-j": "editor::JoinLines",
-      "cmd-d": "editor::DuplicateLine",
+      "cmd-d": "editor::DuplicateLineDown",
       "cmd-backspace": "editor::DeleteLine",
       "cmd-pagedown": "editor::MovePageDown",
       "cmd-pageup": "editor::MovePageUp",

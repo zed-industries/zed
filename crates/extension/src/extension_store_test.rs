@@ -1,3 +1,4 @@
+use crate::extension_manifest::SchemaVersion;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
@@ -146,7 +147,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-ruby".into(),
                         name: "Zed Ruby".into(),
                         version: "1.0.0".into(),
-                        schema_version: 0,
+                        schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: Vec::new(),
                         repository: None,
@@ -171,7 +172,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-monokai".into(),
                         name: "Zed Monokai".into(),
                         version: "2.0.0".into(),
-                        schema_version: 0,
+                        schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: vec![],
                         repository: None,
@@ -262,6 +263,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            None,
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
@@ -327,7 +329,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 id: "zed-gruvbox".into(),
                 name: "Zed Gruvbox".into(),
                 version: "1.0.0".into(),
-                schema_version: 0,
+                schema_version: SchemaVersion::ZERO,
                 description: None,
                 authors: vec![],
                 repository: None,
@@ -381,6 +383,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             None,
             fs.clone(),
             http_client.clone(),
+            None,
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
@@ -446,7 +449,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let cache_dir = root_dir.join("target");
     let gleam_extension_dir = root_dir.join("extensions").join("gleam");
 
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let extensions_dir = temp_tree(json!({
         "installed": {},
         "work": {}
@@ -538,6 +541,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             Some(cache_dir),
             fs.clone(),
             http_client.clone(),
+            None,
             node_runtime,
             language_registry.clone(),
             theme_registry.clone(),

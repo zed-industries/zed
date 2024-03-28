@@ -143,11 +143,12 @@ impl LspAdapter for TypeScriptLspAdapter {
         let len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            Kind::CLASS | Kind::INTERFACE => grammar.highlight_id_for_name("type"),
+            Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
             Kind::CONSTRUCTOR => grammar.highlight_id_for_name("type"),
             Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
             Kind::FUNCTION | Kind::METHOD => grammar.highlight_id_for_name("function"),
             Kind::PROPERTY | Kind::FIELD => grammar.highlight_id_for_name("property"),
+            Kind::VARIABLE => grammar.highlight_id_for_name("variable"),
             _ => None,
         }?;
 

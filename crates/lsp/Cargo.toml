@@ -31,6 +31,9 @@ smol.workspace = true
 util.workspace = true
 release_channel.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
 [dev-dependencies]
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 ctor.workspace = true

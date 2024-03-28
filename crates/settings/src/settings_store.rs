@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext, Global};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
