@@ -61,7 +61,7 @@ impl Database {
             .order_by_desc(extension::Column::TotalDownloadCount)
             .order_by_asc(extension::Column::Name)
             .limit(limit)
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         Ok(extensions
