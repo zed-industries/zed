@@ -42,7 +42,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::OpenOptions,
-    io::{IsTerminal, Write},
+    io::{IsTerminal, Read, Write},
     panic,
     path::Path,
     sync::{
@@ -76,6 +76,7 @@ fn main() {
 
     init_paths();
     init_logger();
+    init_proxy();
 
     if ensure_only_instance() != IsOnlyInstance::Yes {
         return;
@@ -566,6 +567,37 @@ fn init_stdout_logger() {
             writeln!(buf, " {}", record.args())
         })
         .init();
+}
+
+fn init_proxy() {
+    let Some(mut settings_file) = std::fs::File::open(&*paths::SETTINGS).log_err() else {
+        return;
+    };
+    let mut settings_json = String::new();
+    if settings_file
+        .read_to_string(&mut settings_json)
+        .log_err()
+        .is_none()
+    {
+        return;
+    }
+    let settings_value: serde_json::Value =
+        settings::parse_json_with_comments(&settings_json).unwrap_or_default();
+    if let Some(proxies) = settings_value.get("proxy") {
+        if let Some(proxies_map) = proxies.as_object() {
+            for (k_str, v_val) in proxies_map {
+                let v_str = v_val.as_str().unwrap_or_default();
+                if k_str.is_empty() || v_str.is_empty() {
+                    continue;
+                }
+                std::env::set_var(k_str.to_lowercase(), v_str.to_lowercase());
+            }
+        } else {
+            log::error!("not supported proxies: {:?}", proxies);
+        }
+    } else {
+        log::error!("could not load proxy from settings");
+    }
 }
 
 #[derive(Serialize, Deserialize)]
