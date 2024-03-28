@@ -260,8 +260,13 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                         // all our motions assume that the current character is
                         // after the cursor; however in the case of a visual selection
                         // the current character is before the cursor.
+                        // But this will affect the judgment of the html tag
+                        // so the html tag needs to skip this logic.
                         if !selection.reversed && object != Object::Tag {
-                            mut_selection.start = movement::left(map, mut_selection.start);
+                            mut_selection.set_head(
+                                movement::left(map, mut_selection.head()),
+                                mut_selection.goal,
+                            );
                         }
 
                         if let Some(range) = object.range(map, mut_selection, around) {
