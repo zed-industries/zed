@@ -46,7 +46,8 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        if std::env::var("CARGO_CFG_TARGET_ENV").ok() == Some("msvc".to_string()) {
+        #[cfg(target_env = "msvc")]
+        {
             // todo(windows): This is to avoid stack overflow. Remove it when solved.
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
