@@ -289,13 +289,16 @@ impl ActivityIndicator {
             };
         }
 
-        let extension_store = ExtensionStore::global(cx).read(cx);
-        if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-            return Content {
-                icon: Some(DOWNLOAD_ICON),
-                message: format!("Updating {extension_id} extension…"),
-                on_click: None,
-            };
+        if let Some(extension_store) =
+            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+        {
+            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
+                return Content {
+                    icon: Some(DOWNLOAD_ICON),
+                    message: format!("Updating {extension_id} extension…"),
+                    on_click: None,
+                };
+            }
         }
 
         Default::default()

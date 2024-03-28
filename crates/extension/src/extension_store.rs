@@ -164,6 +164,10 @@ pub fn init(
 }
 
 impl ExtensionStore {
+    pub fn try_global(cx: &AppContext) -> Option<Model<Self>> {
+        cx.try_global::<GlobalExtensionStore>().map(|store| store.0.clone())
+    }
+
     pub fn global(cx: &AppContext) -> Model<Self> {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
