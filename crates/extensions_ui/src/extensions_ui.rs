@@ -474,40 +474,44 @@ impl ExtensionsPage {
                         )
                     }))
                     .child(
-                        IconButton::new(
-                            SharedString::from(format!("repository-{}", extension.id)),
-                            IconName::Github,
-                        )
-                        .icon_color(Color::Accent)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Filled)
-                        .on_click(cx.listener({
-                            let repository_url = repository_url.clone();
-                            move |_, _, cx| {
-                                cx.open_url(&repository_url);
-                            }
-                        }))
-                        .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
-                    )
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("more-{}", extension.id)),
-                            IconName::Ellipsis,
-                        )
-                        .icon_color(Color::Accent)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Filled)
-                        .on_click(cx.listener({
-                            let extension_id = extension.id.clone();
-                            move |this, event: &ClickEvent, cx| {
-                                this.deploy_context_menu(
-                                    event.down.position,
-                                    extension_id.clone(),
-                                    cx,
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!("repository-{}", extension.id)),
+                                    IconName::Github,
                                 )
-                            }
-                        }))
-                        .tooltip(move |cx| Tooltip::text("More...", cx)),
+                                .icon_color(Color::Accent)
+                                .icon_size(IconSize::Small)
+                                .style(ButtonStyle::Filled)
+                                .on_click(cx.listener({
+                                    let repository_url = repository_url.clone();
+                                    move |_, _, cx| {
+                                        cx.open_url(&repository_url);
+                                    }
+                                }))
+                                .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
+                            )
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!("more-{}", extension.id)),
+                                    IconName::Ellipsis,
+                                )
+                                .icon_color(Color::Accent)
+                                .icon_size(IconSize::Small)
+                                .style(ButtonStyle::Filled)
+                                .on_click(cx.listener({
+                                    let extension_id = extension.id.clone();
+                                    move |this, event: &ClickEvent, cx| {
+                                        this.deploy_context_menu(
+                                            event.down.position,
+                                            extension_id.clone(),
+                                            cx,
+                                        )
+                                    }
+                                }))
+                                .tooltip(move |cx| Tooltip::text("More...", cx)),
+                            ),
                     ),
             )
     }
