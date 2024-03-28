@@ -305,7 +305,7 @@ pub enum Event {
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId),
+    WorktreeUpdatedGitRepositories,
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -6755,9 +6755,7 @@ impl Project {
                             cx,
                         )
                     }
-                    cx.emit(Event::WorktreeUpdatedGitRepositories(
-                        worktree.read(cx).id(),
-                    ));
+                    cx.emit(Event::WorktreeUpdatedGitRepositories);
                 }
             }
         })

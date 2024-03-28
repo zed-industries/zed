@@ -33,10 +33,6 @@ impl Oid {
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
-
-    pub fn libgit_oid(&self) -> libgit::Oid {
-        self.0
-    }
 }
 
 impl FromStr for Oid {

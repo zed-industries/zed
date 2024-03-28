@@ -7,7 +7,7 @@ use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 pub struct MouseContextMenu {
     pub(crate) position: Point<Pixels>,
     pub(crate) context_menu: View<ui::ContextMenu>,
-    pub(crate) _subscription: Subscription,
+    _subscription: Subscription,
 }
 
 impl MouseContextMenu {

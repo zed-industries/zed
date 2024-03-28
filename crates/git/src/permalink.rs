@@ -61,33 +61,8 @@ pub struct BuildPermalinkParams<'a> {
 }
 
 pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
-    let remote = parse_git_remote_url(params.remote_url)
-        .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
-
-    Ok(build_permalink_for_remote(BuildPermalinkForRemoteParams {
-        remote: &remote,
-        sha: params.sha,
-        path: params.sha,
-        selection: params.selection,
-    }))
-}
-
-pub(crate) struct ParsedGitRemote<'a> {
-    pub provider: GitHostingProvider,
-    pub owner: &'a str,
-    pub repo: &'a str,
-}
-
-struct BuildPermalinkForRemoteParams<'a> {
-    pub remote: &'a ParsedGitRemote<'a>,
-    pub sha: &'a str,
-    pub path: &'a str,
-    pub selection: Option<Range<u32>>,
-}
-
-fn build_permalink_for_remote(params: BuildPermalinkForRemoteParams) -> Url {
-    let BuildPermalinkForRemoteParams {
-        remote,
+    let BuildPermalinkParams {
+        remote_url,
         sha,
         path,
         selection,
@@ -97,7 +72,8 @@ fn build_permalink_for_remote(params: BuildPermalinkForRemoteParams) -> Url {
         provider,
         owner,
         repo,
-    } = remote;
+    } = parse_git_remote_url(remote_url)
+        .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
     let path = match provider {
         GitHostingProvider::Github => format!("{owner}/{repo}/blob/{sha}/{path}"),
@@ -111,16 +87,22 @@ fn build_permalink_for_remote(params: BuildPermalinkForRemoteParams) -> Url {
 
     let mut permalink = provider.base_url().join(&path).unwrap();
     permalink.set_fragment(line_fragment.as_deref());
-    permalink
+    Ok(permalink)
 }
 
-pub(crate) struct BuildCommitLinkParams<'a> {
+pub(crate) struct ParsedGitRemote<'a> {
+    pub provider: GitHostingProvider,
+    pub owner: &'a str,
+    pub repo: &'a str,
+}
+
+pub(crate) struct BuildCommitPermalinkParams<'a> {
     pub remote: &'a ParsedGitRemote<'a>,
     pub sha: &'a str,
 }
 
-pub(crate) fn build_commit_link(params: BuildCommitLinkParams) -> Url {
-    let BuildCommitLinkParams { sha, remote } = params;
+pub(crate) fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
+    let BuildCommitPermalinkParams { sha, remote } = params;
 
     let ParsedGitRemote {
         provider,

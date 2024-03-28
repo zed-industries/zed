@@ -22,15 +22,14 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
         output.status
     );
 
-    let messages = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .split_terminator(MARKER)
-        .map(|str| String::from(str.trim()))
-        .collect::<Vec<_>>();
-
     Ok(shas
         .iter()
         .cloned()
-        .zip(messages.into_iter())
+        .zip(
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .split_terminator(MARKER)
+                .map(|str| String::from(str.trim())),
+        )
         .collect::<HashMap<Oid, String>>())
 }

@@ -4193,7 +4193,6 @@ dependencies = [
  "git2",
  "lazy_static",
  "log",
- "parking_lot",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -4203,7 +4202,6 @@ dependencies = [
  "time",
  "unindent",
  "url",
- "util",
 ]
 
 [[package]]
@@ -5190,7 +5188,6 @@ dependencies = [
  "collections",
  "ctor",
  "env_logger",
- "fs",
  "futures 0.3.28",
  "fuzzy",
  "git",
