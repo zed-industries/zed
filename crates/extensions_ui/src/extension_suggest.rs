@@ -67,35 +67,37 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
         return;
     };
 
-    let file_extension = file
+    let file_extension: Option<Arc<str>> = file
         .path()
         .extension()
-        .and_then(|extension| Some(extension.to_str()?.to_string()));
-    let file_name = file
+        .and_then(|extension| Some(extension.to_str()?.into()));
+    let file_name: Option<Arc<str>> = file
         .path()
         .file_name()
-        .and_then(|file_name| Some(file_name.to_str()?.to_string()));
+        .and_then(|file_name| Some(file_name.to_str()?.into()));
 
-    let Some(file_name_or_extension) = file_name.clone().or(file_extension.clone()) else {
+    let suggestion = None
+        // We suggest against file names first, as these suggestions will be more
+        // specific than ones based on the file extension.
+        .or_else(|| {
+            file_name
+                .clone()
+                .zip(file_name.as_deref().and_then(suggested_extension))
+        })
+        .or_else(|| {
+            file_extension
+                .clone()
+                .zip(file_extension.as_deref().and_then(suggested_extension))
+        });
+
+    let Some((file_name_or_extension, extension_id)) = suggestion else {
         return;
     };
-
-    let suggested_extension = None
-        .or_else(|| file_name.as_deref().and_then(suggested_extension))
-        .or_else(|| file_extension.as_deref().and_then(suggested_extension));
-
-    let Some(extension_id) = suggested_extension else {
-        return;
-    };
-
-    println!("{file_name_or_extension} = {extension_id}");
 
     let key = language_extension_key(&extension_id);
-    let value = KEY_VALUE_STORE.read_kvp(&key);
-
-    if value.is_err() || value.unwrap().is_some() {
+    let Ok(None) = KEY_VALUE_STORE.read_kvp(&key) else {
         return;
-    }
+    };
 
     cx.on_next_frame(move |workspace, cx| {
         let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
