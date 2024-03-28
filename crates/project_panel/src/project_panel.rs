@@ -486,10 +486,11 @@ impl ProjectPanel {
 
         if let Some(parent_path) = entry.path.parent() {
             let snapshot = worktree.snapshot();
-            let child_entries: Vec<&Entry> = snapshot.child_entries(parent_path).collect();
-            if child_entries.len() == 1 {
-                let child = child_entries[0];
-                return child.kind.is_dir();
+            let mut child_entries = snapshot.child_entries(&parent_path);
+            if let Some(child) = child_entries.next() {
+                if child_entries.next().is_none() {
+                    return child.kind.is_dir();
+                }
             }
         };
         false
@@ -498,10 +499,12 @@ impl ProjectPanel {
     fn is_foldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
         if entry.is_dir() {
             let snapshot = worktree.snapshot();
-            let child_entries: Vec<&Entry> = snapshot.child_entries(&entry.path).collect();
-            if child_entries.len() == 1 {
-                let child = child_entries[0];
-                return child.kind.is_dir();
+
+            let mut child_entries = snapshot.child_entries(&entry.path);
+            if let Some(child) = child_entries.next() {
+                if child_entries.next().is_none() {
+                    return child.kind.is_dir();
+                }
             }
         }
         false
@@ -899,13 +902,17 @@ impl ProjectPanel {
             let snapshot = worktree.snapshot();
             let mut path = &*entry.path;
             loop {
-                let children: Vec<&Entry> = snapshot.child_entries(path).collect();
-                if children.len() > 1 || children.is_empty() || !children[0].is_dir() {
+                let mut child_entries_iter = snapshot.child_entries(path);
+                if let Some(child) = child_entries_iter.next() {
+                    if child_entries_iter.next().is_none() && child.is_dir() {
+                        self.unfolded_dir_ids.remove(&child.id);
+                        path = &*child.path;
+                    } else {
+                        break;
+                    }
+                } else {
                     break;
                 }
-                let child = children[0];
-                self.unfolded_dir_ids.remove(&child.id);
-                path = &*child.path;
             }
 
             self.update_visible_entries(None, cx);
@@ -1342,11 +1349,10 @@ impl ProjectPanel {
             }
         }
 
-        let child_entries: Vec<&Entry> = snapshot.child_entries(&entry.path).collect();
-        if child_entries.len() == 1 {
-            let child = child_entries[0];
-            if child.kind.is_dir() {
-                return true;
+        let mut child_entries = snapshot.child_entries(&entry.path);
+        if let Some(child) = child_entries.next() {
+            if child_entries.next().is_none() {
+                return child.kind.is_dir();
             }
         }
 
