@@ -22,7 +22,7 @@ pub struct Anchored {
     position_mode: AnchoredPositionMode,
 }
 
-/// overlay gives you a floating element that will avoid overflowing the window bounds.
+/// anchored gives you an element that will avoid overflowing the window bounds.
 /// Its children should have no margin to avoid measurement issues.
 pub fn anchored() -> Anchored {
     Anchored {
@@ -35,21 +35,21 @@ pub fn anchored() -> Anchored {
 }
 
 impl Anchored {
-    /// Sets which corner of the overlay should be anchored to the current position.
+    /// Sets which corner of the anchored element should be anchored to the current position.
     pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
         self.anchor_corner = anchor;
         self
     }
 
     /// Sets the position in window coordinates
-    /// (otherwise the location the overlay is rendered is used)
+    /// (otherwise the location the anchored element is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
         self
     }
 
-    /// Sets the position mode for this overlay. Local will have this
-    /// interpret its [`Overlay::position`] as relative to the parent element.
+    /// Sets the position mode for this anchored element. Local will have this
+    /// interpret its [`Anchored::position`] as relative to the parent element.
     /// While Window will have it interpret the position as relative to the window.
     pub fn position_mode(mut self, mode: AnchoredPositionMode) -> Self {
         self.position_mode = mode;
@@ -151,7 +151,7 @@ impl Element for Anchored {
             }
         }
 
-        // Snap the horizontal edges of the overlay to the horizontal edges of the window if
+        // Snap the horizontal edges of the anchored element to the horizontal edges of the window if
         // its horizontal bounds overflow, aligning to the left if it is wider than the limits.
         if desired.right() > limits.right() {
             desired.origin.x -= desired.right() - limits.right();
@@ -160,7 +160,7 @@ impl Element for Anchored {
             desired.origin.x = limits.origin.x;
         }
 
-        // Snap the vertical edges of the overlay to the vertical edges of the window if
+        // Snap the vertical edges of the anchored element to the vertical edges of the window if
         // its vertical bounds overflow, aligning to the top if it is taller than the limits.
         if desired.bottom() > limits.bottom() {
             desired.origin.y -= desired.bottom() - limits.bottom();
@@ -175,9 +175,11 @@ impl Element for Anchored {
             before_layout.offset.y.round(),
         );
 
-        for child in &mut self.children {
-            child.after_layout(cx);
-        }
+        cx.with_element_offset(before_layout.offset, |cx| {
+            for child in &mut self.children {
+                child.after_layout(cx);
+            }
+        })
     }
 
     fn paint(
@@ -185,8 +187,11 @@ impl Element for Anchored {
         _bounds: crate::Bounds<crate::Pixels>,
         _before_layout: &mut Self::BeforeLayout,
         _after_layout: &mut Self::AfterLayout,
-        _cx: &mut ElementContext,
+        cx: &mut ElementContext,
     ) {
+        for child in &mut self.children {
+            child.paint(cx);
+        }
     }
 }
 
