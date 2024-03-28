@@ -97,6 +97,7 @@ members = [
     "crates/zed_actions",
 
     "extensions/astro",
+    "extensions/bash",
     "extensions/gleam",
     "extensions/haskell",
     "extensions/prisma",

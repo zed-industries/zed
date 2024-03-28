@@ -1,0 +1,20 @@
+id = "bash"
+name = "Bash"
+version = "0.0.1"
+schema_version = 1
+description = "Bash support"
+repository = "https://github.com/zed-industries/zed"
+authors = ["Unknow <unknow@gmail.com>"]
+themes = []
+languages = ["languages/bash"]
+
+[lib]
+kind = "Rust"
+version = "0.0.4"
+
+[grammars.bash]
+repository = "https://github.com/tree-sitter/tree-sitter-bash"
+rev = "152c934b24cd7b3290e77cd6c9d80401f23fc915"
+
+[language_servers.bash-language-server]
+language = "Shell Script"
