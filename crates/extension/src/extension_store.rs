@@ -77,8 +77,6 @@ pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
         .as_ref()
         .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
     {
-        return false;
-
         if !is_supported_wasm_api_version(wasm_api_version) {
             return false;
         }
