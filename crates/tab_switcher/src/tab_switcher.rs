@@ -3,19 +3,19 @@ mod tab_switcher_tests;
 
 use collections::HashMap;
 use gpui::{
-    impl_actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, View, ViewContext,
-    VisualContext, WeakView,
+    impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement,
+    Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use serde::Deserialize;
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
     pane::{render_item_indicator, tab_details, Event as PaneEvent},
-    ModalView, Pane, Workspace,
+    ModalView, Pane, SaveIntent, Workspace,
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
@@ -266,6 +266,7 @@ impl PickerDelegate for TabSwitcherDelegate {
 
         let label = tab_match.item.tab_content(Some(tab_match.detail), true, cx);
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
+        let item_id = tab_match.item.item_id();
 
         Some(
             ListItem::new(ix)
@@ -273,7 +274,35 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
-                .children(indicator),
+                .children(indicator)
+                .when(true, |el| {
+                    let delete_button = div()
+                        .on_mouse_up(
+                            MouseButton::Right,
+                            cx.listener(move |picker, _: &MouseUpEvent, cx| {
+                                cx.stop_propagation();
+                                let Some(pane) = picker.delegate.pane.upgrade() else {
+                                    return;
+                                };
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }),
+                        )
+                        .child(
+                            IconButton::new("close_tab", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|cx| Tooltip::text("Close", cx)),
+                        )
+                        .into_any_element();
+
+                    if self.selected_index() == ix {
+                        el.end_slot::<AnyElement>(delete_button)
+                    } else {
+                        el.end_hover_slot::<AnyElement>(delete_button)
+                    }
+                }),
         )
     }
 }
