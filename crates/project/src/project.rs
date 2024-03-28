@@ -63,7 +63,6 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
-use release_channel::ReleaseChannel;
 use worktree::LocalSnapshot;
 
 use rpc::{ErrorCode, ErrorExt as _};
@@ -7389,18 +7388,13 @@ impl Project {
                 };
                 let repo = repo_entry.repo().clone();
 
-                let git_binary = match ReleaseChannel::global(cx) {
-                    ReleaseChannel::Dev => PathBuf::from("git"),
-                    _ => cx.path_for_auxiliary_executable("git")?,
-                };
-
-                anyhow::Ok((repo, relative_path, content, git_binary))
+                anyhow::Ok((repo, relative_path, content))
             });
 
             cx.background_executor().spawn(async move {
-                let (repo, relative_path, content, git_binary) = blame_params?;
+                let (repo, relative_path, content) = blame_params?;
                 let lock = repo.lock();
-                lock.blame(&git_binary, &relative_path, content)
+                lock.blame(&relative_path, content)
             })
         } else {
             let project_id = self.remote_id();
