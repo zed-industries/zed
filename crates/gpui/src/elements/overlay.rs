@@ -175,8 +175,8 @@ impl Element for Overlay {
             before_layout.offset.y.round(),
         );
 
-        for child in self.children.drain(..) {
-            cx.defer_draw(child, before_layout.offset, 1);
+        for child in &mut self.children {
+            child.after_layout(cx);
         }
     }
 
