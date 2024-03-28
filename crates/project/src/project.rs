@@ -5193,13 +5193,53 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Hover>>> {
-        let request_task = self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            GetHover { position },
-            cx,
-        );
-        cx.spawn(|_, _| async move { request_task.await.map(|hover| hover.into_iter().collect()) })
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let mut hover_responses = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| server.capabilities().hover_provider.is_some())
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .map(|server_id| {
+                    self.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetHover { position },
+                        cx,
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+
+            cx.spawn(|_, _| async move {
+                let mut hovers = Vec::with_capacity(hover_responses.len());
+                while let Some(hover_response) = hover_responses.next().await {
+                    if let Some(hover) = hover_response? {
+                        hovers.push(hover);
+                    }
+                }
+                Ok(hovers)
+            })
+        } else if self.is_remote() {
+            let request_task = self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::Primary,
+                GetHover { position },
+                cx,
+            );
+            cx.spawn(
+                |_, _| async move { request_task.await.map(|hover| hover.into_iter().collect()) },
+            )
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
     }
 
     pub fn hover<T: ToPointUtf16>(
