@@ -124,6 +124,7 @@ struct ProjectSearch {
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
+    last_search_query_text: Option<String>,
     search_id: usize,
     no_results: Option<bool>,
     limit_reached: bool,
@@ -182,6 +183,7 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
+            last_search_query_text: None,
             search_id: 0,
             no_results: None,
             limit_reached: false,
@@ -197,6 +199,7 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
+            last_search_query_text: self.last_search_query_text.clone(),
             search_id: self.search_id,
             no_results: self.no_results,
             limit_reached: self.limit_reached,
@@ -208,6 +211,7 @@ impl ProjectSearch {
             project.search_history_mut().add(query.as_str().to_string());
             project.search(query.clone(), cx)
         });
+        self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
@@ -368,10 +372,7 @@ impl Item for ProjectSearchView {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
-            .project
-            .read(cx)
-            .search_history()
-            .current()
+            .last_search_query_text
             .as_ref()
             .map(|query| {
                 let query = query.replace('\n', "");
