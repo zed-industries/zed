@@ -90,6 +90,19 @@ pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Takes only `max_lines` from the string and, if there were more than `max_lines-1`, appends a
+/// a newline and "..." to the string, so that `max_lines` are returned.
+/// Returns string unchanged if its length is smaller than max_lines.
+pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
+    let mut lines = s.lines().take(max_lines).collect::<Vec<_>>();
+    if lines.len() > max_lines - 1 {
+        lines.pop();
+        lines.join("\n") + "\n…"
+    } else {
+        lines.join("\n")
+    }
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
@@ -613,5 +626,32 @@ mod tests {
         for (text, expected_result) in words_to_test {
             assert_eq!(word_consists_of_emojis(text), expected_result);
         }
+    }
+
+    #[test]
+    fn test_truncate_lines_and_trailoff() {
+        let text = r#"Line 1
+Line 2
+Line 3"#;
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 2),
+            r#"Line 1
+…"#
+        );
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 3),
+            r#"Line 1
+Line 2
+…"#
+        );
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 4),
+            r#"Line 1
+Line 2
+Line 3"#
+        );
     }
 }
