@@ -33,8 +33,8 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Focused)
     }
     /// Scrolls so that the newest cursor is roughly an n-th line from the top.
-    pub fn target(n: usize) -> Self {
-        Self::Strategy(AutoscrollStrategy::Target(n))
+    pub fn top_relative(n: usize) -> Self {
+        Self::Strategy(AutoscrollStrategy::TopRelative(n))
     }
 }
 
@@ -47,7 +47,7 @@ pub enum AutoscrollStrategy {
     Focused,
     Top,
     Bottom,
-    Target(usize),
+    TopRelative(usize),
 }
 
 impl AutoscrollStrategy {
@@ -183,7 +183,7 @@ impl Editor {
                 scroll_position.y = (target_bottom - visible_lines).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
-            AutoscrollStrategy::Target(lines) => {
+            AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as f32;
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }

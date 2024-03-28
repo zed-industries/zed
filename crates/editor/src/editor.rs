@@ -9479,7 +9479,7 @@ impl Editor {
 
                 let nav_history = editor.nav_history.take();
                 editor.change_selections(
-                    Some(Autoscroll::target(offset_from_top as usize)),
+                    Some(Autoscroll::top_relative(offset_from_top as usize)),
                     cx,
                     |s| {
                         s.select_ranges([cursor..cursor]);
