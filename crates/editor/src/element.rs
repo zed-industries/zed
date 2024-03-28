@@ -3011,11 +3011,8 @@ impl Render for BlameEntryTooltip {
         };
 
         let message = match &self.commit_message {
-            Some(message) => message.clone(),
-            None => {
-                println!("can't find commit message");
-                self.blame_entry.summary.clone().unwrap_or_default()
-            }
+            Some(message) => util::truncate_lines_and_trailoff(message, 15),
+            None => self.blame_entry.summary.clone().unwrap_or_default(),
         };
 
         let pretty_commit_id = format!("{}", self.blame_entry.sha);
