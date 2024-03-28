@@ -5192,7 +5192,7 @@ impl Project {
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Hover>>> {
+    ) -> Task<Vec<Hover>> {
         if self.is_local() {
             let snapshot = buffer.read(cx).snapshot();
             let offset = position.to_offset(&snapshot);
@@ -5221,12 +5221,11 @@ impl Project {
             cx.spawn(|_, _| async move {
                 let mut hovers = Vec::with_capacity(hover_responses.len());
                 while let Some(hover_response) = hover_responses.next().await {
-                    // TODO kb one faulty langserver will spoil all hovers?
-                    if let Some(hover) = hover_response? {
+                    if let Some(hover) = hover_response.log_err().flatten() {
                         hovers.push(hover);
                     }
                 }
-                Ok(hovers)
+                hovers
             })
         } else if self.is_remote() {
             let request_task = self.request_lsp(
@@ -5235,11 +5234,17 @@ impl Project {
                 GetHover { position },
                 cx,
             );
-            cx.spawn(
-                |_, _| async move { request_task.await.map(|hover| hover.into_iter().collect()) },
-            )
+            cx.spawn(|_, _| async move {
+                request_task
+                    .await
+                    .log_err()
+                    .flatten()
+                    .map(|hover| vec![hover])
+                    .unwrap_or_default()
+            })
         } else {
-            Task::ready(Err(anyhow!("project does not have a remote id")))
+            log::error!("cannot show hovers: project does not have a remote id");
+            Task::ready(Vec::new())
         }
     }
 
@@ -5248,7 +5253,7 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Hover>>> {
+    ) -> Task<Vec<Hover>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.hover_impl(buffer, position, cx)
     }

@@ -4544,7 +4544,6 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         vec!["TailwindServer hover", "TypeScriptServer hover"],
         hover_task
             .await
-            .unwrap()
             .into_iter()
             .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
             .sorted()
