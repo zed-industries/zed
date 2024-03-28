@@ -103,6 +103,7 @@ members = [
     "extensions/purescript",
     "extensions/svelte",
     "extensions/uiua",
+    "extensions/zig",
 
     "tooling/xtask",
 ]
@@ -325,7 +326,6 @@ tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", re
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
-tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 unindent = "0.1.7"
 unicase = "2.6"
 url = "2.2"
