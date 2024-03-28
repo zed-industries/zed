@@ -10,7 +10,7 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use gpui::{
-    actions, div, impl_actions, overlay, px, uniform_list, Action, AppContext, AssetSource,
+    actions, div, impl_actions, px, uniform_list, Action, AppContext, AssetSource,
     AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
     Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
+use ui::{overlay, prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{

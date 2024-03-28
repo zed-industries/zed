@@ -1,13 +1,15 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    div, overlay, point, prelude::FluentBuilder, px, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, HitboxId, InteractiveElement,
-    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
-    VisualContext, WindowContext,
+    div, point, prelude::FluentBuilder, px, AnchorCorner, AnyElement, Bounds, DismissEvent,
+    DispatchPhase, Element, ElementContext, ElementId, HitboxId, InteractiveElement, IntoElement,
+    LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
+    WindowContext,
 };
 
 use crate::prelude::*;
+
+use super::overlay;
 
 pub trait PopoverTrigger: IntoElement + Clickable + Selectable + 'static {}
 

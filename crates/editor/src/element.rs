@@ -20,7 +20,7 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
+    div, fill, outline, point, px, quad, relative, size, svg, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity, Hitbox, Hsla,
     InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -49,8 +49,8 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, Tooltip};
+use ui::{overlay, prelude::*};
 use util::ResultExt;
 use workspace::item::Item;
 

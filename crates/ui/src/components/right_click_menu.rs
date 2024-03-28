@@ -1,10 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    div, overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
-    ElementContext, ElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, ManagedView,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    div, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element, ElementContext,
+    ElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, ManagedView, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
+
+use super::overlay;
 
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,

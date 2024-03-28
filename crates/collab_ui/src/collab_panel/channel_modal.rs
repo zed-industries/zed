@@ -5,13 +5,12 @@ use client::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, overlay, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusableView,
-    Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusableView, Model,
+    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
+use ui::{overlay, prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 

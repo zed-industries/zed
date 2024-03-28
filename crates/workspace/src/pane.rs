@@ -8,7 +8,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
+    actions, impl_actions, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
     Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
@@ -32,8 +32,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
+    overlay, prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape,
+    IconName, IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
