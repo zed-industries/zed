@@ -194,6 +194,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let version_match = &self.matches[ix];
+        let extension_version = &self.extension_versions[version_match.candidate_id];
 
         Some(
             ListItem::new(ix)
@@ -203,6 +204,12 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
                 .child(HighlightedLabel::new(
                     version_match.string.clone(),
                     version_match.positions.clone(),
+                ))
+                .end_slot(Label::new(
+                    extension_version
+                        .published_at
+                        .format("%Y-%m-%d")
+                        .to_string(),
                 )),
         )
     }
