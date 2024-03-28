@@ -1111,6 +1111,7 @@ impl EditorElement {
         let start_x = em_width * 1;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+        let text_style = &self.style.text;
 
         let shaped_lines = blamed_rows
             .into_iter()
@@ -1121,6 +1122,7 @@ impl EditorElement {
                         ix,
                         &blame,
                         blame_entry,
+                        text_style,
                         &mut last_used_color,
                         self.editor.clone(),
                         cx,
@@ -2868,6 +2870,7 @@ fn render_blame_entry(
     ix: usize,
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
+    text_style: &TextStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: View<Editor>,
     cx: &mut ElementContext<'_>,
@@ -2911,6 +2914,8 @@ fn render_blame_entry(
     let commit_message = blame.read(cx).message_for_entry(&blame_entry);
 
     h_flex()
+        .font(text_style.font().family)
+        .line_height(text_style.line_height)
         .id(("blame", ix))
         .children([
             div()
