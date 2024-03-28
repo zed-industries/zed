@@ -5123,7 +5123,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, upwards: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5152,7 +5152,7 @@ impl Editor {
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            let insert_location = if action.move_upwards {
+            let insert_location = if upwards {
                 Point::new(rows.end, 0)
             } else {
                 start
@@ -5167,6 +5167,14 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
+    }
+
+    pub fn duplicate_line_up(&mut self, _: &DuplicateLineUp, cx: &mut ViewContext<Self>) {
+        self.duplicate_line(true, cx);
+    }
+
+    pub fn duplicate_line_down(&mut self, _: &DuplicateLineDown, cx: &mut ViewContext<Self>) {
+        self.duplicate_line(false, cx);
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
