@@ -18,6 +18,8 @@ impl Render for SetMenus {
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+
         // Bring the menu bar to the foreground (so you can see the menu bar)
         cx.activate(true);
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
