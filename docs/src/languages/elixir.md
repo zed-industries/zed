@@ -19,9 +19,7 @@ brew install elixir-ls
 
 3. Restart Zed
 
-{% hint style="warning" %}
-If `elixir-ls` is not running in an elixir project, check the error log via the command palette action `zed: open log`. If you find an error message mentioning: `invalid LSP message header "Shall I install Hex? (if running non-interactively, use \"mix local.hex --force\") [Yn]`, you might need to install [`Hex`](https://hex.pm). You run `elixir-ls` from the command line and accept the prompt to install `Hex`.
-{% endhint %}
+> If `elixir-ls` is not running in an elixir project, check the error log via the command palette action `zed: open log`. If you find an error message mentioning: `invalid LSP message header "Shall I install Hex? (if running non-interactively, use \"mix local.hex --force\") [Yn]`, you might need to install [`Hex`](https://hex.pm). You run `elixir-ls` from the command line and accept the prompt to install `Hex`.
 
 ### Formatting with Mix
 
@@ -41,3 +39,21 @@ If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), u
   }
 }
 ```
+
+### Additional workspace configuration options (requires Zed `0.128.0`):
+
+You can pass additional elixir-ls workspace configuration options via lsp settings in `settings.json`.
+
+The following example disables dialyzer:
+
+```json
+"lsp": {
+  "elixir-ls": {
+    "settings": {
+      "dialyzerEnabled": false
+    }
+  }
+}
+```
+
+See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for more options.

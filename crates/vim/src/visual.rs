@@ -9,7 +9,7 @@ use editor::{
     Bias, DisplayPoint, Editor,
 };
 use gpui::{actions, ViewContext, WindowContext};
-use language::{Selection, SelectionGoal};
+use language::{Point, Selection, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{
@@ -87,6 +87,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                         // If the file ends with a newline (which is common) we don't do this.
                         // so that if you go to the end of such a file you can use "up" to go
                         // to the previous line and have it work somewhat as expected.
+                        #[allow(clippy::nonminimal_bool)]
                         if !selection.reversed
                             && !selection.is_empty()
                             && !(selection.end.column() == 0 && selection.end == map.max_point())
@@ -222,7 +223,7 @@ pub fn visual_block_motion(
                     start: start.to_point(map),
                     end: end.to_point(map),
                     reversed: is_reversed,
-                    goal: goal.clone(),
+                    goal,
                 };
 
                 selections.push(selection);
@@ -254,16 +255,21 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
-                        let mut head = selection.head();
+                        let mut mut_selection = selection.clone();
 
                         // all our motions assume that the current character is
                         // after the cursor; however in the case of a visual selection
                         // the current character is before the cursor.
-                        if !selection.reversed {
-                            head = movement::left(map, head);
+                        // But this will affect the judgment of the html tag
+                        // so the html tag needs to skip this logic.
+                        if !selection.reversed && object != Object::Tag {
+                            mut_selection.set_head(
+                                movement::left(map, mut_selection.head()),
+                                mut_selection.goal,
+                            );
                         }
 
-                        if let Some(range) = object.range(map, head, around) {
+                        if let Some(range) = object.range(map, mut_selection, around) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
                                     || selection.is_empty()
@@ -277,6 +283,25 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                                 } else {
                                     selection.end = range.end;
                                 }
+                            }
+
+                            // In the visual selection result of a paragraph object, the cursor is
+                            // placed at the start of the last line. And in the visual mode, the
+                            // selection end is located after the end character. So, adjustment of
+                            // selection end is needed.
+                            //
+                            // We don't do this adjustment for a one-line blank paragraph since the
+                            // trailing newline is included in its selection from the beginning.
+                            if object == Object::Paragraph && range.start != range.end {
+                                let row_of_selection_end_line = selection.end.to_point(map).row;
+                                let new_selection_end =
+                                    if map.buffer_snapshot.line_len(row_of_selection_end_line) == 0
+                                    {
+                                        Point::new(row_of_selection_end_line + 1, 0)
+                                    } else {
+                                        Point::new(row_of_selection_end_line, 1)
+                                    };
+                                selection.end = new_selection_end.to_display_point(map);
                             }
                         }
                     });

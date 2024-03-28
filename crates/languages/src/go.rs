@@ -5,8 +5,10 @@ use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
+use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
 use serde_json::json;
+use settings::Settings;
 use smol::{fs, process};
 use std::{
     any::Any,
@@ -19,7 +21,7 @@ use std::{
         Arc,
     },
 };
-use util::{async_maybe, fs::remove_matching, github::latest_github_release, ResultExt};
+use util::{fs::remove_matching, github::latest_github_release, maybe, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -28,18 +30,18 @@ fn server_binary_arguments() -> Vec<OsString> {
 #[derive(Copy, Clone)]
 pub struct GoLspAdapter;
 
+impl GoLspAdapter {
+    const SERVER_NAME: &'static str = "gopls";
+}
+
 lazy_static! {
     static ref GOPLS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("gopls".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "gopls"
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
     async fn fetch_latest_server_version(
@@ -58,23 +60,41 @@ impl super::LspAdapter for GoLspAdapter {
         Ok(Box::new(version) as Box<_>)
     }
 
-    fn check_if_user_installed(
+    async fn check_if_user_installed(
         &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Option<LanguageServerBinary>>> {
-        let delegate = delegate.clone();
+        delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let configured_binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.binary.clone())
+        });
 
-        Some(cx.spawn(|cx| async move {
-            match cx.update(|cx| delegate.which_command(OsString::from("gopls"), cx)) {
-                Ok(task) => task.await.map(|(path, env)| LanguageServerBinary {
-                    path,
-                    arguments: server_binary_arguments(),
-                    env: Some(env),
-                }),
-                Err(_) => None,
-            }
-        }))
+        if let Ok(Some(BinarySettings {
+            path: Some(path),
+            arguments,
+        })) = configured_binary
+        {
+            Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            })
+        } else {
+            let env = delegate.shell_env().await;
+            let path = delegate.which("gopls".as_ref()).await?;
+            Some(LanguageServerBinary {
+                path,
+                arguments: server_binary_arguments(),
+                env: Some(env),
+            })
+        }
     }
 
     fn will_fetch_server(
@@ -198,8 +218,11 @@ impl super::LspAdapter for GoLspAdapter {
             })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "usePlaceholders": true,
             "hints": {
                 "assignVariableTypes": true,
@@ -210,7 +233,7 @@ impl super::LspAdapter for GoLspAdapter {
                 "parameterNames": true,
                 "rangeVariableTypes": true
             }
-        }))
+        })))
     }
 
     async fn label_for_completion(
@@ -374,7 +397,7 @@ impl super::LspAdapter for GoLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -423,12 +446,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_go_label_for_completion() {
-        let language = language(
-            "go",
-            tree_sitter_go::language(),
-            Some(Arc::new(GoLspAdapter)),
-        )
-        .await;
+        let adapter = Arc::new(GoLspAdapter);
+        let language = language("go", tree_sitter_go::language());
 
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -446,13 +465,16 @@ mod tests {
         let highlight_number = grammar.highlight_id_for_name("number").unwrap();
 
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FUNCTION),
-                    label: "Hello".to_string(),
-                    detail: Some("func(a B) c.D".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        label: "Hello".to_string(),
+                        detail: Some("func(a B) c.D".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "Hello(a B) c.D".to_string(),
@@ -467,13 +489,16 @@ mod tests {
 
         // Nested methods
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::METHOD),
-                    label: "one.two.Three".to_string(),
-                    detail: Some("func() [3]interface{}".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "one.two.Three".to_string(),
+                        detail: Some("func() [3]interface{}".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "one.two.Three() [3]interface{}".to_string(),
@@ -488,13 +513,16 @@ mod tests {
 
         // Nested fields
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FIELD),
-                    label: "two.Three".to_string(),
-                    detail: Some("a.Bcd".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "two.Three".to_string(),
+                        detail: Some("a.Bcd".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "two.Three a.Bcd".to_string(),

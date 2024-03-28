@@ -13,7 +13,7 @@ use language::{
 };
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
-use project::{search::SearchQuery, Project, ProjectPath};
+use project::{search::SearchQuery, Project, ProjectPath, SearchResult};
 use rand::{
     distributions::{Alphanumeric, DistString},
     prelude::*,
@@ -879,8 +879,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                 drop(project);
                 let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
-                    while let Some((buffer, ranges)) = search.next().await {
-                        results.entry(buffer).or_insert(ranges);
+                    while let Some(result) = search.next().await {
+                        if let SearchResult::Buffer { buffer, ranges } = result {
+                            results.entry(buffer).or_insert(ranges);
+                        }
                     }
                     results
                 });
@@ -996,7 +998,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let statuses = statuses
                         .iter()
-                        .map(|(path, val)| (path.as_path(), val.clone()))
+                        .map(|(path, val)| (path.as_path(), *val))
                         .collect::<Vec<_>>();
 
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
@@ -1021,7 +1023,7 @@ impl RandomizedTest for ProjectCollaborationTest {
     }
 
     async fn on_client_added(client: &Rc<TestClient>, _: &mut TestAppContext) {
-        let mut language = Language::new(
+        client.language_registry().add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 matcher: LanguageMatcher {
@@ -1031,9 +1033,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                 ..Default::default()
             },
             None,
-        );
-        language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+        )));
+        client.language_registry().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
                 name: "the-fake-language-server",
                 capabilities: lsp::LanguageServer::full_capabilities(),
                 initializer: Some(Box::new({
@@ -1132,9 +1135,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                     }
                 })),
                 ..Default::default()
-            }))
-            .await;
-        client.app_state.languages.add(Arc::new(language));
+            },
+        );
     }
 
     async fn on_quiesce(_: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {
@@ -1483,10 +1485,10 @@ fn project_for_root_name(
     root_name: &str,
     cx: &TestAppContext,
 ) -> Option<Model<Project>> {
-    if let Some(ix) = project_ix_for_root_name(&*client.local_projects().deref(), root_name, cx) {
+    if let Some(ix) = project_ix_for_root_name(client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
-    if let Some(ix) = project_ix_for_root_name(&*client.remote_projects().deref(), root_name, cx) {
+    if let Some(ix) = project_ix_for_root_name(client.remote_projects().deref(), root_name, cx) {
         return Some(client.remote_projects()[ix].clone());
     }
     None

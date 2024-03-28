@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/language.rs"
 doctest = false
@@ -55,6 +58,7 @@ pulldown-cmark.workspace = true
 tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
+task.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

@@ -23,7 +23,7 @@ pub struct TestDb {
 
 impl TestDb {
     pub fn sqlite(background: BackgroundExecutor) -> Self {
-        let url = format!("sqlite::memory:");
+        let url = "sqlite::memory:";
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -109,13 +109,13 @@ macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
-            let test_db = crate::db::TestDb::postgres(cx.executor().clone());
+            let test_db = $crate::db::TestDb::postgres(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
 
         #[gpui::test]
         async fn $sqlite_test_name(cx: &mut gpui::TestAppContext) {
-            let test_db = crate::db::TestDb::sqlite(cx.executor().clone());
+            let test_db = $crate::db::TestDb::sqlite(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
     };
@@ -168,7 +168,7 @@ async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
         email,
         false,
         NewUserParams {
-            github_login: email[0..email.find("@").unwrap()].to_string(),
+            github_login: email[0..email.find('@').unwrap()].to_string(),
             github_user_id: GITHUB_USER_ID.fetch_add(1, SeqCst),
         },
     )

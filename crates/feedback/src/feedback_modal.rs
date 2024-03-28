@@ -185,7 +185,7 @@ impl FeedbackModal {
                 cx,
             );
             editor.set_show_gutter(false, cx);
-            editor.set_show_copilot_suggestions(false);
+            editor.set_show_inline_completions(false);
             editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
             editor
@@ -431,7 +431,7 @@ impl Render for FeedbackModal {
             .h(rems(32.))
             .p_4()
             .gap_2()
-            .child(Headline::new("Share Feedback"))
+            .child(Headline::new("Give Feedback"))
             .child(
                 Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
                     format!(

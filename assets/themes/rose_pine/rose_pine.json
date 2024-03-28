@@ -77,7 +77,7 @@
         "terminal.ansi.green": "#5cc1a3ff",
         "terminal.ansi.bright_green": "#31614fff",
         "terminal.ansi.dim_green": "#b3e1d1ff",
-        "terminal.ansi.yellow": "#f5c177ff",
+        "terminal.ansi.yellow": "#f6c177ff",
         "terminal.ansi.bright_yellow": "#8a643aff",
         "terminal.ansi.dim_yellow": "#fedfbbff",
         "terminal.ansi.blue": "#9bced6ff",
@@ -93,7 +93,7 @@
         "terminal.ansi.bright_white": "#e0def4ff",
         "terminal.ansi.dim_white": "#514e68ff",
         "link_text.hover": "#9bced6ff",
-        "conflict": "#f5c177ff",
+        "conflict": "#f6c177ff",
         "conflict.background": "#50331aff",
         "conflict.border": "#6d4d2bff",
         "created": "#5cc1a3ff",
@@ -117,7 +117,7 @@
         "info": "#9bced6ff",
         "info.background": "#2f3639ff",
         "info.border": "#435255ff",
-        "modified": "#f5c177ff",
+        "modified": "#f6c177ff",
         "modified.background": "#50331aff",
         "modified.border": "#6d4d2bff",
         "predictive": "#556b81ff",
@@ -132,7 +132,7 @@
         "unreachable": "#74708dff",
         "unreachable.background": "#292738ff",
         "unreachable.border": "#423f55ff",
-        "warning": "#f5c177ff",
+        "warning": "#f6c177ff",
         "warning.background": "#50331aff",
         "warning.border": "#6d4d2bff",
         "players": [
@@ -167,9 +167,9 @@
             "selection": "#ea6e923d"
           },
           {
-            "cursor": "#f5c177ff",
-            "background": "#f5c177ff",
-            "selection": "#f5c1773d"
+            "cursor": "#f6c177ff",
+            "background": "#f6c177ff",
+            "selection": "#f6c1773d"
           },
           {
             "cursor": "#5cc1a3ff",
@@ -319,7 +319,7 @@
             "font_weight": null
           },
           "string": {
-            "color": "#f5c177ff",
+            "color": "#f6c177ff",
             "font_style": null,
             "font_weight": null
           },
@@ -354,7 +354,7 @@
             "font_weight": null
           },
           "title": {
-            "color": "#f5c177ff",
+            "color": "#f6c177ff",
             "font_style": null,
             "font_weight": 700
           },
@@ -835,7 +835,7 @@
         "terminal.ansi.green": "#5cc1a3ff",
         "terminal.ansi.bright_green": "#31614fff",
         "terminal.ansi.dim_green": "#b3e1d1ff",
-        "terminal.ansi.yellow": "#f5c177ff",
+        "terminal.ansi.yellow": "#f6c177ff",
         "terminal.ansi.bright_yellow": "#8a643aff",
         "terminal.ansi.dim_yellow": "#fedfbbff",
         "terminal.ansi.blue": "#9bced6ff",
@@ -851,7 +851,7 @@
         "terminal.ansi.bright_white": "#e0def4ff",
         "terminal.ansi.dim_white": "#74708dff",
         "link_text.hover": "#9bced6ff",
-        "conflict": "#f5c177ff",
+        "conflict": "#f6c177ff",
         "conflict.background": "#50331aff",
         "conflict.border": "#6d4d2bff",
         "created": "#5cc1a3ff",
@@ -875,7 +875,7 @@
         "info": "#9bced6ff",
         "info.background": "#2f3639ff",
         "info.border": "#435255ff",
-        "modified": "#f5c177ff",
+        "modified": "#f6c177ff",
         "modified.background": "#50331aff",
         "modified.border": "#6d4d2bff",
         "predictive": "#516b83ff",
@@ -890,7 +890,7 @@
         "unreachable": "#85819eff",
         "unreachable.background": "#38354eff",
         "unreachable.border": "#504c68ff",
-        "warning": "#f5c177ff",
+        "warning": "#f6c177ff",
         "warning.background": "#50331aff",
         "warning.border": "#6d4d2bff",
         "players": [
@@ -925,9 +925,9 @@
             "selection": "#ea6e923d"
           },
           {
-            "cursor": "#f5c177ff",
-            "background": "#f5c177ff",
-            "selection": "#f5c1773d"
+            "cursor": "#f6c177ff",
+            "background": "#f6c177ff",
+            "selection": "#f6c1773d"
           },
           {
             "cursor": "#5cc1a3ff",
@@ -1077,7 +1077,7 @@
             "font_weight": null
           },
           "string": {
-            "color": "#f5c177ff",
+            "color": "#f6c177ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1112,7 +1112,7 @@
             "font_weight": null
           },
           "title": {
-            "color": "#f5c177ff",
+            "color": "#f6c177ff",
             "font_style": null,
             "font_weight": 700
           },

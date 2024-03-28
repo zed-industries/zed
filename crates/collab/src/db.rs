@@ -12,7 +12,7 @@ use futures::StreamExt;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::{
     proto::{self},
-    ConnectionId,
+    ConnectionId, ExtensionMetadata,
 };
 use sea_orm::{
     entity::prelude::*,
@@ -126,12 +126,6 @@ impl Database {
         }
 
         Ok(new_migrations)
-    }
-
-    /// Initializes static data that resides in the database by upserting it.
-    pub async fn initialize_static_data(&mut self) -> Result<()> {
-        self.initialize_notification_kinds().await?;
-        Ok(())
     }
 
     /// Transaction runs things in a transaction. If you want to call other methods
@@ -359,7 +353,7 @@ impl Database {
         const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
         if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
             let base_delay = SLEEPS[prev_attempt_count];
-            let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
+            let randomized_delay = base_delay * self.rng.lock().await.gen_range(0.5..=2.0);
             log::info!(
                 "retrying transaction after serialization error. delay: {} ms.",
                 randomized_delay
@@ -375,7 +369,7 @@ impl Database {
 }
 
 fn is_serialization_error(error: &Error) -> bool {
-    const SERIALIZATION_FAILURE_CODE: &'static str = "40001";
+    const SERIALIZATION_FAILURE_CODE: &str = "40001";
     match error {
         Error::Database(
             DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error))
@@ -456,6 +450,14 @@ pub struct CreatedChannelMessage {
     pub participant_connection_ids: Vec<ConnectionId>,
     pub channel_members: Vec<UserId>,
     pub notifications: NotificationBatch,
+}
+
+pub struct UpdatedChannelMessage {
+    pub message_id: MessageId,
+    pub participant_connection_ids: Vec<ConnectionId>,
+    pub notifications: NotificationBatch,
+    pub reply_to_message_id: Option<MessageId>,
+    pub timestamp: PrimitiveDateTime,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
@@ -546,7 +548,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    fn from_model(value: channel::Model) -> Self {
+    pub fn from_model(value: channel::Model) -> Self {
         Channel {
             id: value.id,
             visibility: value.visibility,
@@ -604,16 +606,14 @@ pub struct RejoinedChannelBuffer {
 #[derive(Clone)]
 pub struct JoinRoom {
     pub room: proto::Room,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
 }
 
 pub struct RejoinedRoom {
     pub room: proto::Room,
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
 }
 
 pub struct ResharedProject {
@@ -649,8 +649,7 @@ pub struct RejoinedWorktree {
 
 pub struct LeftRoom {
     pub room: proto::Room,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
     pub left_projects: HashMap<ProjectId, LeftProject>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
     pub deleted: bool,
@@ -658,8 +657,7 @@ pub struct LeftRoom {
 
 pub struct RefreshedRoom {
     pub room: proto::Room,
-    pub channel_id: Option<ChannelId>,
-    pub channel_members: Vec<UserId>,
+    pub channel: Option<channel::Model>,
     pub stale_participant_user_ids: Vec<UserId>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
 }
@@ -670,6 +668,8 @@ pub struct RefreshedChannelBuffer {
 }
 
 pub struct Project {
+    pub id: ProjectId,
+    pub role: ChannelRole,
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
@@ -695,7 +695,7 @@ impl ProjectCollaborator {
 #[derive(Debug)]
 pub struct LeftProject {
     pub id: ProjectId,
-    pub host_user_id: UserId,
+    pub host_user_id: Option<UserId>,
     pub host_connection_id: Option<ConnectionId>,
     pub connection_ids: Vec<ConnectionId>,
 }
@@ -725,20 +725,9 @@ pub struct NewExtensionVersion {
     pub description: String,
     pub authors: Vec<String>,
     pub repository: String,
+    pub schema_version: i32,
+    pub wasm_api_version: Option<String>,
     pub published_at: PrimitiveDateTime,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct ExtensionMetadata {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub authors: Vec<String>,
-    pub description: String,
-    pub repository: String,
-    #[serde(serialize_with = "serialize_iso8601")]
-    pub published_at: PrimitiveDateTime,
-    pub download_count: u64,
 }
 
 pub fn serialize_iso8601<S: Serializer>(

@@ -10,8 +10,17 @@ use schemars::{
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
+
+impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
+    fn into(self) -> SettingsLocation<'a> {
+        SettingsLocation {
+            worktree_id: self.worktree_id(),
+            path: self.path().as_ref(),
+        }
+    }
+}
 
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
@@ -33,7 +42,7 @@ pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    let location = file.map(|f| (f.worktree_id(), f.path().as_ref()));
+    let location = file.map(|f| f.as_ref().into());
     AllLanguageSettings::get(location, cx)
 }
 
@@ -44,6 +53,7 @@ pub struct AllLanguageSettings {
     pub copilot: CopilotSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
+    pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for a particular language.
@@ -93,6 +103,8 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    // Controls how the editor handles the autoclosed characters.
+    pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
 }
@@ -121,6 +133,10 @@ pub struct AllLanguageSettingsContent {
     /// The settings for individual languages.
     #[serde(default, alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    /// Settings for associating file extensions and filenames
+    /// with languages.
+    #[serde(default)]
+    pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for a particular language.
@@ -217,7 +233,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
-
+    // Controls how the editor handles the autoclosed characters.
+    // When set to `false`(default), skipping over and auto-removing of the closing characters
+    // happen only for auto-inserted characters.
+    // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
+    // no matter how they were inserted.
+    ///
+    /// Default: false
+    pub always_treat_brackets_as_autoclosed: Option<bool>,
     /// Which code actions to run on save
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
@@ -502,6 +525,16 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
 
+        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        for user_file_types in user_settings.iter().map(|s| &s.file_types) {
+            for (language, suffixes) in user_file_types {
+                file_types
+                    .entry(language.clone())
+                    .or_default()
+                    .extend_from_slice(suffixes);
+            }
+        }
+
         Ok(Self {
             copilot: CopilotSettings {
                 feature_enabled: copilot_enabled,
@@ -512,6 +545,7 @@ impl settings::Settings for AllLanguageSettings {
             },
             defaults,
             languages,
+            file_types,
         })
     }
 
@@ -577,6 +611,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(
+        &mut settings.always_treat_brackets_as_autoclosed,
+        src.always_treat_brackets_as_autoclosed,
+    );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
     merge(

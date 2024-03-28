@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/go_to_line.rs"
 doctest = false
@@ -21,3 +24,13 @@ workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+menu.workspace = true
+project = { workspace = true, features = ["test-support"] }
+rope.workspace = true
+serde_json.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-typescript.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

@@ -90,15 +90,13 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        const HEIGHT_IN_REMS: f32 = 29. / 16.;
-
         div()
             .id(self.id)
             .group("tab_bar")
             .flex()
             .flex_none()
             .w_full()
-            .h(rems(HEIGHT_IN_REMS))
+            .h(rems_from_px(29.))
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
@@ -123,7 +121,6 @@ impl RenderOnce for TabBar {
                             .absolute()
                             .top_0()
                             .left_0()
-                            .z_index(1)
                             .size_full()
                             .border_b()
                             .border_color(cx.theme().colors().border),
@@ -131,7 +128,6 @@ impl RenderOnce for TabBar {
                     .child(
                         h_flex()
                             .id("tabs")
-                            .z_index(2)
                             .flex_grow()
                             .overflow_x_scroll()
                             .when_some(self.scroll_handle, |cx, scroll_handle| {

@@ -9,20 +9,15 @@ use smol::fs;
 use std::env::consts::ARCH;
 use std::ffi::OsString;
 use std::{any::Any, path::PathBuf};
-use util::async_maybe;
-use util::github::latest_github_release;
+use util::{github::latest_github_release, maybe};
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct OmniSharpAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for OmniSharpAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("OmniSharp".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "OmniSharp"
     }
 
     async fn fetch_latest_server_version(
@@ -81,7 +76,7 @@ impl super::LspAdapter for OmniSharpAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo!("windows")
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(
@@ -119,7 +114,7 @@ impl super::LspAdapter for OmniSharpAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

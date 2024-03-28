@@ -1,15 +1,12 @@
 use crate::{
-    motion::Motion,
+    motion::{self, Motion},
     object::Object,
     state::Mode,
-    utils::{coerce_punctuation, copy_selections_content},
+    utils::copy_selections_content,
     Vim,
 };
 use editor::{
-    display_map::DisplaySnapshot,
-    movement::{self, FindRange, TextLayoutDetails},
-    scroll::Autoscroll,
-    DisplayPoint,
+    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
@@ -39,9 +36,37 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             times,
                             ignore_punctuation,
                             &text_layout_details,
+                            false,
+                        )
+                    } else if let Motion::NextSubwordStart { ignore_punctuation } = motion {
+                        expand_changed_word_selection(
+                            map,
+                            selection,
+                            times,
+                            ignore_punctuation,
+                            &text_layout_details,
+                            true,
                         )
                     } else {
-                        motion.expand_selection(map, selection, times, false, &text_layout_details)
+                        let result = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            false,
+                            &text_layout_details,
+                        );
+                        if let Motion::CurrentLine = motion {
+                            let scope = map
+                                .buffer_snapshot
+                                .language_scope_at(selection.start.to_point(&map));
+                            for (ch, _) in map.chars_at(selection.start) {
+                                if ch == '\n' || char_kind(&scope, ch) != CharKind::Whitespace {
+                                    break;
+                                }
+                                *selection.start.column_mut() += 1;
+                            }
+                        }
+                        result
                     };
                 });
             });
@@ -94,6 +119,7 @@ fn expand_changed_word_selection(
     times: Option<usize>,
     ignore_punctuation: bool,
     text_layout_details: &TextLayoutDetails,
+    use_subword: bool,
 ) -> bool {
     if times.is_none() || times.unwrap() == 1 {
         let scope = map
@@ -106,32 +132,30 @@ fn expand_changed_word_selection(
             .unwrap_or_default();
 
         if in_word {
-            selection.end =
-                movement::find_boundary(map, selection.end, FindRange::MultiLine, |left, right| {
-                    let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                    let right_kind =
-                        coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
-
-                    left_kind != right_kind && left_kind != CharKind::Whitespace
-                });
+            if !use_subword {
+                selection.end =
+                    motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
+            } else {
+                selection.end =
+                    motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
+            }
+            selection.end = motion::next_char(map, selection.end, false);
             true
         } else {
-            Motion::NextWordStart { ignore_punctuation }.expand_selection(
-                map,
-                selection,
-                None,
-                false,
-                &text_layout_details,
-            )
+            let motion = if use_subword {
+                Motion::NextSubwordStart { ignore_punctuation }
+            } else {
+                Motion::NextWordStart { ignore_punctuation }
+            };
+            motion.expand_selection(map, selection, None, false, &text_layout_details)
         }
     } else {
-        Motion::NextWordStart { ignore_punctuation }.expand_selection(
-            map,
-            selection,
-            times,
-            false,
-            &text_layout_details,
-        )
+        let motion = if use_subword {
+            Motion::NextSubwordStart { ignore_punctuation }
+        } else {
+            Motion::NextWordStart { ignore_punctuation }
+        };
+        motion.expand_selection(map, selection, times, false, &text_layout_details)
     }
 }
 
@@ -388,6 +412,40 @@ mod test {
             jumps over
             ˇ"},
             ["c", "shift-g"],
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_change_cc(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+           The quick
+             brownˇ fox
+           jumps over
+           the lazy"},
+            ["c", "c"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
+           ˇThe quick
+           brown fox
+           jumps over
+           the lazy"},
+            ["c", "c"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
+           The quick
+             broˇwn fox
+           jumˇps over
+           the lazy"},
+            ["c", "c"],
         )
         .await;
     }

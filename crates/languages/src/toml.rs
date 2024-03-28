@@ -6,20 +6,16 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf};
-use util::async_maybe;
 use util::github::latest_github_release;
+use util::maybe;
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
 pub struct TaploLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TaploLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("taplo-ls".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "taplo-ls"
     }
 
     async fn fetch_latest_server_version(
@@ -72,7 +68,7 @@ impl LspAdapter for TaploLspAdapter {
 
             futures::io::copy(decompressed_bytes, &mut file).await?;
 
-            // todo!("windows")
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
@@ -112,7 +108,7 @@ impl LspAdapter for TaploLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

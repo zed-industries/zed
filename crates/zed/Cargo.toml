@@ -2,14 +2,13 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.126.0"
+version = "0.130.0"
 publish = false
 license = "GPL-3.0-or-later"
+authors = ["Zed Team <hi@zed.dev>"]
 
-[lib]
-name = "zed"
-path = "src/zed.rs"
-doctest = false
+[lints]
+workspace = true
 
 [[bin]]
 name = "Zed"
@@ -27,6 +26,7 @@ breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
 chrono.workspace = true
+clap.workspace = true
 cli.workspace = true
 client.workspace = true
 clock.workspace = true
@@ -44,13 +44,12 @@ extensions_ui.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true
-fsevent.workspace = true
 futures.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
+image_viewer.workspace = true
 install_cli.workspace = true
 isahc.workspace = true
-itertools.workspace = true
 journal.workspace = true
 language.workspace = true
 language_selector.workspace = true
@@ -73,12 +72,12 @@ recent_projects.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 search.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 simplelog = "0.9"
 smol.workspace = true
+tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
 terminal_view.workspace = true
@@ -91,6 +90,10 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-manifest = "1.4.0"
+winresource = "0.1"
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
@@ -107,7 +110,7 @@ identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-dev"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-nightly]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
@@ -115,7 +118,7 @@ identifier = "dev.zed.Zed-Nightly"
 name = "Zed Nightly"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-nightly"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
@@ -123,7 +126,7 @@ identifier = "dev.zed.Zed-Preview"
 name = "Zed Preview"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-preview"]
+osx_url_schemes = ["zed"]
 
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]

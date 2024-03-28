@@ -1,5 +1,6 @@
 use crate::{
-    point, seal::Sealed, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
+    point, seal::Sealed, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
+    ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -99,6 +100,9 @@ pub struct MouseDownEvent {
 
     /// The number of times the button has been clicked.
     pub click_count: usize,
+
+    /// Whether this is the first, focusing click.
+    pub first_mouse: bool,
 }
 
 impl Sealed for MouseDownEvent {}
@@ -343,7 +347,8 @@ impl ExternalPaths {
 
 impl Render for ExternalPaths {
     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        // Intentionally left empty because the platform will render icons for the dragged files
+        // the platform will render icons for the dragged files
+        Empty
     }
 }
 
@@ -434,6 +439,7 @@ impl PlatformInput {
 
 #[cfg(test)]
 mod test {
+
     use crate::{
         self as gpui, div, Element, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
         Keystroke, ParentElement, Render, TestAppContext, VisualContext,

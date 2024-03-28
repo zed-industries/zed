@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext, Global};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -86,9 +86,8 @@ pub trait Settings: 'static + Send + Sync {
         });
     }
 
-    /// path is a (worktree ID, Path)
     #[track_caller]
-    fn get<'a>(path: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a Self
+    fn get<'a>(path: Option<SettingsLocation>, cx: &'a AppContext) -> &'a Self
     where
         Self: Sized,
     {
@@ -96,7 +95,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn get_global<'a>(cx: &'a AppContext) -> &'a Self
+    fn get_global(cx: &AppContext) -> &Self
     where
         Self: Sized,
     {
@@ -104,7 +103,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn try_read_global<'a, R>(cx: &'a AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
+    fn try_read_global<R>(cx: &AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
     where
         Self: Sized,
     {
@@ -112,12 +111,18 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn override_global<'a>(settings: Self, cx: &'a mut AppContext)
+    fn override_global(settings: Self, cx: &mut AppContext)
     where
         Self: Sized,
     {
         cx.global_mut::<SettingsStore>().override_global(settings)
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct SettingsLocation<'a> {
+    pub worktree_id: usize,
+    pub path: &'a Path,
 }
 
 pub struct SettingsJsonSchemaParams<'a> {
@@ -168,7 +173,7 @@ trait AnySettingValue: 'static + Send + Sync {
         custom: &[DeserializedSetting],
         cx: &mut AppContext,
     ) -> Result<Box<dyn Any>>;
-    fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any;
+    fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: usize, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
@@ -210,10 +215,10 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
+                .get(release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
-                    .deserialize_setting(&release_settings)
+                    .deserialize_setting(release_settings)
                     .log_err()
                 {
                     user_values_stack.push(release_settings);
@@ -234,7 +239,7 @@ impl SettingsStore {
     ///
     /// Panics if the given setting type has not been registered, or if there is no
     /// value for this setting.
-    pub fn get<T: Settings>(&self, path: Option<(usize, &Path)>) -> &T {
+    pub fn get<T: Settings>(&self, path: Option<SettingsLocation>) -> &T {
         self.setting_values
             .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -316,7 +321,7 @@ impl SettingsStore {
         let raw_settings = parse_json_with_comments::<serde_json::Value>(text).unwrap_or_default();
         let old_content = match setting.deserialize_setting(&raw_settings) {
             Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
-            Err(_) => Box::new(T::FileContent::default()),
+            Err(_) => Box::<<T as Settings>::FileContent>::default(),
         };
         let mut new_content = old_content.clone();
         update(&mut new_content);
@@ -340,7 +345,7 @@ impl SettingsStore {
             &new_value,
             &mut edits,
         );
-        return edits;
+        edits
     }
 
     /// Configure the tab sized when updating JSON files.
@@ -474,7 +479,28 @@ impl SettingsStore {
             merge_schema(target_schema, setting_schema.schema);
         }
 
-        fn merge_schema(target: &mut SchemaObject, source: SchemaObject) {
+        fn merge_schema(target: &mut SchemaObject, mut source: SchemaObject) {
+            let source_subschemas = source.subschemas();
+            let target_subschemas = target.subschemas();
+            if let Some(all_of) = source_subschemas.all_of.take() {
+                target_subschemas
+                    .all_of
+                    .get_or_insert(Vec::new())
+                    .extend(all_of);
+            }
+            if let Some(any_of) = source_subschemas.any_of.take() {
+                target_subschemas
+                    .any_of
+                    .get_or_insert(Vec::new())
+                    .extend(any_of);
+            }
+            if let Some(one_of) = source_subschemas.one_of.take() {
+                target_subschemas
+                    .one_of
+                    .get_or_insert(Vec::new())
+                    .extend(one_of);
+            }
+
             if let Some(source) = source.object {
                 let target_properties = &mut target.object().properties;
                 for (key, value) in source.properties {
@@ -543,10 +569,10 @@ impl SettingsStore {
 
             if let Some(release_settings) = &self
                 .raw_user_settings
-                .get(&*release_channel::RELEASE_CHANNEL.dev_name())
+                .get(release_channel::RELEASE_CHANNEL.dev_name())
             {
                 if let Some(release_settings) = setting_value
-                    .deserialize_setting(&release_settings)
+                    .deserialize_setting(release_settings)
                     .log_err()
                 {
                     user_settings_stack.push(release_settings);
@@ -659,10 +685,10 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         Ok(DeserializedSetting(Box::new(value)))
     }
 
-    fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any {
-        if let Some((root_id, path)) = path {
+    fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
+        if let Some(SettingsLocation { worktree_id, path }) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
-                if root_id == *settings_root_id && path.starts_with(&settings_path) {
+                if worktree_id == *settings_root_id && path.starts_with(settings_path) {
                     return value;
                 }
             }
@@ -755,8 +781,8 @@ fn replace_value_in_json_text(
     tab_size: usize,
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
-    const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
-    const LANGUAGES: &'static str = "languages";
+    const LANGUAGE_OVERRIDES: &str = "language_overrides";
+    const LANGUAGES: &str = "languages";
 
     lazy_static! {
         static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
@@ -799,15 +825,15 @@ fn replace_value_in_json_text(
             break;
         }
 
-        first_key_start.get_or_insert_with(|| key_range.start);
+        first_key_start.get_or_insert(key_range.start);
 
         let found_key = text
             .get(key_range.clone())
             .map(|key_text| {
                 if key_path[depth] == LANGUAGES && has_language_overrides {
-                    return key_text == format!("\"{}\"", LANGUAGE_OVERRIDES);
+                    key_text == format!("\"{}\"", LANGUAGE_OVERRIDES)
                 } else {
-                    return key_text == format!("\"{}\"", key_path[depth]);
+                    key_text == format!("\"{}\"", key_path[depth])
                 }
             })
             .unwrap_or(false);
@@ -820,9 +846,9 @@ fn replace_value_in_json_text(
 
             if depth == key_path.len() {
                 break;
-            } else {
-                first_key_start = None;
             }
+
+            first_key_start = None;
         }
     }
 
@@ -1010,7 +1036,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get::<UserSettings>(Some((1, Path::new("/root1/something")))),
+            store.get::<UserSettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root1/something"),
+            })),
             &UserSettings {
                 name: "John Doe".to_string(),
                 age: 31,
@@ -1018,7 +1047,10 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<UserSettings>(Some((1, Path::new("/root1/subdir/something")))),
+            store.get::<UserSettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root1/subdir/something")
+            })),
             &UserSettings {
                 name: "Jane Doe".to_string(),
                 age: 31,
@@ -1026,7 +1058,10 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<UserSettings>(Some((1, Path::new("/root2/something")))),
+            store.get::<UserSettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root2/something")
+            })),
             &UserSettings {
                 name: "John Doe".to_string(),
                 age: 42,
@@ -1034,7 +1069,10 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<MultiKeySettings>(Some((1, Path::new("/root2/something")))),
+            store.get::<MultiKeySettings>(Some(SettingsLocation {
+                worktree_id: 1,
+                path: Path::new("/root2/something")
+            })),
             &MultiKeySettings {
                 key1: "a".to_string(),
                 key2: "b".to_string(),

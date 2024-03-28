@@ -8,6 +8,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use util::http::{self, HttpClient};
 
+pub use image::ImageFormat;
+
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub(crate) struct RenderImageParams {
     pub(crate) image_id: ImageId,
@@ -46,7 +48,7 @@ pub(crate) struct ImageCache {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum UriOrPath {
+pub(crate) enum UriOrPath {
     Uri(SharedUri),
     Path(Arc<PathBuf>),
 }
@@ -89,7 +91,7 @@ impl ImageCache {
                             async move {
                                 match uri_or_path {
                                     UriOrPath::Path(uri) => {
-                                        let image = image::open(uri.as_ref())?.into_bgra8();
+                                        let image = image::open(uri.as_ref())?.into_rgba8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
                                     UriOrPath::Uri(uri) => {
@@ -108,7 +110,7 @@ impl ImageCache {
                                         let format = image::guess_format(&body)?;
                                         let image =
                                             image::load_from_memory_with_format(&body, format)?
-                                                .into_bgra8();
+                                                .into_rgba8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
                                 }

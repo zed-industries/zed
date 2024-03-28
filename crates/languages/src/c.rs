@@ -1,27 +1,23 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::AsyncAppContext;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 pub struct CLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("clangd".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "clangd"
     }
 
     async fn fetch_latest_server_version(
@@ -30,7 +26,13 @@ impl super::LspAdapter for CLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release =
             latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
-        let asset_name = format!("clangd-mac-{}.zip", release.tag_name);
+        let os_suffix = match consts::OS {
+            "macos" => "mac",
+            "linux" => "linux",
+            "windows" => "windows",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+        let asset_name = format!("clangd-{}-{}.zip", os_suffix, release.tag_name);
         let asset = release
             .assets
             .iter()
@@ -41,6 +43,20 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let env = delegate.shell_env().await;
+        let path = delegate.which("clangd".as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: Some(env),
+        })
     }
 
     async fn fetch_server_binary(
@@ -247,7 +263,7 @@ impl super::LspAdapter for CLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_clangd_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -277,7 +293,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use gpui::{BorrowAppContext, Context, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -296,7 +312,7 @@ mod tests {
                 });
             });
         });
-        let language = crate::language("c", tree_sitter_c::language(), None).await;
+        let language = crate::language("c", tree_sitter_c::language());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

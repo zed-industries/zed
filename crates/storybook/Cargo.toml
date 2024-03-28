@@ -5,13 +5,16 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "storybook"
 path = "src/storybook.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap = { version = "4.4", features = ["derive", "string"] }
+clap = { workspace = true, features = ["derive", "string"] }
 collab_ui = { workspace = true, features = ["stories"] }
 ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
@@ -30,6 +33,9 @@ story.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
 ui = { workspace = true, features = ["stories"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-manifest = "1.4.0"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

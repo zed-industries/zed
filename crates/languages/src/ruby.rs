@@ -6,14 +6,10 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for RubyLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("solargraph".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "solargraph"
     }
 
     async fn fetch_latest_server_version(

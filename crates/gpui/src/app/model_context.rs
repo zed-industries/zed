@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Global, Model, Subscription, Task, View, WeakModel, WindowContext, WindowHandle,
+    EventEmitter, Model, Subscription, Task, View, WeakModel, WindowContext, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -188,17 +188,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
                 emitter: self.model_state.entity_id,
             });
         }
-    }
-
-    /// Updates the given global
-    pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
-    where
-        G: Global,
-    {
-        let mut global = self.app.lease_global::<G>();
-        let result = f(&mut global, self);
-        self.app.end_global_lease(global);
-        result
     }
 
     /// Spawn the future returned by the given function.

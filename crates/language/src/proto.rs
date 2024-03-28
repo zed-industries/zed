@@ -2,7 +2,7 @@
 
 use crate::{
     diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
-    Language,
+    Language, LanguageRegistry,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -16,12 +16,6 @@ pub use proto::{BufferState, Operation};
 /// Serializes a [`RopeFingerprint`] to be sent over RPC.
 pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
     fingerprint.to_hex()
-}
-
-/// Deserializes a [`RopeFingerprint`] from the RPC representation.
-pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
-    RopeFingerprint::from_hex(fingerprint)
-        .map_err(|error| anyhow!("invalid fingerprint: {}", error))
 }
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
@@ -487,6 +481,7 @@ pub fn serialize_completion(completion: &Completion) -> proto::Completion {
 pub async fn deserialize_completion(
     completion: proto::Completion,
     language: Option<Arc<Language>>,
+    language_registry: &Arc<LanguageRegistry>,
 ) -> Result<Completion> {
     let old_start = completion
         .old_start
@@ -500,7 +495,11 @@ pub async fn deserialize_completion(
 
     let mut label = None;
     if let Some(language) = language {
-        label = language.label_for_completion(&lsp_completion).await;
+        if let Some(adapter) = language_registry.lsp_adapters(&language).first() {
+            label = adapter
+                .label_for_completion(&lsp_completion, &language)
+                .await;
+        }
     }
 
     Ok(Completion {

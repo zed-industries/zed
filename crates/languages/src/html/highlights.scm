@@ -10,6 +10,7 @@
 [
   "<"
   ">"
+  "<!"
   "</"
   "/>"
 ] @punctuation.bracket

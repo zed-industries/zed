@@ -4,7 +4,7 @@ use story::Story;
 use crate::{prelude::*, Avatar};
 use crate::{IconName, ListItem};
 
-const OVERFLOWING_TEXT: &'static str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Aenean mauris ligula, luctus vel dignissim eu, vestibulum sed libero. Sed at convallis velit.";
+const OVERFLOWING_TEXT: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Aenean mauris ligula, luctus vel dignissim eu, vestibulum sed libero. Sed at convallis velit.";
 
 pub struct ListItemStory;
 

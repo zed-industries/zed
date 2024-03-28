@@ -12,7 +12,7 @@ pub fn marked_text_offsets_by(
 
     for char in marked_text.chars() {
         if markers.contains(&char) {
-            let char_offsets = extracted_markers.entry(char).or_insert(Vec::new());
+            let char_offsets = extracted_markers.entry(char).or_default();
             char_offsets.push(unmarked_text.len());
         } else {
             unmarked_text.push(char);
@@ -119,7 +119,7 @@ pub fn marked_text_ranges(
     let mut current_range_start = None;
     let mut current_range_cursor = None;
 
-    let marked_text = marked_text.replace("•", " ");
+    let marked_text = marked_text.replace('•', " ");
     for (marked_ix, marker) in marked_text.match_indices(&['«', '»', 'ˇ']) {
         unmarked_text.push_str(&marked_text[prev_marked_ix..marked_ix]);
         let unmarked_len = unmarked_text.len();
@@ -131,9 +131,9 @@ pub fn marked_text_ranges(
                 if current_range_start.is_some() {
                     if current_range_cursor.is_some() {
                         panic!("duplicate point marker 'ˇ' at index {marked_ix}");
-                    } else {
-                        current_range_cursor = Some(unmarked_len);
                     }
+
+                    current_range_cursor = Some(unmarked_len);
                 } else {
                     ranges.push(unmarked_len..unmarked_len);
                 }
@@ -252,6 +252,7 @@ impl From<(char, char)> for TextRangeMarker {
 mod tests {
     use super::{generate_marked_text, marked_text_ranges};
 
+    #[allow(clippy::reversed_empty_ranges)]
     #[test]
     fn test_marked_text() {
         let (text, ranges) = marked_text_ranges("one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six", true);

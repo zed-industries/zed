@@ -10,7 +10,7 @@ use editor::{
     Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::{char_kind, BufferSnapshot, CharKind, Selection};
+use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -18,6 +18,7 @@ use workspace::Workspace;
 pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,
+    Paragraph,
     Quotes,
     BackQuotes,
     DoubleQuotes,
@@ -43,6 +44,7 @@ actions!(
     vim,
     [
         Sentence,
+        Paragraph,
         Quotes,
         BackQuotes,
         DoubleQuotes,
@@ -65,6 +67,8 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| object(Object::Tag, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
+    workspace
+        .register_action(|_: &mut Workspace, _: &Paragraph, cx: _| object(Object::Paragraph, cx));
     workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
@@ -94,7 +98,7 @@ fn object(object: Object, cx: &mut WindowContext) {
     match Vim::read(cx).state().mode {
         Mode::Normal => normal_object(object, cx),
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_object(object, cx),
-        Mode::Insert => {
+        Mode::Insert | Mode::Replace => {
             // Shouldn't execute a text object in insert mode. Ignoring
         }
     }
@@ -109,6 +113,7 @@ impl Object {
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
+            | Object::Paragraph
             | Object::Parentheses
             | Object::Tag
             | Object::AngleBrackets
@@ -120,7 +125,7 @@ impl Object {
 
     pub fn always_expands_both_ways(self) -> bool {
         match self {
-            Object::Word { .. } | Object::Sentence | Object::Argument => false,
+            Object::Word { .. } | Object::Sentence | Object::Paragraph | Object::Argument => false,
             Object::Quotes
             | Object::BackQuotes
             | Object::DoubleQuotes
@@ -153,15 +158,17 @@ impl Object {
             | Object::VerticalBars
             | Object::Tag
             | Object::Argument => Mode::Visual,
+            Object::Paragraph => Mode::VisualLine,
         }
     }
 
     pub fn range(
         self,
         map: &DisplaySnapshot,
-        relative_to: DisplayPoint,
+        selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
+        let relative_to = selection.head();
         match self {
             Object::Word { ignore_punctuation } => {
                 if around {
@@ -171,6 +178,7 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
+            Object::Paragraph => paragraph(map, relative_to, around),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
@@ -186,7 +194,7 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
-            Object::Tag => surrounding_html_tag(map, relative_to, around),
+            Object::Tag => surrounding_html_tag(map, selection, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -206,7 +214,7 @@ impl Object {
         selection: &mut Selection<DisplayPoint>,
         around: bool,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.head(), around) {
+        if let Some(range) = self.range(map, selection.clone(), around) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -249,8 +257,8 @@ fn in_word(
 
 fn surrounding_html_tag(
     map: &DisplaySnapshot,
-    relative_to: DisplayPoint,
-    surround: bool,
+    selection: Selection<DisplayPoint>,
+    around: bool,
 ) -> Option<Range<DisplayPoint>> {
     fn read_tag(chars: impl Iterator<Item = char>) -> String {
         chars
@@ -271,7 +279,7 @@ fn surrounding_html_tag(
     }
 
     let snapshot = &map.buffer_snapshot;
-    let offset = relative_to.to_offset(map, Bias::Left);
+    let offset = selection.head().to_offset(map, Bias::Left);
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
@@ -291,11 +299,18 @@ fn surrounding_html_tag(
             if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
-                if open_tag.is_some()
-                    && open_tag == close_tag
-                    && (first_child.end_byte() + 1..last_child.start_byte()).contains(&offset)
+                // It needs to be handled differently according to the selection length
+                let is_valid = if selection.end.to_offset(map, Bias::Left)
+                    - selection.start.to_offset(map, Bias::Left)
+                    <= 1
                 {
-                    let range = if surround {
+                    offset <= last_child.end_byte()
+                } else {
+                    selection.start.to_offset(map, Bias::Left) >= first_child.start_byte()
+                        && selection.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
+                };
+                if open_tag.is_some() && open_tag == close_tag && is_valid {
+                    let range = if around {
                         first_child.byte_range().start..last_child.byte_range().end
                     } else {
                         first_child.byte_range().end..last_child.byte_range().start
@@ -313,6 +328,7 @@ fn surrounding_html_tag(
     }
     None
 }
+
 /// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
 ///
@@ -458,7 +474,7 @@ fn argument(
             parent_covers_bracket_range = covers_bracket_range;
 
             // Unable to find a child node with a parent that covers the bracket range, so no argument to select
-            if !cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.goto_first_child_for_byte(offset).is_none() {
                 return None;
             }
         }
@@ -684,6 +700,99 @@ fn expand_to_include_whitespace(
     range
 }
 
+/// If not `around` (i.e. inner), returns a range that surrounds the paragraph
+/// where `relative_to` is in. If `around`, principally returns the range ending
+/// at the end of the next paragraph.
+///
+/// Here, the "paragraph" is defined as a block of non-blank lines or a block of
+/// blank lines. If the paragraph ends with a trailing newline (i.e. not with
+/// EOF), the returned range ends at the trailing newline of the paragraph (i.e.
+/// the trailing newline is not subject to subsequent operations).
+///
+/// Edge cases:
+/// - If `around` and if the current paragraph is the last paragraph of the
+///   file and is blank, then the selection results in an error.
+/// - If `around` and if the current paragraph is the last paragraph of the
+///   file and is not blank, then the returned range starts at the start of the
+///   previous paragraph, if it exists.
+fn paragraph(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    let mut paragraph_start = start_of_paragraph(map, relative_to);
+    let mut paragraph_end = end_of_paragraph(map, relative_to);
+
+    let paragraph_end_row = paragraph_end.row();
+    let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
+    let point = relative_to.to_point(map);
+    let current_line_is_empty = map.buffer_snapshot.is_line_blank(point.row);
+
+    if around {
+        if paragraph_ends_with_eof {
+            if current_line_is_empty {
+                return None;
+            }
+
+            let paragraph_start_row = paragraph_start.row();
+            if paragraph_start_row != 0 {
+                let previous_paragraph_last_line_start =
+                    Point::new(paragraph_start_row - 1, 0).to_display_point(map);
+                paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+            }
+        } else {
+            let next_paragraph_start = Point::new(paragraph_end_row + 1, 0).to_display_point(map);
+            paragraph_end = end_of_paragraph(map, next_paragraph_start);
+        }
+    }
+
+    let range = paragraph_start..paragraph_end;
+    Some(range)
+}
+
+/// Returns a position of the start of the current paragraph, where a paragraph
+/// is defined as a run of non-blank lines or a run of blank lines.
+pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == 0 {
+        return DisplayPoint::zero();
+    }
+
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
+
+    for row in (0..point.row).rev() {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if blank != is_current_line_blank {
+            return Point::new(row + 1, 0).to_display_point(map);
+        }
+    }
+
+    DisplayPoint::zero()
+}
+
+/// Returns a position of the end of the current paragraph, where a paragraph
+/// is defined as a run of non-blank lines or a run of blank lines.
+/// The trailing newline is excluded from the paragraph.
+pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == map.max_buffer_row() {
+        return map.max_point();
+    }
+
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(point.row);
+
+    for row in point.row + 1..map.max_buffer_row() + 1 {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if blank != is_current_line_blank {
+            let previous_row = row - 1;
+            return Point::new(previous_row, map.buffer_snapshot.line_len(previous_row))
+                .to_display_point(map);
+        }
+    }
+
+    map.max_point()
+}
+
 fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -835,7 +944,7 @@ mod test {
         test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
     };
 
-    const WORD_LOCATIONS: &'static str = indoc! {"
+    const WORD_LOCATIONS: &str = indoc! {"
         The quick ˇbrowˇnˇ•••
         fox ˇjuˇmpsˇ over
         the lazy dogˇ••
@@ -1044,6 +1153,168 @@ mod test {
                 ExemptionFeatures::AroundSentenceStartingBetweenIncludesWrongWhitespace,
             )
             .await;
+        }
+    }
+
+    const PARAGRAPH_EXAMPLES: &[&'static str] = &[
+        // Single line
+        "ˇThe quick brown fox jumpˇs over the lazy dogˇ.ˇ",
+        // Multiple lines without empty lines
+        indoc! {"
+            ˇThe quick brownˇ
+            ˇfox jumps overˇ
+            the lazy dog.ˇ
+        "},
+        // Heading blank paragraph and trailing normal paragraph
+        indoc! {"
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumps
+            ˇover the lazy dog.
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+        "},
+        // Inserted blank paragraph and trailing blank paragraph
+        indoc! {"
+            ˇThe quick brown fox jumps
+            ˇover the lazy dog.
+            ˇ
+            ˇ
+            ˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+            ˇ
+            ˇ
+            ˇ
+        "},
+        // "Blank" paragraph with whitespace characters
+        indoc! {"
+            ˇThe quick brown fox jumps
+            over the lazy dog.
+
+            ˇ \t
+
+            ˇThe quick brown fox jumps
+            over the lazy dog.ˇ
+            ˇ
+            ˇ \t
+            \t \t
+        "},
+        // Single line "paragraphs", where selection size might be zero.
+        indoc! {"
+            ˇThe quick brown fox jumps over the lazy dog.
+            ˇ
+            ˇThe quick brown fox jumpˇs over the lazy dog.ˇ
+            ˇ
+        "},
+    ];
+
+    #[gpui::test]
+    async fn test_change_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for paragraph_example in PARAGRAPH_EXAMPLES {
+            cx.assert_binding_matches_all(["c", "i", "p"], paragraph_example)
+                .await;
+            cx.assert_binding_matches_all(["c", "a", "p"], paragraph_example)
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_delete_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for paragraph_example in PARAGRAPH_EXAMPLES {
+            cx.assert_binding_matches_all(["d", "i", "p"], paragraph_example)
+                .await;
+            cx.assert_binding_matches_all(["d", "a", "p"], paragraph_example)
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_paragraph_object_with_landing_positions_not_at_beginning_of_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Landing position not at the beginning of the line
+        const PARAGRAPH_LANDING_POSITION_EXAMPLE: &'static str = indoc! {"
+            The quick brown fox jumpsˇ
+            over the lazy dog.ˇ
+            ˇ ˇ\tˇ
+            ˇ ˇ
+            ˇ\tˇ ˇ\tˇ
+            ˇThe quick brown fox jumpsˇ
+            ˇover the lazy dog.ˇ
+            ˇ ˇ\tˇ
+            ˇ
+            ˇ ˇ\tˇ
+            ˇ\tˇ ˇ\tˇ
+        "};
+
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_binding_matches_all_exempted(
+            ["c", "i", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["c", "a", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["d", "i", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["d", "a", "p"],
+            PARAGRAPH_LANDING_POSITION_EXAMPLE,
+            ExemptionFeatures::IncorrectLandingPosition,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const EXAMPLES: &[&'static str] = &[
+            indoc! {"
+                ˇThe quick brown
+                fox jumps over
+                the lazy dog.
+            "},
+            indoc! {"
+                ˇ
+
+                ˇThe quick brown fox jumps
+                over the lazy dog.
+                ˇ
+
+                ˇThe quick brown fox jumps
+                over the lazy dog.
+            "},
+            indoc! {"
+                ˇThe quick brown fox jumps over the lazy dog.
+                ˇ
+                ˇThe quick brown fox jumps over the lazy dog.
+
+            "},
+        ];
+
+        for paragraph_example in EXAMPLES {
+            cx.assert_binding_matches_all(["v", "i", "p"], paragraph_example)
+                .await;
+            cx.assert_binding_matches_all(["v", "a", "p"], paragraph_example)
+                .await;
         }
     }
 
@@ -1332,6 +1603,64 @@ mod test {
         cx.simulate_keystrokes(["a", "t"]);
         cx.assert_state(
             "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            Mode::Visual,
+        );
+
+        // The cursor is before the tag
+        cx.set_state(
+            "<html><head></head><body> ˇ  <b>hi!</b></body>",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>   <b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>   «<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+
+        // The cursor is in the open tag
+        cx.set_state(
+            "<html><head></head><body><bˇ>hi!</b><b>hello!</b></body>",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»<b>hello!</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b><b>hello!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+
+        // current selection length greater than 1
+        cx.set_state(
+            "<html><head></head><body><«b>hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+
+        cx.set_state(
+            "<html><head></head><body><«b>hi!</ˇ»b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes(["a", "t"]);

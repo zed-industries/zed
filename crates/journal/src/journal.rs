@@ -94,6 +94,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&entry_path)?;
         Ok::<_, std::io::Error>((journal_dir, entry_path))
@@ -102,7 +103,14 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
         let (workspace, _) = cx
-            .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))?
+            .update(|cx| {
+                workspace::open_paths(
+                    &[journal_dir],
+                    app_state,
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+            })?
             .await?;
 
         let opened = workspace

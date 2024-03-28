@@ -1,30 +1,63 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
+use gpui::AsyncAppContext;
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
+use project::project_settings::ProjectSettings;
 use regex::Regex;
+use settings::Settings;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
+use task::{
+    static_source::{Definition, TaskDefinitions},
+    TaskVariables,
+};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 pub struct RustLspAdapter;
 
-#[async_trait]
+impl RustLspAdapter {
+    const SERVER_NAME: &'static str = "rust-analyzer";
+}
+
+#[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("rust-analyzer".into())
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
-    fn short_name(&self) -> &'static str {
-        "rust"
+    async fn check_if_user_installed(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let binary = cx
+            .update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .lsp
+                    .get(Self::SERVER_NAME)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()??;
+
+        let path = binary.path?;
+        Some(LanguageServerBinary {
+            path: path.into(),
+            arguments: binary
+                .arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -49,7 +82,7 @@ impl LspAdapter for RustLspAdapter {
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
@@ -74,7 +107,7 @@ impl LspAdapter for RustLspAdapter {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let mut file = File::create(&destination_path).await?;
             futures::io::copy(decompressed_bytes, &mut file).await?;
-            // todo!("windows")
+            // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
@@ -287,8 +320,83 @@ impl LspAdapter for RustLspAdapter {
     }
 }
 
+pub(crate) struct RustContextProvider;
+
+impl ContextProvider for RustContextProvider {
+    fn build_context(
+        &self,
+        location: Location,
+        cx: &mut gpui::AppContext,
+    ) -> Result<TaskVariables> {
+        let mut context = SymbolContextProvider.build_context(location.clone(), cx)?;
+
+        if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
+            let local_file = file.as_local()?.abs_path(cx);
+            local_file.parent().map(PathBuf::from)
+        }) {
+            let Some(pkgid) = std::process::Command::new("cargo")
+                .current_dir(path)
+                .arg("pkgid")
+                .output()
+                .log_err()
+            else {
+                return Ok(context);
+            };
+            let package_name = String::from_utf8(pkgid.stdout)
+                .map(|name| name.trim().to_owned())
+                .ok();
+
+            if let Some(package_name) = package_name {
+                context.0.insert("ZED_PACKAGE".to_owned(), package_name);
+            }
+        }
+
+        Ok(context)
+    }
+    fn associated_tasks(&self) -> Option<TaskDefinitions> {
+        Some(TaskDefinitions(vec![
+            Definition {
+                label: "Rust: Test current crate".to_owned(),
+                command: "cargo".into(),
+                args: vec!["test".into(), "-p".into(), "$ZED_PACKAGE".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: Test current function".to_owned(),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    "$ZED_PACKAGE".into(),
+                    "--".into(),
+                    "$ZED_SYMBOL".into(),
+                ],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo run".into(),
+                command: "cargo".into(),
+                args: vec!["run".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo check current crate".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "-p".into(), "$ZED_PACKAGE".into()],
+                ..Default::default()
+            },
+            Definition {
+                label: "Rust: cargo check workspace".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "--workspace".into()],
+                ..Default::default()
+            },
+        ]))
+    }
+}
+
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -311,7 +419,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{Context, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
     use text::BufferId;
@@ -360,12 +468,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_rust_label_for_completion() {
-        let language = language(
-            "rust",
-            tree_sitter_rust::language(),
-            Some(Arc::new(RustLspAdapter)),
-        )
-        .await;
+        let adapter = Arc::new(RustLspAdapter);
+        let language = language("rust", tree_sitter_rust::language());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -382,13 +486,16 @@ mod tests {
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FUNCTION),
-                    label: "hello(…)".to_string(),
-                    detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        label: "hello(…)".to_string(),
+                        detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
@@ -404,13 +511,16 @@ mod tests {
             })
         );
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FUNCTION),
-                    label: "hello(…)".to_string(),
-                    detail: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        label: "hello(…)".to_string(),
+                        detail: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
@@ -426,13 +536,16 @@ mod tests {
             })
         );
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FIELD),
-                    label: "len".to_string(),
-                    detail: Some("usize".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "len".to_string(),
+                        detail: Some("usize".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "len: usize".to_string(),
@@ -442,13 +555,16 @@ mod tests {
         );
 
         assert_eq!(
-            language
-                .label_for_completion(&lsp::CompletionItem {
-                    kind: Some(lsp::CompletionItemKind::FUNCTION),
-                    label: "hello(…)".to_string(),
-                    detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
-                    ..Default::default()
-                })
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        label: "hello(…)".to_string(),
+                        detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
+                        ..Default::default()
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
@@ -467,12 +583,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_rust_label_for_symbol() {
-        let language = language(
-            "rust",
-            tree_sitter_rust::language(),
-            Some(Arc::new(RustLspAdapter)),
-        )
-        .await;
+        let adapter = Arc::new(RustLspAdapter);
+        let language = language("rust", tree_sitter_rust::language());
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),
@@ -488,8 +600,8 @@ mod tests {
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
 
         assert_eq!(
-            language
-                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION)
+            adapter
+                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
                 .await,
             Some(CodeLabel {
                 text: "fn hello".to_string(),
@@ -499,8 +611,8 @@ mod tests {
         );
 
         assert_eq!(
-            language
-                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER)
+            adapter
+                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
                 .await,
             Some(CodeLabel {
                 text: "type World".to_string(),
@@ -524,7 +636,7 @@ mod tests {
             });
         });
 
-        let language = crate::language("rust", tree_sitter_rust::language(), None).await;
+        let language = crate::language("rust", tree_sitter_rust::language());
 
         cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")

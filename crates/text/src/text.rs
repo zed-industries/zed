@@ -1622,6 +1622,49 @@ impl BufferSnapshot {
         &self.visible_text
     }
 
+    pub fn rope_for_version(&self, version: &clock::Global) -> Rope {
+        let mut rope = Rope::new();
+
+        let mut cursor = self
+            .fragments
+            .filter::<_, FragmentTextSummary>(move |summary| {
+                !version.observed_all(&summary.max_version)
+            });
+        cursor.next(&None);
+
+        let mut visible_cursor = self.visible_text.cursor(0);
+        let mut deleted_cursor = self.deleted_text.cursor(0);
+
+        while let Some(fragment) = cursor.item() {
+            if cursor.start().visible > visible_cursor.offset() {
+                let text = visible_cursor.slice(cursor.start().visible);
+                rope.append(text);
+            }
+
+            if fragment.was_visible(version, &self.undo_map) {
+                if fragment.visible {
+                    let text = visible_cursor.slice(cursor.end(&None).visible);
+                    rope.append(text);
+                } else {
+                    deleted_cursor.seek_forward(cursor.start().deleted);
+                    let text = deleted_cursor.slice(cursor.end(&None).deleted);
+                    rope.append(text);
+                }
+            } else if fragment.visible {
+                visible_cursor.seek_forward(cursor.end(&None).visible);
+            }
+
+            cursor.next(&None);
+        }
+
+        if cursor.start().visible > visible_cursor.offset() {
+            let text = visible_cursor.slice(cursor.start().visible);
+            rope.append(text);
+        }
+
+        rope
+    }
+
     pub fn remote_id(&self) -> BufferId {
         self.remote_id
     }

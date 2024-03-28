@@ -6,7 +6,6 @@ use gpui::{
     actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowBounds,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -15,11 +14,11 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, titlebar_height, Workspace};
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -59,25 +58,14 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        h_flex()
-            .id("titlebar")
-            .justify_between()
-            .w_full()
-            .h(titlebar_height(cx))
-            .map(|this| {
-                if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
-                    this.pl_2()
-                } else {
-                    // Use pixels here instead of a rem-based size because the macOS traffic
-                    // lights are a static size, and don't scale with the rest of the UI.
-                    this.pl(px(80.))
-                }
-            })
-            .bg(cx.theme().colors().title_bar_background)
-            .on_click(|event, cx| {
-                if event.up.click_count == 2 {
-                    cx.zoom_window();
-                }
+        TitleBar::new("collab-titlebar")
+            // note: on windows titlebar behaviour is handled by the platform implementation
+            .when(cfg!(not(windows)), |this| {
+                this.on_click(|event, cx| {
+                    if event.up.click_count == 2 {
+                        cx.zoom_window();
+                    }
+                })
             })
             // left side
             .child(
@@ -329,24 +317,27 @@ impl Render for CollabTitlebarItem {
     }
 }
 
-fn render_color_ribbon(color: Hsla) -> gpui::Canvas {
-    canvas(move |bounds, cx| {
-        let height = bounds.size.height;
-        let horizontal_offset = height;
-        let vertical_offset = px(height.0 / 2.0);
-        let mut path = Path::new(bounds.lower_left());
-        path.curve_to(
-            bounds.origin + point(horizontal_offset, vertical_offset),
-            bounds.origin + point(px(0.0), vertical_offset),
-        );
-        path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
-        path.curve_to(
-            bounds.lower_right(),
-            bounds.upper_right() + point(px(0.0), vertical_offset),
-        );
-        path.line_to(bounds.lower_left());
-        cx.paint_path(path, color);
-    })
+fn render_color_ribbon(color: Hsla) -> impl Element {
+    canvas(
+        move |_, _| {},
+        move |bounds, _, cx| {
+            let height = bounds.size.height;
+            let horizontal_offset = height;
+            let vertical_offset = px(height.0 / 2.0);
+            let mut path = Path::new(bounds.lower_left());
+            path.curve_to(
+                bounds.origin + point(horizontal_offset, vertical_offset),
+                bounds.origin + point(px(0.0), vertical_offset),
+            );
+            path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+            path.curve_to(
+                bounds.lower_right(),
+                bounds.upper_right() + point(px(0.0), vertical_offset),
+            );
+            path.line_to(bounds.lower_left());
+            cx.paint_path(path, color);
+        },
+    )
     .h_1()
     .w_full()
 }
@@ -403,7 +394,7 @@ impl CollabTitlebarItem {
                     )
                 })
                 .on_click({
-                    let host_peer_id = host.peer_id.clone();
+                    let host_peer_id = host.peer_id;
                     cx.listener(move |this, _, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
@@ -478,6 +469,7 @@ impl CollabTitlebarItem {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_collaborator(
         &self,
         user: &Arc<User>,
@@ -697,9 +689,8 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
                             .separator()
-                            .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -721,10 +712,8 @@ impl CollabTitlebarItem {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Theme", theme_selector::Toggle.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .separator()
-                            .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
+                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
                     })
                     .into()
                 })

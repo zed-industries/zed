@@ -1,8 +1,8 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    AppState, Config,
+    rpc::{Principal, Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    AppState, Config, RateLimiter,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
@@ -40,7 +40,7 @@ use std::{
     },
 };
 use util::{http::FakeHttpClient, SemanticVersion};
-use workspace::{Workspace, WorkspaceStore};
+use workspace::{Workspace, WorkspaceId, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -93,17 +93,14 @@ impl TestServer {
             deterministic.clone(),
         )
         .unwrap();
-        let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
+        let executor = Executor::Deterministic(deterministic.clone());
+        let app_state = Self::build_app_state(&test_db, &live_kit_server, executor.clone()).await;
         let epoch = app_state
             .db
             .create_server(&app_state.config.zed_environment)
             .await
             .unwrap();
-        let server = Server::new(
-            epoch,
-            app_state.clone(),
-            Executor::Deterministic(deterministic.clone()),
-        );
+        let server = Server::new(epoch, app_state.clone());
         server.start().await.unwrap();
         // Advance clock to ensure the server's cleanup task is finished.
         deterministic.advance_clock(CLEANUP_TIMEOUT);
@@ -138,7 +135,7 @@ impl TestServer {
         (server, client_a, client_b, channel_id)
     }
 
-    pub async fn start1<'a>(cx: &'a mut TestAppContext) -> TestClient {
+    pub async fn start1(cx: &mut TestAppContext) -> TestClient {
         let mut server = Self::start(cx.executor().clone()).await;
         server.create_client(cx, "user_a").await
     }
@@ -200,15 +197,20 @@ impl TestServer {
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
-                    Ok(Credentials {
+                    Ok(Credentials::User {
                         user_id: user_id.to_proto(),
                         access_token,
                     })
                 })
             })
             .override_establish_connection(move |credentials, cx| {
-                assert_eq!(credentials.user_id, user_id.0 as u64);
-                assert_eq!(credentials.access_token, "the-token");
+                assert_eq!(
+                    credentials,
+                    &Credentials::User {
+                        user_id: user_id.0 as u64,
+                        access_token: "the-token".into()
+                    }
+                );
 
                 let server = server.clone();
                 let db = db.clone();
@@ -233,14 +235,18 @@ impl TestServer {
                             .spawn(server.handle_connection(
                                 server_conn,
                                 client_name,
-                                user,
+                                Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
-                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
                             .detach();
-                        let connection_id = connection_id_rx.await.unwrap();
+                        let connection_id = connection_id_rx.await.map_err(|e| {
+                            EstablishConnectionError::Other(anyhow!(
+                                "{} (is server shutting down?)",
+                                e
+                            ))
+                        })?;
                         connection_killers
                             .lock()
                             .insert(connection_id.into(), killed);
@@ -252,15 +258,14 @@ impl TestServer {
         let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
-        let mut language_registry = LanguageRegistry::test();
-        language_registry.set_executor(cx.executor());
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,
-            languages: Arc::new(language_registry),
+            languages: language_registry,
             fs: fs.clone(),
-            build_window_options: |_, _, _| Default::default(),
+            build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
         });
 
@@ -461,7 +466,7 @@ impl TestServer {
         let active_call_a = cx_a.read(ActiveCall::global);
 
         for (client_b, cx_b) in right {
-            let user_id_b = client_b.current_user_id(*cx_b).to_proto();
+            let user_id_b = client_b.current_user_id(cx_b).to_proto();
             active_call_a
                 .update(*cx_a, |call, cx| call.invite(user_id_b, None, cx))
                 .await
@@ -478,12 +483,15 @@ impl TestServer {
 
     pub async fn build_app_state(
         test_db: &TestDb,
-        fake_server: &live_kit_client::TestServer,
+        live_kit_test_server: &live_kit_client::TestServer,
+        executor: Executor,
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
-            live_kit_client: Some(Arc::new(fake_server.create_api_client())),
+            live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
+            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
+            executor,
             clickhouse_client: None,
             config: Config {
                 http_port: 0,
@@ -502,11 +510,17 @@ impl TestServer {
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
+                openai_api_key: None,
+                google_ai_api_key: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,
                 clickhouse_database: None,
                 zed_client_checksum_seed: None,
+                slack_panics_webhook: None,
+                auto_join_channel_id: None,
+                migrations_path: None,
+                seed_path: None,
             },
         })
     }
@@ -583,19 +597,19 @@ impl TestClient {
             .await;
     }
 
-    pub fn local_projects<'a>(&'a self) -> impl Deref<Target = Vec<Model<Project>>> + 'a {
+    pub fn local_projects(&self) -> impl Deref<Target = Vec<Model<Project>>> + '_ {
         Ref::map(self.state.borrow(), |state| &state.local_projects)
     }
 
-    pub fn remote_projects<'a>(&'a self) -> impl Deref<Target = Vec<Model<Project>>> + 'a {
+    pub fn remote_projects(&self) -> impl Deref<Target = Vec<Model<Project>>> + '_ {
         Ref::map(self.state.borrow(), |state| &state.remote_projects)
     }
 
-    pub fn local_projects_mut<'a>(&'a self) -> impl DerefMut<Target = Vec<Model<Project>>> + 'a {
+    pub fn local_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.local_projects)
     }
 
-    pub fn remote_projects_mut<'a>(&'a self) -> impl DerefMut<Target = Vec<Model<Project>>> + 'a {
+    pub fn remote_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.remote_projects)
     }
 
@@ -608,16 +622,14 @@ impl TestClient {
         })
     }
 
-    pub fn buffers<'a>(
-        &'a self,
-    ) -> impl DerefMut<Target = HashMap<Model<Project>, HashSet<Model<language::Buffer>>>> + 'a
+    pub fn buffers(
+        &self,
+    ) -> impl DerefMut<Target = HashMap<Model<Project>, HashSet<Model<language::Buffer>>>> + '_
     {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.buffers)
     }
 
-    pub fn channel_buffers<'a>(
-        &'a self,
-    ) -> impl DerefMut<Target = HashSet<Model<ChannelBuffer>>> + 'a {
+    pub fn channel_buffers(&self) -> impl DerefMut<Target = HashSet<Model<ChannelBuffer>>> + '_ {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.channel_buffers)
     }
 
@@ -749,7 +761,12 @@ impl TestClient {
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+            Workspace::new(
+                WorkspaceId::default(),
+                project.clone(),
+                self.app_state.clone(),
+                cx,
+            )
         })
     }
 
@@ -760,7 +777,12 @@ impl TestClient {
         let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+            Workspace::new(
+                WorkspaceId::default(),
+                project.clone(),
+                self.app_state.clone(),
+                cx,
+            )
         })
     }
 

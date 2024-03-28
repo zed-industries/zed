@@ -19,6 +19,6 @@ actions!(
         SelectNext,
         SelectFirst,
         SelectLast,
-        ShowContextMenu
+        UseSelectedQuery,
     ]
 );

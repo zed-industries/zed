@@ -3,9 +3,9 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu,
     MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowOptions,
+    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -48,7 +48,6 @@ use std::{
     rc::Rc,
     slice, str,
     sync::Arc,
-    time::Duration,
 };
 use time::UtcOffset;
 
@@ -137,6 +136,7 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+
         decl.register()
     }
 }
@@ -477,6 +477,10 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(MacDisplay::primary()))
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
@@ -494,13 +498,16 @@ impl Platform for MacPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
+        // Clippy thinks that this evaluates to `()`, for some reason.
+        #[allow(clippy::unit_arg, clippy::clone_on_copy)]
+        let renderer_context = self.0.lock().renderer_context.clone();
         Box::new(MacWindow::open(
             handle,
             options,
             self.foreground_executor(),
-            self.0.lock().renderer_context.clone(),
+            renderer_context,
         ))
     }
 
@@ -520,6 +527,54 @@ impl Platform for MacPlatform {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
+    }
+
+    fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
+        // API only available post Monterey
+        // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
+        let (done_tx, done_rx) = oneshot::channel();
+        if self.os_version().ok() < Some(SemanticVersion::new(12, 0, 0)) {
+            return Task::ready(Err(anyhow!(
+                "macOS 12.0 or later is required to register URL schemes"
+            )));
+        }
+
+        let bundle_id = unsafe {
+            let bundle: id = msg_send![class!(NSBundle), mainBundle];
+            let bundle_id: id = msg_send![bundle, bundleIdentifier];
+            if bundle_id == nil {
+                return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
+            }
+            bundle_id
+        };
+
+        unsafe {
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let scheme: id = ns_string(scheme);
+            let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+            if app == nil {
+                return Task::ready(Err(anyhow!(
+                    "Cannot register URL scheme until app is installed"
+                )));
+            }
+            let done_tx = Cell::new(Some(done_tx));
+            let block = ConcreteBlock::new(move |error: id| {
+                let result = if error == nil {
+                    Ok(())
+                } else {
+                    let msg: id = msg_send![error, localizedDescription];
+                    Err(anyhow!("Failed to register: {:?}", msg))
+                };
+
+                if let Some(done_tx) = done_tx.take() {
+                    let _ = done_tx.send(result);
+                }
+            });
+            let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
+        }
+
+        self.background_executor()
+            .spawn(async { crate::Flatten::flatten(done_rx.await.map_err(|e| anyhow!(e))) })
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -659,13 +714,6 @@ impl Platform for MacPlatform {
         "macOS"
     }
 
-    fn double_click_interval(&self) -> Duration {
-        unsafe {
-            let double_click_interval: f64 = msg_send![class!(NSEvent), doubleClickInterval];
-            Duration::from_secs_f64(double_click_interval)
-        }
-    }
-
     fn os_version(&self) -> Result<SemanticVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
@@ -685,6 +733,9 @@ impl Platform for MacPlatform {
                 Err(anyhow!("app is not running inside a bundle"))
             } else {
                 let version: id = msg_send![bundle, objectForInfoDictionaryKey: ns_string("CFBundleShortVersionString")];
+                if version.is_null() {
+                    bail!("bundle does not have version");
+                }
                 let len = msg_send![version, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
                 let bytes = version.UTF8String() as *const u8;
                 let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
@@ -710,6 +761,29 @@ impl Platform for MacPlatform {
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
             app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
+        }
+    }
+
+    fn add_recent_documents(&self, paths: &[PathBuf]) {
+        for path in paths {
+            let Some(path_str) = path.to_str() else {
+                log::error!("Not adding to recent documents a non-unicode path: {path:?}");
+                continue;
+            };
+            unsafe {
+                let document_controller: id =
+                    msg_send![class!(NSDocumentController), sharedDocumentController];
+                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path_str));
+                let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
+            }
+        }
+    }
+
+    fn clear_recent_documents(&self) {
+        unsafe {
+            let document_controller: id =
+                msg_send![class!(NSDocumentController), sharedDocumentController];
+            let _: () = msg_send![document_controller, clearRecentDocuments:nil];
         }
     }
 
@@ -1009,7 +1083,6 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
-
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {

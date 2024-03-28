@@ -174,7 +174,7 @@ impl Render for ChannelModal {
                     .child(
                         h_flex()
                             .w_full()
-                            .h(rems(22. / 16.))
+                            .h(rems_from_px(22.))
                             .justify_between()
                             .line_height(rems(1.25))
                             .child(CheckboxWithLabel::new(
@@ -197,7 +197,7 @@ impl Render for ChannelModal {
                                                 .read(cx)
                                                 .channel_for_id(channel_id)
                                             {
-                                                let item = ClipboardItem::new(channel.link());
+                                                let item = ClipboardItem::new(channel.link(cx));
                                                 cx.write_to_clipboard(item);
                                             }
                                         })),

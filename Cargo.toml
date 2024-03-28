@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/activity_indicator",
-    "crates/ai",
     "crates/assets",
     "crates/assistant",
     "crates/audio",
@@ -23,6 +22,8 @@ members = [
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
+    "crates/extension_api",
+    "crates/extension_cli",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -32,8 +33,10 @@ members = [
     "crates/fuzzy",
     "crates/git",
     "crates/go_to_line",
+    "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
+    "crates/image_viewer",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
@@ -49,11 +52,11 @@ members = [
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/open_ai",
     "crates/outline",
     "crates/picker",
     "crates/prettier",
     "crates/project",
-    "crates/project_core",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/quick_action_bar",
@@ -67,7 +70,6 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
-    "crates/semantic_index",
     "crates/settings",
     "crates/snippet",
     "crates/sqlez",
@@ -75,6 +77,7 @@ members = [
     "crates/story",
     "crates/storybook",
     "crates/sum_tree",
+    "crates/tab_switcher",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
@@ -89,8 +92,20 @@ members = [
     "crates/vim",
     "crates/welcome",
     "crates/workspace",
+    "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
+
+    "extensions/astro",
+    "extensions/gleam",
+    "extensions/haskell",
+    "extensions/prisma",
+    "extensions/purescript",
+    "extensions/svelte",
+    "extensions/uiua",
+    "extensions/zig",
+
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -102,6 +117,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
+base64 = "0.13"
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -129,9 +145,11 @@ fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
 go_to_line = { path = "crates/go_to_line" }
+google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 install_cli = { path = "crates/install_cli" }
+image_viewer = { path = "crates/image_viewer" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
@@ -146,13 +164,14 @@ menu = { path = "crates/menu" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
-project_core = { path = "crates/project_core" }
+worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 quick_action_bar = { path = "crates/quick_action_bar" }
@@ -164,7 +183,6 @@ rpc = { path = "crates/rpc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
@@ -172,6 +190,7 @@ sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
+tab_switcher = { path = "crates/tab_switcher" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
@@ -191,37 +210,49 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-fs = "1.6"
+async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e9d93a4d41f3946a03ffb76136290d6ccf7f2b80" }
+bitflags = "2.4.2"
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
+cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+emojis = "0.6.1"
 env_logger = "0.9"
 futures = "0.3"
+futures-lite = "1.13"
 git2 = { version = "0.15", default-features = false }
 globset = "0.4"
 hex = "0.4.3"
 ignore = "0.4.22"
 indoc = "1"
 # We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = ["static-curl", "text-decoding"] }
+isahc = { version = "1.7.2", default-features = false, features = [
+    "static-curl",
+    "text-decoding",
+] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
-parking_lot = "0.11.1"
+parking_lot = "0.12.1"
 profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
-prost = "0.8"
+prost = "0.9"
+prost-build = "0.9"
+prost-types = "0.9"
 pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
@@ -233,44 +264,52 @@ semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_json_lenient = { version = "0.1", features = ["preserve_order", "raw_value"] }
+serde_json_lenient = { version = "0.1", features = [
+    "preserve_order",
+    "raw_value",
+] }
 serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
-sysinfo = "0.29.10"
+subtle = "2.5.0"
+sysinfo = "0.30.7"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
-time = { version = "0.3", features = ["serde", "serde-well-known", "formatting"] }
+time = { version = "0.3", features = [
+    "macros",
+    "parsing",
+    "serde",
+    "serde-well-known",
+    "formatting",
+] }
 toml = "0.8"
+tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
-tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
 tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts" }
 tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
-tree-sitter-dockerfile = { git = "https://github.com/camdencheek/tree-sitter-dockerfile", rev = "33e22c33bcdbfc33d42806ee84cfd0b1248cc392" }
 tree-sitter-dart = { git = "https://github.com/agent3bood/tree-sitter-dart", rev = "48934e3bf757a9b78f17bdfaa3e2b4284656fdc7" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-erlang = "0.4.0"
-tree-sitter-gitcommit = { git = "https://github.com/gbprod/tree-sitter-gitcommit" }
-tree-sitter-gleam = { git = "https://github.com/gleam-lang/tree-sitter-gleam", rev = "58b7cac8fc14c92b0677c542610d8738c373fa81" }
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
-tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "8a99848fc734f9c4ea523b3f2a07df133cbbcec2" }
 tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
+rustc-demangle = "0.1.23"
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
+tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", ref = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
 tree-sitter-lua = "0.0.14"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
@@ -278,52 +317,122 @@ tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", re
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "7dd29f9616822e5fc259f5b4ae6c4ded9a71a132" }
 tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", rev = "4abfdc1c7af2c6c77a370aee974627be1c285b3b" }
 tree-sitter-php = "0.21.1"
-tree-sitter-prisma-io = { git = "https://github.com/victorhqc/tree-sitter-prisma" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
-tree-sitter-purescript = { git = "https://github.com/postsolar/tree-sitter-purescript", rev = "v0.1.0" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
+tree-sitter-regex = "0.20.0"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
 tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
-tree-sitter-svelte = { git = "https://github.com/Himujjal/tree-sitter-svelte", rev = "bd60db7d3d06f89b6ec3b287c9a6e9190b5564bd" }
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-uiua = { git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "21dc2db39494585bf29a3f86d5add6e9d11a22ba" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
-tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 unindent = "0.1.7"
 unicase = "2.6"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
-wasmtime = "18.0"
+wasmparser = "0.201"
+wasm-encoder = "0.201"
+wasmtime = { version = "19.0.0", default-features = false, features = [
+    "async",
+    "demangle",
+    "runtime",
+    "cranelift",
+    "component-model",
+] }
+wasmtime-wasi = "19.0.0"
 which = "6.0.0"
+wit-component = "0.201"
 sys-locale = "0.3.1"
 
+[workspace.dependencies.windows]
+version = "0.53.0"
+features = [
+    "implement",
+    "Wdk_System_SystemServices",
+    "Win32_Globalization",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Gdi",
+    "Win32_Media",
+    "Win32_Security",
+    "Win32_Security_Credentials",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]
+
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "e4a23971ec3071a09c1e84816954c98f96e98e52" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7f21c3b98c0749ac192da67a0d65dfe3eabc4a63" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "e4fcda0d5259d0acf902aee6de7d2501f2bd6629" }
+pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "30419d07660dc11a21e42ef4a7fa329600cff152" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
 
-# todo!(linux) - Remove this
-[profile.dev.package.blade-graphics]
-split-debuginfo = "off"
-debug = "full"
-
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }
+wasmtime = { opt-level = 3 }
 
 [profile.release]
 debug = "limited"
 lto = "thin"
 codegen-units = 1
+
+[profile.release.package]
+zed = { codegen-units = 16 }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+# Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
+# warning on this rule produces a lot of noise.
+single_range_in_vec_init = "allow"
+
+# These are all of the rules that currently have violations in the Zed
+# codebase.
+#
+# We'll want to drive this list down by either:
+# 1. fixing violations of the rule and begin enforcing it
+# 2. deciding we want to allow the rule permanently, at which point
+#    we should codify that separately above.
+#
+# This list shouldn't be added to; it should only get shorter.
+# =============================================================================
+
+# There are a bunch of rules currently failing in the `style` group, so
+# allow all of those, for now.
+style = "allow"
+
+# Individual rules that have violations in the codebase:
+almost_complete_range = "allow"
+arc_with_non_send_sync = "allow"
+borrowed_box = "allow"
+let_underscore_future = "allow"
+map_entry = "allow"
+non_canonical_partial_ord_impl = "allow"
+reversed_empty_ranges = "allow"
+type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

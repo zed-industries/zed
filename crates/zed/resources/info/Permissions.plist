@@ -22,5 +22,3 @@
 <string>An application in Zed wants to use speech recognition.</string>
 <key>NSRemindersUsageDescription</key>
 <string>An application in Zed wants to use your reminders.</string>
-<key>MetalHudEnabled</key>
-<true />

@@ -98,7 +98,7 @@ impl ProjectSharedNotification {
 
     fn join(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(app_state) = self.app_state.upgrade() {
-            workspace::join_remote_project(self.project_id, self.owner.id, app_state, cx)
+            workspace::join_in_room_project(self.project_id, self.owner.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
     }
@@ -123,7 +123,7 @@ impl Render for ProjectSharedNotification {
             let theme_settings = ThemeSettings::get_global(cx);
             (
                 theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size.clone(),
+                theme_settings.ui_font_size,
             )
         };
 

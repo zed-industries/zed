@@ -12,12 +12,11 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{
-    CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
-};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, MemoryEvent, SettingEvent,
+    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
+    SettingEvent,
 };
 use tempfile::NamedTempFile;
 use util::http::{self, HttpClient, HttpClientWithUrl, Method};
@@ -84,7 +83,7 @@ impl Telemetry {
         TelemetrySettings::register(cx);
 
         let state = Arc::new(Mutex::new(TelemetryState {
-            settings: TelemetrySettings::get_global(cx).clone(),
+            settings: *TelemetrySettings::get_global(cx),
             app_metadata: cx.app_metadata(),
             architecture: env::consts::ARCH,
             release_channel,
@@ -119,7 +118,7 @@ impl Telemetry {
 
             move |cx| {
                 let mut state = state.lock();
-                state.settings = TelemetrySettings::get_global(cx).clone();
+                state.settings = *TelemetrySettings::get_global(cx);
             }
         })
         .detach();
@@ -168,14 +167,14 @@ impl Telemetry {
     ) {
         let mut state = self.state.lock();
         state.installation_id = installation_id.map(|id| id.into());
-        state.session_id = Some(session_id.into());
+        state.session_id = Some(session_id);
         drop(state);
 
         let this = self.clone();
         cx.spawn(|_| async move {
             // Avoiding calling `System::new_all()`, as there have been crashes related to it
             let refresh_kind = RefreshKind::new()
-                .with_memory() // For memory usage
+                .with_memory(MemoryRefreshKind::everything()) // For memory usage
                 .with_processes(ProcessRefreshKind::everything()) // For process usage
                 .with_cpu(CpuRefreshKind::everything()); // For core count
 
@@ -263,7 +262,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &'static str,
+        model: String,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
@@ -328,6 +327,13 @@ impl Telemetry {
         self.report_event(event)
     }
 
+    pub fn report_extension_event(self: &Arc<Self>, extension_id: Arc<str>, version: Arc<str>) {
+        self.report_event(Event::Extension(ExtensionEvent {
+            extension_id,
+            version,
+        }))
+    }
+
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
@@ -387,11 +393,9 @@ impl Telemetry {
             event,
         });
 
-        if state.installation_id.is_some() {
-            if state.events_queue.len() >= state.max_queue_size {
-                drop(state);
-                self.flush_events();
-            }
+        if state.installation_id.is_some() && state.events_queue.len() >= state.max_queue_size {
+            drop(state);
+            self.flush_events();
         }
     }
 
@@ -433,7 +437,7 @@ impl Telemetry {
                             json_bytes.clear();
                             serde_json::to_writer(&mut json_bytes, event)?;
                             file.write_all(&json_bytes)?;
-                            file.write(b"\n")?;
+                            file.write_all(b"\n")?;
                         }
                     }
 
@@ -442,7 +446,7 @@ impl Telemetry {
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
-                            is_staff: state.is_staff.clone(),
+                            is_staff: state.is_staff,
                             app_version: state
                                 .app_metadata
                                 .app_version
@@ -474,7 +478,11 @@ impl Telemetry {
 
                     let request = http::Request::builder()
                         .method(Method::POST)
-                        .uri(this.http_client.build_zed_api_url("/telemetry/events"))
+                        .uri(
+                            this.http_client
+                                .build_zed_api_url("/telemetry/events", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "text/plain")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());

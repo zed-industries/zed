@@ -5,17 +5,22 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/copilot_ui.rs"
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
 copilot.workspace = true
 editor.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language.workspace = true
+menu.workspace = true
 settings.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -23,4 +28,11 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+copilot = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+futures.workspace = true
+indoc.workspace = true
+lsp = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+theme = { workspace = true, features = ["test-support"] }

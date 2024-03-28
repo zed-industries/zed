@@ -182,7 +182,7 @@ impl ScrollManager {
         map: &DisplaySnapshot,
         local: bool,
         autoscroll: bool,
-        workspace_id: Option<i64>,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
@@ -221,7 +221,7 @@ impl ScrollManager {
         top_row: u32,
         local: bool,
         autoscroll: bool,
-        workspace_id: Option<i64>,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
         self.anchor = anchor;
@@ -470,7 +470,7 @@ impl Editor {
                 .buffer()
                 .read(cx)
                 .snapshot(cx)
-                .anchor_at(Point::new(top_row as u32, 0), Bias::Left);
+                .anchor_at(Point::new(top_row, 0), Bias::Left);
             let scroll_anchor = ScrollAnchor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,

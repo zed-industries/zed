@@ -29,8 +29,8 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
                 Value::Object(_) => {
                     fs::create_dir(&path).unwrap();
 
-                    if path.file_name() == Some(&OsStr::new(".git")) {
-                        git2::Repository::init(&path.parent().unwrap()).unwrap();
+                    if path.file_name() == Some(OsStr::new(".git")) {
+                        git2::Repository::init(path.parent().unwrap()).unwrap();
                     }
 
                     write_tree(&path, contents);

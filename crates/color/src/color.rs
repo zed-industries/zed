@@ -14,7 +14,7 @@
 //! Once we have a good idea of the needs of the theme system and color in gpui in general I see 3 paths:
 //! 1. Use `palette` (or another color library) directly in gpui and everywhere else, rather than rolling our own color system.
 //! 2. Keep this crate as a thin wrapper around `palette` and use it everywhere except gpui, and convert to gpui's color system when needed.
-//! 3. Build the needed functionality into gpui and keep using it's color system everywhere.
+//! 3. Build the needed functionality into gpui and keep using its color system everywhere.
 //!
 //! I'm leaning towards 2 in the short term and 1 in the long term, but we'll need to discuss it more.
 //!
@@ -58,24 +58,23 @@ pub fn hex_to_hsla(s: &str) -> Result<RGBAColor, String> {
     let hex = s.trim_start_matches('#');
 
     // Expand shorthand formats #RGB and #RGBA to #RRGGBB and #RRGGBBAA
-    let hex = match hex.len() {
-        3 => hex.chars().map(|c| c.to_string().repeat(2)).collect(),
-        4 => {
-            let (rgb, alpha) = hex.split_at(3);
-            let rgb = rgb
-                .chars()
-                .map(|c| c.to_string().repeat(2))
-                .collect::<String>();
-            let alpha = alpha.chars().next().unwrap().to_string().repeat(2);
-            format!("{}{}", rgb, alpha)
-        }
-        6 => format!("{}ff", hex), // Add alpha if missing
-        8 => hex.to_string(),      // Already in full format
+    let h = hex.as_bytes();
+    let arr: [u8; 8] = match h.len() {
+        // #RGB => #RRGGBBAA
+        3 => [h[0], h[0], h[1], h[1], h[2], h[2], b'f', b'f'],
+        // #RGBA => #RRGGBBAA
+        4 => [h[0], h[0], h[1], h[1], h[2], h[2], h[3], h[3]],
+        // #RRGGBB => #RRGGBBAA
+        6 => [h[0], h[1], h[2], h[3], h[4], h[5], b'f', b'f'],
+        // Already in #RRGGBBAA
+        8 => h.try_into().unwrap(),
         _ => return Err("Invalid hexadecimal string length".to_string()),
     };
 
+    let hex =
+        std::str::from_utf8(&arr).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
     let hex_val =
-        u32::from_str_radix(&hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
+        u32::from_str_radix(hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
 
     Ok(RGBAColor {
         r: ((hex_val >> 24) & 0xFF) as f32 / 255.0,
@@ -197,7 +196,7 @@ pub struct ColorStates {
 
 /// Returns a set of colors for different states of an element.
 ///
-/// todo!("This should take a theme and use appropriate colors from it")
+/// todo("This should take a theme and use appropriate colors from it")
 pub fn states_for_color(color: RGBAColor, is_light: bool) -> ColorStates {
     let adjustment_factor = if is_light { 0.1 } else { -0.1 };
     let hover_adjustment = 1.0 - adjustment_factor;

@@ -10,6 +10,7 @@
 /assets/*licenses.md
 **/venv
 .build
+*.wasm
 Packages
 *.xcodeproj
 xcuserdata/
@@ -22,3 +23,4 @@ DerivedData/
 .pytest_cache
 .venv
 .blob_store
+.vscode

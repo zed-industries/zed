@@ -1,11 +1,11 @@
-use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
+use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, AnyElement, AvailableSpace, Bounds, DispatchPhase, Element,
-    ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
-    TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementContext,
+    FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hitbox, Hsla, InputHandler,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
+    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -15,10 +15,13 @@ use terminal::{
         grid::Dimensions,
         index::Point as AlacPoint,
         term::{cell::Flags, TermMode},
-        vte::ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
+        vte::ansi::{
+            Color::{self as AnsiColor, Named},
+            CursorShape as AlacCursorShape, NamedColor,
+        },
     },
     terminal_settings::TerminalSettings,
-    IndexedCell, Terminal, TerminalContent, TerminalSize,
+    HoveredWord, IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::Tooltip;
@@ -29,16 +32,18 @@ use std::{fmt::Debug, ops::RangeInclusive};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
+    hitbox: Hitbox,
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
-    cursor: Option<Cursor>,
+    cursor: Option<CursorLayout>,
     background_color: Hsla,
     dimensions: TerminalSize,
     mode: TermMode,
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement>,
     gutter: Pixels,
+    last_hovered_word: Option<HoveredWord>,
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
@@ -365,7 +370,7 @@ impl TerminalElement {
         };
 
         let mut result = TextRun {
-            len: indexed.c.len_utf8() as usize,
+            len: indexed.c.len_utf8(),
             color: fg,
             background_color: None,
             font: Font {
@@ -392,217 +397,6 @@ impl TerminalElement {
         result
     }
 
-    fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut ElementContext) -> LayoutState {
-        let settings = ThemeSettings::get_global(cx).clone();
-
-        let buffer_font_size = settings.buffer_font_size(cx);
-
-        let terminal_settings = TerminalSettings::get_global(cx);
-        let font_family = terminal_settings
-            .font_family
-            .as_ref()
-            .map(|string| string.clone().into())
-            .unwrap_or(settings.buffer_font.family);
-
-        let font_features = terminal_settings
-            .font_features
-            .clone()
-            .unwrap_or(settings.buffer_font.features.clone());
-
-        let line_height = terminal_settings.line_height.value();
-        let font_size = terminal_settings.font_size.clone();
-
-        let font_size =
-            font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
-
-        let theme = cx.theme().clone();
-
-        let link_style = HighlightStyle {
-            color: Some(theme.colors().link_text_hover),
-            font_weight: None,
-            font_style: None,
-            background_color: None,
-            underline: Some(UnderlineStyle {
-                thickness: px(1.0),
-                color: Some(theme.colors().link_text_hover),
-                wavy: false,
-            }),
-            strikethrough: None,
-            fade_out: None,
-        };
-
-        let text_style = TextStyle {
-            font_family,
-            font_features,
-            font_size: font_size.into(),
-            font_style: FontStyle::Normal,
-            line_height: line_height.into(),
-            background_color: None,
-            white_space: WhiteSpace::Normal,
-            // These are going to be overridden per-cell
-            underline: None,
-            strikethrough: None,
-            color: theme.colors().text,
-            font_weight: FontWeight::NORMAL,
-        };
-
-        let text_system = cx.text_system();
-        let player_color = theme.players().local();
-        let match_color = theme.colors().search_match_background;
-        let gutter;
-        let dimensions = {
-            let rem_size = cx.rem_size();
-            let font_pixels = text_style.font_size.to_pixels(rem_size);
-            let line_height = font_pixels * line_height.to_pixels(rem_size);
-            let font_id = cx.text_system().resolve_font(&text_style.font());
-
-            let cell_width = text_system
-                .advance(font_id, font_pixels, 'm')
-                .unwrap()
-                .width;
-            gutter = cell_width;
-
-            let mut size = bounds.size.clone();
-            size.width -= gutter;
-
-            // https://github.com/zed-industries/zed/issues/2750
-            // if the terminal is one column wide, rendering 🦀
-            // causes alacritty to misbehave.
-            if size.width < cell_width * 2.0 {
-                size.width = cell_width * 2.0;
-            }
-
-            TerminalSize::new(line_height, cell_width, size)
-        };
-
-        let search_matches = self.terminal.read(cx).matches.clone();
-
-        let background_color = theme.colors().terminal_background;
-
-        let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
-            terminal.set_size(dimensions);
-            terminal.sync(cx);
-            if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
-                terminal.last_content.last_hovered_word.clone()
-            } else {
-                None
-            }
-        });
-
-        if bounds.contains(&cx.mouse_position()) {
-            let stacking_order = cx.stacking_order().clone();
-            if self.can_navigate_to_selected_word && last_hovered_word.is_some() {
-                cx.set_cursor_style(gpui::CursorStyle::PointingHand, stacking_order);
-            } else {
-                cx.set_cursor_style(gpui::CursorStyle::IBeam, stacking_order);
-            }
-        }
-
-        let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
-            div()
-                .size_full()
-                .id("terminal-element")
-                .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
-                .into_any_element()
-        });
-
-        let TerminalContent {
-            cells,
-            mode,
-            display_offset,
-            cursor_char,
-            selection,
-            cursor,
-            ..
-        } = &self.terminal.read(cx).last_content;
-
-        // searches, highlights to a single range representations
-        let mut relative_highlighted_ranges = Vec::new();
-        for search_match in search_matches {
-            relative_highlighted_ranges.push((search_match, match_color))
-        }
-        if let Some(selection) = selection {
-            relative_highlighted_ranges
-                .push((selection.start..=selection.end, player_color.selection));
-        }
-
-        // then have that representation be converted to the appropriate highlight data structure
-
-        let (cells, rects) = TerminalElement::layout_grid(
-            cells,
-            &text_style,
-            &cx.text_system(),
-            last_hovered_word
-                .as_ref()
-                .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
-            cx,
-        );
-
-        // Layout cursor. Rectangle is used for IME, so we should lay it out even
-        // if we don't end up showing it.
-        let cursor = if let AlacCursorShape::Hidden = cursor.shape {
-            None
-        } else {
-            let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
-            let cursor_text = {
-                let str_trxt = cursor_char.to_string();
-                let len = str_trxt.len();
-                cx.text_system()
-                    .shape_line(
-                        str_trxt.into(),
-                        text_style.font_size.to_pixels(cx.rem_size()),
-                        &[TextRun {
-                            len,
-                            font: text_style.font(),
-                            color: theme.colors().terminal_background,
-                            background_color: None,
-                            underline: Default::default(),
-                            strikethrough: None,
-                        }],
-                    )
-                    .unwrap()
-            };
-
-            let focused = self.focused;
-            TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                move |(cursor_position, block_width)| {
-                    let (shape, text) = match cursor.shape {
-                        AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
-                        AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
-                        AlacCursorShape::Underline => (CursorShape::Underscore, None),
-                        AlacCursorShape::Beam => (CursorShape::Bar, None),
-                        AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
-                        //This case is handled in the if wrapping the whole cursor layout
-                        AlacCursorShape::Hidden => unreachable!(),
-                    };
-
-                    Cursor::new(
-                        cursor_position,
-                        block_width,
-                        dimensions.line_height,
-                        theme.players().local().cursor,
-                        shape,
-                        text,
-                        None,
-                    )
-                },
-            )
-        };
-
-        LayoutState {
-            cells,
-            cursor,
-            background_color,
-            dimensions,
-            rects,
-            relative_highlighted_ranges,
-            mode: *mode,
-            display_offset: *display_offset,
-            hyperlink_tooltip,
-            gutter,
-        }
-    }
-
     fn generic_button_handler<E>(
         connection: Model<Terminal>,
         origin: Point<Pixels>,
@@ -623,15 +417,11 @@ impl TerminalElement {
         &mut self,
         origin: Point<Pixels>,
         mode: TermMode,
-        bounds: Bounds<Pixels>,
+        hitbox: &Hitbox,
         cx: &mut ElementContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
-        let interactive_bounds = InteractiveBounds {
-            bounds: bounds.intersect(&cx.content_mask().bounds),
-            stacking_order: cx.stacking_order().clone(),
-        };
 
         self.interactivity.on_mouse_down(MouseButton::Left, {
             let terminal = terminal.clone();
@@ -646,30 +436,30 @@ impl TerminalElement {
         });
 
         cx.on_mouse_event({
-            let bounds = bounds.clone();
             let focus = self.focus.clone();
             let terminal = self.terminal.clone();
+            let hitbox = hitbox.clone();
             move |e: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
                     return;
                 }
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
-                    let visibly_contains = interactive_bounds.visibly_contains(&e.position, cx);
+                    let hovered = hitbox.is_hovered(cx);
                     terminal.update(cx, |terminal, cx| {
                         if !terminal.selection_started() {
-                            if visibly_contains {
-                                terminal.mouse_drag(e, origin, bounds);
+                            if hovered {
+                                terminal.mouse_drag(e, origin, hitbox.bounds);
                                 cx.notify();
                             }
                         } else {
-                            terminal.mouse_drag(e, origin, bounds);
+                            terminal.mouse_drag(e, origin, hitbox.bounds);
                             cx.notify();
                         }
                     })
                 }
 
-                if interactive_bounds.visibly_contains(&e.position, cx) {
+                if hitbox.is_hovered(cx) {
                     terminal.update(cx, |terminal, cx| {
                         terminal.mouse_move(&e, origin);
                         cx.notify();
@@ -751,34 +541,244 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type State = InteractiveElementState;
+    type BeforeLayout = ();
+    type AfterLayout = LayoutState;
 
-    fn request_layout(
+    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+        self.interactivity.occlude_mouse();
+        let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
+            style.size.width = relative(1.).into();
+            style.size.height = relative(1.).into();
+            let layout_id = cx.request_layout(&style, None);
+
+            layout_id
+        });
+        (layout_id, ())
+    }
+
+    fn after_layout(
         &mut self,
-        element_state: Option<Self::State>,
-        cx: &mut ElementContext<'_>,
-    ) -> (LayoutId, Self::State) {
-        let (layout_id, interactive_state) =
-            self.interactivity
-                .layout(element_state, cx, |mut style, cx| {
-                    style.size.width = relative(1.).into();
-                    style.size.height = relative(1.).into();
-                    let layout_id = cx.request_layout(&style, None);
+        bounds: Bounds<Pixels>,
+        _: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> Self::AfterLayout {
+        self.interactivity
+            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, cx| {
+                let hitbox = hitbox.unwrap();
+                let settings = ThemeSettings::get_global(cx).clone();
 
-                    layout_id
+                let buffer_font_size = settings.buffer_font_size(cx);
+
+                let terminal_settings = TerminalSettings::get_global(cx);
+                let font_family = terminal_settings
+                    .font_family
+                    .as_ref()
+                    .map(|string| string.clone().into())
+                    .unwrap_or(settings.buffer_font.family);
+
+                let font_features = terminal_settings
+                    .font_features
+                    .unwrap_or(settings.buffer_font.features);
+
+                let line_height = terminal_settings.line_height.value();
+                let font_size = terminal_settings.font_size;
+
+                let font_size =
+                    font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
+
+                let theme = cx.theme().clone();
+
+                let link_style = HighlightStyle {
+                    color: Some(theme.colors().link_text_hover),
+                    font_weight: None,
+                    font_style: None,
+                    background_color: None,
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: Some(theme.colors().link_text_hover),
+                        wavy: false,
+                    }),
+                    strikethrough: None,
+                    fade_out: None,
+                };
+
+                let text_style = TextStyle {
+                    font_family,
+                    font_features,
+                    font_size: font_size.into(),
+                    font_style: FontStyle::Normal,
+                    line_height: line_height.into(),
+                    background_color: None,
+                    white_space: WhiteSpace::Normal,
+                    // These are going to be overridden per-cell
+                    underline: None,
+                    strikethrough: None,
+                    color: theme.colors().text,
+                    font_weight: FontWeight::NORMAL,
+                };
+
+                let text_system = cx.text_system();
+                let player_color = theme.players().local();
+                let match_color = theme.colors().search_match_background;
+                let gutter;
+                let dimensions = {
+                    let rem_size = cx.rem_size();
+                    let font_pixels = text_style.font_size.to_pixels(rem_size);
+                    let line_height = font_pixels * line_height.to_pixels(rem_size);
+                    let font_id = cx.text_system().resolve_font(&text_style.font());
+
+                    let cell_width = text_system
+                        .advance(font_id, font_pixels, 'm')
+                        .unwrap()
+                        .width;
+                    gutter = cell_width;
+
+                    let mut size = bounds.size;
+                    size.width -= gutter;
+
+                    // https://github.com/zed-industries/zed/issues/2750
+                    // if the terminal is one column wide, rendering 🦀
+                    // causes alacritty to misbehave.
+                    if size.width < cell_width * 2.0 {
+                        size.width = cell_width * 2.0;
+                    }
+
+                    TerminalSize::new(line_height, cell_width, size)
+                };
+
+                let search_matches = self.terminal.read(cx).matches.clone();
+
+                let background_color = theme.colors().terminal_background;
+
+                let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
+                    terminal.set_size(dimensions);
+                    terminal.sync(cx);
+                    if self.can_navigate_to_selected_word
+                        && terminal.can_navigate_to_selected_word()
+                    {
+                        terminal.last_content.last_hovered_word.clone()
+                    } else {
+                        None
+                    }
                 });
 
-        (layout_id, interactive_state)
+                let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
+                    let offset = bounds.origin + Point::new(gutter, px(0.));
+                    let mut element = div()
+                        .size_full()
+                        .id("terminal-element")
+                        .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+                        .into_any_element();
+                    element.layout(offset, bounds.size.into(), cx);
+                    element
+                });
+
+                let TerminalContent {
+                    cells,
+                    mode,
+                    display_offset,
+                    cursor_char,
+                    selection,
+                    cursor,
+                    ..
+                } = &self.terminal.read(cx).last_content;
+
+                // searches, highlights to a single range representations
+                let mut relative_highlighted_ranges = Vec::new();
+                for search_match in search_matches {
+                    relative_highlighted_ranges.push((search_match, match_color))
+                }
+                if let Some(selection) = selection {
+                    relative_highlighted_ranges
+                        .push((selection.start..=selection.end, player_color.selection));
+                }
+
+                // then have that representation be converted to the appropriate highlight data structure
+
+                let (cells, rects) = TerminalElement::layout_grid(
+                    cells,
+                    &text_style,
+                    &cx.text_system(),
+                    last_hovered_word
+                        .as_ref()
+                        .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                    cx,
+                );
+
+                // Layout cursor. Rectangle is used for IME, so we should lay it out even
+                // if we don't end up showing it.
+                let cursor = if let AlacCursorShape::Hidden = cursor.shape {
+                    None
+                } else {
+                    let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
+                    let cursor_text = {
+                        let str_trxt = cursor_char.to_string();
+                        let len = str_trxt.len();
+                        cx.text_system()
+                            .shape_line(
+                                str_trxt.into(),
+                                text_style.font_size.to_pixels(cx.rem_size()),
+                                &[TextRun {
+                                    len,
+                                    font: text_style.font(),
+                                    color: theme.colors().terminal_background,
+                                    background_color: None,
+                                    underline: Default::default(),
+                                    strikethrough: None,
+                                }],
+                            )
+                            .unwrap()
+                    };
+
+                    let focused = self.focused;
+                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                        move |(cursor_position, block_width)| {
+                            let (shape, text) = match cursor.shape {
+                                AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
+                                AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                                AlacCursorShape::Underline => (CursorShape::Underscore, None),
+                                AlacCursorShape::Beam => (CursorShape::Bar, None),
+                                AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
+                                //This case is handled in the if wrapping the whole cursor layout
+                                AlacCursorShape::Hidden => unreachable!(),
+                            };
+
+                            CursorLayout::new(
+                                cursor_position,
+                                block_width,
+                                dimensions.line_height,
+                                theme.players().local().cursor,
+                                shape,
+                                text,
+                            )
+                        },
+                    )
+                };
+
+                LayoutState {
+                    hitbox,
+                    cells,
+                    cursor,
+                    background_color,
+                    dimensions,
+                    rects,
+                    relative_highlighted_ranges,
+                    mode: *mode,
+                    display_offset: *display_offset,
+                    hyperlink_tooltip,
+                    gutter,
+                    last_hovered_word,
+                }
+            })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::State,
+        _: &mut Self::BeforeLayout,
+        layout: &mut Self::AfterLayout,
         cx: &mut ElementContext<'_>,
     ) {
-        let mut layout = self.compute_layout(bounds, cx);
-
         cx.paint_quad(fill(bounds, layout.background_color));
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
@@ -791,10 +791,17 @@ impl Element for TerminalElement {
             workspace: self.workspace.clone(),
         };
 
-        self.register_mouse_listeners(origin, layout.mode, bounds, cx);
+        self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, cx);
+        if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
+            cx.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
+        } else {
+            cx.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
+        }
 
+        let cursor = layout.cursor.take();
+        let hyperlink_tooltip = layout.hyperlink_tooltip.take();
         self.interactivity
-            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+            .paint(bounds, Some(&layout.hitbox), cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({
@@ -817,42 +824,35 @@ impl Element for TerminalElement {
                     rect.paint(origin, &layout, cx);
                 }
 
-                cx.with_z_index(1, |cx| {
-                    for (relative_highlighted_range, color) in
-                        layout.relative_highlighted_ranges.iter()
+                for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
+                {
+                    if let Some((start_y, highlighted_range_lines)) =
+                        to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
                     {
-                        if let Some((start_y, highlighted_range_lines)) =
-                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
-                        {
-                            let hr = HighlightedRange {
-                                start_y, //Need to change this
-                                line_height: layout.dimensions.line_height,
-                                lines: highlighted_range_lines,
-                                color: color.clone(),
-                                //Copied from editor. TODO: move to theme or something
-                                corner_radius: 0.15 * layout.dimensions.line_height,
-                            };
-                            hr.paint(bounds, cx);
-                        }
+                        let hr = HighlightedRange {
+                            start_y, //Need to change this
+                            line_height: layout.dimensions.line_height,
+                            lines: highlighted_range_lines,
+                            color: *color,
+                            //Copied from editor. TODO: move to theme or something
+                            corner_radius: 0.15 * layout.dimensions.line_height,
+                        };
+                        hr.paint(bounds, cx);
                     }
-                });
-
-                cx.with_z_index(2, |cx| {
-                    for cell in &layout.cells {
-                        cell.paint(origin, &layout, bounds, cx);
-                    }
-                });
-
-                if self.cursor_visible {
-                    cx.with_z_index(3, |cx| {
-                        if let Some(cursor) = &layout.cursor {
-                            cursor.paint(origin, cx);
-                        }
-                    });
                 }
 
-                if let Some(mut element) = layout.hyperlink_tooltip.take() {
-                    element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
+                for cell in &layout.cells {
+                    cell.paint(origin, &layout, bounds, cx);
+                }
+
+                if self.cursor_visible {
+                    if let Some(mut cursor) = cursor {
+                        cursor.paint(origin, cx);
+                    }
+                }
+
+                if let Some(mut element) = hyperlink_tooltip {
+                    element.paint(cx);
                 }
             });
     }
@@ -860,10 +860,6 @@ impl Element for TerminalElement {
 
 impl IntoElement for TerminalElement {
     type Element = Self;
-
-    fn element_id(&self) -> Option<ElementId> {
-        Some("terminal".into())
-    }
 
     fn into_element(self) -> Self::Element {
         self
@@ -1015,10 +1011,10 @@ fn to_highlighted_range_lines(
         let mut line_end = layout.dimensions.columns();
 
         if line == clamped_start_line {
-            line_start = unclamped_start.column.0 as usize;
+            line_start = unclamped_start.column.0;
         }
         if line == clamped_end_line {
-            line_end = unclamped_end.column.0 as usize + 1; //+1 for inclusive
+            line_end = unclamped_end.column.0 + 1; // +1 for inclusive
         }
 
         highlighted_range_lines.push(HighlightedRangeLine {

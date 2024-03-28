@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/workspace.rs"
 doctest = false
@@ -22,7 +25,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-async-recursion = "1.0.0"
+async-recursion.workspace = true
 bincode = "1.2.1"
 call.workspace = true
 client.workspace = true

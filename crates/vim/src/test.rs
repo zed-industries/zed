@@ -153,6 +153,24 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // goes to current line end
+    cx.set_state(indoc! {"ˇaa\nbb\ncc"}, Mode::Normal);
+    cx.simulate_keystrokes(["$"]);
+    cx.assert_editor_state("aˇa\nbb\ncc");
+
+    // goes to next line end
+    cx.simulate_keystrokes(["2", "$"]);
+    cx.assert_editor_state("aa\nbˇb\ncc");
+
+    // try to exceed the final line.
+    cx.simulate_keystrokes(["4", "$"]);
+    cx.assert_editor_state("aa\nbb\ncˇc");
+}
+
+#[gpui::test]
 async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
@@ -251,6 +269,11 @@ async fn test_status_indicator(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
         Some(Mode::Insert)
+    );
+    cx.simulate_keystrokes(["escape", "shift-r"]);
+    assert_eq!(
+        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
+        Some(Mode::Replace)
     );
 
     // shows even in search
@@ -962,4 +985,56 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.set_state("12ˇ34", Mode::Normal);
     cx.simulate_keystrokes(["g", "t"]);
     cx.assert_state("12ˇ 34", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_undo(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("hello quˇoel world").await;
+    cx.simulate_shared_keystrokes(["v", "i", "w", "s", "c", "o", "escape", "u"])
+        .await;
+    cx.assert_shared_state("hello ˇquoel world").await;
+    cx.simulate_shared_keystrokes(["ctrl-r"]).await;
+    cx.assert_shared_state("hello ˇco world").await;
+    cx.simulate_shared_keystrokes(["a", "o", "right", "l", "escape"])
+        .await;
+    cx.assert_shared_state("hello cooˇl world").await;
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state("hello cooˇ world").await;
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state("hello cˇo world").await;
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state("hello ˇquoel world").await;
+
+    cx.set_shared_state("hello quˇoel world").await;
+    cx.simulate_shared_keystrokes(["v", "i", "w", "~", "u"])
+        .await;
+    cx.assert_shared_state("hello ˇquoel world").await;
+
+    cx.set_shared_state("\nhello quˇoel world\n").await;
+    cx.simulate_shared_keystrokes(["shift-v", "s", "c", "escape", "u"])
+        .await;
+    cx.assert_shared_state("\nˇhello quoel world\n").await;
+
+    cx.set_shared_state(indoc! {"
+        ˇ1
+        2
+        3"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["ctrl-v", "shift-g", "ctrl-a"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        ˇ2
+        3
+        4"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state(indoc! {"
+        ˇ1
+        2
+        3"})
+        .await;
 }

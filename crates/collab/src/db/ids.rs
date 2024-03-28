@@ -67,31 +67,34 @@ macro_rules! id_type {
     };
 }
 
-id_type!(BufferId);
 id_type!(AccessTokenId);
+id_type!(BufferId);
+id_type!(ChannelBufferCollaboratorId);
 id_type!(ChannelChatParticipantId);
 id_type!(ChannelId);
 id_type!(ChannelMemberId);
-id_type!(MessageId);
 id_type!(ContactId);
+id_type!(DevServerId);
+id_type!(ExtensionId);
+id_type!(FlagId);
 id_type!(FollowerId);
+id_type!(HostedProjectId);
+id_type!(MessageId);
+id_type!(NotificationId);
+id_type!(NotificationKindId);
+id_type!(ProjectCollaboratorId);
+id_type!(ProjectId);
+id_type!(ReplicaId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
-id_type!(ProjectId);
-id_type!(ProjectCollaboratorId);
-id_type!(ReplicaId);
 id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
-id_type!(ChannelBufferCollaboratorId);
-id_type!(FlagId);
-id_type!(ExtensionId);
-id_type!(NotificationId);
-id_type!(NotificationKindId);
-id_type!(HostedProjectId);
 
 /// ChannelRole gives you permissions for both channels and calls.
-#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
+#[derive(
+    Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash, Serialize,
+)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
 pub enum ChannelRole {
     /// Admin can read/write and change permissions.

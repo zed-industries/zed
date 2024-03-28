@@ -13,6 +13,8 @@ pub struct Model {
     pub authors: String,
     pub repository: String,
     pub description: String,
+    pub schema_version: i32,
+    pub wasm_api_version: Option<String>,
     pub download_count: i64,
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
     Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowAppearance, WindowOptions,
+    WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -12,7 +12,6 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     sync::Arc,
-    time::Duration,
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
@@ -121,14 +120,13 @@ impl Platform for TestPlatform {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         #[cfg(target_os = "linux")]
-        return Arc::new(crate::platform::test::TestTextSystem {});
+        return Arc::new(crate::platform::linux::LinuxTextSystem::new());
 
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        // todo!("windows")
         #[cfg(target_os = "windows")]
-        unimplemented!()
+        return Arc::new(crate::platform::windows::WindowsTextSystem::new());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -161,6 +159,10 @@ impl Platform for TestPlatform {
         vec![self.active_display.clone()]
     }
 
+    fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        Some(self.active_display.clone())
+    }
+
     fn display(&self, id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
         self.displays().iter().find(|d| d.id() == id).cloned()
     }
@@ -175,11 +177,11 @@ impl Platform for TestPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        params: WindowParams,
     ) -> Box<dyn crate::PlatformWindow> {
         let window = TestWindow::new(
-            options,
             handle,
+            params,
             self.weak.clone(),
             self.active_display.clone(),
         );
@@ -236,6 +238,10 @@ impl Platform for TestPlatform {
     }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+
+    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
+
+    fn clear_recent_documents(&self) {}
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 
@@ -295,7 +301,7 @@ impl Platform for TestPlatform {
         Task::ready(Ok(()))
     }
 
-    fn double_click_interval(&self) -> std::time::Duration {
-        Duration::from_millis(500)
+    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
+        unimplemented!()
     }
 }

@@ -7,11 +7,10 @@ mod semantic_version;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub use backtrace::Backtrace;
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
-pub use semantic_version::SemanticVersion;
+pub use semantic_version::*;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -32,7 +31,7 @@ macro_rules! debug_panic {
         if cfg!(debug_assertions) {
             panic!( $($fmt_arg)* );
         } else {
-            let backtrace = $crate::Backtrace::new();
+            let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
     };
@@ -427,21 +426,20 @@ pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
     }
 }
 
-/// Evaluates to an immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result
+/// Expands to an immediately-invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result.
+///
+/// Accepts a normal block, an async block, or an async move block.
 #[macro_export]
 macro_rules! maybe {
     ($block:block) => {
         (|| $block)()
     };
-}
-
-/// Evaluates to an immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result, but async.
-#[macro_export]
-macro_rules! async_maybe {
-    ($block:block) => {
-        (|| async move { $block })()
+    (async $block:block) => {
+        (|| async $block)()
+    };
+    (async move $block:block) => {
+        (|| async move $block)()
     };
 }
 
@@ -524,6 +522,22 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
         Some(self.cmp(other))
     }
 }
+lazy_static! {
+    static ref EMOJI_REGEX: regex::Regex = regex::Regex::new("(\\p{Emoji}|\u{200D})").unwrap();
+}
+
+/// Returns true if the given string consists of emojis only.
+/// E.g. "👨‍👩‍👧‍👧👋" will return true, but "👋!" will return false.
+pub fn word_consists_of_emojis(s: &str) -> bool {
+    let mut prev_end = 0;
+    for capture in EMOJI_REGEX.find_iter(s) {
+        if capture.start() != prev_end {
+            return false;
+        }
+        prev_end = capture.end();
+    }
+    prev_end == s.len()
+}
 
 #[cfg(test)]
 mod tests {
@@ -581,6 +595,23 @@ mod tests {
                 None,
                 "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
             )
+        }
+    }
+
+    #[test]
+    fn test_word_consists_of_emojis() {
+        let words_to_test = vec![
+            ("👨‍👩‍👧‍👧👋🥒", true),
+            ("👋", true),
+            ("!👋", false),
+            ("👋!", false),
+            ("👋 ", false),
+            (" 👋", false),
+            ("Test", false),
+        ];
+
+        for (text, expected_result) in words_to_test {
+            assert_eq!(word_consists_of_emojis(text), expected_result);
         }
     }
 }

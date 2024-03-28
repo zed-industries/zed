@@ -3,6 +3,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::sync::Arc;
+use url::Url;
 
 pub struct GitHubLspBinaryVersion {
     pub name: String,
@@ -73,4 +74,35 @@ pub async fn latest_github_release(
         .filter(|release| !require_assets || !release.assets.is_empty())
         .find(|release| release.pre_release == pre_release)
         .ok_or(anyhow!("Failed to find a release"))
+}
+
+pub fn build_tarball_url(repo_name_with_owner: &str, tag: &str) -> Result<String> {
+    let mut url = Url::parse(&format!(
+        "https://github.com/{repo_name_with_owner}/archive/refs/tags",
+    ))?;
+    // We're pushing this here, because tags may contain `/` and other characters
+    // that need to be escaped.
+    let tarball_filename = format!("{}.tar.gz", tag);
+    url.path_segments_mut()
+        .map_err(|_| anyhow!("cannot modify url path segments"))?
+        .push(&tarball_filename);
+    Ok(url.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::github::build_tarball_url;
+
+    #[test]
+    fn test_build_tarball_url() {
+        let tag = "release/2.3.5";
+        let repo_name_with_owner = "microsoft/vscode-eslint";
+
+        let have = build_tarball_url(repo_name_with_owner, tag).unwrap();
+
+        assert_eq!(
+            have,
+            "https://github.com/microsoft/vscode-eslint/archive/refs/tags/release%2F2.3.5.tar.gz"
+        );
+    }
 }

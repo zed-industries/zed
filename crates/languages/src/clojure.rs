@@ -12,14 +12,10 @@ use util::{
 #[derive(Copy, Clone)]
 pub struct ClojureLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for ClojureLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("clojure-lsp".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "clojure"
     }
 
     async fn fetch_latest_server_version(

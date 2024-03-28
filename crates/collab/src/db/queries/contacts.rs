@@ -177,7 +177,7 @@ impl Database {
                         sender_id: sender_id.to_proto(),
                     },
                     true,
-                    &*tx,
+                    &tx,
                 )
                 .await?
                 .into_iter()
@@ -227,7 +227,7 @@ impl Database {
                         rpc::Notification::ContactRequest {
                             sender_id: requester_id.to_proto(),
                         },
-                        &*tx,
+                        &tx,
                     )
                     .await?;
             }
@@ -335,7 +335,7 @@ impl Database {
                         sender_id: requester_id.to_proto(),
                     },
                     accept,
-                    &*tx,
+                    &tx,
                 )
                 .await?,
             );
@@ -348,7 +348,7 @@ impl Database {
                             responder_id: responder_id.to_proto(),
                         },
                         true,
-                        &*tx,
+                        &tx,
                     )
                     .await?,
                 );

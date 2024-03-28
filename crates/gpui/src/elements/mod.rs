@@ -1,4 +1,6 @@
+mod animation;
 mod canvas;
+mod deferred;
 mod div;
 mod img;
 mod list;
@@ -7,7 +9,9 @@ mod svg;
 mod text;
 mod uniform_list;
 
+pub use animation::*;
 pub use canvas::*;
+pub use deferred::*;
 pub use div::*;
 pub use img::*;
 pub use list::*;

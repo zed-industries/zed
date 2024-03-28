@@ -10,14 +10,14 @@ impl CharBag {
 
     fn insert(&mut self, c: char) {
         let c = c.to_ascii_lowercase();
-        if ('a'..='z').contains(&c) {
+        if c.is_ascii_lowercase() {
             let mut count = self.0;
             let idx = c as u8 - b'a';
             count >>= idx * 2;
             count = ((count << 1) | 1) & 3;
             count <<= idx * 2;
             self.0 |= count;
-        } else if ('0'..='9').contains(&c) {
+        } else if c.is_ascii_digit() {
             let idx = c as u8 - b'0';
             self.0 |= 1 << (idx + 52);
         } else if c == '-' {

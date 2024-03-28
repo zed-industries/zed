@@ -1,20 +1,28 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
+// Disable command line from opening on release mode
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
+use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, UserStore};
+use client::{
+    parse_zed_link, telemetry::Telemetry, Client, ClientSettings, DevServerToken, UserStore,
+};
 use collab_ui::channel_view::ChannelView;
+use copilot::Copilot;
+use copilot_ui::CopilotCompletionProvider;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::{Editor, EditorMode};
 use env_logger::Builder;
 use fs::RealFs;
-#[cfg(target_os = "macos")]
-use fsevent::StreamFlags;
-use futures::StreamExt;
-use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use futures::{future, StreamExt};
+use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, ViewContext};
+use image_viewer;
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -23,7 +31,7 @@ use assets::Assets;
 use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use release_channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
@@ -36,7 +44,7 @@ use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write},
     panic,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -45,17 +53,18 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
-    async_maybe,
     http::{HttpClient, HttpClientWithUrl},
+    maybe,
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
-    ResultExt,
+    ResultExt, TryFutureExt,
 };
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, IsOnlyInstance, OpenListener, OpenRequest,
+    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
+    OpenListener, OpenRequest,
 };
 
 #[global_allocator]
@@ -83,7 +92,16 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    let fs = Arc::new(RealFs);
+    let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+        app.path_for_auxiliary_executable("git")
+            .context("could not find git binary path")
+            .log_err()
+    } else {
+        None
+    };
+    log::info!("Using git binary path: {:?}", git_binary_path);
+
+    let fs = Arc::new(RealFs::new(git_binary_path));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -106,13 +124,11 @@ fn main() {
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
     let open_listener = listener.clone();
-    app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
+    app.on_open_urls(move |urls| open_listener.open_urls(urls));
     app.on_reopen(move |cx| {
-        if let Some(app_state) = AppState::try_global(cx)
-            .map(|app_state| app_state.upgrade())
-            .flatten()
+        if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
-            workspace::open_new(&app_state, cx, |workspace, cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -145,9 +161,9 @@ fn main() {
         ));
 
         let client = client::Client::new(clock, http.clone(), cx);
-        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        let mut languages =
+            LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         let copilot_language_server_id = languages.next_language_server_id();
-        languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
@@ -166,6 +182,7 @@ fn main() {
         command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
+        image_viewer::init(cx);
         diagnostics::init(cx);
         copilot::init(
             copilot_language_server_id,
@@ -173,22 +190,21 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
-        assistant::init(cx);
+        assistant::init(client.clone(), cx);
+        init_inline_completion_provider(client.telemetry().clone(), cx);
 
         extension::init(
             fs.clone(),
-            http.clone(),
+            client.clone(),
+            node_runtime.clone(),
             languages.clone(),
             ThemeRegistry::global(cx),
             cx,
         );
 
         load_user_themes_in_background(fs.clone(), cx);
-        #[cfg(target_os = "macos")]
         watch_themes(fs.clone(), cx);
 
-        cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
-            .detach();
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -242,13 +258,13 @@ fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
+        tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
         tasks_ui::init(cx);
         channel::init(&client, user_store.clone(), cx);
         search::init(cx);
-        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
 
@@ -267,157 +283,63 @@ fn main() {
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
 
-        if stdout_is_a_pty() {
-            //todo!(linux): unblock this
-            #[cfg(not(target_os = "linux"))]
-            upload_panics_and_crashes(http.clone(), cx);
-            cx.activate(true);
-            let urls = collect_url_args();
-            if !urls.is_empty() {
-                listener.open_urls(&urls)
-            }
+        // todo(linux): unblock this
+        upload_panics_and_crashes(http.clone(), cx);
+
+        cx.activate(true);
+
+        let mut args = Args::parse();
+        if let Some(dev_server_token) = args.dev_server_token.take() {
+            let dev_server_token = DevServerToken(dev_server_token);
+            let server_url = ClientSettings::get_global(&cx).server_url.clone();
+            let client = client.clone();
+            client.set_dev_server_token(dev_server_token);
+            cx.spawn(|cx| async move {
+                client.authenticate_and_connect(false, &cx).await?;
+                log::info!("Connected to {}", server_url);
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         } else {
-            upload_panics_and_crashes(http.clone(), cx);
-            // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
-            // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
-            if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
-                && !listener.triggered.load(Ordering::Acquire)
-            {
-                listener.open_urls(&collect_url_args())
+            let urls: Vec<_> = args
+                .paths_or_urls
+                .iter()
+                .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+                .collect();
+
+            if !urls.is_empty() {
+                listener.open_urls(urls)
             }
         }
 
         let mut triggered_authentication = false;
 
-        fn open_paths_and_log_errs(
-            paths: &[PathBuf],
-            app_state: &Arc<AppState>,
-            cx: &mut AppContext,
-        ) {
-            let task = workspace::open_paths(&paths, &app_state, None, cx);
-            cx.spawn(|_| async move {
-                if let Some((_window, results)) = task.await.log_err() {
-                    for result in results {
-                        if let Some(Err(e)) = result {
-                            log::error!("Error opening path: {}", e);
-                        }
-                    }
-                }
-            })
-            .detach();
-        }
-
-        match open_rx.try_next() {
-            Ok(Some(OpenRequest::Paths { paths })) => {
-                open_paths_and_log_errs(&paths, &app_state, cx)
+        match open_rx
+            .try_next()
+            .ok()
+            .flatten()
+            .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
+        {
+            Some(request) => {
+                triggered_authentication = handle_open_request(request, app_state.clone(), cx)
             }
-            Ok(Some(OpenRequest::CliConnection { connection })) => {
-                let app_state = app_state.clone();
-                cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
-                    .detach();
-            }
-            Ok(Some(OpenRequest::JoinChannel { channel_id })) => {
-                triggered_authentication = true;
-                let app_state = app_state.clone();
-                let client = client.clone();
-                cx.spawn(|cx| async move {
-                    // ignore errors here, we'll show a generic "not signed in"
-                    let _ = authenticate(client, &cx).await;
-                    cx.update(|cx| {
-                        workspace::join_channel(client::ChannelId(channel_id), app_state, None, cx)
-                    })?
-                    .await?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
-            Ok(Some(OpenRequest::OpenChannelNotes {
-                channel_id,
-                heading,
-            })) => {
-                triggered_authentication = true;
-                let app_state = app_state.clone();
-                let client = client.clone();
-                cx.spawn(|mut cx| async move {
-                    // ignore errors here, we'll show a generic "not signed in"
-                    let _ = authenticate(client, &cx).await;
-                    let workspace_window =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    let workspace = workspace_window.root_view(&cx)?;
-                    cx.update_window(workspace_window.into(), |_, cx| {
-                        ChannelView::open(client::ChannelId(channel_id), heading, workspace, cx)
-                    })?
-                    .await?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
-            Ok(None) | Err(_) => cx
+            None => cx
                 .spawn({
                     let app_state = app_state.clone();
-                    |cx| async move { restore_or_create_workspace(&app_state, cx).await }
+                    |cx| async move { restore_or_create_workspace(app_state, cx).await }
                 })
                 .detach(),
         }
 
         let app_state = app_state.clone();
         cx.spawn(move |cx| async move {
-            while let Some(request) = open_rx.next().await {
-                match request {
-                    OpenRequest::Paths { paths } => {
-                        cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
-                            .ok();
+            while let Some(urls) = open_rx.next().await {
+                cx.update(|cx| {
+                    if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
+                        handle_open_request(request, app_state.clone(), cx);
                     }
-                    OpenRequest::CliConnection { connection } => {
-                        let app_state = app_state.clone();
-                        cx.spawn(move |cx| {
-                            handle_cli_connection(connection, app_state.clone(), cx)
-                        })
-                        .detach();
-                    }
-                    OpenRequest::JoinChannel { channel_id } => {
-                        let app_state = app_state.clone();
-                        cx.update(|mut cx| {
-                            cx.spawn(|cx| async move {
-                                cx.update(|cx| {
-                                    workspace::join_channel(
-                                        client::ChannelId(channel_id),
-                                        app_state,
-                                        None,
-                                        cx,
-                                    )
-                                })?
-                                .await?;
-                                anyhow::Ok(())
-                            })
-                            .detach_and_log_err(&mut cx);
-                        })
-                        .log_err();
-                    }
-                    OpenRequest::OpenChannelNotes {
-                        channel_id,
-                        heading,
-                    } => {
-                        let app_state = app_state.clone();
-                        let open_notes_task = cx.spawn(|mut cx| async move {
-                            let workspace_window =
-                                workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                            let workspace = workspace_window.root_view(&cx)?;
-                            cx.update_window(workspace_window.into(), |_, cx| {
-                                ChannelView::open(
-                                    client::ChannelId(channel_id),
-                                    heading,
-                                    workspace,
-                                    cx,
-                                )
-                            })?
-                            .await?;
-                            anyhow::Ok(())
-                        });
-                        cx.update(|cx| open_notes_task.detach_and_log_err(cx))
-                            .log_err();
-                    }
-                }
+                })
+                .ok();
             }
         })
         .detach();
@@ -427,6 +349,89 @@ fn main() {
                 .detach_and_log_err(cx);
         }
     });
+}
+
+fn handle_open_request(
+    request: OpenRequest,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> bool {
+    if let Some(connection) = request.cli_connection {
+        let app_state = app_state.clone();
+        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
+            .detach();
+        return false;
+    }
+
+    let mut task = None;
+    if !request.open_paths.is_empty() {
+        let app_state = app_state.clone();
+        task = Some(cx.spawn(|mut cx| async move {
+            let (_window, results) = open_paths_with_positions(
+                &request.open_paths,
+                app_state,
+                workspace::OpenOptions::default(),
+                &mut cx,
+            )
+            .await?;
+            for result in results.into_iter().flatten() {
+                if let Err(err) = result {
+                    log::error!("Error opening path: {err}",);
+                }
+            }
+            anyhow::Ok(())
+        }));
+    }
+
+    if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
+        cx.spawn(|mut cx| async move {
+            if let Some(task) = task {
+                task.await?;
+            }
+            let client = app_state.client.clone();
+            // we continue even if authentication fails as join_channel/ open channel notes will
+            // show a visible error message.
+            authenticate(client, &cx).await.log_err();
+
+            if let Some(channel_id) = request.join_channel {
+                cx.update(|cx| {
+                    workspace::join_channel(
+                        client::ChannelId(channel_id),
+                        app_state.clone(),
+                        None,
+                        cx,
+                    )
+                })?
+                .await?;
+            }
+
+            let workspace_window =
+                workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+            let workspace = workspace_window.root_view(&cx)?;
+
+            let mut promises = Vec::new();
+            for (channel_id, heading) in request.open_channel_notes {
+                promises.push(cx.update_window(workspace_window.into(), |_, cx| {
+                    ChannelView::open(
+                        client::ChannelId(channel_id),
+                        heading,
+                        workspace.clone(),
+                        cx,
+                    )
+                    .log_err()
+                })?)
+            }
+            future::join_all(promises).await;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+        true
+    } else {
+        if let Some(task) = task {
+            task.detach_and_log_err(cx)
+        }
+        false
+    }
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
@@ -466,12 +471,19 @@ async fn installation_id() -> Result<(String, bool)> {
     Ok((installation_id, false))
 }
 
-async fn restore_or_create_workspace(app_state: &Arc<AppState>, cx: AsyncAppContext) {
-    async_maybe!({
+async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppContext) {
+    maybe!(async {
         if let Some(location) = workspace::last_opened_workspace_paths().await {
-            cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
-                .await
-                .log_err();
+            cx.update(|cx| {
+                workspace::open_paths(
+                    location.paths().as_ref(),
+                    app_state,
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+            })?
+            .await
+            .log_err();
         } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_welcome_view(app_state, cx)).log_err();
         } else {
@@ -490,10 +502,11 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, cx: AsyncAppCont
 
 fn init_paths() {
     std::fs::create_dir_all(&*util::paths::CONFIG_DIR).expect("could not create config path");
+    std::fs::create_dir_all(&*util::paths::EXTENSIONS_DIR)
+        .expect("could not create extensions path");
     std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
     std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
     std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
-    #[cfg(target_os = "linux")]
     std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
 }
 
@@ -663,7 +676,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 
         let panic_data = Panic {
             thread: thread_name.into(),
-            payload: payload.into(),
+            payload,
             location_data: info.location().map(|location| LocationData {
                 file: location.file().into(),
                 line: location.line(),
@@ -807,7 +820,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = http.build_url("/api/crash");
+    let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -833,7 +846,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = Request::post(&crash_report_url)
+            let mut request = Request::post(&crash_report_url.to_string())
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain");
 
@@ -875,7 +888,7 @@ async fn load_login_shell_environment() -> Result<()> {
     // in home directory.
     let shell_cmd_prefix = std::env::var_os("HOME")
         .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd {home};"));
+        .map(|home| format!("cd '{home}';"));
 
     // The `exit 0` is the result of hours of debugging, trying to find out
     // why running this command here, without `exit 0`, would mess
@@ -922,21 +935,35 @@ fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
-fn collect_url_args() -> Vec<String> {
-    env::args()
-        .skip(1)
-        .filter_map(|arg| match std::fs::canonicalize(Path::new(&arg)) {
-            Ok(path) => Some(format!("file://{}", path.to_string_lossy())),
-            Err(error) => {
-                if let Some(_) = parse_zed_link(&arg) {
-                    Some(arg)
-                } else {
-                    log::error!("error parsing path argument: {}", error);
-                    None
-                }
+#[derive(Parser, Debug)]
+#[command(name = "zed", disable_version_flag = true)]
+struct Args {
+    /// A sequence of space-separated paths or urls that you want to open.
+    ///
+    /// Use `path:line:row` syntax to open a file at a specific location.
+    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    ///
+    /// URLs can either be file:// or zed:// scheme, or relative to https://zed.dev.
+    paths_or_urls: Vec<String>,
+
+    /// Instructs zed to run as a dev server on this machine. (not implemented)
+    #[arg(long)]
+    dev_server_token: Option<String>,
+}
+
+fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
+    match std::fs::canonicalize(Path::new(&arg)) {
+        Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
+        Err(error) => {
+            if arg.starts_with("file://") || arg.starts_with("zed-cli://") {
+                Ok(arg.into())
+            } else if let Some(_) = parse_zed_link(&arg, cx) {
+                Ok(arg.into())
+            } else {
+                Err(anyhow!("error parsing path argument: {}", error))
             }
-        })
-        .collect()
+        }
+    }
 }
 
 fn load_embedded_fonts(cx: &AppContext) {
@@ -997,9 +1024,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-//todo!(linux): Port fsevents to linux
 /// Spawns a background task to watch the themes directory for changes.
-#[cfg(target_os = "macos")]
 fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
@@ -1007,17 +1032,14 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
             .await;
 
-        while let Some(events) = events.next().await {
-            for event in events {
-                if event.flags.contains(StreamFlags::ITEM_REMOVED) {
-                    // Theme was removed, don't need to reload.
-                    // We may want to remove the theme from the registry, in this case.
-                } else {
+        while let Some(paths) = events.next().await {
+            for path in paths {
+                if fs.metadata(&path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&event.path, fs.clone())
+                            .load_user_theme(&path, fs.clone())
                             .await
                             .log_err()
                         {
@@ -1033,31 +1055,21 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 #[cfg(debug_assertions)]
-async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) {
-    use std::time::Duration;
-
-    let reload_debounce = Duration::from_millis(250);
-
-    let mut events = fs
-        .watch("crates/zed/src/languages".as_ref(), reload_debounce)
-        .await;
-
-    while (events.next().await).is_some() {
-        languages.reload();
-    }
-}
-
-#[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
+    use gpui::BorrowAppContext;
+
+    let path = {
+        let p = Path::new("assets/icons/file_icons/file_types.json");
+        let Ok(full_path) = p.canonicalize() else {
+            return;
+        };
+        full_path
+    };
+
     cx.spawn(|cx| async move {
-        let mut events = fs
-            .watch(
-                "assets/icons/file_icons/file_types.json".as_ref(),
-                Duration::from_millis(100),
-            )
-            .await;
+        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 cx.update_global(|file_types, _| {
@@ -1073,5 +1085,44 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
 
-#[cfg(not(debug_assertions))]
-async fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>) {}
+fn init_inline_completion_provider(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
+    if let Some(copilot) = Copilot::global(cx) {
+        cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+            if editor.mode() == EditorMode::Full {
+                // We renamed some of these actions to not be copilot-specific, but that
+                // would have not been backwards-compatible. So here we are re-registering
+                // the actions with the old names to not break people's keymaps.
+                editor
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::Suggest, cx: &mut ViewContext<Editor>| {
+                            editor.show_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
+                            editor.next_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
+                            editor.previous_inline_completion(&Default::default(), cx);
+                        },
+                    ))
+                    .register_action(cx.listener(
+                        |editor,
+                         _: &editor::actions::AcceptPartialCopilotSuggestion,
+                         cx: &mut ViewContext<Editor>| {
+                            editor.accept_partial_inline_completion(&Default::default(), cx);
+                        },
+                    ));
+
+                let provider = cx.new_model(|_| {
+                    CopilotCompletionProvider::new(copilot.clone())
+                        .with_telemetry(telemetry.clone())
+                });
+                editor.set_inline_completion_provider(provider, cx)
+            }
+        })
+        .detach();
+    }
+}

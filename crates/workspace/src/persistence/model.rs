@@ -6,7 +6,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
+use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
 use project::Project;
 use std::{
     path::{Path, PathBuf},
@@ -21,6 +21,16 @@ pub struct WorkspaceLocation(Arc<Vec<PathBuf>>);
 impl WorkspaceLocation {
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
         self.0.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new<P: AsRef<Path>>(paths: Vec<P>) -> Self {
+        Self(Arc::new(
+            paths
+                .into_iter()
+                .map(|p| p.as_ref().to_path_buf())
+                .collect(),
+        ))
     }
 }
 
@@ -59,7 +69,8 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: WorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) bounds: Option<WindowBounds>,
+    pub(crate) bounds: Option<Bounds<DevicePixels>>,
+    pub(crate) fullscreen: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
 }

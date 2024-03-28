@@ -14,9 +14,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
-const SERVER_PATH: &'static str = "node_modules/.bin/tailwindcss-language-server";
+const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -32,14 +32,10 @@ impl TailwindLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("tailwindcss-language-server".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "tailwind"
     }
 
     async fn fetch_latest_server_version(
@@ -55,19 +51,22 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<String>().unwrap();
+        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
+        let package_name = "@tailwindcss/language-server";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .await;
+
+        if should_install_language_server {
             self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[("@tailwindcss/language-server", version.as_str())],
-                )
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
                 .await?;
         }
 
@@ -93,8 +92,11 @@ impl LspAdapter for TailwindLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(Some(json!({
             "provideFormatter": true,
             "userLanguages": {
                 "html": "html",
@@ -102,7 +104,7 @@ impl LspAdapter for TailwindLspAdapter {
                 "javascript": "javascript",
                 "typescriptreact": "typescriptreact",
             },
-        }))
+        })))
     }
 
     fn workspace_configuration(&self, _workspace_root: &Path, _: &mut AppContext) -> Value {
@@ -127,17 +129,13 @@ impl LspAdapter for TailwindLspAdapter {
             ("PHP".to_string(), "php".to_string()),
         ])
     }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["prettier-plugin-tailwindcss"]
-    }
 }
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

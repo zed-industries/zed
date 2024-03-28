@@ -197,12 +197,10 @@ impl StreamingDiff {
                     } else {
                         hunks.push(Hunk::Remove { len: char_len })
                     }
+                } else if let Some(Hunk::Keep { len }) = hunks.last_mut() {
+                    *len += char_len;
                 } else {
-                    if let Some(Hunk::Keep { len }) = hunks.last_mut() {
-                        *len += char_len;
-                    } else {
-                        hunks.push(Hunk::Keep { len: char_len })
-                    }
+                    hunks.push(Hunk::Keep { len: char_len })
                 }
             }
 

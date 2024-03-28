@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 fn intelephense_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -34,14 +34,10 @@ impl IntelephenseLspAdapter {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for IntelephenseLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("intelephense".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "php"
     }
 
     async fn fetch_latest_server_version(
@@ -55,18 +51,30 @@ impl LspAdapter for IntelephenseLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<IntelephenseVersion>().unwrap();
+        let latest_version = latest_version.downcast::<IntelephenseVersion>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
+        let package_name = "intelephense";
 
-        if fs::metadata(&server_path).await.is_err() {
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                package_name,
+                &server_path,
+                &container_dir,
+                latest_version.0.as_str(),
+            )
+            .await;
+
+        if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[("intelephense", version.0.as_str())])
+                .npm_install_packages(&container_dir, &[(package_name, latest_version.0.as_str())])
                 .await?;
         }
+
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
@@ -89,23 +97,8 @@ impl LspAdapter for IntelephenseLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn label_for_completion(
-        &self,
-        _item: &lsp::CompletionItem,
-        _language: &Arc<language::Language>,
-    ) -> Option<language::CodeLabel> {
-        None
-    }
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        None
-    }
     fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
-    }
-
-    fn prettier_plugins(&self) -> &[&'static str] {
-        &["@prettier/plugin-php"]
     }
 }
 
@@ -113,7 +106,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

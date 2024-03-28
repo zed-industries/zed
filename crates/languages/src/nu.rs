@@ -6,14 +6,10 @@ use std::{any::Any, path::PathBuf};
 
 pub struct NuLanguageServer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl LspAdapter for NuLanguageServer {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("nu".into())
-    }
-
-    fn short_name(&self) -> &'static str {
-        "nu"
     }
 
     async fn fetch_latest_server_version(
