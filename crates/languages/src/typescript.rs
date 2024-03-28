@@ -294,7 +294,7 @@ impl LspAdapter for EsLintLspAdapter {
                 },
                 "problems": {},
                 "codeActionOnSave": code_action_on_save,
-                "workingDirectories":working_directories,
+                "workingDirectories": working_directories,
                 "experimental": {
                     "useFlatConfig": use_flat_config,
                 },
