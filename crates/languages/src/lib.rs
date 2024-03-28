@@ -19,7 +19,6 @@ mod dart;
 mod deno;
 mod elixir;
 mod elm;
-mod emmet;
 mod erlang;
 mod go;
 mod html;
@@ -295,7 +294,6 @@ pub fn init(
         vec![
             Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-            Arc::new(emmet::EmmetLspAdapter::new(node_runtime.clone())),
         ]
     );
     language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
