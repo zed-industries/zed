@@ -356,6 +356,11 @@ impl<'a> ElementContext<'a> {
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
         root_element.layout(Point::default(), self.window.viewport_size.into(), self);
 
+        let mut sorted_deferred_draws =
+            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
+        sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
+        self.layout_deferred_draws(&sorted_deferred_draws);
+
         let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
@@ -380,16 +385,13 @@ impl<'a> ElementContext<'a> {
             tooltip_element = Some(element);
         }
 
-        let mut sorted_deferred_draws =
-            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
-        self.layout_deferred_draws(&sorted_deferred_draws);
-
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
 
         // Now actually paint the elements.
         self.window.draw_phase = DrawPhase::Paint;
         root_element.paint(self);
+
+        self.paint_deferred_draws(&sorted_deferred_draws);
 
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self)
@@ -398,8 +400,6 @@ impl<'a> ElementContext<'a> {
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self);
         }
-
-        self.paint_deferred_draws(&sorted_deferred_draws);
     }
 
     fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
