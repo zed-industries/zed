@@ -92,7 +92,7 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    let git_binary_path = if std::env::var("ZED_BUNDLE").ok().as_deref() == Some("true") {
+    let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
         app.path_for_auxiliary_executable("git")
             .context("could not find git binary path")
             .log_err()
