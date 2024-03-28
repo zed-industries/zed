@@ -605,16 +605,7 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
-                    let workspace_serialization = this.serialize_workspace(cx);
-                    cx.spawn(|workspace, mut cx| async move {
-                        workspace_serialization.await;
-                        workspace
-                            .update(&mut cx, |workspace, cx| {
-                                workspace.refresh_recent_documents(cx)
-                            })?
-                            .await
-                    })
-                    .detach_and_log_err(cx)
+                    this.serialize_workspace(cx).detach();
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -944,12 +935,7 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |workspace, cx| {
-                    workspace
-                        .refresh_recent_documents(cx)
-                        .detach_and_log_err(cx);
-                    cx.activate_window()
-                })
+                .update(&mut cx, |_, cx| cx.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })

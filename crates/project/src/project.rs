@@ -6620,6 +6620,10 @@ impl Project {
             .or_insert_with(|| {
                 cx.spawn(move |project, mut cx| {
                     async move {
+                        cx.update(|cx| {
+                            cx.add_recent_documents(&[path.to_path_buf()]);
+                        })
+                        .log_err();
                         let worktree = Worktree::local(
                             client.clone(),
                             path.clone(),
