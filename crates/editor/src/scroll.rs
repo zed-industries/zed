@@ -43,6 +43,14 @@ impl ScrollAnchor {
         }
     }
 
+    pub(crate) fn top_row_display(&self, snapshot: &DisplaySnapshot) -> u32 {
+        if self.anchor != Anchor::min() {
+            self.anchor.to_display_point(snapshot).row()
+        } else {
+            0
+        }
+    }
+
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
         let mut scroll_position = self.offset;
         if self.anchor != Anchor::min() {

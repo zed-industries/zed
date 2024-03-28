@@ -9951,6 +9951,10 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
+    pub(crate) fn scroll_anchor(&self) -> ScrollAnchor {
+        self.scroll_anchor
+    }
+
     pub fn gutter_dimensions(
         &self,
         font_id: FontId,
