@@ -8863,13 +8863,6 @@ impl Editor {
             };
 
             let project = project.clone();
-
-            // cx.spawn(|this, cx| async move {
-            //     let blame = GitBlame::load(buffer, project, cx).await;
-            //     this.update(cx, |this, cx| {
-            //         this.blame = Some(...);
-            //     })
-            // })
             let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);
