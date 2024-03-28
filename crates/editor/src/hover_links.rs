@@ -9,9 +9,10 @@ use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
-    ResolveState,
+    ProjectPath, ResolveState,
 };
-use std::{cmp, ops::Range};
+
+use std::{cmp, ffi::OsStr, ops::Range};
 use text::Point;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
@@ -60,6 +61,7 @@ impl RangeInEditor {
 pub enum HoverLink {
     Url(String),
     Text(LocationLink),
+    Relative(ProjectPath),
     InlayHint(lsp::Location, LanguageServerId),
 }
 
@@ -504,13 +506,29 @@ pub fn show_link_definition(
         editor.hide_hovered_link(cx)
     }
     let project = editor.project.clone();
+    let mut project_files: Vec<ProjectPath> = Vec::new();
+    if let Some(ref model) = project {
+        for wrk in model.read(cx).worktrees() {
+            for entry in wrk.read(cx).entries(true) {
+                if entry.is_dir() || entry.is_symlink || entry.is_external {
+                    continue;
+                }
 
+                project_files.push(ProjectPath {
+                    path: entry.path.clone(),
+                    worktree_id: wrk.read(cx).id(),
+                });
+            }
+        }
+    }
     let snapshot = snapshot.buffer_snapshot.clone();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                    if let Some((url_range, hover_link)) =
+                        find_url(&buffer, buffer_position, project_files, cx.clone())
+                    {
                         this.update(&mut cx, |_, _| {
                             let range = maybe!({
                                 let start =
@@ -518,7 +536,7 @@ pub fn show_link_definition(
                                 let end = snapshot.anchor_in_excerpt(excerpt_id, url_range.end)?;
                                 Some(RangeInEditor::Text(start..end))
                             });
-                            (range, vec![HoverLink::Url(url)])
+                            (range, vec![hover_link])
                         })
                         .ok()
                     } else if let Some(project) = project {
@@ -627,8 +645,9 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Model<language::Buffer>,
     position: text::Anchor,
+    project_files: Vec<ProjectPath>,
     mut cx: AsyncWindowContext,
-) -> Option<(Range<text::Anchor>, String)> {
+) -> Option<(Range<text::Anchor>, HoverLink)> {
     const LIMIT: usize = 2048;
 
     let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
@@ -680,10 +699,34 @@ pub(crate) fn find_url(
         if link.start() <= relative_offset && link.end() >= relative_offset {
             let range = snapshot.anchor_before(token_start + link.start())
                 ..snapshot.anchor_after(token_start + link.end());
-            return Some((range, link.as_str().to_string()));
+            return Some((range, HoverLink::Url(link.as_str().to_string())));
         }
     }
+
+    if let Some(link) = is_relative_link(&input, project_files) {
+        let range =
+            snapshot.anchor_before(token_start)..snapshot.anchor_after(token_start + input.len());
+        return Some((range, HoverLink::Relative(link)));
+    }
+
     None
+}
+
+fn is_relative_link(
+    input: &String,
+    project_files: Vec<ProjectPath>,
+) -> std::option::Option<ProjectPath> {
+    if let Some(link) = input.strip_prefix("./") {
+        return project_files
+            .iter()
+            .find(|&pf| pf.path.as_os_str().eq(OsStr::new(link)))
+            .cloned();
+    }
+
+    return project_files
+        .iter()
+        .find(|&pf| pf.path.as_os_str().eq(OsStr::new(input)))
+        .cloned();
 }
 
 #[cfg(test)]

@@ -7627,10 +7627,17 @@ impl Editor {
         };
 
         cx.spawn(|editor, mut cx| async move {
-            if let Some((_, url)) = find_url(&buffer, buffer_position, cx.clone()) {
-                editor.update(&mut cx, |_, cx| {
-                    cx.open_url(&url);
-                })
+            if let Some((_, hover_link)) =
+                find_url(&buffer, buffer_position, Vec::new(), cx.clone())
+            {
+                match hover_link {
+                    HoverLink::Url(url) => editor.update(&mut cx, |_, cx| {
+                        cx.open_url(&url);
+                    }),
+                    _ => {
+                        unreachable!()
+                    }
+                }
             } else {
                 Ok(())
             }
@@ -7652,6 +7659,10 @@ impl Editor {
                 HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
                 HoverLink::InlayHint(lsp_location, server_id) => {
                     self.compute_target_location(lsp_location, server_id, cx)
+                }
+                HoverLink::Relative(path) => {
+                    self.jump(path, Point::zero(), text::Anchor::MIN, cx);
+                    Task::ready(Ok(None))
                 }
                 HoverLink::Url(url) => {
                     cx.open_url(&url);
@@ -7729,6 +7740,7 @@ impl Editor {
                                     )
                                 }),
                                 HoverLink::InlayHint(_, _) => None,
+                                HoverLink::Relative(_) => None,
                                 HoverLink::Url(_) => None,
                             })
                             .unwrap_or(tab_kind.to_string());
@@ -7739,6 +7751,7 @@ impl Editor {
                                 HoverLink::InlayHint(lsp_location, server_id) => {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
+                                HoverLink::Relative(_) => Task::ready(Ok(None)),
                                 HoverLink::Url(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
