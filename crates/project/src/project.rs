@@ -9,6 +9,7 @@ pub mod terminals;
 
 #[cfg(test)]
 mod project_tests;
+pub mod search_history;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
@@ -62,6 +63,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use search_history::SearchHistory;
 use worktree::LocalSnapshot;
 
 use rpc::{ErrorCode, ErrorExt as _};
@@ -204,6 +206,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
+    search_history: SearchHistory,
 }
 
 pub enum LanguageServerToQuery {
@@ -667,6 +670,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                search_history: Default::default(),
             }
         })
     }
@@ -802,6 +806,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                search_history: Default::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1122,6 +1127,14 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
+    }
+
+    pub fn search_history(&self) -> &SearchHistory {
+        &self.search_history
+    }
+
+    pub fn search_history_mut(&mut self) -> &mut SearchHistory {
+        &mut self.search_history
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {

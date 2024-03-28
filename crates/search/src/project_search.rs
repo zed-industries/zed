@@ -1,8 +1,7 @@
 use crate::{
-    history::SearchHistory, mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode,
-    NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace,
-    ToggleWholeWord,
+    mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -126,7 +125,6 @@ struct ProjectSearch {
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
     search_id: usize,
-    search_history: SearchHistory,
     no_results: Option<bool>,
     limit_reached: bool,
 }
@@ -181,7 +179,6 @@ impl ProjectSearch {
             match_ranges: Default::default(),
             active_query: None,
             search_id: 0,
-            search_history: SearchHistory::default(),
             no_results: None,
             limit_reached: false,
         }
@@ -197,18 +194,17 @@ impl ProjectSearch {
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
             search_id: self.search_id,
-            search_history: self.search_history.clone(),
             no_results: self.no_results,
             limit_reached: self.limit_reached,
         })
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
-        let search = self
-            .project
-            .update(cx, |project, cx| project.search(query.clone(), cx));
+        let search = self.project.update(cx, |project, cx| {
+            project.search_history_mut().add(query.as_str().to_string());
+            project.search(query.clone(), cx)
+        });
         self.search_id += 1;
-        self.search_history.add(query.as_str().to_string());
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
@@ -368,7 +364,9 @@ impl Item for ProjectSearchView {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
-            .search_history
+            .project
+            .read(cx)
+            .search_history()
             .current()
             .as_ref()
             .map(|query| {
@@ -1270,11 +1268,15 @@ impl ProjectSearchBar {
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.model.update(cx, |model, _| {
-                    if let Some(new_query) = model.search_history.next().map(str::to_string) {
+                let new_query = search_view.model.update(cx, |model, cx| {
+                    if let Some(new_query) = model.project.update(cx, |project, _| {
+                        project.search_history_mut().next().map(str::to_string)
+                    }) {
                         new_query
                     } else {
-                        model.search_history.reset_selection();
+                        model.project.update(cx, |project, _| {
+                            project.search_history_mut().reset_selection()
+                        });
                         String::new()
                     }
                 });
@@ -1290,7 +1292,9 @@ impl ProjectSearchBar {
                     if let Some(new_query) = search_view
                         .model
                         .read(cx)
-                        .search_history
+                        .project
+                        .read(cx)
+                        .search_history()
                         .current()
                         .map(str::to_string)
                     {
@@ -1299,8 +1303,10 @@ impl ProjectSearchBar {
                     }
                 }
 
-                if let Some(new_query) = search_view.model.update(cx, |model, _| {
-                    model.search_history.previous().map(str::to_string)
+                if let Some(new_query) = search_view.model.update(cx, |model, cx| {
+                    model.project.update(cx, |project, _| {
+                        project.search_history_mut().previous().map(str::to_string)
+                    })
                 }) {
                     search_view.set_query(&new_query, cx);
                 }

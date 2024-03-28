@@ -1,7 +1,6 @@
 mod registrar;
 
 use crate::{
-    history::SearchHistory,
     mode::{next_mode, SearchMode},
     search_bar::render_nav_button,
     ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
@@ -20,7 +19,7 @@ use gpui::{
     ParentElement as _, Render, Styled, Subscription, Task, TextStyle, View, ViewContext,
     VisualContext as _, WhiteSpace, WindowContext,
 };
-use project::search::SearchQuery;
+use project::{search::SearchQuery, search_history::SearchHistory};
 use serde::Deserialize;
 use settings::Settings;
 use std::{any::Any, sync::Arc};
