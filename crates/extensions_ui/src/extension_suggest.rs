@@ -63,18 +63,32 @@ fn language_extension_key(extension_id: &str) -> String {
 }
 
 pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
-    let Some(file_name_or_extension) = buffer.read(cx).file().and_then(|file| {
-        Some(match file.path().extension() {
-            Some(extension) => extension.to_str()?.to_string(),
-            None => file.path().to_str()?.to_string(),
-        })
-    }) else {
+    let Some(file) = buffer.read(cx).file().cloned() else {
         return;
     };
 
-    let Some(extension_id) = suggested_extension(&file_name_or_extension) else {
+    let file_extension = file
+        .path()
+        .extension()
+        .and_then(|extension| Some(extension.to_str()?.to_string()));
+    let file_name = file
+        .path()
+        .file_name()
+        .and_then(|file_name| Some(file_name.to_str()?.to_string()));
+
+    let Some(file_name_or_extension) = file_name.clone().or(file_extension.clone()) else {
         return;
     };
+
+    let suggested_extension = None
+        .or_else(|| file_name.as_deref().and_then(suggested_extension))
+        .or_else(|| file_extension.as_deref().and_then(suggested_extension));
+
+    let Some(extension_id) = suggested_extension else {
+        return;
+    };
+
+    println!("{file_name_or_extension} = {extension_id}");
 
     let key = language_extension_key(&extension_id);
     let value = KEY_VALUE_STORE.read_kvp(&key);
@@ -95,8 +109,8 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
         workspace.show_notification(buffer.entity_id().as_u64() as usize, cx, |cx| {
             cx.new_view(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
-                    "Do you want to install the recommended '{}' extension?",
-                    file_name_or_extension
+                    "Do you want to install the recommended '{}' extension for '{}' files?",
+                    extension_id, file_name_or_extension
                 ))
                 .with_click_message("Yes")
                 .on_click({
