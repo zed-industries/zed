@@ -7661,7 +7661,7 @@ impl Editor {
                     self.compute_target_location(lsp_location, server_id, cx)
                 }
                 HoverLink::Relative(path) => {
-                    self.jump(path, Point::zero(), text::Anchor::MIN, cx);
+                    self.jump(path, Point::zero(), text::Anchor::MIN, 0, cx);
                     Task::ready(Ok(None))
                 }
                 HoverLink::Url(url) => {

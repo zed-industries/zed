@@ -515,7 +515,7 @@ pub fn show_link_definition(
                 }
 
                 project_files.push(ProjectPath {
-                    path: entry.path.clone(),
+                    path: entry.path.clone(), // TODO: make the path relative to file where the link was found.
                     worktree_id: wrk.read(cx).id(),
                 });
             }
