@@ -91,7 +91,7 @@ impl ImageCache {
                             async move {
                                 match uri_or_path {
                                     UriOrPath::Path(uri) => {
-                                        let image = image::open(uri.as_ref())?.into_bgra8();
+                                        let image = image::open(uri.as_ref())?.into_rgba8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
                                     UriOrPath::Uri(uri) => {
@@ -110,7 +110,7 @@ impl ImageCache {
                                         let format = image::guess_format(&body)?;
                                         let image =
                                             image::load_from_memory_with_format(&body, format)?
-                                                .into_bgra8();
+                                                .into_rgba8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
                                 }

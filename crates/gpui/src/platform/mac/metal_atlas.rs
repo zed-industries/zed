@@ -115,7 +115,7 @@ impl MetalAtlasState {
                 usage = metal::MTLTextureUsage::ShaderRead;
             }
             AtlasTextureKind::Polychrome => {
-                pixel_format = metal::MTLPixelFormat::BGRA8Unorm;
+                pixel_format = metal::MTLPixelFormat::RGBA8Unorm;
                 usage = metal::MTLTextureUsage::ShaderRead;
             }
             AtlasTextureKind::Path => {

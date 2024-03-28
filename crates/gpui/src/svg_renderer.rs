@@ -1,6 +1,9 @@
 use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
 use anyhow::anyhow;
-use std::{hash::Hash, sync::Arc};
+use std::{
+    hash::Hash,
+    sync::{Arc, OnceLock},
+};
 
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub(crate) struct RenderSvgParams {
@@ -24,15 +27,19 @@ impl SvgRenderer {
 
         // Load the tree.
         let bytes = self.asset_source.load(&params.path)?;
-        let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
+        let tree =
+            resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default(), svg_fontdb())?;
 
         // Render the SVG to a pixmap with the specified width and height.
         let mut pixmap =
-            tiny_skia::Pixmap::new(params.size.width.into(), params.size.height.into()).unwrap();
+            resvg::tiny_skia::Pixmap::new(params.size.width.into(), params.size.height.into())
+                .unwrap();
+
+        let ratio = params.size.width.0 as f32 / tree.size().width();
         resvg::render(
             &tree,
-            usvg::FitTo::Width(params.size.width.into()),
-            pixmap.as_mut(),
+            resvg::tiny_skia::Transform::from_scale(ratio, ratio),
+            &mut pixmap.as_mut(),
         );
 
         // Convert the pixmap's pixels into an alpha mask.
@@ -43,4 +50,14 @@ impl SvgRenderer {
             .collect::<Vec<_>>();
         Ok(alpha_mask)
     }
+}
+
+/// Returns the global font database used for SVG rendering.
+fn svg_fontdb() -> &'static resvg::usvg::fontdb::Database {
+    static FONTDB: OnceLock<resvg::usvg::fontdb::Database> = OnceLock::new();
+    FONTDB.get_or_init(|| {
+        let mut fontdb = resvg::usvg::fontdb::Database::new();
+        fontdb.load_system_fonts();
+        fontdb
+    })
 }

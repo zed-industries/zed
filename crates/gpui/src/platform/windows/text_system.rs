@@ -213,11 +213,19 @@ impl WindowsTextSystemState {
         _features: FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let mut font_ids = SmallVec::new();
-        let family = self
+        let families = self
             .font_system
-            .get_font_matches(Attrs::new().family(cosmic_text::Family::Name(name)));
-        for font in family.as_ref() {
-            let font = self.font_system.get_font(*font).unwrap();
+            .db()
+            .faces()
+            .filter(|face| face.families.iter().any(|family| *name == family.0))
+            .map(|face| (face.id, face.post_script_name.clone()))
+            .collect::<SmallVec<[_; 4]>>();
+
+        for (font_id, postscript_name) in families {
+            let font = self
+                .font_system
+                .get_font(font_id)
+                .ok_or_else(|| anyhow!("Could not load font"))?;
             // TODO: figure out why this is causing fluent icons from loading
             // if font.as_swash().charmap().map('m') == 0 {
             //     self.font_system.db_mut().remove_face(font.id());
@@ -227,6 +235,8 @@ impl WindowsTextSystemState {
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
             self.fonts.push(font);
+            self.postscript_names_by_font_id
+                .insert(font_id, postscript_name);
         }
         Ok(font_ids)
     }
@@ -274,6 +284,7 @@ impl WindowsTextSystemState {
                     params.glyph_id.0 as u16,
                     (params.font_size * params.scale_factor).into(),
                     (0.0, 0.0),
+                    cosmic_text::CacheKeyFlags::empty(),
                 )
                 .0,
             )
@@ -307,6 +318,7 @@ impl WindowsTextSystemState {
                         params.glyph_id.0 as u16,
                         (params.font_size * params.scale_factor).into(),
                         (0.0, 0.0),
+                        cosmic_text::CacheKeyFlags::empty(),
                     )
                     .0,
                 )
@@ -342,6 +354,7 @@ impl WindowsTextSystemState {
             font_size.0,
             f32::MAX, // todo(windows) we don't have a width cause this should technically not be wrapped I believe
             cosmic_text::Wrap::None,
+            None,
         );
         let mut runs = Vec::new();
         // todo(windows) what I think can happen is layout returns possibly multiple lines which means we should be probably working with it higher up in the text rendering

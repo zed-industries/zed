@@ -40,7 +40,7 @@ etagere = "0.2"
 futures.workspace = true
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5a5c4d4" }
 gpui_macros.workspace = true
-image = "0.23"
+image = "0.25"
 itertools.workspace = true
 lazy_static.workspace = true
 linkme = "0.3"
@@ -54,7 +54,7 @@ profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = "0.14"
+resvg = "0.40"
 schemars.workspace = true
 seahash = "4.1"
 serde.workspace = true
@@ -67,8 +67,6 @@ sum_tree.workspace = true
 taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
 thiserror.workspace = true
 time.workspace = true
-tiny-skia = "0.5"
-usvg = { version = "0.14", features = [] }
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4", "v5"] }
 waker-fn = "1.1.0"
@@ -78,7 +76,7 @@ backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 
-[build-dependencies]
+[target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.65.1"
 cbindgen = "0.26.0"
 
@@ -101,13 +99,15 @@ blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-rwh.workspace = true
 bytemuck = "1"
-cosmic-text = "0.10.0"
+cosmic-text = "0.11.2"
 copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-open = "5.0.1"
-ashpd = "0.7.0"
-x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr"] }
+as-raw-xcb-connection = "1"
+ashpd = "0.8.0"
+calloop = "0.12.4"
+calloop-wayland-source = "0.2.0"
+wayland-backend = { version = "0.3.3", features = ["client_system"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
 wayland-protocols = { version = "0.31.2", features = [
@@ -115,12 +115,10 @@ wayland-protocols = { version = "0.31.2", features = [
     "staging",
     "unstable",
 ] }
-wayland-backend = { version = "0.3.3", features = ["client_system"] }
-xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
-as-raw-xcb-connection = "1"
-calloop = "0.12.4"
-calloop-wayland-source = "0.2.0"
 oo7 = "0.3.0"
+open = "5.1.2"
+x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr"] }
+xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
