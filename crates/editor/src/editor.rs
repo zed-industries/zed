@@ -10035,9 +10035,8 @@ impl EditorSnapshot {
             .show_git_blame
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
-        let left_padding = if let Some(blame_width) = git_blame_entries_width {
-            blame_width
-        } else if gutter_settings.code_actions {
+        let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
+        left_padding += if gutter_settings.code_actions {
             em_width * 3.0
         } else if show_git_gutter && gutter_settings.line_numbers {
             em_width * 2.0
