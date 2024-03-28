@@ -7,6 +7,7 @@ mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
+use crate::extension_manifest::SchemaVersion;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -60,7 +61,8 @@ pub use extension_settings::ExtensionSettings;
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+/// The current extension [`SchemaVersion`] supported by Zed.
+const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
 pub struct ExtensionStore {
     builder: Arc<ExtensionBuilder>,
