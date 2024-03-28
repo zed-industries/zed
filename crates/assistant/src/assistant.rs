@@ -6,7 +6,7 @@ mod prompts;
 mod saved_conversation;
 mod streaming_diff;
 
-mod assistant_context;
+mod embedded_scope;
 
 pub use assistant_panel::AssistantPanel;
 use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};

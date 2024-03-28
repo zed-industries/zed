@@ -4,12 +4,12 @@ use gpui::{AppContext, Model};
 use crate::{LanguageModelRequestMessage, Role};
 
 #[derive(Default)]
-pub struct InlineContext {
+pub struct EmbeddedScope {
     active_buffer: Option<Model<MultiBuffer>>,
     active_buffer_enabled: bool,
 }
 
-impl InlineContext {
+impl EmbeddedScope {
     pub fn new() -> Self {
         Self {
             active_buffer: None,
@@ -33,6 +33,7 @@ impl InlineContext {
         self.active_buffer_enabled = enabled;
     }
 
+    /// Provide a message for the language model based on the active buffer.
     pub fn message(&self, cx: &AppContext) -> Option<LanguageModelRequestMessage> {
         if !self.active_buffer_enabled {
             return None;
@@ -72,6 +73,6 @@ impl InlineContext {
             });
         }
 
-        return None;
+        None
     }
 }

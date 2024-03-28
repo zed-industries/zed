@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::Element;
+use ui::Element as _;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -229,9 +229,6 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
-    fn language_model_context(&self, _cx: &AppContext) -> Option<LanguageModelContext> {
-        None
-    }
 }
 
 pub trait ItemHandle: 'static + Send {
@@ -301,19 +298,6 @@ pub trait ItemHandle: 'static + Send {
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
-    fn language_model_context(&self, cx: &AppContext) -> Option<LanguageModelContext>;
-}
-
-// Idea: All items have a way to output their context for the language model
-// to use.
-// Diagnostics -> LLM
-// Channel Notes -> LLM
-
-pub struct LanguageModelContext {
-    /// For the LLM
-    pub markdown: String,
-    /// For the Human
-    pub rendered: AnyElement,
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -351,16 +335,16 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
+    fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
+        self.read(cx).telemetry_event_text()
+    }
+
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
         self.read(cx).tab_description(detail, cx)
     }
 
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
         self.read(cx).tab_content(detail, selected, cx)
-    }
-
-    fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
-        self.read(cx).telemetry_event_text()
     }
 
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
@@ -678,10 +662,6 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>> {
         self.read(cx).pixel_position_of_cursor(cx)
-    }
-
-    fn language_model_context(&self, cx: &AppContext) -> Option<LanguageModelContext> {
-        self.read(cx).language_model_context(cx)
     }
 }
 
