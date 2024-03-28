@@ -60,7 +60,6 @@ pub fn init(
     DenoSettings::register(cx);
 
     languages.register_native_grammars([
-        ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
         ("c_sharp", tree_sitter_c_sharp::language()),
         ("clojure", tree_sitter_clojure::language()),
@@ -164,7 +163,6 @@ pub fn init(
             );
         };
     }
-    language!("bash");
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
