@@ -172,6 +172,10 @@ impl ProjectSearch {
         let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
+        project.update(cx, |project, _| {
+            project.search_history_mut().reset_selection()
+        });
+
         Self {
             project,
             excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
