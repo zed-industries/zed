@@ -143,11 +143,12 @@ impl LspAdapter for TypeScriptLspAdapter {
         let len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            Kind::CLASS | Kind::INTERFACE => grammar.highlight_id_for_name("type"),
+            Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
             Kind::CONSTRUCTOR => grammar.highlight_id_for_name("type"),
             Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
             Kind::FUNCTION | Kind::METHOD => grammar.highlight_id_for_name("function"),
             Kind::PROPERTY | Kind::FIELD => grammar.highlight_id_for_name("property"),
+            Kind::VARIABLE => grammar.highlight_id_for_name("variable"),
             _ => None,
         }?;
 
@@ -276,6 +277,9 @@ impl LspAdapter for EsLintLspAdapter {
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
+        let working_directories = eslint_user_settings
+            .get("workingDirectories")
+            .unwrap_or(&Value::Null);
 
         json!({
             "": {
@@ -291,6 +295,7 @@ impl LspAdapter for EsLintLspAdapter {
                 },
                 "problems": {},
                 "codeActionOnSave": code_action_on_save,
+                "workingDirectories": working_directories,
                 "experimental": {
                     "useFlatConfig": use_flat_config,
                 },

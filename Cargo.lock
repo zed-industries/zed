@@ -54,9 +54,9 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.7.6"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcb51a0695d8f838b1ee009b3fbf66bda078cd64590202a864a8f3e8c4315c47"
+checksum = "891477e0c6a8957309ee5c45a6368af3ae14bb510732d2684ffa19af310920f9"
 dependencies = [
  "getrandom 0.2.10",
  "once_cell",
@@ -87,9 +87,9 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.23.0-rc1"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc2c16faa5425a10be102dda76f73d76049b44746e18ddeefc44d78bbe76cbce"
+checksum = "f6d1ea4484c8676f295307a4892d478c70ac8da1dbd8c7c10830a504b7f1022f"
 dependencies = [
  "base64 0.22.0",
  "bitflags 2.4.2",
@@ -4443,7 +4443,7 @@ version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 dependencies = [
- "ahash 0.7.6",
+ "ahash 0.7.8",
 ]
 
 [[package]]
@@ -5330,7 +5330,6 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-vue",
  "tree-sitter-yaml",
- "tree-sitter-zig",
  "unindent",
  "util",
  "workspace",
@@ -5570,6 +5569,7 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
+ "windows 0.53.0",
 ]
 
 [[package]]
@@ -9399,6 +9399,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tab_switcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ctor",
+ "editor",
+ "env_logger",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "taffy"
 version = "0.3.11"
 source = "git+https://github.com/DioxusLabs/taffy?rev=1876f72bee5e376023eaa518aa7b8a34c769bd1b#1876f72bee5e376023eaa518aa7b8a34c769bd1b"
@@ -10480,15 +10502,6 @@ dependencies = [
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-zig"
-version = "0.0.1"
-source = "git+https://github.com/maxxnino/tree-sitter-zig?rev=0d08703e4c3f426ec61695d7617415fff97029bd#0d08703e4c3f426ec61695d7617415fff97029bd"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12457,7 +12470,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.129.0"
+version = "0.130.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -12522,6 +12535,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "tab_switcher",
  "task",
  "tasks_ui",
  "terminal_view",
@@ -12571,7 +12585,7 @@ dependencies = [
 
 [[package]]
 name = "zed_gleam"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -12606,6 +12620,13 @@ dependencies = [
 
 [[package]]
 name = "zed_uiua"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_zig"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -56,6 +56,19 @@ impl LspAdapter for ExtensionLspAdapter {
                 .host
                 .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
 
+            // TODO: Eventually we'll want to expose an extension API for doing this, but for
+            // now we just manually set the file permissions for extensions that we know need it.
+            if self.extension.manifest.id.as_ref() == "zig" {
+                #[cfg(not(windows))]
+                {
+                    use std::fs::{self, Permissions};
+                    use std::os::unix::fs::PermissionsExt;
+
+                    fs::set_permissions(&path, Permissions::from_mode(0o755))
+                        .context("failed to set file permissions")?;
+                }
+            }
+
             Ok(LanguageServerBinary {
                 path,
                 arguments: command.args.into_iter().map(|arg| arg.into()).collect(),

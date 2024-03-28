@@ -761,7 +761,7 @@ impl ExtensionStore {
 
         if let Some(telemetry) = &self.telemetry {
             for extension_id in &extensions_to_load {
-                if let Some(extension) = self.extension_index.extensions.get(extension_id) {
+                if let Some(extension) = new_index.extensions.get(extension_id) {
                     telemetry.report_extension_event(
                         extension_id.clone(),
                         extension.manifest.version.clone(),

@@ -59,12 +59,12 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText,
-    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
-    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
+    ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
+    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
+    MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled,
+    StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View,
+    ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1676,7 +1676,9 @@ impl Editor {
     ) {
         self.inline_completion_provider = Some(RegisteredInlineCompletionProvider {
             _subscription: cx.observe(&provider, |this, _, cx| {
-                this.update_visible_inline_completion(cx);
+                if this.focus_handle.is_focused(cx) {
+                    this.update_visible_inline_completion(cx);
+                }
             }),
             provider: Arc::new(provider),
         });
@@ -5121,7 +5123,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, upwards: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5150,7 +5152,7 @@ impl Editor {
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            let insert_location = if action.move_upwards {
+            let insert_location = if upwards {
                 Point::new(rows.end, 0)
             } else {
                 start
@@ -5165,6 +5167,14 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
+    }
+
+    pub fn duplicate_line_up(&mut self, _: &DuplicateLineUp, cx: &mut ViewContext<Self>) {
+        self.duplicate_line(true, cx);
+    }
+
+    pub fn duplicate_line_down(&mut self, _: &DuplicateLineDown, cx: &mut ViewContext<Self>) {
+        self.duplicate_line(false, cx);
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
@@ -10503,6 +10513,41 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
 
+        let multi_line_diagnostic = diagnostic.message.contains('\n');
+
+        let buttons = |diagnostic: &Diagnostic, block_id: usize| {
+            if multi_line_diagnostic {
+                v_flex()
+            } else {
+                h_flex()
+            }
+            .children(diagnostic.is_primary.then(|| {
+                IconButton::new(("close-block", block_id), IconName::XCircle)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Transparent)
+                    .visible_on_hover(group_id.clone())
+                    .on_click(move |_click, cx| cx.dispatch_action(Box::new(Cancel)))
+                    .tooltip(|cx| Tooltip::for_action("Close Diagnostics", &Cancel, cx))
+            }))
+            .child(
+                IconButton::new(("copy-block", block_id), IconName::Copy)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Transparent)
+                    .visible_on_hover(group_id.clone())
+                    .on_click({
+                        let message = diagnostic.message.clone();
+                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                    })
+                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+            )
+        };
+
+        let icon_size = buttons(&diagnostic, cx.block_id)
+            .into_any_element()
+            .measure(AvailableSpace::min_size(), cx);
+
         h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
@@ -10513,9 +10558,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             .child(
                 div()
                     .flex()
-                    .w(cx.anchor_x - cx.gutter_dimensions.width)
+                    .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
+            .child(buttons(&diagnostic, cx.block_id))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,
@@ -10530,18 +10576,6 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                     }),
                 ),
             ))
-            .child(
-                IconButton::new(("copy-block", cx.block_id), IconName::Copy)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id)
-                    .on_click({
-                        let message = diagnostic.message.clone();
-                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
-                    })
-                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
-            )
             .into_any_element()
     })
 }

@@ -1,5 +1,7 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
+// Disable command line from opening on release mode
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod zed;
 
@@ -247,6 +249,7 @@ fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
+        tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);

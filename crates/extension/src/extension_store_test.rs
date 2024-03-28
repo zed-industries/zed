@@ -1,3 +1,4 @@
+use crate::extension_manifest::SchemaVersion;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
@@ -146,7 +147,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-ruby".into(),
                         name: "Zed Ruby".into(),
                         version: "1.0.0".into(),
-                        schema_version: 0,
+                        schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: Vec::new(),
                         repository: None,
@@ -171,7 +172,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-monokai".into(),
                         name: "Zed Monokai".into(),
                         version: "2.0.0".into(),
-                        schema_version: 0,
+                        schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: vec![],
                         repository: None,
@@ -328,7 +329,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 id: "zed-gruvbox".into(),
                 name: "Zed Gruvbox".into(),
                 version: "1.0.0".into(),
-                schema_version: 0,
+                schema_version: SchemaVersion::ZERO,
                 description: None,
                 authors: vec![],
                 repository: None,

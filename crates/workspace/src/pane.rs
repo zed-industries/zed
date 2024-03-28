@@ -422,6 +422,10 @@ impl Pane {
         self.active_item_index
     }
 
+    pub fn activation_history(&self) -> &Vec<EntityId> {
+        &self.activation_history
+    }
+
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
         cx.notify();
@@ -1309,17 +1313,7 @@ impl Pane {
 
         let label = item.tab_content(Some(detail), is_active, cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
-
-        let indicator = maybe!({
-            let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
-                (true, _) => Color::Warning,
-                (_, true) => Color::Accent,
-                (false, false) => return None,
-            };
-
-            Some(Indicator::dot().color(indicator_color))
-        });
-
+        let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -1529,7 +1523,7 @@ impl Pane {
                 self.items
                     .iter()
                     .enumerate()
-                    .zip(self.tab_details(cx))
+                    .zip(tab_details(&self.items, cx))
                     .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
             )
             .child(
@@ -1574,43 +1568,6 @@ impl Pane {
             .right_0()
             .size_0()
             .child(overlay().anchor(AnchorCorner::TopRight).child(menu.clone()))
-    }
-
-    fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
-        let mut tab_details = self.items.iter().map(|_| 0).collect::<Vec<_>>();
-
-        let mut tab_descriptions = HashMap::default();
-        let mut done = false;
-        while !done {
-            done = true;
-
-            // Store item indices by their tab description.
-            for (ix, (item, detail)) in self.items.iter().zip(&tab_details).enumerate() {
-                if let Some(description) = item.tab_description(*detail, cx) {
-                    if *detail == 0
-                        || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
-                    {
-                        tab_descriptions
-                            .entry(description)
-                            .or_insert(Vec::new())
-                            .push(ix);
-                    }
-                }
-            }
-
-            // If two or more items have the same tab description, increase eir level
-            // of detail and try again.
-            for (_, item_ixs) in tab_descriptions.drain() {
-                if item_ixs.len() > 1 {
-                    done = false;
-                    for ix in item_ixs {
-                        tab_details[ix] += 1;
-                    }
-                }
-            }
-        }
-
-        tab_details
     }
 
     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
@@ -2125,6 +2082,54 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
+}
+
+pub fn tab_details(items: &Vec<Box<dyn ItemHandle>>, cx: &AppContext) -> Vec<usize> {
+    let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
+    let mut tab_descriptions = HashMap::default();
+    let mut done = false;
+    while !done {
+        done = true;
+
+        // Store item indices by their tab description.
+        for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
+            if let Some(description) = item.tab_description(*detail, cx) {
+                if *detail == 0
+                    || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
+                {
+                    tab_descriptions
+                        .entry(description)
+                        .or_insert(Vec::new())
+                        .push(ix);
+                }
+            }
+        }
+
+        // If two or more items have the same tab description, increase their level
+        // of detail and try again.
+        for (_, item_ixs) in tab_descriptions.drain() {
+            if item_ixs.len() > 1 {
+                done = false;
+                for ix in item_ixs {
+                    tab_details[ix] += 1;
+                }
+            }
+        }
+    }
+
+    tab_details
+}
+
+pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> Option<Indicator> {
+    maybe!({
+        let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
+            (true, _) => Color::Warning,
+            (_, true) => Color::Accent,
+            (false, false) => return None,
+        };
+
+        Some(Indicator::dot().color(indicator_color))
+    })
 }
 
 #[cfg(test)]

@@ -177,7 +177,8 @@ impl EditorElement {
         register_action(view, cx, Editor::delete_to_beginning_of_line);
         register_action(view, cx, Editor::delete_to_end_of_line);
         register_action(view, cx, Editor::cut_to_end_of_line);
-        register_action(view, cx, Editor::duplicate_line);
+        register_action(view, cx, Editor::duplicate_line_up);
+        register_action(view, cx, Editor::duplicate_line_down);
         register_action(view, cx, Editor::move_line_up);
         register_action(view, cx, Editor::move_line_down);
         register_action(view, cx, Editor::transpose);
