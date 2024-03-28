@@ -2192,10 +2192,12 @@ impl ConversationEditor {
             .read(cx)
             .active_item(cx)
             .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
-        self.conversation.update(cx, |conversation, _cx| {
+
+        self.conversation.update(cx, |conversation, cx| {
             conversation.embedded_scope.set_active_buffer(active_buffer);
             // TODO: Notify, without causing a cycle.
             // cx.notify();
+            conversation.count_remaining_tokens(cx);
         });
     }
 
