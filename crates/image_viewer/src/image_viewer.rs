@@ -82,14 +82,13 @@ impl Item for ImageView {
             .unwrap_or_else(|| self.path.as_os_str())
             .to_string_lossy()
             .to_string();
-        h_flex()
-            .gap_2()
-            .child(Label::new(title).color(if selected {
+        Label::new(title)
+            .color(if selected {
                 Color::Default
             } else {
                 Color::Muted
-            }))
-            .into_any()
+            })
+            .into_any_element()
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
