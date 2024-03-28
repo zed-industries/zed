@@ -46,6 +46,8 @@ pub fn suggested_extension(file_extension_or_name: &str) -> Option<Arc<str>> {
                 ("sql", "sql"),
                 ("svelte", "svelte"),
                 ("swift", "swift"),
+                ("toml", "Cargo.lock"),
+                ("toml", "toml"),
                 ("templ", "templ"),
                 ("wgsl", "wgsl"),
                 ("zig", "zig"),

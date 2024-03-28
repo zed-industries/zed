@@ -5462,7 +5462,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
- "tree-sitter-toml",
  "tree-sitter-typescript",
  "tree-sitter-vue",
  "tree-sitter-yaml",
@@ -10652,15 +10651,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-toml"
-version = "0.5.1"
-source = "git+https://github.com/tree-sitter/tree-sitter-toml?rev=342d9be207c2dba869b9967124c679b5e6fd0ebe#342d9be207c2dba869b9967124c679b5e6fd0ebe"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-typescript"
 version = "0.20.2"
 source = "git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259#5d20856f34315b068c41edaee2ac8a100081d259"
@@ -12720,6 +12710,13 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_toml"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",

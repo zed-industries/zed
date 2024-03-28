@@ -58,7 +58,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
             // TODO: Eventually we'll want to expose an extension API for doing this, but for
             // now we just manually set the file permissions for extensions that we know need it.
-            if self.extension.manifest.id.as_ref() == "zig" {
+            if ["toml", "zig"].contains(&self.extension.manifest.id.as_ref()) {
                 #[cfg(not(windows))]
                 {
                     use std::fs::{self, Permissions};

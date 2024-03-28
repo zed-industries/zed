@@ -32,7 +32,6 @@ mod ruby;
 mod rust;
 mod tailwind;
 mod terraform;
-mod toml;
 mod typescript;
 mod vue;
 mod yaml;
@@ -99,7 +98,6 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
-        ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
@@ -236,7 +234,6 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
         RustContextProvider
     );
-    language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
             language!(
