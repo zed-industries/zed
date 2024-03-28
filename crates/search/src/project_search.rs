@@ -665,6 +665,14 @@ impl ProjectSearchView {
             }
         }
         subscriptions.push(cx.observe(&model, |this, _, cx| this.model_changed(cx)));
+        subscriptions.push(cx.on_release(move |view, _, cx| {
+            let handle = view.model.read(cx).search_history_selection_handle;
+            view.model.update(cx, |model, cx| {
+                model.project.update(cx, |project, _| {
+                    project.search_history_mut().release_handle(handle)
+                })
+            })
+        }));
 
         let query_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
