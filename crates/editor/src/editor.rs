@@ -109,7 +109,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -354,7 +354,11 @@ type CompletionId = usize;
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
+pub struct BackgroundHighlight {
+    ranges: Vec<Range<Anchor>>,
+    color_fetcher: fn(&ThemeColors) -> Hsla,
+    marked_row_ranges: Option<Vec<Range<u32>>>,
+}
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -3116,6 +3120,7 @@ impl Editor {
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
                 self.inlay_hint_cache.enabled = enabled;
+                self.invalidate_marked_row_ranges();
                 if enabled {
                     (InvalidationStrategy::RefreshRequested, None)
                 } else {
@@ -3132,6 +3137,7 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::SettingsChange(new_settings) => {
+                self.invalidate_marked_row_ranges();
                 match self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
@@ -8087,11 +8093,11 @@ impl Editor {
                     let ranges = this
                         .clear_background_highlights::<DocumentHighlightWrite>(cx)
                         .into_iter()
-                        .flat_map(|(_, ranges)| ranges.into_iter())
+                        .flat_map(|h| h.ranges.into_iter())
                         .chain(
                             this.clear_background_highlights::<DocumentHighlightRead>(cx)
                                 .into_iter()
-                                .flat_map(|(_, ranges)| ranges.into_iter()),
+                                .flat_map(|h| h.ranges.into_iter()),
                         )
                         .collect();
 
@@ -8594,9 +8600,9 @@ impl Editor {
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
             }
-
             cx.notify();
         }
+        self.invalidate_marked_row_ranges();
     }
 
     pub fn unfold_ranges<T: ToOffset + Clone>(
@@ -8616,6 +8622,7 @@ impl Editor {
 
             cx.notify();
         }
+        self.invalidate_marked_row_ranges();
     }
 
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
@@ -8785,6 +8792,7 @@ impl Editor {
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
+        self.invalidate_marked_row_ranges();
         cx.notify();
     }
 
@@ -9019,8 +9027,14 @@ impl Editor {
                 .summary_for_anchor::<usize>(&range.end);
         }
 
-        self.background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
+        self.background_highlights.insert(
+            TypeId::of::<T>(),
+            BackgroundHighlight {
+                ranges,
+                color_fetcher,
+                marked_row_ranges: None,
+            },
+        );
         cx.notify();
     }
 
@@ -9053,11 +9067,11 @@ impl Editor {
         let read_highlights = self
             .background_highlights
             .get(&TypeId::of::<DocumentHighlightRead>())
-            .map(|h| &h.1);
+            .map(|h| &h.ranges);
         let write_highlights = self
             .background_highlights
             .get(&TypeId::of::<DocumentHighlightWrite>())
-            .map(|h| &h.1);
+            .map(|h| &h.ranges);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
         read_highlights
@@ -9084,7 +9098,7 @@ impl Editor {
     pub fn has_background_highlights<T: 'static>(&self) -> bool {
         self.background_highlights
             .get(&TypeId::of::<T>())
-            .map_or(false, |(_, highlights)| !highlights.is_empty())
+            .map_or(false, |h| !h.ranges.is_empty())
     }
 
     pub fn background_highlights_in_range(
@@ -9094,7 +9108,12 @@ impl Editor {
         theme: &ThemeColors,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
-        for (color_fetcher, ranges) in self.background_highlights.values() {
+        for BackgroundHighlight {
+            color_fetcher,
+            ranges,
+            ..
+        } in self.background_highlights.values()
+        {
             let color = color_fetcher(theme);
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe
@@ -9122,81 +9141,6 @@ impl Editor {
                 results.push((start..end, color))
             }
         }
-        results
-    }
-
-    pub fn background_highlight_row_ranges<T: 'static>(
-        &self,
-        search_range: Range<Anchor>,
-        display_snapshot: &DisplaySnapshot,
-        count: usize,
-    ) -> Vec<RangeInclusive<DisplayPoint>> {
-        let mut results = Vec::new();
-        let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
-            return vec![];
-        };
-
-        let start_ix = match ranges.binary_search_by(|probe| {
-            let cmp = probe
-                .end
-                .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
-            if cmp.is_gt() {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        }) {
-            Ok(i) | Err(i) => i,
-        };
-        let mut push_region = |start: Option<Point>, end: Option<Point>| {
-            if let (Some(start_display), Some(end_display)) = (start, end) {
-                results.push(
-                    start_display.to_display_point(display_snapshot)
-                        ..=end_display.to_display_point(display_snapshot),
-                );
-            }
-        };
-        let mut start_row: Option<Point> = None;
-        let mut end_row: Option<Point> = None;
-        if ranges.len() > count {
-            return Vec::new();
-        }
-        for range in &ranges[start_ix..] {
-            if range
-                .start
-                .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
-                .is_ge()
-            {
-                break;
-            }
-            let end = range.end.to_point(&display_snapshot.buffer_snapshot);
-            if let Some(current_row) = &end_row {
-                if end.row == current_row.row {
-                    continue;
-                }
-            }
-            let start = range.start.to_point(&display_snapshot.buffer_snapshot);
-            if start_row.is_none() {
-                assert_eq!(end_row, None);
-                start_row = Some(start);
-                end_row = Some(end);
-                continue;
-            }
-            if let Some(current_end) = end_row.as_mut() {
-                if start.row > current_end.row + 1 {
-                    push_region(start_row, end_row);
-                    start_row = Some(start);
-                    end_row = Some(end);
-                } else {
-                    // Merge two hunks.
-                    *current_end = end;
-                }
-            } else {
-                unreachable!();
-            }
-        }
-        // We might still have a hunk that was not rendered (if there was a search hit on the last line)
-        push_region(start_row, end_row);
         results
     }
 
@@ -9768,6 +9712,12 @@ impl Editor {
             })
         }));
         self
+    }
+
+    fn invalidate_marked_row_ranges(&mut self) {
+        for (_, highlight) in self.background_highlights.iter_mut() {
+            highlight.marked_row_ranges = None;
+        }
     }
 }
 
