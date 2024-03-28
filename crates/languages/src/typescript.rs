@@ -277,9 +277,6 @@ impl LspAdapter for EsLintLspAdapter {
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
-        let working_directories = eslint_user_settings
-            .get("workingDirectories")
-            .unwrap_or(&Value::Null);
 
         json!({
             "": {
@@ -295,7 +292,6 @@ impl LspAdapter for EsLintLspAdapter {
                 },
                 "problems": {},
                 "codeActionOnSave": code_action_on_save,
-                "workingDirectories": working_directories,
                 "experimental": {
                     "useFlatConfig": use_flat_config,
                 },
