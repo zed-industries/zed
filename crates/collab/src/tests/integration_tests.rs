@@ -4980,8 +4980,7 @@ async fn test_lsp_hover(
 
     let hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         hovers.len(),
         1,
