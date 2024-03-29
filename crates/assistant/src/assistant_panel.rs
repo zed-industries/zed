@@ -2499,7 +2499,7 @@ impl ConversationEditor {
             icon_path = path
                 .as_ref()
                 .and_then(|path| FileIcons::get_icon(path.as_path(), cx))
-                .map(|arc_str| SharedString::from(arc_str))
+                .map(SharedString::from)
                 .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
         } else {
             icon_path = SharedString::from("icons/file_icons/file.svg");
