@@ -6620,10 +6620,6 @@ impl Project {
             .or_insert_with(|| {
                 cx.spawn(move |project, mut cx| {
                     async move {
-                        cx.update(|cx| {
-                            cx.add_recent_documents(&[path.to_path_buf()]);
-                        })
-                        .log_err();
                         let worktree = Worktree::local(
                             client.clone(),
                             path.clone(),
@@ -6641,6 +6637,12 @@ impl Project {
                         let worktree = worktree?;
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
+
+                        cx.update(|cx| {
+                            cx.add_recent_documents(&[path.to_path_buf()]);
+                        })
+                        .log_err();
+
                         Ok(worktree)
                     }
                     .map_err(Arc::new)
