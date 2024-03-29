@@ -100,6 +100,7 @@ members = [
 
     "extensions/astro",
     "extensions/csharp",
+    "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
     "extensions/php",
@@ -306,7 +307,6 @@ tree-sitter-dart = { git = "https://github.com/agent3bood/tree-sitter-dart", rev
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-erlang = "0.4.0"
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }

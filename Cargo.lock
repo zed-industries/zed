@@ -5455,7 +5455,6 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
- "tree-sitter-erlang",
  "tree-sitter-glsl",
  "tree-sitter-go",
  "tree-sitter-gomod",
@@ -10441,16 +10440,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-erlang"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93ced5145ebb17f83243bf055b74e108da7cc129e12faab4166df03f59b287f4"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-glsl"
 version = "0.1.4"
 source = "git+https://github.com/theHamsta/tree-sitter-glsl?rev=2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3#2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3"
@@ -12672,6 +12661,13 @@ dependencies = [
 
 [[package]]
 name = "zed_csharp"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_erlang"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",

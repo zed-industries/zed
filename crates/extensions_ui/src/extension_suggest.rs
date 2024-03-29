@@ -19,6 +19,8 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
             ("csharp", "cs"),
             ("dockerfile", "Dockerfile"),
             ("elisp", "el"),
+            ("erlang", "erl"),
+            ("erlang", "hrl"),
             ("fish", "fish"),
             ("git-firefly", ".gitconfig"),
             ("git-firefly", ".gitignore"),
