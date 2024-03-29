@@ -4,8 +4,8 @@ mod v0_0_4;
 use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
 use language::LspAdapterDelegate;
+use semantic_version::SemanticVersion;
 use std::sync::Arc;
-use util::SemanticVersion;
 use wasmtime::{
     component::{Component, Instance, Linker, Resource},
     Store,

@@ -2265,6 +2265,7 @@ dependencies = [
  "rustc-demangle",
  "scrypt",
  "sea-orm",
+ "semantic_version",
  "semver",
  "serde",
  "serde_derive",
@@ -3558,6 +3559,7 @@ dependencies = [
  "parking_lot",
  "project",
  "schemars",
+ "semantic_version",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -3610,6 +3612,7 @@ dependencies = [
  "language",
  "picker",
  "project",
+ "semantic_version",
  "serde",
  "settings",
  "smallvec",
@@ -4446,6 +4449,7 @@ dependencies = [
  "resvg",
  "schemars",
  "seahash",
+ "semantic_version",
  "serde",
  "serde_derive",
  "serde_json",
@@ -8497,6 +8501,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58bf37232d3bb9a2c4e641ca2a11d83b5062066f88df7fed36c28772046d65ba"
 
 [[package]]
+name = "semantic_version"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9659,8 +9671,8 @@ dependencies = [
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
+ "semantic_version",
  "serde",
- "util",
 ]
 
 [[package]]

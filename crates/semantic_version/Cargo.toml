@@ -1,16 +1,16 @@
 [package]
-name = "telemetry_events"
+name = "semantic_version"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lints]
 workspace = true
 
 [lib]
-path = "src/telemetry_events.rs"
+path = "src/semantic_version.rs"
 
 [dependencies]
-semantic_version.workspace = true
+anyhow.workspace = true
 serde.workspace = true

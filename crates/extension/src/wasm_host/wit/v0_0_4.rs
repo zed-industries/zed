@@ -5,19 +5,16 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::io::BufReader;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
+use semantic_version::SemanticVersion;
 use std::{
     env,
     path::PathBuf,
     sync::{Arc, OnceLock},
 };
-use util::{maybe, SemanticVersion};
+use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const VERSION: SemanticVersion = SemanticVersion {
-    major: 0,
-    minor: 0,
-    patch: 4,
-};
+pub const VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
 
 wasmtime::component::bindgen!({
     async: true,

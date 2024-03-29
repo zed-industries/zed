@@ -33,6 +33,7 @@ use language::{
     QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
+use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::str::FromStr;
@@ -44,7 +45,6 @@ use std::{
 };
 use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
-use util::SemanticVersion;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
     maybe,

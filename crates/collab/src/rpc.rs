@@ -46,6 +46,7 @@ use rpc::{
     },
     Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
+use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
@@ -68,7 +69,7 @@ use tracing::{
     field::{self},
     info_span, instrument, Instrument,
 };
-use util::{http::IsahcHttpClient, SemanticVersion};
+use util::http::IsahcHttpClient;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 

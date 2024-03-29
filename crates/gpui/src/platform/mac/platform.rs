@@ -718,11 +718,11 @@ impl Platform for MacPlatform {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             let version = process_info.operatingSystemVersion();
-            Ok(SemanticVersion {
-                major: version.majorVersion as usize,
-                minor: version.minorVersion as usize,
-                patch: version.patchVersion as usize,
-            })
+            Ok(SemanticVersion::new(
+                version.majorVersion as usize,
+                version.minorVersion as usize,
+                version.patchVersion as usize,
+            ))
         }
     }
 
