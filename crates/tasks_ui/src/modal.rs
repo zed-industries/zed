@@ -310,7 +310,20 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn selected_as_query(&self) -> Option<String> {
-        Some(self.matches.get(self.selected_index())?.string.clone())
+        use itertools::intersperse;
+        let task_index = self.matches.get(self.selected_index())?.candidate_id;
+        let tasks = self.candidates.as_ref()?;
+        let (_, task) = tasks.get(task_index)?;
+        // .exec doesn't actually spawn anything; it merely prepares a spawning command,
+        // which we can use for substitution.
+        let mut spawn_prompt = task.exec(self.task_context.clone())?;
+        if !spawn_prompt.args.is_empty() {
+            spawn_prompt.command.push(' ');
+            spawn_prompt
+                .command
+                .extend(intersperse(spawn_prompt.args.into_iter(), " ".to_string()));
+        }
+        Some(spawn_prompt.command)
     }
 }
 
