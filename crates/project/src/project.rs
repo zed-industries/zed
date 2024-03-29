@@ -5193,6 +5193,17 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Hover>> {
+        fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
+            hover
+                .contents
+                .retain(|hover_block| !hover_block.text.trim().is_empty());
+            if hover.contents.is_empty() {
+                None
+            } else {
+                Some(hover)
+            }
+        }
+
         if self.is_local() {
             let snapshot = buffer.read(cx).snapshot();
             let offset = position.to_offset(&snapshot);
@@ -5225,7 +5236,11 @@ impl Project {
             cx.spawn(|_, _| async move {
                 let mut hovers = Vec::with_capacity(hover_responses.len());
                 while let Some(hover_response) = hover_responses.next().await {
-                    if let Some(hover) = hover_response.log_err().flatten() {
+                    if let Some(hover) = hover_response
+                        .log_err()
+                        .flatten()
+                        .and_then(remove_empty_hover_blocks)
+                    {
                         hovers.push(hover);
                     }
                 }
@@ -5243,6 +5258,7 @@ impl Project {
                     .await
                     .log_err()
                     .flatten()
+                    .and_then(remove_empty_hover_blocks)
                     .map(|hover| vec![hover])
                     .unwrap_or_default()
             })
