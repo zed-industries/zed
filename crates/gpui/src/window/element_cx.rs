@@ -13,7 +13,7 @@
 //! for taking manual control of the layouting or painting of specialized elements.
 
 use std::{
-    any::{Any, TypeId},
+    any::{type_name, Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
     mem,
     ops::Range,

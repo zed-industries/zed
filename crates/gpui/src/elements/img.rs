@@ -189,7 +189,7 @@ impl Element for Img {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
             // TODO: Adjust this so that the vector data gets its 'natural' size here
-            if let Some(data) = self.source.data(None, cx) {
+            if let Some(data) = self.source.data(cx) {
                 let image_size = data.size();
                 match (style.size.width, style.size.height) {
                     (Length::Auto, Length::Auto) => {
@@ -233,9 +233,11 @@ impl Element for Img {
             .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                if let Some(data) = source.data(Some(bounds), cx) {
-                    cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
-                        .log_err();
+                if let Some(data) = source.data(cx) {
+                    if let Some(data) = data.img(dbg!(bounds.size), cx) {
+                        cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
+                            .log_err();
+                    }
                 }
 
                 match source {
@@ -273,11 +275,7 @@ impl InteractiveElement for Img {
 }
 
 impl ImageSource {
-    fn data(
-        &self,
-        bounds: Option<Bounds<Pixels>>,
-        cx: &mut ElementContext,
-    ) -> Option<Arc<ImageData>> {
+    fn data(&self, cx: &mut ElementContext) -> Option<RasterOrVector> {
         match self {
             ImageSource::Uri(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
@@ -286,25 +284,11 @@ impl ImageSource {
                     _ => unreachable!(),
                 };
 
-                let asset = cx.use_asset::<RasterOrVector>(&uri_or_path)?.log_err()?;
-
-                match asset {
-                    RasterOrVector::Raster(data) => Some(data),
-                    RasterOrVector::Vector { data, id } => {
-                        let bounds = bounds?;
-
-                        let scaled = bounds.scale(cx.scale_factor());
-                        let key = {
-                            let size = scaled.size.map(|x| x.into());
-                            VectorKey { data, id, size }
-                        };
-
-                        cx.use_asset::<Vector>(&key)
-                    }
-                }
+                cx.use_cached_asset::<RasterOrVector>(&uri_or_path)?
+                    .log_err()
             }
 
-            ImageSource::Data(data) => Some(data.to_owned()),
+            ImageSource::Data(data) => Some(RasterOrVector::Raster(data.to_owned())),
             #[cfg(target_os = "macos")]
             ImageSource::Surface(_) => None,
         }
@@ -318,6 +302,33 @@ enum RasterOrVector {
         data: Arc<resvg::usvg::Tree>,
         id: u64,
     },
+}
+
+impl RasterOrVector {
+    fn size(&self) -> Size<DevicePixels> {
+        match self {
+            RasterOrVector::Raster(data) => data.size(),
+            RasterOrVector::Vector { data, .. } => size(
+                DevicePixels(data.size().width() as i32),
+                DevicePixels(data.size().height() as i32),
+            ),
+        }
+    }
+
+    fn img(&self, size: Size<Pixels>, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
+        match self.clone() {
+            RasterOrVector::Raster(data) => Some(data),
+            RasterOrVector::Vector { data, id } => {
+                let scaled = size.scale(cx.scale_factor());
+                let key = {
+                    let size = scaled.map(|x| x.into());
+                    VectorKey { data, id, size }
+                };
+
+                cx.use_cached_asset::<Vector>(&key)
+            }
+        }
+    }
 }
 
 impl Asset for RasterOrVector {
@@ -396,8 +407,8 @@ impl Asset for Vector {
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         async move {
             let mut pixmap = resvg::tiny_skia::Pixmap::new(
-                source.size.width.0 as u32,
-                source.size.height.0 as u32,
+                (source.size.width.0 as u32).max(5),
+                (source.size.height.0 as u32).max(5),
             )
             .expect("Attempted to render SVG with 0 size");
 
