@@ -1468,6 +1468,10 @@ impl PlatformWindow for WindowsWindow {
             .ok();
     }
 
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(windows)
+    }
+
     // todo(windows)
     fn set_edited(&mut self, _edited: bool) {}
 
