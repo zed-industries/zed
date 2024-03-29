@@ -2193,20 +2193,17 @@ impl ConversationEditor {
         event: &WorkspaceEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        match event {
-            WorkspaceEvent::ActiveItemChanged => {
-                let active_buffer = workspace
-                    .read(cx)
-                    .active_item(cx)
-                    .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
+        if let WorkspaceEvent::ActiveItemChanged = event {
+            let active_buffer = workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
 
-                self.conversation.update(cx, |conversation, cx| {
-                    conversation.embedded_scope.set_active_buffer(active_buffer);
-                    conversation.count_remaining_tokens(cx);
-                    cx.notify();
-                });
-            }
-            _ => {}
+            self.conversation.update(cx, |conversation, cx| {
+                conversation.embedded_scope.set_active_buffer(active_buffer);
+                conversation.count_remaining_tokens(cx);
+                cx.notify();
+            });
         }
     }
 
