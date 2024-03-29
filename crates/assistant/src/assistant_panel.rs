@@ -2464,7 +2464,7 @@ impl ConversationEditor {
                         .child(
                             div()
                                 .h_6()
-                                .child(Label::new("File Context"))
+                                .child(Label::new("File Contexts"))
                                 .ml_1()
                                 .font_weight(FontWeight::SEMIBOLD),
                         ),
@@ -2512,44 +2512,43 @@ impl ConversationEditor {
         let file_name = path.map_or("Untitled".to_string(), |path| {
             path.to_string_lossy().to_string()
         });
-        let file_name_text_color = if focused {
-            Color::Default
-        } else {
-            Color::Muted
-        };
 
         let enabled = self
             .conversation
             .read(cx)
             .embedded_scope
             .active_buffer_enabled();
+
+        let file_name_text_color = if enabled {
+            Color::Default
+        } else {
+            Color::Disabled
+        };
+
         div()
+            .id("close-or-check")
             .h_flex()
-            .child(Icon::from_path(icon_path))
+            .cursor_pointer()
+            .child(Icon::from_path(icon_path).color(file_name_text_color))
             .child(
                 div()
                     .h_6()
                     .child(Label::new(file_name).color(file_name_text_color))
                     .ml_1(),
             )
-            .child(
-                Checkbox::new(
-                    "active-file",
-                    if enabled {
-                        Selection::Selected
-                    } else {
-                        Selection::Unselected
-                    },
-                )
-                .on_click(cx.listener(move |this, _, cx| {
-                    this.conversation.update(cx, |conversation, cx| {
-                        conversation
-                            .embedded_scope
-                            .set_active_buffer_enabled(!enabled);
-                        cx.notify();
-                    })
-                })),
-            )
+            .children(enabled.then(|| {
+                div()
+                    .child(Icon::new(IconName::Check).color(file_name_text_color))
+                    .ml_1()
+            }))
+            .on_click(cx.listener(move |this, _, cx| {
+                this.conversation.update(cx, |conversation, cx| {
+                    conversation
+                        .embedded_scope
+                        .set_active_buffer_enabled(!enabled);
+                    cx.notify();
+                })
+            }))
     }
 }
 
