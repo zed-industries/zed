@@ -5458,7 +5458,6 @@ dependencies = [
  "tree-sitter-nix",
  "tree-sitter-nu",
  "tree-sitter-ocaml",
- "tree-sitter-php",
  "tree-sitter-proto",
  "tree-sitter-python",
  "tree-sitter-racket",
@@ -10582,16 +10581,6 @@ dependencies = [
 name = "tree-sitter-ocaml"
 version = "0.20.4"
 source = "git+https://github.com/tree-sitter/tree-sitter-ocaml?rev=4abfdc1c7af2c6c77a370aee974627be1c285b3b#4abfdc1c7af2c6c77a370aee974627be1c285b3b"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-php"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0db3788e709a5adfb583683a4b686a084e41a0f9e5a2fcb9a8e358f11481036a"
 dependencies = [
  "cc",
  "tree-sitter",
