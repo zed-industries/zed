@@ -700,8 +700,6 @@ impl Vim {
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) {
                 editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
-            } else {
-                editor.remove_keymap_context_layer::<Self>(cx);
             }
         });
     }
