@@ -26,13 +26,19 @@ impl SearchHistory {
     pub fn new_with_handle(
         insertion_behavior: QueryInsertionBehavior,
     ) -> (Self, SearchHistorySelectionHandle) {
-        let mut search_history = SearchHistory::default();
-        search_history.insertion_behavior = insertion_behavior;
-        let handle = search_history.new_handle();
+        let mut search_history = SearchHistory::new(insertion_behavior);
+        let handle = search_history.acquire_handle();
         (search_history, handle)
     }
 
-    pub fn new_handle(&mut self) -> SearchHistorySelectionHandle {
+    pub fn new(insertion_behavior: QueryInsertionBehavior) -> Self {
+        SearchHistory {
+            insertion_behavior,
+            ..Default::default()
+        }
+    }
+
+    pub fn acquire_handle(&mut self) -> SearchHistorySelectionHandle {
         let handle = SearchHistorySelectionHandle(self.selected.len());
         self.selected.insert(handle, None);
         handle
@@ -69,6 +75,8 @@ impl SearchHistory {
     }
 
     pub fn next(&mut self, handle: SearchHistorySelectionHandle) -> Option<&str> {
+        dbg!(handle);
+
         let history_size = self.history.len();
         if history_size == 0 {
             return None;
@@ -90,6 +98,8 @@ impl SearchHistory {
     }
 
     pub fn previous(&mut self, handle: SearchHistorySelectionHandle) -> Option<&str> {
+        dbg!(handle);
+
         let history_size = self.history.len();
         if history_size == 0 {
             return None;
@@ -167,7 +177,7 @@ mod tests {
     #[test]
     fn test_next_and_previous() {
         let mut search_history = SearchHistory::default();
-        let handle = search_history.new_handle();
+        let handle = search_history.acquire_handle();
 
         assert_eq!(
             search_history.next(handle),
@@ -206,7 +216,7 @@ mod tests {
     #[test]
     fn test_reset_selection() {
         let mut search_history = SearchHistory::default();
-        let handle = search_history.new_handle();
+        let handle = search_history.acquire_handle();
 
         search_history.add(handle, "Rust".to_string());
         search_history.add(handle, "JavaScript".to_string());
@@ -233,8 +243,8 @@ mod tests {
     #[test]
     fn test_multiple_handles() {
         let mut search_history = SearchHistory::default();
-        let handle1 = search_history.new_handle();
-        let handle2 = search_history.new_handle();
+        let handle1 = search_history.acquire_handle();
+        let handle2 = search_history.acquire_handle();
 
         search_history.add(handle1, "Rust".to_string());
         search_history.add(handle1, "JavaScript".to_string());
