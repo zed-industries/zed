@@ -529,9 +529,15 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         .with_local_workspace(cx, move |workspace, cx| {
             let fs = workspace.app_state().fs.clone();
             let app_state = workspace.app_state().clone();
+            // `"LOG"` is taken from [1] as the current "official" log language plugin
+            // [1]: https://github.com/evrsen/zed-log/blob/b913d7174675ec5efde945b8fb8f3e09811d8d28/languages/log/config.toml#L1
+            let log_language_name = "LOG";
             cx.spawn(|workspace, mut cx| async move {
-                let (old_log, new_log) =
-                    futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
+                let (old_log, new_log, log_language) = futures::join!(
+                    fs.load(&paths::OLD_LOG),
+                    fs.load(&paths::LOG),
+                    app_state.languages.language_for_name(log_language_name),
+                );
                 let log = match (old_log, new_log) {
                     (Err(_), Err(_)) => None,
                     (old_log, new_log) => {
@@ -555,8 +561,6 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                     }
                 };
 
-                let logLang = app_state.languages.language_for_name("LOG").await;
-
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         let Some(log) = log else {
@@ -572,16 +576,10 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                         };
                         let project = workspace.project().clone();
                         let buffer = project
-                            .update(cx, |project, cx| project.create_buffer(&log, None, cx))
+                            .update(cx, |project, cx| {
+                                project.create_buffer(&log, log_language.ok(), cx)
+                            })
                             .expect("creating buffers on a local workspace always succeeds");
-
-                        // If the log language exists, set the buffer to the log language
-                        // The log language repo is https://github.com/evrsen/zed-log
-                        if let Ok(log) = logLang {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(log), cx);
-                            });
-                        }
 
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
