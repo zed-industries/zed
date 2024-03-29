@@ -247,7 +247,6 @@ impl PickerDelegate for TasksModalDelegate {
                     .as_ref()
                     .map(|candidates| candidates[ix].1.clone())
             });
-        dbg!(omit_history_entry);
         let Some(task) = task else {
             return;
         };
