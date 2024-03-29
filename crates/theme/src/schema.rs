@@ -33,7 +33,7 @@ pub enum AppearanceContent {
     Dark,
 }
 
-/// Background style ("opaque", "transparent" or "blurred").
+/// The background appearance of the window.
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowBackgroundContent {
