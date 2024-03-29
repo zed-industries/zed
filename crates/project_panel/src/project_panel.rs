@@ -1435,15 +1435,15 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
-                        div().size(IconSize::default().rems()).invisible()
+                        h_flex().size(IconSize::default().rems()).invisible()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            div()
+                            h_flex()
                                 .h_6()
                                 .child(Label::new(file_name).color(filename_text_color))
                         }
