@@ -21,16 +21,6 @@ use cocoa::{
     },
 };
 use core_graphics::display::{CGDirectDisplayID, CGRect};
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    // Widely used private APIs; Apple uses them for their Terminal.app.
-    fn CGSMainConnectionID() -> id;
-    fn CGSSetWindowBackgroundBlurRadius(
-        connection_id: id,
-        window_id: NSInteger,
-        radius: i64,
-    ) -> i32;
-}
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -92,6 +82,17 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    // Widely used private APIs; Apple uses them for their Terminal.app.
+    fn CGSMainConnectionID() -> id;
+    fn CGSSetWindowBackgroundBlurRadius(
+        connection_id: id,
+        window_id: NSInteger,
+        radius: i64,
+    ) -> i32;
+}
 
 #[ctor]
 unsafe fn build_classes() {
