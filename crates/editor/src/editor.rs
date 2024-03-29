@@ -4493,10 +4493,21 @@ impl Editor {
                 continue;
             }
 
-            // If the selection is empty and the cursor is in the leading whitespace before the
-            // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
             let current_indent = snapshot.indent_size_for_line(cursor.row);
+
+            // Accept copilot completion if there is only one selection and the cursor is not
+            // in the leading whitespace.
+            if self.selections.count() == 1
+                && cursor.column >= current_indent.len
+                && self.has_active_inline_completion(cx)
+            {
+                self.accept_inline_completion(cx);
+                return;
+            }
+
+            // If the selection is empty and the cursor is in the leading whitespace before the
+            // suggested indentation, then auto-indent the line.
             if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
@@ -4514,16 +4525,6 @@ impl Editor {
                     }
                     continue;
                 }
-            }
-
-            // Accept copilot completion if there is only one selection and the cursor is not
-            // in the leading whitespace.
-            if self.selections.count() == 1
-                && cursor.column >= current_indent.len
-                && self.has_active_inline_completion(cx)
-            {
-                self.accept_inline_completion(cx);
-                return;
             }
 
             // Otherwise, insert a hard or soft tab.
