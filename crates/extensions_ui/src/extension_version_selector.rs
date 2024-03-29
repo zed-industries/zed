@@ -9,9 +9,10 @@ use gpui::{
     prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Task, View, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use semantic_version::SemanticVersion;
 use settings::update_settings_file;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
-use util::{ResultExt, SemanticVersion};
+use util::ResultExt;
 use workspace::ModalView;
 
 pub struct ExtensionVersionSelector {

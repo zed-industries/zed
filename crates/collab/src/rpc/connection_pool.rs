@@ -2,9 +2,9 @@ use crate::db::{ChannelId, ChannelRole, UserId};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
+use semantic_version::{semver, SemanticVersion};
 use serde::Serialize;
 use tracing::instrument;
-use util::{semver, SemanticVersion};
 
 #[derive(Default, Serialize)]
 pub struct ConnectionPool {

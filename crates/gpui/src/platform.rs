@@ -53,10 +53,10 @@ pub use keystroke::*;
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
+pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
-pub use util::SemanticVersion;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 

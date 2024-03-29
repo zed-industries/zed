@@ -1,9 +1,8 @@
 use collections::HashMap;
 
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
+use semantic_version::SemanticVersion;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use util::SemanticVersion;
 
 #[derive(Debug)]
 pub struct IpsFile {

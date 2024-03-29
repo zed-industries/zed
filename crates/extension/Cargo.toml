@@ -33,6 +33,7 @@ lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
 schemars.workspace = true
+semantic_version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

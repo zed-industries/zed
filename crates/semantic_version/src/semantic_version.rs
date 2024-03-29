@@ -6,7 +6,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use serde::{de::Error, Deserialize, Serialize};
 
-/// A datastructure representing a semantic version number
+/// A [semantic version](https://semver.org/) number.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SemanticVersion {
     pub major: usize,
@@ -14,16 +14,12 @@ pub struct SemanticVersion {
     pub patch: usize,
 }
 
-pub fn semver(major: usize, minor: usize, patch: usize) -> SemanticVersion {
-    SemanticVersion {
-        major,
-        minor,
-        patch,
-    }
+pub const fn semver(major: usize, minor: usize, patch: usize) -> SemanticVersion {
+    SemanticVersion::new(major, minor, patch)
 }
 
 impl SemanticVersion {
-    pub fn new(major: usize, minor: usize, patch: usize) -> Self {
+    pub const fn new(major: usize, minor: usize, patch: usize) -> Self {
         Self {
             major,
             minor,
@@ -34,6 +30,7 @@ impl SemanticVersion {
 
 impl FromStr for SemanticVersion {
     type Err = anyhow::Error;
+
     fn from_str(s: &str) -> Result<Self> {
         let mut components = s.trim().split('.');
         let major = components

@@ -14,11 +14,12 @@ use futures::{
 use gpui::BackgroundExecutor;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
+use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, SemanticVersion};
+use util::http::HttpClient;
 use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,

@@ -10,6 +10,7 @@ use axum::{
     Extension, Router, TypedHeader,
 };
 use rpc::ExtensionMetadata;
+use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
@@ -17,7 +18,6 @@ use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CopilotEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent, SettingEvent,
 };
-use util::SemanticVersion;
 
 pub fn router() -> Router {
     Router::new()

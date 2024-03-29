@@ -70,6 +70,7 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
+    "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
     "crates/sqlez",
@@ -184,6 +185,7 @@ rpc = { path = "crates/rpc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
+semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
