@@ -1277,7 +1277,7 @@ struct Summary {
     done: bool,
 }
 
-struct Conversation {
+pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
     embedded_scope: EmbeddedScope,
@@ -1338,6 +1338,7 @@ impl Conversation {
             buffer,
             embedded_scope,
         };
+
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
             start: language::Anchor::MIN,
@@ -1457,7 +1458,7 @@ impl Conversation {
         }
     }
 
-    fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let request = self.to_completion_request(cx);
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
@@ -2060,6 +2061,7 @@ impl ConversationEditor {
             workspace: workspace.downgrade(),
             _subscriptions,
         };
+        this.update_active_buffer(workspace, cx);
         this.update_message_headers(cx);
         this
     }
@@ -2200,17 +2202,28 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) {
         if let WorkspaceEvent::ActiveItemChanged = event {
-            let active_buffer = workspace
-                .read(cx)
-                .active_item(cx)
-                .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
-
-            self.conversation.update(cx, |conversation, cx| {
-                conversation.embedded_scope.set_active_buffer(active_buffer);
-                conversation.count_remaining_tokens(cx);
-                cx.notify();
-            });
+            self.update_active_buffer(workspace, cx);
         }
+    }
+
+    fn update_active_buffer(
+        &mut self,
+        workspace: View<Workspace>,
+        cx: &mut ViewContext<'_, ConversationEditor>,
+    ) {
+        let active_buffer = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
+
+        self.conversation.update(cx, |conversation, cx| {
+            conversation
+                .embedded_scope
+                .set_active_buffer(active_buffer.clone(), cx);
+
+            conversation.count_remaining_tokens(cx);
+            cx.notify();
+        });
     }
 
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {

@@ -1,12 +1,13 @@
 use editor::MultiBuffer;
-use gpui::{AppContext, Model};
+use gpui::{AppContext, Model, ModelContext, Subscription};
 
-use crate::{LanguageModelRequestMessage, Role};
+use crate::{assistant_panel::Conversation, LanguageModelRequestMessage, Role};
 
 #[derive(Default)]
 pub struct EmbeddedScope {
     active_buffer: Option<Model<MultiBuffer>>,
     active_buffer_enabled: bool,
+    active_buffer_subscription: Option<Subscription>,
 }
 
 impl EmbeddedScope {
@@ -14,10 +15,29 @@ impl EmbeddedScope {
         Self {
             active_buffer: None,
             active_buffer_enabled: true,
+            active_buffer_subscription: None,
         }
     }
 
-    pub fn set_active_buffer(&mut self, buffer: Option<Model<MultiBuffer>>) {
+    pub fn set_active_buffer(
+        &mut self,
+        buffer: Option<Model<MultiBuffer>>,
+        cx: &mut ModelContext<Conversation>,
+    ) {
+        self.active_buffer_subscription.take();
+
+        if let Some(active_buffer) = buffer.clone() {
+            self.active_buffer_subscription =
+                Some(cx.subscribe(&active_buffer, |conversation, _, e, cx| {
+                    match e {
+                        multi_buffer::Event::Edited { .. } => {
+                            conversation.count_remaining_tokens(cx)
+                        }
+                        _ => {}
+                    };
+                }));
+        }
+
         self.active_buffer = buffer;
     }
 
