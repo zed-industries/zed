@@ -20,8 +20,9 @@ CORE_LABELS: set[str] = set(
         "design",
         "documentation",
         "enhancement",
+        "linux",
         "panic / crash",
-        "platform support",
+        "windows"
     ]
 )
 # A set of labels for adding in labels that we want present in the final
