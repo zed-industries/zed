@@ -26,17 +26,14 @@ mod json;
 mod lua;
 mod nu;
 mod ocaml;
-mod php;
 mod python;
 mod ruby;
 mod rust;
 mod tailwind;
 mod terraform;
-mod toml;
 mod typescript;
 mod vue;
 mod yaml;
-mod zig;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -92,7 +89,6 @@ pub fn init(
             "ocaml_interface",
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
-        ("php", tree_sitter_php::language_php()),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
@@ -100,12 +96,10 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
-        ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
-        ("zig", tree_sitter_zig::language()),
         ("dart", tree_sitter_dart::language()),
     ]);
 
@@ -212,7 +206,6 @@ pub fn init(
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
-    language!("zig", vec![Arc::new(zig::ZlsAdapter)]);
     language!(
         "heex",
         vec![
@@ -239,7 +232,6 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
         RustContextProvider
     );
-    language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
             language!(
@@ -316,13 +308,6 @@ pub fn init(
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
     language!(
-        "php",
-        vec![
-            Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
-    language!(
         "elm",
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
@@ -346,6 +331,10 @@ pub fn init(
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "PHP".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
     languages.register_secondary_lsp_adapter(

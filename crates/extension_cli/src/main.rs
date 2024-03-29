@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(engine)?;
 
@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
         version: manifest.version,
         description: manifest.description,
         authors: manifest.authors,
-        schema_version: Some(manifest.schema_version),
+        schema_version: Some(manifest.schema_version.0),
         repository: manifest
             .repository
             .ok_or_else(|| anyhow!("missing repository in extension manifest"))?,

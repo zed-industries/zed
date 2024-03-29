@@ -459,7 +459,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     const OLD_NAME: &str = "aaa.rs";
     const NEW_NAME: &str = "AAA.rs";
 
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let temp_root = temp_tree(json!({
         OLD_NAME: "",
     }));
@@ -969,7 +969,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         build_client(cx),
         dir.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1049,7 +1049,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         build_client(cx),
         dir.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1153,7 +1153,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         build_client(cx),
         dir.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1263,7 +1263,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         build_client(cx),
         dot_git_worktree_dir.clone(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1404,7 +1404,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         )
     });
 
-    let fs_real = Arc::new(RealFs);
+    let fs_real = Arc::new(RealFs::default());
     let temp_root = temp_tree(json!({
         "a": {}
     }));
@@ -2008,7 +2008,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         build_client(cx),
         root_path,
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -2087,7 +2087,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         build_client(cx),
         root.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -2228,7 +2228,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
         build_client(cx),
         root.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )

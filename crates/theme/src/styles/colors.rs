@@ -1,4 +1,4 @@
-use gpui::Hsla;
+use gpui::{Hsla, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;
 
@@ -235,6 +235,8 @@ pub struct ThemeColors {
 
 #[derive(Refineable, Clone)]
 pub struct ThemeStyles {
+    /// The background appearance of the window.
+    pub window_background_appearance: WindowBackgroundAppearance,
     pub system: SystemColors,
     /// An array of colors used for theme elements that iterate through a series of colors.
     ///

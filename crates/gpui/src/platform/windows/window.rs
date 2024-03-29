@@ -68,12 +68,12 @@ impl WindowsWindowInner {
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(Point {
-            x: DevicePixels(cs.x as i32),
-            y: DevicePixels(cs.y as i32),
+            x: DevicePixels(cs.x),
+            y: DevicePixels(cs.y),
         });
         let physical_size = Cell::new(Size {
-            width: DevicePixels(cs.cx as i32),
-            height: DevicePixels(cs.cy as i32),
+            width: DevicePixels(cs.cx),
+            height: DevicePixels(cs.cy),
         });
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
@@ -175,10 +175,10 @@ impl WindowsWindowInner {
             let bounds = self.display.borrow().clone().bounds();
             StyleAndBounds {
                 style,
-                x: bounds.left().0 as i32,
-                y: bounds.top().0 as i32,
-                cx: bounds.size.width.0 as i32,
-                cy: bounds.size.height.0 as i32,
+                x: bounds.left().0,
+                y: bounds.top().0,
+                cx: bounds.size.width.0,
+                cy: bounds.size.height.0,
             }
         };
         unsafe { set_window_long(self.hwnd, GWL_STYLE, style.0 as isize) };
@@ -924,8 +924,8 @@ impl WindowsWindowInner {
         let height = size_rect.bottom - size_rect.top;
 
         self.physical_size.set(Size {
-            width: DevicePixels(width as i32),
-            height: DevicePixels(height as i32),
+            width: DevicePixels(width),
+            height: DevicePixels(height),
         });
 
         if self.hide_title_bar {
@@ -1076,10 +1076,7 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(self.hwnd, &mut cursor_point) };
-            let physical_point = point(
-                DevicePixels(cursor_point.x as i32),
-                DevicePixels(cursor_point.y as i32),
-            );
+            let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
             let click_count = self.click_state.borrow_mut().update(button, physical_point);
             let scale_factor = self.scale_factor.get();
             let event = MouseDownEvent {
@@ -1218,10 +1215,10 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let x = options.bounds.origin.x.0 as i32;
-        let y = options.bounds.origin.y.0 as i32;
-        let nwidth = options.bounds.size.width.0 as i32;
-        let nheight = options.bounds.size.height.0 as i32;
+        let x = options.bounds.origin.x.0;
+        let y = options.bounds.origin.y.0;
+        let nwidth = options.bounds.size.width.0;
+        let nheight = options.bounds.size.height.0;
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
         let hinstance = HINSTANCE::default();
@@ -1469,6 +1466,10 @@ impl PlatformWindow for WindowsWindow {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
             .ok();
+    }
+
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(windows)
     }
 
     // todo(windows)

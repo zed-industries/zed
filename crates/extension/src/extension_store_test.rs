@@ -1,3 +1,5 @@
+use crate::extension_manifest::SchemaVersion;
+use crate::extension_settings::ExtensionSettings;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
@@ -13,7 +15,7 @@ use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::Project;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings as _, SettingsStore};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -35,11 +37,7 @@ fn init_logger() {
 
 #[gpui::test]
 async fn test_extension_store(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        theme::init(theme::LoadThemes::JustBase, cx);
-    });
+    init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
     let http_client = FakeHttpClient::with_200_response();
@@ -146,7 +144,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-ruby".into(),
                         name: "Zed Ruby".into(),
                         version: "1.0.0".into(),
-                        schema_version: 0,
+                        schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: Vec::new(),
                         repository: None,
@@ -171,7 +169,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         id: "zed-monokai".into(),
                         name: "Zed Monokai".into(),
                         version: "2.0.0".into(),
-                        schema_version: 0,
+                        schema_version: SchemaVersion::ZERO,
                         description: None,
                         authors: vec![],
                         repository: None,
@@ -328,7 +326,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 id: "zed-gruvbox".into(),
                 name: "Zed Gruvbox".into(),
                 version: "1.0.0".into(),
-                schema_version: 0,
+                schema_version: SchemaVersion::ZERO,
                 description: None,
                 authors: vec![],
                 repository: None,
@@ -448,7 +446,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let cache_dir = root_dir.join("target");
     let gleam_extension_dir = root_dir.join("extensions").join("gleam");
 
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let extensions_dir = temp_tree(json!({
         "installed": {},
         "work": {}
@@ -485,7 +483,6 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         move |request| {
             let language_server_version = language_server_version.clone();
             async move {
-                language_server_version.lock().http_request_count += 1;
                 let version = language_server_version.lock().version.clone();
                 let binary_contents = language_server_version.lock().binary_contents.clone();
 
@@ -495,6 +492,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
                 let uri = request.uri().to_string();
                 if uri == github_releases_uri {
+                    language_server_version.lock().http_request_count += 1;
                     Ok(Response::new(
                         json!([
                             {
@@ -514,6 +512,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
                         .into(),
                     ))
                 } else if uri == asset_download_uri {
+                    language_server_version.lock().http_request_count += 1;
                     let mut bytes = Vec::<u8>::new();
                     let mut archive = async_tar::Builder::new(&mut bytes);
                     let mut header = async_tar::Header::new_gnu();
@@ -672,6 +671,7 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
+        ExtensionSettings::register(cx);
         language::init(cx);
     });
 }

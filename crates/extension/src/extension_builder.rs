@@ -195,7 +195,13 @@ impl ExtensionBuilder {
             &grammar_metadata.rev,
         )?;
 
-        let src_path = grammar_repo_dir.join("src");
+        let base_grammar_path = grammar_metadata
+            .path
+            .as_ref()
+            .map(|path| grammar_repo_dir.join(path))
+            .unwrap_or(grammar_repo_dir);
+
+        let src_path = base_grammar_path.join("src");
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
 
@@ -479,7 +485,7 @@ impl ExtensionBuilder {
 fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
     // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
     // contents of the computed fields, since we don't care what the existing values are.
-    if manifest.schema_version == 0 {
+    if manifest.schema_version.is_v0() {
         manifest.languages.clear();
         manifest.grammars.clear();
         manifest.themes.clear();
@@ -522,7 +528,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
 
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
     // the manifest using the contents of the `grammars` directory.
-    if manifest.schema_version == 0 {
+    if manifest.schema_version.is_v0() {
         let grammars_dir = extension_path.join("grammars");
         if grammars_dir.exists() {
             for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {
@@ -533,6 +539,8 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                     struct GrammarConfigToml {
                         pub repository: String,
                         pub commit: String,
+                        #[serde(default)]
+                        pub path: Option<String>,
                     }
 
                     let grammar_config = fs::read_to_string(&grammar_path)?;
@@ -548,6 +556,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                             GrammarManifestEntry {
                                 repository: grammar_config.repository,
                                 rev: grammar_config.commit,
+                                path: grammar_config.path,
                             },
                         );
                     }

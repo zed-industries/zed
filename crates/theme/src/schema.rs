@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::gen::SchemaGenerator;
@@ -33,6 +33,25 @@ pub enum AppearanceContent {
     Dark,
 }
 
+/// The background appearance of the window.
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowBackgroundContent {
+    Opaque,
+    Transparent,
+    Blurred,
+}
+
+impl From<WindowBackgroundContent> for WindowBackgroundAppearance {
+    fn from(value: WindowBackgroundContent) -> Self {
+        match value {
+            WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
+            WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
+            WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
+        }
+    }
+}
+
 /// The content of a serialized theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
@@ -53,6 +72,9 @@ pub struct ThemeContent {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ThemeStyleContent {
+    #[serde(default, rename = "background.appearance")]
+    pub window_background_appearance: Option<WindowBackgroundContent>,
+
     #[serde(flatten, default)]
     pub colors: ThemeColorsContent,
 

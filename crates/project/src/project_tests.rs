@@ -11,7 +11,9 @@ use lsp::Url;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::{os, task::Poll};
+#[cfg(not(windows))]
+use std::os;
+use std::task::Poll;
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 use worktree::WorktreeModelHandle as _;
@@ -75,7 +77,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
 
-    let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
+    let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
 
     project.update(cx, |project, cx| {
         let tree = project.worktrees().next().unwrap().read(cx);
@@ -2520,7 +2522,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let action = actions.await.unwrap()[0].clone();
+    let action = actions.await[0].clone();
     let apply = project.update(cx, |project, cx| {
         project.apply_code_action(buffer.clone(), action, true, cx)
     });
@@ -2842,7 +2844,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
+    let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
     let rpc = project.update(cx, |p, _| p.client.clone());
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
@@ -4402,6 +4404,311 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     assert!(result.is_err())
 }
 
+#[gpui::test]
+async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.tsx": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(tsx_lang());
+    let language_server_names = [
+        "TypeScriptServer",
+        "TailwindServer",
+        "ESLintServer",
+        "NoHoverCapabilitiesServer",
+    ];
+    let mut fake_tsx_language_servers = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        true,
+        FakeLspAdapter {
+            name: &language_server_names[0],
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _a = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        false,
+        FakeLspAdapter {
+            name: &language_server_names[1],
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _b = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        false,
+        FakeLspAdapter {
+            name: &language_server_names[2],
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _c = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        false,
+        FakeLspAdapter {
+            name: &language_server_names[3],
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: None,
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let mut servers_with_hover_requests = HashMap::default();
+    for i in 0..language_server_names.len() {
+        let new_server = fake_tsx_language_servers
+            .next()
+            .await
+            .unwrap_or_else(|| panic!("Failed to get language server #{i}"));
+        let new_server_name = new_server.server.name();
+        assert!(
+            !servers_with_hover_requests.contains_key(new_server_name),
+            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+        );
+        let new_server_name = new_server_name.to_string();
+        match new_server_name.as_str() {
+            "TailwindServer" | "TypeScriptServer" => {
+                servers_with_hover_requests.insert(
+                    new_server_name.clone(),
+                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| {
+                        let name = new_server_name.clone();
+                        async move {
+                            Ok(Some(lsp::Hover {
+                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                                    format!("{name} hover"),
+                                )),
+                                range: None,
+                            }))
+                        }
+                    }),
+                );
+            }
+            "ESLintServer" => {
+                servers_with_hover_requests.insert(
+                    new_server_name,
+                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                        |_, _| async move { Ok(None) },
+                    ),
+                );
+            }
+            "NoHoverCapabilitiesServer" => {
+                let _never_handled = new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    |_, _| async move {
+                        panic!(
+                            "Should not call for hovers server with no corresponding capabilities"
+                        )
+                    },
+                );
+            }
+            unexpected => panic!("Unexpected server name: {unexpected}"),
+        }
+    }
+
+    let hover_task = project.update(cx, |project, cx| {
+        project.hover(&buffer, Point::new(0, 0), cx)
+    });
+    let _: Vec<()> = futures::future::join_all(servers_with_hover_requests.into_values().map(
+        |mut hover_request| async move {
+            hover_request
+                .next()
+                .await
+                .expect("All hover requests should have been triggered")
+        },
+    ))
+    .await;
+    assert_eq!(
+        vec!["TailwindServer hover", "TypeScriptServer hover"],
+        hover_task
+            .await
+            .into_iter()
+            .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
+            .sorted()
+            .collect::<Vec<_>>(),
+        "Should receive hover responses from all related servers with hover capabilities"
+    );
+}
+
+#[gpui::test]
+async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.tsx": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(tsx_lang());
+    let language_server_names = [
+        "TypeScriptServer",
+        "TailwindServer",
+        "ESLintServer",
+        "NoActionsCapabilitiesServer",
+    ];
+    let mut fake_tsx_language_servers = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        true,
+        FakeLspAdapter {
+            name: &language_server_names[0],
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _a = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        false,
+        FakeLspAdapter {
+            name: &language_server_names[1],
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _b = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        false,
+        FakeLspAdapter {
+            name: &language_server_names[2],
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _c = language_registry.register_specific_fake_lsp_adapter(
+        "tsx",
+        false,
+        FakeLspAdapter {
+            name: &language_server_names[3],
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: None,
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let mut servers_with_actions_requests = HashMap::default();
+    for i in 0..language_server_names.len() {
+        let new_server = fake_tsx_language_servers
+            .next()
+            .await
+            .unwrap_or_else(|| panic!("Failed to get language server #{i}"));
+        let new_server_name = new_server.server.name();
+        assert!(
+            !servers_with_actions_requests.contains_key(new_server_name),
+            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+        );
+        let new_server_name = new_server_name.to_string();
+        match new_server_name.as_str() {
+            "TailwindServer" | "TypeScriptServer" => {
+                servers_with_actions_requests.insert(
+                    new_server_name.clone(),
+                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                        move |_, _| {
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                                    lsp::CodeAction {
+                                        title: format!("{name} code action"),
+                                        ..lsp::CodeAction::default()
+                                    },
+                                )]))
+                            }
+                        },
+                    ),
+                );
+            }
+            "ESLintServer" => {
+                servers_with_actions_requests.insert(
+                    new_server_name,
+                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                        |_, _| async move { Ok(None) },
+                    ),
+                );
+            }
+            "NoActionsCapabilitiesServer" => {
+                let _never_handled = new_server
+                    .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+                        panic!(
+                            "Should not call for code actions server with no corresponding capabilities"
+                        )
+                    });
+            }
+            unexpected => panic!("Unexpected server name: {unexpected}"),
+        }
+    }
+
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..buffer.read(cx).len(), cx)
+    });
+    let _: Vec<()> = futures::future::join_all(servers_with_actions_requests.into_values().map(
+        |mut code_actions_request| async move {
+            code_actions_request
+                .next()
+                .await
+                .expect("All code actions requests should have been triggered")
+        },
+    ))
+    .await;
+    assert_eq!(
+        vec!["TailwindServer code action", "TypeScriptServer code action"],
+        code_actions_task
+            .await
+            .into_iter()
+            .map(|code_action| code_action.lsp_action.title)
+            .sorted()
+            .collect::<Vec<_>>(),
+        "Should receive code actions responses from all related servers with hover capabilities"
+    );
+}
+
 async fn search(
     project: &Model<Project>,
     query: SearchQuery,
@@ -4504,5 +4811,19 @@ fn typescript_lang() -> Arc<Language> {
             ..Default::default()
         },
         Some(tree_sitter_typescript::language_typescript()),
+    ))
+}
+
+fn tsx_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "tsx".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::language_tsx()),
     ))
 }

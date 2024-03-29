@@ -4,8 +4,8 @@ mod v0_0_4;
 use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
 use language::LspAdapterDelegate;
+use semantic_version::SemanticVersion;
 use std::sync::Arc;
-use util::SemanticVersion;
 use wasmtime::{
     component::{Component, Instance, Linker, Resource},
     Store,
@@ -26,6 +26,11 @@ pub fn new_linker(
 
 fn wasi_view(state: &mut WasmState) -> &mut WasmState {
     state
+}
+
+/// Returns whether the given Wasm API version is supported by the Wasm host.
+pub fn is_supported_wasm_api_version(version: SemanticVersion) -> bool {
+    v0_0_1::VERSION <= version && version <= v0_0_4::VERSION
 }
 
 pub enum Extension {

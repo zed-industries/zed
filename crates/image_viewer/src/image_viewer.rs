@@ -73,14 +73,21 @@ impl Item for ImageView {
     fn tab_content(
         &self,
         _detail: Option<usize>,
-        _selected: bool,
+        selected: bool,
         _cx: &WindowContext,
     ) -> AnyElement {
-        self.path
+        let title = self
+            .path
             .file_name()
             .unwrap_or_else(|| self.path.as_os_str())
             .to_string_lossy()
-            .to_string()
+            .to_string();
+        Label::new(title)
+            .color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
             .into_any_element()
     }
 

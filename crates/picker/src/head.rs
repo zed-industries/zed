@@ -28,8 +28,13 @@ impl Head {
         Self::Editor(editor)
     }
 
-    pub fn empty(cx: &mut WindowContext) -> Self {
-        Self::Empty(cx.new_view(|cx| EmptyHead::new(cx)))
+    pub fn empty<V: 'static>(
+        blur_handler: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
+        cx: &mut ViewContext<V>,
+    ) -> Self {
+        let head = cx.new_view(|cx| EmptyHead::new(cx));
+        cx.on_blur(&head.focus_handle(cx), blur_handler).detach();
+        Self::Empty(head)
     }
 }
 
