@@ -536,7 +536,7 @@ pub struct WindowOptions {
     pub display_id: Option<DisplayId>,
 
     /// The background type of the window
-    pub window_background: WindowBackground
+    pub window_background: WindowBackground,
 }
 
 /// The variables that can be configured when creating a new window
@@ -642,7 +642,7 @@ impl Default for WindowAppearance {
 
 /// The appearance of the background of the window itself, when there is
 /// no content or the content is transparent.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum WindowBackground {
     /// Opaque.
     ///
@@ -651,6 +651,7 @@ pub enum WindowBackground {
     ///
     /// Actual color depends on the system and themes should define a fully
     /// opaque background color instead.
+    #[default]
     Opaque,
     /// Plain alpha transparency.
     Transparent,
@@ -658,12 +659,6 @@ pub enum WindowBackground {
     ///
     /// Not always supported.
     Blurred,
-}
-
-impl Default for WindowBackground {
-    fn default() -> Self {
-        WindowBackground::Opaque
-    }
 }
 
 /// The options that can be configured for a file dialog prompt

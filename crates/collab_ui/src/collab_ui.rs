@@ -121,6 +121,6 @@ fn notification_window_options(
         is_movable: false,
         display_id: Some(screen.id()),
         fullscreen: false,
-        window_background: WindowBackground::default()
+        window_background: WindowBackground::default(),
     }
 }

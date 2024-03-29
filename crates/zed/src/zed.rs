@@ -29,12 +29,12 @@ use settings::{
     initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
-use theme::ActiveTheme;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
+use theme::ActiveTheme;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{

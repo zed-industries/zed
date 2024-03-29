@@ -1469,7 +1469,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     // todo(windows)
-    fn set_background(&mut self, background: WindowBackground) {}
+    fn set_background(&mut self, _background: WindowBackground) {}
 
     // todo(windows)
     fn set_edited(&mut self, _edited: bool) {}

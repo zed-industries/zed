@@ -163,7 +163,7 @@ impl Theme {
     /// Returns the window background for the theme.
     #[inline(always)]
     pub fn window_background(&self) -> WindowBackground {
-       self.window_background
+        self.window_background
     }
 }
 
