@@ -1,7 +1,7 @@
 use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
-    div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
+    actions, div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
     EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton, MouseUpEvent, Render,
     Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
@@ -17,6 +17,8 @@ enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),
 }
+
+actions!(picker, [UseSelectedQuery]);
 
 struct PendingUpdateMatches {
     delegate_update_matches: Option<Task<()>>,
@@ -278,7 +280,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn use_selected_query(&mut self, _: &menu::UseSelectedQuery, cx: &mut ViewContext<Self>) {
+    fn use_selected_query(&mut self, _: &UseSelectedQuery, cx: &mut ViewContext<Self>) {
         if let Some(new_query) = self.delegate.selected_as_query() {
             self.set_query(new_query, cx);
             cx.stop_propagation();

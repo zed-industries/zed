@@ -169,7 +169,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         Arc::from(format!(
             "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
-            cx.keystroke_text_for(&menu::UseSelectedQuery),
+            cx.keystroke_text_for(&picker::UseSelectedQuery),
             cx.keystroke_text_for(&menu::SecondaryConfirm),
             cx.keystroke_text_for(&menu::Confirm),
         ))
@@ -391,7 +391,7 @@ mod tests {
             "Only one task should match the query {query_str}"
         );
 
-        cx.dispatch_action(menu::UseSelectedQuery);
+        cx.dispatch_action(picker::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
             "echo 4",
@@ -438,7 +438,7 @@ mod tests {
             "Last recently used one show task should be listed first"
         );
 
-        cx.dispatch_action(menu::UseSelectedQuery);
+        cx.dispatch_action(picker::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
             query_str,
