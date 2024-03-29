@@ -137,8 +137,9 @@
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
       "g x": "editor::OpenUrl",
-      "g n": "vim::SelectNext",
-      "g shift-n": "vim::SelectPrevious",
+      "g n": "vim::VisualSelectNextMatch",
+      "g l": "vim::SelectNext",
+      "g shift-l": "vim::SelectPrevious",
       "g >": [
         "editor::SelectNext",
         {

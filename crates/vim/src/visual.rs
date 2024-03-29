@@ -11,6 +11,8 @@ use editor::{
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
 use workspace::Workspace;
+use search::BufferSearchBar;
+use workspace::searchable::Direction;
 
 use crate::{
     motion::{start_of_line, Motion},
@@ -31,6 +33,7 @@ actions!(
         OtherEnd,
         SelectNext,
         SelectPrevious,
+        VisualSelectNextMatch,
     ]
 );
 
@@ -56,6 +59,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace, action, cx| {
         select_previous(workspace, action, cx).ok();
     });
+    workspace.register_action(visual_select_next_match);
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -462,6 +466,26 @@ pub fn select_next(
         })
     })
     .unwrap_or(Ok(()))
+}
+
+pub fn visual_select_next_match(
+    workspace: &mut Workspace,
+    _: &VisualSelectNextMatch,
+    cx: &mut ViewContext<Workspace>,
+) {
+    let pane = workspace.active_pane().clone();
+    pane.update(cx, |pane, cx| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |search_bar, cx| {
+                search_bar.select_match(Direction::Next, 1, cx);
+            });
+        }
+    });
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.select_next(&Default::default(), cx).unwrap();
+        });
+    });
 }
 
 pub fn select_previous(

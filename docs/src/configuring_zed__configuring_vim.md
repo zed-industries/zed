@@ -26,8 +26,8 @@ g <space>  Open the current search excerpt in its own tab
 g s   Find symbol in current file
 g S   Find symbol in entire project
 
-g n   Add a visual selection for the next copy of the current word
-g N   The same, but backwards
+g l   Add a visual selection for the next copy of the current word
+g L   The same, but backwards
 g >   Skip latest word selection, and add next.
 g <   The same, but backwards
 g a   Add a visual selection for every copy of the current word
