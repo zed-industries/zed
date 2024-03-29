@@ -16,6 +16,7 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
         [
             ("astro", "astro"),
             ("beancount", "beancount"),
+            ("csharp", "cs"),
             ("dockerfile", "Dockerfile"),
             ("elisp", "el"),
             ("fish", "fish"),
