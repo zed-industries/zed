@@ -535,7 +535,7 @@ pub struct WindowOptions {
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
 
-    /// The background type of the window
+    /// The appearance of the window background.
     pub window_background: WindowBackgroundAppearance,
 }
 
