@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::gen::SchemaGenerator;
@@ -42,6 +42,16 @@ pub enum WindowBackgroundContent {
     Blurred,
 }
 
+impl From<WindowBackgroundContent> for WindowBackgroundAppearance {
+    fn from(value: WindowBackgroundContent) -> Self {
+        match value {
+            WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
+            WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
+            WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
+        }
+    }
+}
+
 /// The content of a serialized theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
@@ -56,14 +66,15 @@ pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
     pub style: ThemeStyleContent,
-    #[serde(default, rename = "window.background")]
-    pub window_background: Option<WindowBackgroundContent>,
 }
 
 /// The content of a serialized theme.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ThemeStyleContent {
+    #[serde(default, rename = "background.appearance")]
+    pub window_background_appearance: Option<WindowBackgroundContent>,
+
     #[serde(flatten, default)]
     pub colors: ThemeColorsContent,
 

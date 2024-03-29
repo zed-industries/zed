@@ -39,9 +39,8 @@ pub(crate) fn one_dark() -> Theme {
         id: "one_dark".to_string(),
         name: "One Dark".into(),
         appearance: Appearance::Dark,
-        window_background: WindowBackgroundAppearance::Opaque,
-
         styles: ThemeStyles {
+            window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
             colors: ThemeColors {
                 border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),

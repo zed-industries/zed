@@ -16,8 +16,8 @@ fn zed_pro_daylight() -> Theme {
         id: "zed_pro_daylight".to_string(),
         name: "Zed Pro Daylight".into(),
         appearance: Appearance::Light,
-        window_background: WindowBackgroundAppearance::Opaque,
         styles: ThemeStyles {
+            window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
             colors: ThemeColors::light(),
             status: StatusColors::light(),
@@ -47,8 +47,8 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
         id: "zed_pro_moonlight".to_string(),
         name: "Zed Pro Moonlight".into(),
         appearance: Appearance::Dark,
-        window_background: WindowBackgroundAppearance::Opaque,
         styles: ThemeStyles {
+            window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
             colors: ThemeColors::dark(),
             status: StatusColors::dark(),

@@ -215,12 +215,14 @@ fn main() {
             let client = client.clone();
 
             move |cx| {
-                cx.windows().iter_mut().for_each(|&mut window| {
-                    let bg = cx.theme().window_background();
+                for &mut window in cx.windows().iter_mut() {
+                    let background_appearance = cx.theme().window_background_appearance();
                     window
-                        .update(cx, |_, cx| cx.set_background_appearance(bg))
+                        .update(cx, |_, cx| {
+                            cx.set_background_appearance(background_appearance)
+                        })
                         .ok();
-                });
+                }
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {

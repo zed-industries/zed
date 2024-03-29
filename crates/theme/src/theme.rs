@@ -115,7 +115,6 @@ pub struct Theme {
     pub id: String,
     pub name: SharedString,
     pub appearance: Appearance,
-    pub window_background: WindowBackgroundAppearance,
     pub styles: ThemeStyles,
 }
 
@@ -162,10 +161,10 @@ impl Theme {
         self.appearance
     }
 
-    /// Returns the window background for the theme.
+    /// Returns the [`WindowBackgroundAppearance`] for the theme.
     #[inline(always)]
-    pub fn window_background(&self) -> WindowBackgroundAppearance {
-        self.window_background
+    pub fn window_background_appearance(&self) -> WindowBackgroundAppearance {
+        self.styles.window_background_appearance
     }
 }
 

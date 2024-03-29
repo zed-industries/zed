@@ -55,8 +55,8 @@ impl VsCodeThemeConverter {
         Ok(ThemeContent {
             name: self.theme_metadata.name,
             appearance,
-            window_background: Some(theme::WindowBackgroundContent::Opaque),
             style: ThemeStyleContent {
+                window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
                 colors: theme_colors,
                 status: status_colors,
                 players: Vec::new(),
