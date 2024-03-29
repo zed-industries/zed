@@ -75,8 +75,6 @@ impl SearchHistory {
     }
 
     pub fn next(&mut self, handle: SearchHistorySelectionHandle) -> Option<&str> {
-        dbg!(handle);
-
         let history_size = self.history.len();
         if history_size == 0 {
             return None;
@@ -98,8 +96,6 @@ impl SearchHistory {
     }
 
     pub fn previous(&mut self, handle: SearchHistorySelectionHandle) -> Option<&str> {
-        dbg!(handle);
-
         let history_size = self.history.len();
         if history_size == 0 {
             return None;

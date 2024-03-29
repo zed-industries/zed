@@ -1318,7 +1318,6 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 let selection_handle = search_view.model.read(cx).search_history_selection_handle;
-                dbg!(selection_handle);
                 if search_view.query_editor.read(cx).text(cx).is_empty() {
                     if let Some(new_query) = search_view
                         .model
@@ -2953,60 +2952,109 @@ pub mod tests {
             "/dir",
             json!({
                 "one.rs": "const ONE: usize = 1;",
-                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
             }),
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
+
+        let panes: Vec<_> = window
+            .update(cx, |this, _| this.panes().to_owned())
+            .unwrap();
 
         let search_bar_1 = window.build_view(cx, |_| ProjectSearchBar::new());
         let search_bar_2 = window.build_view(cx, |_| ProjectSearchBar::new());
 
+        assert_eq!(panes.len(), 1);
+        let first_pane = panes.get(0).cloned().unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 0);
+        window
+            .update(cx, |workspace, cx| {
+                workspace.open_path(
+                    (worktree_id, "one.rs"),
+                    Some(first_pane.downgrade()),
+                    true,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+
+        // Add a project search item to the first pane
         window
             .update(cx, {
+                let search_bar = search_bar_1.clone();
+                let pane = first_pane.clone();
                 move |workspace, cx| {
-                    workspace.split_pane(
-                        workspace.active_pane().clone(),
-                        workspace::SplitDirection::Right,
-                        cx,
-                    )
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+                }
+            })
+            .unwrap();
+        let search_view_1 = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        let second_pane = window
+            .update(cx, |workspace, cx| {
+                workspace.split_and_clone(first_pane.clone(), workspace::SplitDirection::Right, cx)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
+
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 2);
+
+        // Add a project search item to the second pane
+        window
+            .update(cx, {
+                let search_bar = search_bar_2.clone();
+                let pane = second_pane.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
                 }
             })
             .unwrap();
 
-        let get_search_view =
-            |idx: usize, search_bar: &View<ProjectSearchBar>, cx: &mut TestAppContext| {
-                window
-                    .update(cx, {
-                        let search_bar = search_bar.clone();
-                        move |workspace, cx| {
-                            workspace.panes()[idx].update(cx, move |pane, cx| {
-                                pane.toolbar()
-                                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
-                            });
-                            ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
-                        }
-                    })
-                    .unwrap();
-                cx.read(|cx| {
-                    workspace
-                        .read(cx)
-                        .active_item(cx)
-                        .and_then(|item| item.downcast::<ProjectSearchView>())
-                        .expect("Search view expected to appear after new search event trigger")
-                })
-            };
+        let search_view_2 = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 2);
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 2);
 
         let update_search_view =
             |search_view: &View<ProjectSearchView>, query: &str, cx: &mut TestAppContext| {
                 window
                     .update(cx, |_, cx| {
                         search_view.update(cx, |search_view, cx| {
-                            search_view.search_options = SearchOptions::CASE_SENSITIVE;
                             search_view
                                 .query_editor
                                 .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
@@ -3049,38 +3097,21 @@ pub mod tests {
                     .unwrap();
             };
 
-        let debug_history = |cx: &mut TestAppContext| {
-            cx.read(|cx| {
-                dbg!(project.read(cx).search_history());
-            })
-        };
-
-        let search_view_1 = get_search_view(0, &search_bar_1, cx);
-        let search_view_2 = get_search_view(1, &search_bar_2, cx);
-
-        debug_history(cx);
-
         update_search_view(&search_view_1, "ONE", cx);
         cx.background_executor.run_until_parked();
 
-        debug_history(cx);
-
         update_search_view(&search_view_2, "TWO", cx);
         cx.background_executor.run_until_parked();
-
-        debug_history(cx);
 
         assert_eq!(active_query(&search_view_1, cx), "ONE");
         assert_eq!(active_query(&search_view_2, cx), "TWO");
 
         // Selecting previous history item should select the query from search view 1.
         select_prev_history_item(&search_bar_2, cx);
-        debug_history(cx);
         assert_eq!(active_query(&search_view_2, cx), "ONE");
 
         // Selecting the previous history item should not change the query as it is already the first item.
         select_prev_history_item(&search_bar_2, cx);
-        debug_history(cx);
         assert_eq!(active_query(&search_view_2, cx), "ONE");
 
         // Changing the query in search view 2 should not affect the history of search view 1.
@@ -3108,14 +3139,21 @@ pub mod tests {
         // Search view 1 should now see the query from search view 2.
         assert_eq!(active_query(&search_view_1, cx), "ONE");
 
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "TWO");
+
+        // Here is the new query from search view 2
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "THREE");
+
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "");
+
         select_next_history_item(&search_bar_1, cx);
         assert_eq!(active_query(&search_view_1, cx), "TWO");
 
         select_next_history_item(&search_bar_1, cx);
         assert_eq!(active_query(&search_view_1, cx), "THREE");
-
-        select_next_history_item(&search_bar_1, cx);
-        assert_eq!(active_query(&search_view_1, cx), "");
 
         select_next_history_item(&search_bar_1, cx);
         assert_eq!(active_query(&search_view_1, cx), "");
