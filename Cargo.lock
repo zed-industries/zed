@@ -7648,11 +7648,9 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
- "collections",
  "editor",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
  "language",
  "menu",
  "ordered-float 2.10.0",

@@ -6749,6 +6749,12 @@ impl Project {
                         let worktree = worktree?;
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
+
+                        cx.update(|cx| {
+                            cx.add_recent_document(&path);
+                        })
+                        .log_err();
+
                         Ok(worktree)
                     }
                     .map_err(Arc::new)
