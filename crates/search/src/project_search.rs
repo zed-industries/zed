@@ -174,10 +174,6 @@ impl ProjectSearch {
         let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
-        let search_history_selection_handle = project.update(cx, |project, _| {
-            project.search_history_mut().acquire_handle()
-        });
-
         Self {
             project,
             excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
@@ -188,15 +184,11 @@ impl ProjectSearch {
             search_id: 0,
             no_results: None,
             limit_reached: false,
-            search_history_selection_handle,
+            search_history_selection_handle: Default::default(),
         }
     }
 
     fn clone(&self, cx: &mut ModelContext<Self>) -> Model<Self> {
-        let search_history_selection_handle = self.project.update(cx, |project, _| {
-            project.search_history_mut().acquire_handle()
-        });
-
         cx.new_model(|cx| Self {
             project: self.project.clone(),
             excerpts: self
@@ -209,14 +201,14 @@ impl ProjectSearch {
             search_id: self.search_id,
             no_results: self.no_results,
             limit_reached: self.limit_reached,
-            search_history_selection_handle,
+            search_history_selection_handle: self.search_history_selection_handle.clone(),
         })
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
         let search = self.project.update(cx, |project, cx| {
             project.search_history_mut().add(
-                self.search_history_selection_handle,
+                &mut self.search_history_selection_handle,
                 query.as_str().to_string(),
             );
             project.search(query.clone(), cx)
@@ -666,14 +658,6 @@ impl ProjectSearchView {
             }
         }
         subscriptions.push(cx.observe(&model, |this, _, cx| this.model_changed(cx)));
-        subscriptions.push(cx.on_release(move |view, _, cx| {
-            let handle = view.model.read(cx).search_history_selection_handle;
-            view.model.update(cx, |model, cx| {
-                model.project.update(cx, |project, _| {
-                    project.search_history_mut().release_handle(handle)
-                })
-            })
-        }));
 
         let query_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -1291,21 +1275,16 @@ impl ProjectSearchBar {
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let selection_handle = search_view.model.read(cx).search_history_selection_handle;
                 let new_query = search_view.model.update(cx, |model, cx| {
                     if let Some(new_query) = model.project.update(cx, |project, _| {
                         project
                             .search_history_mut()
-                            .next(selection_handle)
+                            .next(&mut model.search_history_selection_handle)
                             .map(str::to_string)
                     }) {
                         new_query
                     } else {
-                        model.project.update(cx, |project, _| {
-                            project
-                                .search_history_mut()
-                                .reset_selection(selection_handle)
-                        });
+                        model.search_history_selection_handle.reset();
                         String::new()
                     }
                 });
@@ -1317,7 +1296,6 @@ impl ProjectSearchBar {
     fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let selection_handle = search_view.model.read(cx).search_history_selection_handle;
                 if search_view.query_editor.read(cx).text(cx).is_empty() {
                     if let Some(new_query) = search_view
                         .model
@@ -1325,7 +1303,7 @@ impl ProjectSearchBar {
                         .project
                         .read(cx)
                         .search_history()
-                        .current(selection_handle)
+                        .current(&search_view.model.read(cx).search_history_selection_handle)
                         .map(str::to_string)
                     {
                         search_view.set_query(&new_query, cx);
@@ -1337,7 +1315,7 @@ impl ProjectSearchBar {
                     model.project.update(cx, |project, _| {
                         project
                             .search_history_mut()
-                            .previous(selection_handle)
+                            .previous(&mut model.search_history_selection_handle)
                             .map(str::to_string)
                     })
                 }) {

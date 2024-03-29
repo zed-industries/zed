@@ -530,10 +530,6 @@ impl BufferSearchBar {
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
-        let (search_history, search_history_selection_handle) = SearchHistory::new_with_handle(
-            project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
-        );
-
         Self {
             query_editor,
             query_editor_focused: false,
@@ -548,8 +544,10 @@ impl BufferSearchBar {
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
-            search_history,
-            search_history_selection_handle,
+            search_history: SearchHistory::new(
+                project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
+            ),
+            search_history_selection_handle: Default::default(),
             current_mode: SearchMode::default(),
             active_search: None,
             replace_enabled: false,
@@ -944,7 +942,7 @@ impl BufferSearchBar {
 
                             this.update_match_index(cx);
                             this.search_history
-                                .add(this.search_history_selection_handle, query_text);
+                                .add(&mut this.search_history_selection_handle, query_text);
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -1008,13 +1006,12 @@ impl BufferSearchBar {
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(new_query) = self
             .search_history
-            .next(self.search_history_selection_handle)
+            .next(&mut self.search_history_selection_handle)
             .map(str::to_string)
         {
             let _ = self.search(&new_query, Some(self.search_options), cx);
         } else {
-            self.search_history
-                .reset_selection(self.search_history_selection_handle);
+            self.search_history_selection_handle.reset();
             let _ = self.search("", Some(self.search_options), cx);
         }
     }
@@ -1023,7 +1020,7 @@ impl BufferSearchBar {
         if self.query(cx).is_empty() {
             if let Some(new_query) = self
                 .search_history
-                .current(self.search_history_selection_handle)
+                .current(&mut self.search_history_selection_handle)
                 .map(str::to_string)
             {
                 let _ = self.search(&new_query, Some(self.search_options), cx);
@@ -1033,7 +1030,7 @@ impl BufferSearchBar {
 
         if let Some(new_query) = self
             .search_history
-            .previous(self.search_history_selection_handle)
+            .previous(&mut self.search_history_selection_handle)
             .map(str::to_string)
         {
             let _ = self.search(&new_query, Some(self.search_options), cx);
