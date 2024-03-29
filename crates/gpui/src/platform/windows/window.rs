@@ -1468,8 +1468,9 @@ impl PlatformWindow for WindowsWindow {
             .ok();
     }
 
-    // todo(windows)
-    fn set_background(&mut self, _background: WindowBackground) {}
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(windows)
+    }
 
     // todo(windows)
     fn set_edited(&mut self, _edited: bool) {}

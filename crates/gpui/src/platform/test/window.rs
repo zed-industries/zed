@@ -2,7 +2,7 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackground, WindowParams,
+    WindowBackgroundAppearance, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -190,7 +190,7 @@ impl PlatformWindow for TestWindow {
         self.0.lock().title = Some(title.to_owned());
     }
 
-    fn set_background(&mut self, _background: WindowBackground) {
+    fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
         unimplemented!()
     }
 

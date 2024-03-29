@@ -23,7 +23,7 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
-    PromptLevel, Size, WindowAppearance, WindowBackground, WindowParams,
+    PromptLevel, Size, WindowAppearance, WindowBackgroundAppearance, WindowParams,
 };
 
 #[derive(Default)]
@@ -355,6 +355,10 @@ impl PlatformWindow for WaylandWindow {
         self.0.toplevel.set_title(title.to_string());
     }
 
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(linux)
+    }
+
     fn set_edited(&mut self, edited: bool) {
         // todo(linux)
     }
@@ -382,9 +386,6 @@ impl PlatformWindow for WaylandWindow {
     fn is_fullscreen(&self) -> bool {
         *self.0.fullscreen.borrow()
     }
-
-    // todo(linux)
-    fn set_background(&mut self, background: WindowBackground) {}
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);

@@ -4,7 +4,7 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackground, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -697,7 +697,7 @@ impl MacWindow {
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
-            window.set_background(window_background);
+            window.set_background_appearance(window_background);
 
             match kind {
                 WindowKind::Normal => {
@@ -981,25 +981,14 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn set_edited(&mut self, edited: bool) {
-        unsafe {
-            let window = self.0.lock().native_window;
-            msg_send![window, setDocumentEdited: edited as BOOL]
-        }
-
-        // Changing the document edited state resets the traffic light position,
-        // so we have to move it again.
-        self.0.lock().move_traffic_light();
-    }
-
-    fn set_background(&mut self, background: WindowBackground) {
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let this = self.0.as_ref().lock();
-        let blur_radius = if background == WindowBackground::Blurred {
+        let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
             80
         } else {
             0
         };
-        let opaque = if background == WindowBackground::Opaque {
+        let opaque = if background_appearance == WindowBackgroundAppearance::Opaque {
             YES
         } else {
             NO
@@ -1015,6 +1004,17 @@ impl PlatformWindow for MacWindow {
             let window_number = this.native_window.windowNumber();
             CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
         }
+    }
+
+    fn set_edited(&mut self, edited: bool) {
+        unsafe {
+            let window = self.0.lock().native_window;
+            msg_send![window, setDocumentEdited: edited as BOOL]
+        }
+
+        // Changing the document edited state resets the traffic light position,
+        // so we have to move it again.
+        self.0.lock().move_traffic_light();
     }
 
     fn show_character_palette(&self) {

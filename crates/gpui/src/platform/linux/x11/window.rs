@@ -4,7 +4,7 @@
 use crate::{
     platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackground, WindowOptions, WindowParams,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -421,10 +421,11 @@ impl PlatformWindow for X11Window {
     }
 
     // todo(linux)
-    fn set_background(&mut self, background: WindowBackground) {}
-
-    // todo(linux)
     fn set_edited(&mut self, edited: bool) {}
+
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(linux)
+    }
 
     // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
     // but it looks like the equivalent for Linux is GTK specific:

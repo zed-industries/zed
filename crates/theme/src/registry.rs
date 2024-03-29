@@ -6,7 +6,9 @@ use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString, WindowBackground};
+use gpui::{
+    AppContext, AssetSource, Global, HighlightStyle, SharedString, WindowBackgroundAppearance,
+};
 use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
@@ -126,10 +128,10 @@ impl ThemeRegistry {
 
             let window_background = user_theme
                 .window_background
-                .map(|bg| match bg {
-                    WindowBackgroundContent::Opaque => WindowBackground::Opaque,
-                    WindowBackgroundContent::Transparent => WindowBackground::Transparent,
-                    WindowBackgroundContent::Blurred => WindowBackground::Blurred,
+                .map(|background| match background {
+                    WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
+                    WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
+                    WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
                 })
                 .unwrap_or_default();
 

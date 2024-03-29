@@ -190,8 +190,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
     fn set_edited(&mut self, edited: bool);
-    fn set_background(&mut self, background: WindowBackground);
     fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
@@ -536,7 +536,7 @@ pub struct WindowOptions {
     pub display_id: Option<DisplayId>,
 
     /// The background type of the window
-    pub window_background: WindowBackground,
+    pub window_background: WindowBackgroundAppearance,
 }
 
 /// The variables that can be configured when creating a new window
@@ -560,7 +560,7 @@ pub(crate) struct WindowParams {
 
     pub display_id: Option<DisplayId>,
 
-    pub window_background: WindowBackground,
+    pub window_background: WindowBackgroundAppearance,
 }
 
 impl Default for WindowOptions {
@@ -578,7 +578,7 @@ impl Default for WindowOptions {
             is_movable: true,
             display_id: None,
             fullscreen: false,
-            window_background: WindowBackground::default(),
+            window_background: WindowBackgroundAppearance::default(),
         }
     }
 }
@@ -643,7 +643,7 @@ impl Default for WindowAppearance {
 /// The appearance of the background of the window itself, when there is
 /// no content or the content is transparent.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub enum WindowBackground {
+pub enum WindowBackgroundAppearance {
     /// Opaque.
     ///
     /// This lets the window manager know that content behind this

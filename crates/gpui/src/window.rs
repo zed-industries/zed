@@ -8,7 +8,7 @@ use crate::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render,
     ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
     TextStyle, TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance,
-    WindowBackground, WindowOptions, WindowParams, WindowTextSystem,
+    WindowBackgroundAppearance, WindowOptions, WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -893,11 +893,6 @@ impl<'a> WindowContext<'a> {
         self.window.appearance
     }
 
-    /// Sets the window background style
-    pub fn set_background(&mut self, background: WindowBackground) {
-        self.window.platform_window.set_background(background);
-    }
-
     /// Returns the size of the drawable area within the window.
     pub fn viewport_size(&self) -> Size<Pixels> {
         self.window.viewport_size
@@ -916,6 +911,13 @@ impl<'a> WindowContext<'a> {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
+    }
+
+    /// Sets the window background appearance.
+    pub fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        self.window
+            .platform_window
+            .set_background_appearance(background_appearance);
     }
 
     /// Mark the window as dirty at the platform level.
