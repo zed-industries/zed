@@ -321,7 +321,7 @@ impl PickerDelegate for TasksModalDelegate {
             spawn_prompt.command.push(' ');
             spawn_prompt
                 .command
-                .extend(intersperse(spawn_prompt.args.into_iter(), " ".to_string()));
+                .extend(intersperse(spawn_prompt.args, " ".to_string()));
         }
         Some(spawn_prompt.command)
     }
