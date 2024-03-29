@@ -36,6 +36,7 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
             ("latex", "tex"),
             ("make", "Makefile"),
             ("nix", "nix"),
+            ("php", "php"),
             ("prisma", "prisma"),
             ("purescript", "purs"),
             ("r", "r"),

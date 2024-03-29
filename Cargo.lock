@@ -5458,7 +5458,6 @@ dependencies = [
  "tree-sitter-nix",
  "tree-sitter-nu",
  "tree-sitter-ocaml",
- "tree-sitter-php",
  "tree-sitter-proto",
  "tree-sitter-python",
  "tree-sitter-racket",
@@ -10588,16 +10587,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-php"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0db3788e709a5adfb583683a4b686a084e41a0f9e5a2fcb9a8e358f11481036a"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-proto"
 version = "0.0.2"
 source = "git+https://github.com/rewinfrey/tree-sitter-proto?rev=36d54f288aee112f13a67b550ad32634d0c2cb52#36d54f288aee112f13a67b550ad32634d0c2cb52"
@@ -12703,6 +12692,13 @@ dependencies = [
 
 [[package]]
 name = "zed_haskell"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_php"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",

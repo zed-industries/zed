@@ -1,6 +1,7 @@
 use crate::wasm_host::{wit::LanguageServerConfig, WasmExtension, WasmHost};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{Language, LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -104,6 +105,17 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         None
+    }
+
+    fn language_ids(&self) -> HashMap<String, String> {
+        // TODO: Eventually we'll want to expose an extension API for doing this, but for
+        // now we just manually language ID mappings for extensions that we know need it.
+
+        if self.extension.manifest.id.as_ref() == "php" {
+            return HashMap::from_iter([("PHP".into(), "php".into())]);
+        }
+
+        Default::default()
     }
 
     async fn initialization_options(

@@ -26,7 +26,6 @@ mod json;
 mod lua;
 mod nu;
 mod ocaml;
-mod php;
 mod python;
 mod ruby;
 mod rust;
@@ -90,7 +89,6 @@ pub fn init(
             "ocaml_interface",
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
-        ("php", tree_sitter_php::language_php()),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
@@ -310,13 +308,6 @@ pub fn init(
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
     language!(
-        "php",
-        vec![
-            Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
-    language!(
         "elm",
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
@@ -340,6 +331,10 @@ pub fn init(
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "PHP".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
     languages.register_secondary_lsp_adapter(
