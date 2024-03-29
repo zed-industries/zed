@@ -3,9 +3,9 @@ mod tab_switcher_tests;
 
 use collections::HashMap;
 use gpui::{
-    impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement,
-    Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId, EventEmitter,
+    FocusHandle, FocusableView, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use serde::Deserialize;
@@ -145,9 +145,14 @@ impl TabSwitcherDelegate {
         cx.subscribe(&pane, |tab_switcher, _, event, cx| {
             match event {
                 PaneEvent::AddItem { .. } | PaneEvent::RemoveItem { .. } | PaneEvent::Remove => {
-                    tab_switcher
-                        .picker
-                        .update(cx, |picker, cx| picker.refresh(cx))
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let selected_item_id = picker.delegate.selected_item_id();
+                        picker.delegate.update_matches(cx);
+                        if let Some(item_id) = selected_item_id {
+                            picker.delegate.select_item_id(item_id, cx);
+                        }
+                        cx.notify();
+                    })
                 }
                 _ => {}
             };
@@ -199,6 +204,39 @@ impl TabSwitcherDelegate {
                 self.selected_index = 1;
             }
         }
+    }
+
+    fn selected_item_id(&self) -> Option<EntityId> {
+        self.matches
+            .get(self.selected_index())
+            .map(|tab_match| tab_match.item.item_id())
+    }
+
+    fn select_item_id(
+        &mut self,
+        item_id: EntityId,
+        cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>,
+    ) {
+        if let Some(selected_idx) = self
+            .matches
+            .iter()
+            .position(|tab_match| tab_match.item.item_id() == item_id)
+        {
+            self.set_selected_index(selected_idx, cx);
+        }
+    }
+
+    fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>) {
+        let Some(tab_match) = self.matches.get(ix) else {
+            return;
+        };
+        let Some(pane) = self.pane.upgrade() else {
+            return;
+        };
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, cx)
+                .detach_and_log_err(cx);
+        });
     }
 }
 
@@ -266,7 +304,35 @@ impl PickerDelegate for TabSwitcherDelegate {
 
         let label = tab_match.item.tab_content(Some(tab_match.detail), true, cx);
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
-        let item_id = tab_match.item.item_id();
+        let indicator_color = if let Some(ref indicator) = indicator {
+            indicator.color
+        } else {
+            Color::default()
+        };
+        let indicator = h_flex()
+            .flex_shrink_0()
+            .children(indicator)
+            .child(div().w_2())
+            .into_any_element();
+        let close_button = div()
+            // We need this on_mouse_up here instead of on_click on the close
+            // button because Picker intercepts the same events and handles them
+            // as click's on list items.
+            // See the same handler in Picker for more details.
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(move |picker, _: &MouseUpEvent, cx| {
+                    cx.stop_propagation();
+                    picker.delegate.close_item_at(ix, cx);
+                }),
+            )
+            .child(
+                IconButton::new("close_tab", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .icon_color(indicator_color)
+                    .tooltip(|cx| Tooltip::text("Close", cx)),
+            )
+            .into_any_element();
 
         Some(
             ListItem::new(ix)
@@ -274,33 +340,12 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
-                .children(indicator)
                 .when(true, |el| {
-                    let delete_button = div()
-                        .on_mouse_up(
-                            MouseButton::Right,
-                            cx.listener(move |picker, _: &MouseUpEvent, cx| {
-                                cx.stop_propagation();
-                                let Some(pane) = picker.delegate.pane.upgrade() else {
-                                    return;
-                                };
-                                pane.update(cx, |pane, cx| {
-                                    pane.close_item_by_id(item_id, SaveIntent::Close, cx)
-                                        .detach_and_log_err(cx);
-                                });
-                            }),
-                        )
-                        .child(
-                            IconButton::new("close_tab", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip(|cx| Tooltip::text("Close", cx)),
-                        )
-                        .into_any_element();
-
-                    if self.selected_index() == ix {
-                        el.end_slot::<AnyElement>(delete_button)
+                    if self.selected_index == ix {
+                        el.end_slot::<AnyElement>(close_button)
                     } else {
-                        el.end_hover_slot::<AnyElement>(delete_button)
+                        el.end_slot::<AnyElement>(indicator)
+                            .end_hover_slot::<AnyElement>(close_button)
                     }
                 }),
         )
