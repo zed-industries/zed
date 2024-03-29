@@ -12,13 +12,13 @@ struct TypeConfig {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct FileAssociations {
+pub struct FileIcons {
     stems: HashMap<String, String>,
     suffixes: HashMap<String, String>,
     types: HashMap<String, TypeConfig>,
 }
 
-impl Global for FileAssociations {}
+impl Global for FileIcons {}
 
 const COLLAPSED_DIRECTORY_TYPE: &str = "collapsed_folder";
 const EXPANDED_DIRECTORY_TYPE: &str = "expanded_folder";
@@ -27,18 +27,18 @@ const EXPANDED_CHEVRON_TYPE: &str = "expanded_chevron";
 pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
-    cx.set_global(FileAssociations::new(assets))
+    cx.set_global(FileIcons::new(assets))
 }
 
-impl FileAssociations {
+impl FileIcons {
     pub fn new(assets: impl AssetSource) -> Self {
         assets
             .load("icons/file_icons/file_types.json")
             .and_then(|file| {
-                serde_json::from_str::<FileAssociations>(str::from_utf8(&file).unwrap())
+                serde_json::from_str::<FileIcons>(str::from_utf8(&file).unwrap())
                     .map_err(Into::into)
             })
-            .unwrap_or_else(|_| FileAssociations {
+            .unwrap_or_else(|_| FileIcons {
                 stems: HashMap::default(),
                 suffixes: HashMap::default(),
                 types: HashMap::default(),

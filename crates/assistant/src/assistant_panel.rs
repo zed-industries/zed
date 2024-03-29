@@ -1,13 +1,14 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, ZedDotDevModel},
     codegen::{self, Codegen, CodegenKind},
+    embedded_scope::EmbeddedScope,
     prompts::generate_content_prompt,
     Assist, CompletionProvider, CycleMessageRole, InlineAssist, LanguageModel,
     LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
     NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -16,9 +17,10 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset as _,
-    ToPoint,
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MultiBufferSnapshot,
+    ToOffset as _, ToPoint,
 };
+use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
@@ -47,7 +49,7 @@ use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
-    Save, Toast, ToggleZoom, Toolbar, Workspace,
+    Event as WorkspaceEvent, Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
 
 pub fn init(cx: &mut AppContext) {
@@ -159,6 +161,11 @@ impl AssistantPanel {
                         }),
                     ];
                     let model = CompletionProvider::global(cx).default_model();
+
+                    cx.observe_global::<FileIcons>(|_, cx| {
+                        cx.notify();
+                    })
+                    .detach();
 
                     Self {
                         workspace: workspace_handle,
@@ -709,18 +716,20 @@ impl AssistantPanel {
         });
     }
 
-    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
+    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ConversationEditor>> {
+        let workspace = self.workspace.upgrade()?;
+
         let editor = cx.new_view(|cx| {
             ConversationEditor::new(
                 self.model.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
-                self.workspace.clone(),
+                workspace,
                 cx,
             )
         });
         self.show_conversation(editor.clone(), cx);
-        editor
+        Some(editor)
     }
 
     fn show_conversation(
@@ -989,11 +998,15 @@ impl AssistantPanel {
             .await?;
 
             this.update(&mut cx, |this, cx| {
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace dropped"))?;
                 let editor = cx.new_view(|cx| {
                     ConversationEditor::for_conversation(conversation, fs, workspace, cx)
                 });
                 this.show_conversation(editor, cx);
-            })?;
+                anyhow::Ok(())
+            })??;
             Ok(())
         })
     }
@@ -1264,9 +1277,10 @@ struct Summary {
     done: bool,
 }
 
-struct Conversation {
+pub struct Conversation {
     id: Option<String>,
     buffer: Model<Buffer>,
+    embedded_scope: EmbeddedScope,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1288,6 +1302,7 @@ impl Conversation {
     fn new(
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
+        embedded_scope: EmbeddedScope,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
@@ -1321,7 +1336,9 @@ impl Conversation {
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
+            embedded_scope,
         };
+
         let message = MessageAnchor {
             id: MessageId(post_inc(&mut this.next_message_id.0)),
             start: language::Anchor::MIN,
@@ -1422,6 +1439,7 @@ impl Conversation {
                 pending_save: Task::ready(Ok(())),
                 path: Some(path),
                 buffer,
+                embedded_scope: EmbeddedScope::new(),
             };
             this.count_remaining_tokens(cx);
             this
@@ -1440,7 +1458,7 @@ impl Conversation {
         }
     }
 
-    fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let request = self.to_completion_request(cx);
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
@@ -1603,7 +1621,7 @@ impl Conversation {
     }
 
     fn to_completion_request(&self, cx: &mut ModelContext<Conversation>) -> LanguageModelRequest {
-        let request = LanguageModelRequest {
+        let mut request = LanguageModelRequest {
             model: self.model.clone(),
             messages: self
                 .messages(cx)
@@ -1613,6 +1631,9 @@ impl Conversation {
             stop: vec![],
             temperature: 1.0,
         };
+
+        let context_message = self.embedded_scope.message(cx);
+        request.messages.extend(context_message);
         request
     }
 
@@ -2002,17 +2023,18 @@ impl ConversationEditor {
         model: LanguageModel,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let conversation = cx.new_model(|cx| Conversation::new(model, language_registry, cx));
+        let conversation = cx
+            .new_model(|cx| Conversation::new(model, language_registry, EmbeddedScope::new(), cx));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
     fn for_conversation(
         conversation: Model<Conversation>,
         fs: Arc<dyn Fs>,
-        workspace: WeakView<Workspace>,
+        workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.new_view(|cx| {
@@ -2027,6 +2049,7 @@ impl ConversationEditor {
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
+            cx.subscribe(&workspace, Self::handle_workspace_event),
         ];
 
         let mut this = Self {
@@ -2035,9 +2058,10 @@ impl ConversationEditor {
             blocks: Default::default(),
             scroll_position: None,
             fs,
-            workspace,
+            workspace: workspace.downgrade(),
             _subscriptions,
         };
+        this.update_active_buffer(workspace, cx);
         this.update_message_headers(cx);
         this
     }
@@ -2169,6 +2193,37 @@ impl ConversationEditor {
             }
             _ => {}
         }
+    }
+
+    fn handle_workspace_event(
+        &mut self,
+        workspace: View<Workspace>,
+        event: &WorkspaceEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let WorkspaceEvent::ActiveItemChanged = event {
+            self.update_active_buffer(workspace, cx);
+        }
+    }
+
+    fn update_active_buffer(
+        &mut self,
+        workspace: View<Workspace>,
+        cx: &mut ViewContext<'_, ConversationEditor>,
+    ) {
+        let active_buffer = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
+
+        self.conversation.update(cx, |conversation, cx| {
+            conversation
+                .embedded_scope
+                .set_active_buffer(active_buffer.clone(), cx);
+
+            conversation.count_remaining_tokens(cx);
+            cx.notify();
+        });
     }
 
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
@@ -2304,11 +2359,11 @@ impl ConversationEditor {
         let start_language = buffer.language_at(range.start);
         let end_language = buffer.language_at(range.end);
         let language_name = if start_language == end_language {
-            start_language.map(|language| language.name())
+            start_language.map(|language| language.code_fence_block_name())
         } else {
             None
         };
-        let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
+        let language_name = language_name.as_deref().unwrap_or("");
 
         let selected_text = buffer.text_for_range(range).collect::<String>();
         let text = if selected_text.is_empty() {
@@ -2332,15 +2387,17 @@ impl ConversationEditor {
 
         if let Some(text) = text {
             panel.update(cx, |panel, cx| {
-                let conversation = panel
+                if let Some(conversation) = panel
                     .active_conversation_editor()
                     .cloned()
-                    .unwrap_or_else(|| panel.new_conversation(cx));
-                conversation.update(cx, |conversation, cx| {
-                    conversation
-                        .editor
-                        .update(cx, |editor, cx| editor.insert(&text, cx))
-                });
+                    .or_else(|| panel.new_conversation(cx))
+                {
+                    conversation.update(cx, |conversation, cx| {
+                        conversation
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&text, cx))
+                    });
+                };
             });
         }
     }
@@ -2405,12 +2462,120 @@ impl ConversationEditor {
             .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Conversation".into())
     }
+
+    fn render_embedded_scope(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+        let active_buffer = self
+            .conversation
+            .read(cx)
+            .embedded_scope
+            .active_buffer()?
+            .clone();
+
+        Some(
+            div()
+                .p_4()
+                .v_flex()
+                .child(
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .child(Icon::new(IconName::File))
+                        .child(
+                            div()
+                                .h_6()
+                                .child(Label::new("File Contexts"))
+                                .ml_1()
+                                .font_weight(FontWeight::SEMIBOLD),
+                        ),
+                )
+                .child(
+                    div()
+                        .ml_4()
+                        .child(self.render_active_buffer(active_buffer, cx)),
+                ),
+        )
+    }
+
+    fn render_active_buffer(
+        &self,
+        buffer: Model<MultiBuffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl Element {
+        let buffer = buffer.read(cx);
+        let icon_path;
+        let path;
+        if let Some(singleton) = buffer.as_singleton() {
+            let singleton = singleton.read(cx);
+
+            path = singleton.file().map(|file| file.full_path(cx));
+
+            icon_path = path
+                .as_ref()
+                .and_then(|path| FileIcons::get_icon(path.as_path(), cx))
+                .map(SharedString::from)
+                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
+        } else {
+            icon_path = SharedString::from("icons/file_icons/file.svg");
+            path = None;
+        }
+
+        let file_name = path.map_or("Untitled".to_string(), |path| {
+            path.to_string_lossy().to_string()
+        });
+
+        let enabled = self
+            .conversation
+            .read(cx)
+            .embedded_scope
+            .active_buffer_enabled();
+
+        let file_name_text_color = if enabled {
+            Color::Default
+        } else {
+            Color::Disabled
+        };
+
+        div()
+            .id("active-buffer")
+            .h_flex()
+            .cursor_pointer()
+            .child(Icon::from_path(icon_path).color(file_name_text_color))
+            .child(
+                div()
+                    .h_6()
+                    .child(Label::new(file_name).color(file_name_text_color))
+                    .ml_1(),
+            )
+            .children(enabled.then(|| {
+                div()
+                    .child(Icon::new(IconName::Check).color(file_name_text_color))
+                    .ml_1()
+            }))
+            .on_click(cx.listener(move |this, _, cx| {
+                this.conversation.update(cx, |conversation, cx| {
+                    conversation
+                        .embedded_scope
+                        .set_active_buffer_enabled(!enabled);
+                    cx.notify();
+                })
+            }))
+    }
 }
 
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        //
+        // The ConversationEditor has two main segments
+        //
+        // 1. Messages Editor
+        // 2. Context
+        //   - File Context (currently only the active file)
+        //   - Project Diagnostics (Planned)
+        //   - Deep Code Context (Planned, for query and other tools for the model)
+        //
+
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -2420,14 +2585,15 @@ impl Render for ConversationEditor {
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
             .size_full()
-            .relative()
+            .v_flex()
             .child(
                 div()
-                    .size_full()
+                    .flex_grow()
                     .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
+            .child(div().flex_shrink().children(self.render_embedded_scope(cx)))
     }
 }
 
@@ -2799,8 +2965,9 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, EmbeddedScope::new(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -2931,8 +3098,9 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, EmbeddedScope::new(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3030,8 +3198,9 @@ mod tests {
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry, cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(LanguageModel::default(), registry, EmbeddedScope::new(), cx)
+        });
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3115,8 +3284,14 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let conversation =
-            cx.new_model(|cx| Conversation::new(LanguageModel::default(), registry.clone(), cx));
+        let conversation = cx.new_model(|cx| {
+            Conversation::new(
+                LanguageModel::default(),
+                registry.clone(),
+                EmbeddedScope::new(),
+                cx,
+            )
+        });
         let buffer = conversation.read_with(cx, |conversation, _| conversation.buffer.clone());
         let message_0 =
             conversation.read_with(cx, |conversation, _| conversation.message_anchors[0].id);

@@ -517,6 +517,7 @@ impl DelayedDebouncedEditAction {
 
 pub enum Event {
     PaneAdded(View<Pane>),
+    ActiveItemChanged,
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
     SpawnTask(SpawnInTerminal),
@@ -2377,6 +2378,7 @@ impl Workspace {
                 self.update_window_edited(cx);
             }
             pane::Event::RemoveItem { item_id } => {
+                cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
                     if entry.get().entity_id() == pane.entity_id() {
@@ -2747,10 +2749,12 @@ impl Workspace {
             .any(|state| state.leader_id == peer_id)
     }
 
-    fn active_item_path_changed(&mut self, cx: &mut WindowContext) {
+    fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         self.project
             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+
         self.update_window_title(cx);
     }
 

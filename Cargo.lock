@@ -328,6 +328,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -3749,6 +3750,18 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "file_icons"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -7235,6 +7248,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "file_icons",
  "gpui",
  "language",
  "menu",
@@ -12591,6 +12605,7 @@ dependencies = [
  "extensions_ui",
  "feedback",
  "file_finder",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "go_to_line",

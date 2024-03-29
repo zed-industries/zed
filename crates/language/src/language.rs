@@ -486,6 +486,8 @@ pub struct CodeLabel {
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
+    /// The name of this language for a Markdown code fence block
+    pub code_fence_block_name: Option<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -609,6 +611,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
+            code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -1183,6 +1186,13 @@ impl Language {
 
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
+    }
+
+    pub fn code_fence_block_name(&self) -> Arc<str> {
+        self.config
+            .code_fence_block_name
+            .clone()
+            .unwrap_or_else(|| self.config.name.to_lowercase().into())
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
