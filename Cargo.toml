@@ -110,7 +110,7 @@ members = [
     "extensions/uiua",
     "extensions/zig",
 
-    "tooling/xtask", "crates/file_icons",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 resolver = "2"

@@ -28,7 +28,6 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
-
 use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;

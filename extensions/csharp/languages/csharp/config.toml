@@ -1,4 +1,5 @@
 name = "CSharp"
+code_fence_block_name = "csharp"
 grammar = "c_sharp"
 path_suffixes = ["cs"]
 line_comments = ["// "]

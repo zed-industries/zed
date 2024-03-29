@@ -3756,7 +3756,6 @@ dependencies = [
 name = "file_icons"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "collections",
  "gpui",
  "serde",

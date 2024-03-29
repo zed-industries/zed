@@ -2359,11 +2359,11 @@ impl ConversationEditor {
         let start_language = buffer.language_at(range.start);
         let end_language = buffer.language_at(range.end);
         let language_name = if start_language == end_language {
-            start_language.map(|language| language.name())
+            start_language.map(|language| language.code_fence_block_name())
         } else {
             None
         };
-        let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
+        let language_name = language_name.as_deref().unwrap_or("");
 
         let selected_text = buffer.text_for_range(range).collect::<String>();
         let text = if selected_text.is_empty() {

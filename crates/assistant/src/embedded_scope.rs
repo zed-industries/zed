@@ -29,12 +29,9 @@ impl EmbeddedScope {
         if let Some(active_buffer) = buffer.clone() {
             self.active_buffer_subscription =
                 Some(cx.subscribe(&active_buffer, |conversation, _, e, cx| {
-                    match e {
-                        multi_buffer::Event::Edited { .. } => {
-                            conversation.count_remaining_tokens(cx)
-                        }
-                        _ => {}
-                    };
+                    if let multi_buffer::Event::Edited { .. } = e {
+                        conversation.count_remaining_tokens(cx)
+                    }
                 }));
         }
 
@@ -75,11 +72,7 @@ impl EmbeddedScope {
             let language = singleton
                 .language()
                 .map(|l| {
-                    // TODO: Find out the markdown code fence block name. In some cases the name
-                    // doesn't match the code fence block name, which the model will later copy.
-                    // For example, "Shell Script" is a language name whereas the code fence block
-                    // name is "shell", "bash", or "sh".
-                    let name = l.name();
+                    let name = l.code_fence_block_name();
                     name.to_string()
                 })
                 .unwrap_or_default();
