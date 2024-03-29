@@ -12,6 +12,7 @@ use futures::{AsyncReadExt, Future};
 use image::ImageError;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
+
 use thiserror::Error;
 use util::{http, ResultExt};
 
@@ -328,13 +329,8 @@ impl Asset for RasterOrVector {
         cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
-        let mut asset_cache = cx.asset_cache();
 
         async move {
-            if let Some(asset) = asset_cache.get::<Self>(&source) {
-                return asset.clone();
-            }
-
             let bytes = match source.clone() {
                 UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
                 UriOrPath::Uri(uri) => {
@@ -369,14 +365,8 @@ impl Asset for RasterOrVector {
                 }
             };
 
-            asset_cache.insert::<Self>(source, Ok(data.clone()));
-
             Ok(data)
         }
-    }
-
-    fn remove_from_cache(source: &Self::Source, cx: &mut AppContext) -> Option<Self::Output> {
-        cx.asset_cache().remove::<Self>(source)
     }
 }
 
@@ -402,37 +392,29 @@ impl Asset for Vector {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let mut asset_cache = cx.asset_cache();
-
         async move {
-            if let Some(image_data) = asset_cache.get::<Self>(&source) {
-                return image_data.clone();
-            };
-
             let mut pixmap = resvg::tiny_skia::Pixmap::new(
                 source.size.width.0 as u32,
                 source.size.height.0 as u32,
             )
-            .unwrap();
+            .expect("Attempted to render SVG with 0 size");
+
             let ratio = source.size.width.0 as f32 / source.data.size().width();
+
             resvg::render(
                 &source.data,
                 resvg::tiny_skia::Transform::from_scale(ratio, ratio),
                 &mut pixmap.as_mut(),
             );
+
             let png = pixmap.encode_png().unwrap();
             let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap();
             let image_data = Arc::new(ImageData::new(image.into_rgba8()));
-            asset_cache.insert::<Self>(source.clone(), image_data.clone());
 
             image_data
         }
-    }
-
-    fn remove_from_cache(source: &Self::Source, cx: &mut AppContext) -> Option<Self::Output> {
-        cx.asset_cache().remove::<Self>(source)
     }
 }
 

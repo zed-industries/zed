@@ -33,17 +33,11 @@ pub trait Asset {
     /// The loaded asset
     type Output: Clone + Send;
 
-    /// Load the asset asynchronously, asset may be cached
+    /// Load the asset asynchronously
     fn load(
         source: Self::Source,
         cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static;
-
-    // TODO: Remove this caching stuff, move it into the asset cache?
-    /// If a cache is used in the implementation of load(), this function can be used to clear it.
-    fn remove_from_cache(_source: &Self::Source, _cx: &mut AppContext) -> Option<Self::Output> {
-        None
-    }
 }
 
 /// Use a quick, non-cryptographically secure hash function to get an identifier from data

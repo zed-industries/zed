@@ -219,8 +219,9 @@ pub struct AppContext {
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
-    asset_cache: AssetCache,
+
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
@@ -639,12 +640,7 @@ impl AppContext {
         self.platform.local_timezone()
     }
 
-    /// Returns the asset cache.
-    pub fn asset_cache(&self) -> AssetCache {
-        self.asset_cache.clone()
-    }
-
-    /// Returns the asset cache.
+    /// Returns the http client assigned to GPUI
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }

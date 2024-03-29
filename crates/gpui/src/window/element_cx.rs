@@ -666,17 +666,59 @@ impl<'a> ElementContext<'a> {
         result
     }
 
+    /// Remove an asset from GPUI's cache
+    pub fn remove_cached_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> Option<A::Output> {
+        self.asset_cache.remove::<A>(source)
+    }
+
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call.
+    /// The results of that call will be cached, and returned on subsequent uses of this API.
+    ///
+    /// Use [Self::remove_cached_asset] to reload your asset.
+    pub fn use_cached_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> Option<A::Output> {
+        self.asset_cache.get::<A>(source).or_else(|| {
+            if let Some(asset) = self.use_asset::<A>(source) {
+                self.asset_cache
+                    .insert::<A>(source.to_owned(), asset.clone());
+                Some(asset)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    /// Your view will be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    ///
+    /// This asset will not be cached by default, see [Self::use_cached_asset]
     pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
         let asset_id = (TypeId::of::<A>(), hash(source));
+        let mut is_first = false;
         let task = self
             .loading_assets
             .remove(&asset_id)
             .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
             .unwrap_or_else(|| {
+                is_first = true;
                 let future = A::load(source.clone(), self);
                 let task = self.background_executor().spawn(future).shared();
+                task
+            });
+
+        task.clone().now_or_never().or_else(|| {
+            if is_first {
                 let parent_id = self.parent_view_id();
                 self.spawn({
                     let task = task.clone();
@@ -693,12 +735,10 @@ impl<'a> ElementContext<'a> {
                     }
                 })
                 .detach();
+            }
 
-                task
-            });
-
-        task.clone().now_or_never().or_else(|| {
             self.loading_assets.insert(asset_id, Box::new(task));
+
             None
         })
     }
