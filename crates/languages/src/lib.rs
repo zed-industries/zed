@@ -13,7 +13,6 @@ use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
 mod clojure;
-mod csharp;
 mod css;
 mod dart;
 mod deno;
@@ -60,7 +59,6 @@ pub fn init(
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
-        ("c_sharp", tree_sitter_c_sharp::language()),
         ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
@@ -164,7 +162,6 @@ pub fn init(
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
-    language!("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
     language!(
         "css",
         vec![

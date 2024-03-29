@@ -37,7 +37,6 @@ smol.workspace = true
 task.workspace = true
 toml.workspace = true
 tree-sitter-bash.workspace = true
-tree-sitter-c-sharp.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-clojure.workspace = true
 tree-sitter-cpp.workspace = true
