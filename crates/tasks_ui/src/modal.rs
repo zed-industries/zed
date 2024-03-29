@@ -236,28 +236,31 @@ impl PickerDelegate for TasksModalDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, omit_history_entry: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let task = if secondary {
-            None
-        } else {
-            self.matches
-                .get(current_match_index)
-                .and_then(|current_match| {
-                    let ix = current_match.candidate_id;
-                    self.candidates
-                        .as_ref()
-                        .map(|candidates| candidates[ix].1.clone())
-                })
-        };
-
+        let task = self
+            .matches
+            .get(current_match_index)
+            .and_then(|current_match| {
+                let ix = current_match.candidate_id;
+                self.candidates
+                    .as_ref()
+                    .map(|candidates| candidates[ix].1.clone())
+            });
+        dbg!(omit_history_entry);
         let Some(task) = task else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
+                schedule_task(
+                    workspace,
+                    task.as_ref(),
+                    self.task_context.clone(),
+                    omit_history_entry,
+                    cx,
+                );
             })
             .ok();
         cx.emit(DismissEvent);
@@ -321,13 +324,19 @@ impl PickerDelegate for TasksModalDelegate {
         }
         Some(spawn_prompt.command)
     }
-    fn confirm_input(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
         let Some(task) = self.spawn_oneshot(cx) else {
             return;
         };
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
+                schedule_task(
+                    workspace,
+                    task.as_ref(),
+                    self.task_context.clone(),
+                    omit_history_entry,
+                    cx,
+                );
             })
             .ok();
         cx.emit(DismissEvent);
