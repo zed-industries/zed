@@ -1,6 +1,6 @@
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
-    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model,
+    EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Model,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use persistence::IMAGE_VIEWER;
@@ -36,8 +36,7 @@ impl project::Item for ImageItem {
             .and_then(OsStr::to_str)
             .unwrap_or_default();
 
-        let format = gpui::ImageFormat::from_extension(ext);
-        if format.is_some() || ext == "svg" {
+        if Img::extensions().contains(&ext) {
             Some(cx.spawn(|mut cx| async move {
                 let abs_path = project
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?

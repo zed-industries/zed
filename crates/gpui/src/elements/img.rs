@@ -15,8 +15,6 @@ use media::core_video::CVImageBuffer;
 use thiserror::Error;
 use util::{http, ResultExt};
 
-pub use image::ImageFormat;
-
 /// A source of image content.
 #[derive(Clone, Debug)]
 pub enum ImageSource {
@@ -169,6 +167,15 @@ impl ObjectFit {
 }
 
 impl Img {
+    /// A list of all format extensions currently supported by this img element
+    pub fn extensions() -> &'static [&'static str] {
+        // This is the list in [image::ImageFormat::from_extension] + `svg`
+        &[
+            "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
+            "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
+        ]
+    }
+
     /// Set the image to be displayed in grayscale.
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
@@ -187,7 +194,6 @@ impl Element for Img {
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
-            // TODO: Adjust this so that the vector data gets its 'natural' size here
             if let Some(data) = self.source.data(cx) {
                 let image_size = data.size();
                 match (style.size.width, style.size.height) {
