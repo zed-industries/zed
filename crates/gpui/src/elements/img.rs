@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::{fs, hash::Hash};
 
 use crate::{
-    point, px, size, svg_fontdb, AbsoluteLength, Asset, AssetFetchTask, Bounds, DefiniteLength,
+    hash, point, px, size, svg_fontdb, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength,
     DevicePixels, Element, ElementContext, Hitbox, ImageData, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, UriOrPath,
 };
-use futures::{AsyncReadExt, FutureExt, TryFutureExt};
+use futures::{AsyncReadExt, Future};
 use image::ImageError;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
@@ -72,52 +72,6 @@ impl From<Arc<ImageData>> for ImageSource {
 impl From<CVImageBuffer> for ImageSource {
     fn from(value: CVImageBuffer) -> Self {
         Self::Surface(value)
-    }
-}
-
-impl ImageSource {
-    fn data(
-        &self,
-        bounds: Option<Bounds<Pixels>>,
-        cx: &mut ElementContext,
-        f: impl FnOnce(&Arc<ImageData>, &mut ElementContext),
-    ) {
-        match self {
-            ImageSource::Uri(_) | ImageSource::File(_) => {
-                let uri_or_path: UriOrPath = match self {
-                    ImageSource::Uri(uri) => uri.clone().into(),
-                    ImageSource::File(path) => path.clone().into(),
-                    _ => unreachable!(),
-                };
-
-                return cx.with_asset::<RasterOrVector>(uri_or_path, |asset, cx| {
-                    match asset {
-                        RasterOrVector::Raster(data) => {
-                            f(&data, cx);
-                        }
-                        RasterOrVector::Vector(vector) => {
-                            if let Some(bounds) = bounds {
-                                let scaled = bounds.scale(cx.scale_factor());
-                                let key = vector.to_key(size(
-                                    scaled.size.width.into(),
-                                    scaled.size.height.into(),
-                                ));
-                                cx.with_asset::<Vector>(key, |asset, cx| {
-                                    f(&asset, cx);
-                                });
-                            };
-                            //
-                        }
-                    };
-                });
-            }
-
-            ImageSource::Data(data) => {
-                return f(data, cx);
-            }
-            #[cfg(target_os = "macos")]
-            ImageSource::Surface(_) => {}
-        }
     }
 }
 
@@ -233,7 +187,8 @@ impl Element for Img {
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
-            self.source.data(None, cx, |data, _| {
+            // TODO: Adjust this so that the vector data gets its 'natural' size here
+            if let Some(data) = self.source.data(None, cx) {
                 let image_size = data.size();
                 match (style.size.width, style.size.height) {
                     (Length::Auto, Length::Auto) => {
@@ -248,7 +203,8 @@ impl Element for Img {
                     }
                     _ => {}
                 }
-            });
+            }
+
             cx.request_layout(&style, [])
         });
         (layout_id, ())
@@ -276,10 +232,11 @@ impl Element for Img {
             .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                source.data(Some(bounds), cx, |data, cx| {
+                if let Some(data) = source.data(Some(bounds), cx) {
                     cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
                         .log_err();
-                });
+                }
+
                 match source {
                     #[cfg(target_os = "macos")]
                     ImageSource::Surface(surface) => {
@@ -314,147 +271,168 @@ impl InteractiveElement for Img {
     }
 }
 
-struct Vector {
-    data: resvg::usvg::Tree,
-}
+impl ImageSource {
+    fn data(
+        &self,
+        bounds: Option<Bounds<Pixels>>,
+        cx: &mut ElementContext,
+    ) -> Option<Arc<ImageData>> {
+        match self {
+            ImageSource::Uri(_) | ImageSource::File(_) => {
+                let uri_or_path: UriOrPath = match self {
+                    ImageSource::Uri(uri) => uri.clone().into(),
+                    ImageSource::File(path) => path.clone().into(),
+                    _ => unreachable!(),
+                };
 
-impl Vector {
-    fn to_key(&self, size: Size<DevicePixels>) -> VectorKey {
-        VectorKey {
-            data: self.data.clone(),
-            size,
-        }
-    }
-}
+                let asset = cx.use_asset::<RasterOrVector>(&uri_or_path)?.log_err()?;
 
-#[derive(Clone)]
-struct VectorKey {
-    data: resvg::usvg::Tree,
-    size: Size<DevicePixels>,
-}
+                match asset {
+                    RasterOrVector::Raster(data) => Some(data),
+                    RasterOrVector::Vector { data, id } => {
+                        let bounds = bounds?;
 
-impl Hash for VectorKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.data
-            .to_string(&resvg::usvg::WriteOptions::default())
-            .hash(state);
-        self.size.hash(state);
-    }
-}
+                        let scaled = bounds.scale(cx.scale_factor());
+                        let key = {
+                            let size = scaled.size.map(|x| x.into());
+                            VectorKey { data, id, size }
+                        };
 
-impl Asset for Vector {
-    type Source = VectorKey;
-    type Output = Arc<ImageData>;
-    type Error = ImageCacheError;
-
-    fn load(source: &Self::Source, cx: &mut crate::AppContext) -> AssetFetchTask<Self> {
-        if let Some(future) = cx.asset_cache.get::<Self>(&source) {
-            return future.clone();
-        };
-        let future = cx
-            .background_executor()
-            .spawn(
-                {
-                    let source = source.clone();
-                    async move {
-                        let mut pixmap = resvg::tiny_skia::Pixmap::new(
-                            source.size.width.0 as u32,
-                            source.size.height.0 as u32,
-                        )
-                        .unwrap();
-                        let ratio = source.size.width.0 as f32 / source.data.size().width();
-                        resvg::render(
-                            &source.data,
-                            resvg::tiny_skia::Transform::from_scale(ratio, ratio),
-                            &mut pixmap.as_mut(),
-                        );
-                        let png = pixmap.encode_png().unwrap();
-                        let image =
-                            image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
-                        Ok(Arc::new(ImageData::new(image.into_rgba8())))
+                        cx.use_asset::<Vector>(&key)
                     }
                 }
-                .map_err({
-                    move |error| {
-                        log::log!(log::Level::Info, "Failed to render SVG: {:?}", &error);
-                        error
-                    }
-                }),
-            )
-            .shared();
+            }
 
-        cx.asset_cache
-            .insert::<Self>(source.clone(), future.clone());
-        future
+            ImageSource::Data(data) => Some(data.to_owned()),
+            #[cfg(target_os = "macos")]
+            ImageSource::Surface(_) => None,
+        }
     }
 }
 
 #[derive(Clone)]
 enum RasterOrVector {
     Raster(Arc<ImageData>),
-    Vector(Arc<Vector>),
+    Vector {
+        data: Arc<resvg::usvg::Tree>,
+        id: u64,
+    },
 }
 
 impl Asset for RasterOrVector {
     type Source = UriOrPath;
-    type Output = Self;
-    type Error = ImageCacheError;
+    type Output = Result<Self, ImageCacheError>;
 
-    fn load(source: &Self::Source, cx: &mut crate::AppContext) -> AssetFetchTask<Self> {
-        if let Some(future) = cx.asset_cache.get::<Self>(&source) {
-            return future.clone();
-        };
-        let client = cx.asset_cache.client().clone();
-        let future: AssetFetchTask<Self> = cx
-            .background_executor()
-            .spawn(
-                {
-                    let source = source.clone();
-                    async move {
-                        let bytes = match source {
-                            UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
-                            UriOrPath::Uri(uri) => {
-                                let mut response =
-                                    client.get(uri.as_ref(), ().into(), true).await?;
-                                let mut body = Vec::new();
-                                response.body_mut().read_to_end(&mut body).await?;
-                                if !response.status().is_success() {
-                                    return Err(ImageCacheError::BadStatus {
-                                        status: response.status(),
-                                        body: String::from_utf8_lossy(&body).into_owned(),
-                                    });
-                                }
-                                body
-                            }
-                        };
-                        let data = if let Ok(format) = image::guess_format(&bytes) {
-                            let data =
-                                image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
-                            Self::Raster(Arc::new(ImageData::new(data)))
-                        } else {
-                            let data = resvg::usvg::Tree::from_data(
-                                &bytes,
-                                &resvg::usvg::Options::default(),
-                                svg_fontdb(),
-                            )?;
-                            Self::Vector(Arc::new(Vector { data }))
-                        };
-                        Ok(data)
+    fn load(
+        source: Self::Source,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+        let mut asset_cache = cx.asset_cache();
+
+        async move {
+            if let Some(asset) = asset_cache.get::<Self>(&source) {
+                return asset.clone();
+            }
+
+            let bytes = match source.clone() {
+                UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
+                UriOrPath::Uri(uri) => {
+                    let mut response = client.get(uri.as_ref(), ().into(), true).await?;
+                    let mut body = Vec::new();
+                    response.body_mut().read_to_end(&mut body).await?;
+                    if !response.status().is_success() {
+                        return Err(ImageCacheError::BadStatus {
+                            status: response.status(),
+                            body: String::from_utf8_lossy(&body).into_owned(),
+                        });
                     }
+                    body
                 }
-                .map_err({
-                    let source = source.clone();
-                    move |error| {
-                        log::log!(log::Level::Info, "{:?} {:?}", &source, &error);
-                        error
-                    }
-                }),
-            )
-            .shared();
+            };
 
-        cx.asset_cache
-            .insert::<Self>(source.clone(), future.clone());
-        future
+            let data = if let Ok(format) = image::guess_format(&bytes) {
+                let data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+                Self::Raster(Arc::new(ImageData::new(data)))
+            } else {
+                let data = resvg::usvg::Tree::from_data(
+                    &bytes,
+                    &resvg::usvg::Options::default(),
+                    svg_fontdb(),
+                )?;
+
+                let id = hash(&source);
+
+                Self::Vector {
+                    data: Arc::new(data),
+                    id,
+                }
+            };
+
+            asset_cache.insert::<Self>(source, Ok(data.clone()));
+
+            Ok(data)
+        }
+    }
+
+    fn remove_from_cache(source: &Self::Source, cx: &mut AppContext) -> Option<Self::Output> {
+        cx.asset_cache().remove::<Self>(source)
+    }
+}
+
+#[derive(Clone)]
+struct VectorKey {
+    data: Arc<resvg::usvg::Tree>,
+    id: u64,
+    size: Size<DevicePixels>,
+}
+
+impl Hash for VectorKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.size.hash(state);
+    }
+}
+
+struct Vector;
+
+impl Asset for Vector {
+    type Source = VectorKey;
+    type Output = Arc<ImageData>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let mut asset_cache = cx.asset_cache();
+
+        async move {
+            if let Some(image_data) = asset_cache.get::<Self>(&source) {
+                return image_data.clone();
+            };
+
+            let mut pixmap = resvg::tiny_skia::Pixmap::new(
+                source.size.width.0 as u32,
+                source.size.height.0 as u32,
+            )
+            .unwrap();
+            let ratio = source.size.width.0 as f32 / source.data.size().width();
+            resvg::render(
+                &source.data,
+                resvg::tiny_skia::Transform::from_scale(ratio, ratio),
+                &mut pixmap.as_mut(),
+            );
+            let png = pixmap.encode_png().unwrap();
+            let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap();
+            let image_data = Arc::new(ImageData::new(image.into_rgba8()));
+            asset_cache.insert::<Self>(source.clone(), image_data.clone());
+
+            image_data
+        }
+    }
+
+    fn remove_from_cache(source: &Self::Source, cx: &mut AppContext) -> Option<Self::Output> {
+        cx.asset_cache().remove::<Self>(source)
     }
 }
 

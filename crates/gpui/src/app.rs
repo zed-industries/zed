@@ -218,8 +218,10 @@ pub struct AppContext {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
+    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     asset_source: Arc<dyn AssetSource>,
-    pub(crate) asset_cache: AssetCache,
+    asset_cache: AssetCache,
+    http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -279,8 +281,10 @@ impl AppContext {
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
+                asset_cache: AssetCache::new(),
+                loading_assets: Default::default(),
                 asset_source,
-                asset_cache: AssetCache::new(http_client),
+                http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -636,8 +640,13 @@ impl AppContext {
     }
 
     /// Returns the asset cache.
-    pub fn asset_cache(&self) -> &AssetCache {
-        &self.asset_cache
+    pub fn asset_cache(&self) -> AssetCache {
+        self.asset_cache.clone()
+    }
+
+    /// Returns the asset cache.
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {

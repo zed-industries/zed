@@ -12,7 +12,6 @@
 //! to call the paint and layout methods on elements. These have been included as they're often useful
 //! for taking manual control of the layouting or painting of specialized elements.
 
-use futures::FutureExt;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
@@ -25,20 +24,21 @@ use std::{
 use anyhow::Result;
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
+use futures::{future::Shared, FutureExt};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 
 use crate::{
-    prelude::*, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace, Bounds, BoxShadow,
-    ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
-    DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
-    GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
-    LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels,
-    PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window, WindowContext,
-    SUBPIXEL_VARIANTS,
+    hash, prelude::*, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace, Bounds,
+    BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase,
+    DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent,
+    LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad,
+    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+    Style, Task, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window,
+    WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -666,23 +666,41 @@ impl<'a> ElementContext<'a> {
         result
     }
 
-    /// Asynchronously load an asset and call a function with the loaded asset.
-    pub fn with_asset<A: Asset + 'static>(
-        &mut self,
-        source: A::Source,
-        f: impl FnOnce(A::Output, &mut Self),
-    ) {
-        let future = A::load(&source, self);
-        if let Some(data) = future.clone().now_or_never().and_then(|result| result.ok()) {
-            f(data, self);
-        } else {
-            self.spawn(|mut cx| async move {
-                if future.await.is_ok() {
-                    cx.on_next_frame(|cx| cx.refresh());
-                }
-            })
-            .detach();
-        };
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    /// Your view will be re-drawn once the asset has finished loading.
+    pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        let task = self
+            .loading_assets
+            .remove(&asset_id)
+            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
+            .unwrap_or_else(|| {
+                let future = A::load(source.clone(), self);
+                let task = self.background_executor().spawn(future).shared();
+                let parent_id = self.parent_view_id();
+                self.spawn({
+                    let task = task.clone();
+                    |mut cx| async move {
+                        task.await;
+
+                        cx.on_next_frame(move |cx| {
+                            if let Some(parent_id) = parent_id {
+                                cx.notify(parent_id)
+                            } else {
+                                cx.refresh()
+                            }
+                        });
+                    }
+                })
+                .detach();
+
+                task
+            });
+
+        task.clone().now_or_never().or_else(|| {
+            self.loading_assets.insert(asset_id, Box::new(task));
+            None
+        })
     }
 
     /// Obtain the current element offset.
