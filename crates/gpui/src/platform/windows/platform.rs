@@ -12,13 +12,14 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use ::util::{ResultExt, SemanticVersion};
+use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
+use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
 use windows::{
