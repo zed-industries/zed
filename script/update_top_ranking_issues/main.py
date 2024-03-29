@@ -20,17 +20,23 @@ CORE_LABELS: set[str] = set(
         "design",
         "documentation",
         "enhancement",
-        "linux",
         "panic / crash",
-        "windows"
     ]
 )
 # A set of labels for adding in labels that we want present in the final
 # report, but that we don't want being defined as a core label, since issues
 # with without core labels are flagged as errors.
-ADDITIONAL_LABELS: set[str] = set(["ai", "vim"])
+ADDITIONAL_LABELS: set[str] = set(
+    [
+        "ai",
+        "linux",
+        "vim",
+        "windows",
+    ]
+)
 IGNORED_LABELS: set[str] = set(
     [
+        "ignore top-ranking issues",
         "meta",
     ]
 )
@@ -59,7 +65,9 @@ def main(
 
     if query_day_interval:
         tz = timezone("america/new_york")
-        current_time = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        current_time = datetime.now(tz).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         start_date = current_time - timedelta(days=query_day_interval)
 
     # GitHub Workflow will pass in the token as an environment variable,
@@ -114,12 +122,12 @@ def get_issue_maps(
         label_to_issues
     )
 
-    error_message_to_erroneous_issues: defaultdict[
-        str, list[Issue]
-    ] = get_error_message_to_erroneous_issues(github, repository)
-    error_message_to_erroneous_issue_data: dict[
-        str, list[IssueData]
-    ] = get_error_message_to_erroneous_issue_data(error_message_to_erroneous_issues)
+    error_message_to_erroneous_issues: defaultdict[str, list[Issue]] = (
+        get_error_message_to_erroneous_issues(github, repository)
+    )
+    error_message_to_erroneous_issue_data: dict[str, list[IssueData]] = (
+        get_error_message_to_erroneous_issue_data(error_message_to_erroneous_issues)
+    )
 
     # Create a new dictionary with labels ordered by the summation the of likes on the associated issues
     labels = list(label_to_issue_data.keys())
@@ -168,7 +176,7 @@ def get_label_to_issues(
 
 
 def get_label_to_issue_data(
-    label_to_issues: defaultdict[str, list[Issue]]
+    label_to_issues: defaultdict[str, list[Issue]],
 ) -> dict[str, list[IssueData]]:
     label_to_issue_data: dict[str, list[IssueData]] = {}
 
