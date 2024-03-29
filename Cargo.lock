@@ -9640,6 +9640,7 @@ dependencies = [
  "editor",
  "fuzzy",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "menu",
  "picker",

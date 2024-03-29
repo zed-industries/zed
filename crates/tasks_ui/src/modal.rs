@@ -310,7 +310,20 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn selected_as_query(&self) -> Option<String> {
-        Some(self.matches.get(self.selected_index())?.string.clone())
+        use itertools::intersperse;
+        let task_index = self.matches.get(self.selected_index())?.candidate_id;
+        let tasks = self.candidates.as_ref()?;
+        let (_, task) = tasks.get(task_index)?;
+        // .exec doesn't actually spawn anything; it merely prepares a spawning command,
+        // which we can use for substitution.
+        let mut spawn_prompt = task.exec(self.task_context.clone())?;
+        if !spawn_prompt.args.is_empty() {
+            spawn_prompt.command.push(' ');
+            spawn_prompt
+                .command
+                .extend(intersperse(spawn_prompt.args, " ".to_string()));
+        }
+        Some(spawn_prompt.command)
     }
 }
 
@@ -381,15 +394,15 @@ mod tests {
         cx.dispatch_action(menu::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
-            "example task",
-            "Query should be set to the selected task's name"
+            "echo 4",
+            "Query should be set to the selected task's command"
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["example task"],
-            "No other tasks should be listed"
+            Vec::<String>::new(),
+            "No task should be listed"
         );
-        cx.dispatch_action(menu::Confirm);
+        cx.dispatch_action(menu::SecondaryConfirm);
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -399,8 +412,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["example task", "another one"],
-            "Last recently used task should be listed first"
+            vec!["echo 4", "another one", "example task"],
+            "New oneshot task should be listed first"
         );
 
         let query_str = "echo 4";
@@ -408,8 +421,8 @@ mod tests {
         assert_eq!(query(&tasks_picker, cx), query_str);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "No tasks should match custom command query"
+            vec!["echo 4"],
+            "New oneshot should match custom command query"
         );
 
         cx.dispatch_action(menu::SecondaryConfirm);
@@ -421,7 +434,7 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec![query_str, "example task", "another one"],
+            vec![query_str, "another one", "example task"],
             "Last recently used one show task should be listed first"
         );
 
