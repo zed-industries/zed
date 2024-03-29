@@ -3,7 +3,7 @@ mod supermaven_completion_provider;
 
 use anyhow::{Context as _, Result};
 use collections::BTreeMap;
-use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, Stream, StreamExt};
+use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
 use gpui::{
     AppContext, AsyncAppContext, Bounds, EntityId, Global, GlobalPixels, InteractiveText, Model,
     Render, StyledText, Task, ViewContext,
@@ -91,9 +91,9 @@ impl Supermaven {
                     Self::update(cx, |this, cx| {
                         if let Self::Disabled = this {
                             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-                            // outgoing_tx
-                            //     .unbounded_send(OutboundMessage::UseFreeVersion)
-                            //     .unwrap();
+                            outgoing_tx
+                                .unbounded_send(OutboundMessage::UseFreeVersion)
+                                .unwrap();
                             *this = Self::Started {
                                 _process: process,
                                 next_state_id: SupermavenCompletionStateId::default(),
@@ -126,11 +126,7 @@ impl Supermaven {
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &AppContext,
-    ) -> (Option<SupermavenCompletionStateId>, impl Stream<Item = ()>) {
-        let (updates_tx, mut updates_rx) = watch::channel();
-        postage::stream::Stream::try_recv(&mut updates_rx).unwrap();
-        let mut completion_state_id = None;
-
+    ) -> Option<SupermavenCompletion> {
         if let Self::Started {
             next_state_id,
             states,
@@ -151,7 +147,9 @@ impl Supermaven {
             let state_id = *next_state_id;
             next_state_id.0 += 1;
 
-            completion_state_id = Some(state_id);
+            let (updates_tx, mut updates_rx) = watch::channel();
+            postage::stream::Stream::try_recv(&mut updates_rx).unwrap();
+
             states.insert(
                 state_id,
                 SupermavenCompletionState {
@@ -172,9 +170,14 @@ impl Supermaven {
                     StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
                 ],
             }));
-        }
 
-        (completion_state_id, updates_rx)
+            Some(SupermavenCompletion {
+                id: state_id,
+                updates: updates_rx,
+            })
+        } else {
+            None
+        }
     }
 
     pub fn completion(
@@ -279,6 +282,11 @@ pub struct SupermavenCompletionState {
     completion: Vec<ResponseItem>,
     text: String,
     updates_tx: watch::Sender<()>,
+}
+
+pub struct SupermavenCompletion {
+    pub id: SupermavenCompletionStateId,
+    pub updates: watch::Receiver<()>,
 }
 
 struct ActivationRequestPrompt {

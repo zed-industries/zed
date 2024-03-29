@@ -44,18 +44,20 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let (completion_id, mut updates) = Supermaven::update(cx, |supermaven, cx| {
+        let Some(mut completion) = Supermaven::update(cx, |supermaven, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
-        });
+        }) else {
+            return;
+        };
 
         self.pending_refresh = cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
 
-            while let Some(()) = updates.next().await {
+            while let Some(()) = completion.updates.next().await {
                 this.update(&mut cx, |this, cx| {
-                    this.completion_id = completion_id;
+                    this.completion_id = Some(completion.id);
                     cx.notify();
                 })?;
             }
