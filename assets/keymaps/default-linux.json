@@ -138,7 +138,8 @@
       // ],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-k ctrl-r": "editor::RevertSelectedHunks"
+      "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
+      "ctrl-alt-g b": "editor::ToggleGitBlame"
     }
   },
   {
