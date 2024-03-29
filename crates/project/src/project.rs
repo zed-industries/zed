@@ -6639,7 +6639,7 @@ impl Project {
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
 
                         cx.update(|cx| {
-                            cx.add_recent_documents(&[path.to_path_buf()]);
+                            cx.add_recent_document(&path);
                         })
                         .log_err();
 
