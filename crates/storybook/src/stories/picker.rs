@@ -129,7 +129,7 @@ impl PickerStory {
                 KeyBinding::new("cmd-up", menu::SelectFirst, Some("picker")),
                 KeyBinding::new("cmd-down", menu::SelectLast, Some("picker")),
                 KeyBinding::new("enter", menu::Confirm, Some("picker")),
-                KeyBinding::new("ctrl-enter", menu::ShowContextMenu, Some("picker")),
+                KeyBinding::new("ctrl-enter", menu::SecondaryConfirm, Some("picker")),
                 KeyBinding::new("cmd-enter", menu::SecondaryConfirm, Some("picker")),
                 KeyBinding::new("escape", menu::Cancel, Some("picker")),
                 KeyBinding::new("ctrl-c", menu::Cancel, Some("picker")),

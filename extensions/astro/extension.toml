@@ -1,0 +1,15 @@
+id = "astro"
+name = "Astro"
+description = "Astro support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Alvaro Gaona <alvgaona@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.astro-language-server]
+name = "Astro Language Server"
+language = "Astro"
+
+[grammars.astro]
+repository = "https://github.com/virchau13/tree-sitter-astro"
+commit = "dfa0893bdc4bdfada102043404758c66e3580568"

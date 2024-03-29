@@ -19,17 +19,46 @@ struct StaticTask {
     definition: Definition,
 }
 
+impl StaticTask {
+    fn new(definition: Definition, (id_base, index_in_file): (&str, usize)) -> Arc<Self> {
+        Arc::new(Self {
+            id: TaskId(format!(
+                "static_{id_base}_{index_in_file}_{}",
+                definition.label
+            )),
+            definition,
+        })
+    }
+}
+
+/// TODO: doc
+pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
+    tasks
+        .0
+        .into_iter()
+        .enumerate()
+        .map(|(index, task)| StaticTask::new(task, (id_base, index)) as Arc<_>)
+        .collect()
+}
+
 impl Task for StaticTask {
     fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
-        let TaskContext { cwd, env } = cx;
+        let TaskContext {
+            cwd,
+            task_variables,
+        } = cx;
         let cwd = self
             .definition
             .cwd
             .clone()
-            .and_then(|path| subst::substitute(&path, &env).map(Into::into).ok())
+            .and_then(|path| {
+                subst::substitute(&path, &task_variables.0)
+                    .map(Into::into)
+                    .ok()
+            })
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
-        definition_env.extend(env);
+        definition_env.extend(task_variables.0);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
@@ -58,15 +87,15 @@ impl Task for StaticTask {
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: Vec<StaticTask>,
-    _definitions: Model<TrackedFile<DefinitionProvider>>,
+    tasks: Vec<Arc<StaticTask>>,
+    _definitions: Model<TrackedFile<TaskDefinitions>>,
     _subscription: Subscription,
 }
 
 /// Static task definition from the tasks config file.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) struct Definition {
+pub struct Definition {
     /// Human readable name of the task to display in the UI.
     pub label: String,
     /// Executable command to spawn.
@@ -106,9 +135,9 @@ pub enum RevealStrategy {
 
 /// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct DefinitionProvider(pub(crate) Vec<Definition>);
+pub struct TaskDefinitions(pub Vec<Definition>);
 
-impl DefinitionProvider {
+impl TaskDefinitions {
     /// Generates JSON schema of Tasks JSON definition format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
         let schema = SchemaSettings::draft07()
@@ -206,7 +235,7 @@ impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
         id_base: impl Into<Cow<'static, str>>,
-        definitions: Model<TrackedFile<DefinitionProvider>>,
+        definitions: Model<TrackedFile<TaskDefinitions>>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn TaskSource>> {
         cx.new_model(|cx| {
@@ -222,10 +251,7 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| StaticTask {
-                                id: TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
-                                definition,
-                            })
+                            .map(|(i, definition)| StaticTask::new(definition, (&id_base, i)))
                             .collect();
                         cx.notify();
                     }
@@ -247,9 +273,8 @@ impl TaskSource for StaticSource {
         _: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks
-            .clone()
-            .into_iter()
-            .map(|task| Arc::new(task) as Arc<dyn Task>)
+            .iter()
+            .map(|task| task.clone() as Arc<dyn Task>)
             .collect()
     }
 

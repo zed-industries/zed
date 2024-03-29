@@ -1,5 +1,6 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
+use extension::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
     actions, svg, AppContext, CursorStyle, EventEmitter, InteractiveElement as _, Model,
@@ -205,7 +206,7 @@ impl ActivityIndicator {
                 }
                 LanguageServerBinaryStatus::Downloading => downloading.push(status.name.0.as_ref()),
                 LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.0.as_ref()),
-                LanguageServerBinaryStatus::Downloaded | LanguageServerBinaryStatus::Cached => {}
+                LanguageServerBinaryStatus::None => {}
             }
         }
 
@@ -286,6 +287,18 @@ impl ActivityIndicator {
                 },
                 AutoUpdateStatus::Idle => Default::default(),
             };
+        }
+
+        if let Some(extension_store) =
+            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+        {
+            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
+                return Content {
+                    icon: Some(DOWNLOAD_ICON),
+                    message: format!("Updating {extension_id} extension…"),
+                    on_click: None,
+                };
+            }
         }
 
         Default::default()

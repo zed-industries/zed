@@ -13,10 +13,10 @@ cat assets/themes/LICENSES >> $OUTPUT_FILE
 
 echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 
-[[ "$(cargo about --version)" == "cargo-about 0.5.2" ]] || cargo install cargo-about --locked --git https://github.com/zed-industries/cargo-about --branch error-code-on-warn
+[[ "$(cargo about --version)" == "cargo-about 0.6.1" ]] || cargo install cargo-about@0.6.1
 
 echo "Generating cargo licenses"
-cargo about generate --fail-on-missing-license -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md >> $OUTPUT_FILE
+cargo about generate --fail -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md >> $OUTPUT_FILE
 
 sed -i '' 's/&quot;/"/g' $OUTPUT_FILE
 sed -i '' 's/&#x27;/'\''/g' $OUTPUT_FILE # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string

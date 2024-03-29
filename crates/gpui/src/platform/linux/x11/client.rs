@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
@@ -19,11 +19,13 @@ use xkbcommon::xkb as xkbc;
 use crate::platform::linux::client::Client;
 use crate::platform::{LinuxPlatformInner, PlatformWindow};
 use crate::{
-    AnyWindowHandle, Bounds, CursorStyle, DisplayId, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowParams,
+    px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Pixels, PlatformDisplay, PlatformInput,
+    Point, ScrollDelta, Size, TouchPhase, WindowParams,
 };
 
 use super::{super::SCROLL_LINES, X11Display, X11Window, X11WindowState, XcbAtoms};
+use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+use crate::platform::linux::util::is_within_click_distance;
 use calloop::{
     generic::{FdWrapper, Generic},
     RegistrationToken,
@@ -39,6 +41,13 @@ struct X11ClientState {
     xkb: xkbc::State,
     clipboard: Rc<RefCell<X11ClipboardContext<Clipboard>>>,
     primary: Rc<RefCell<X11ClipboardContext<Primary>>>,
+    click_state: ClickState,
+}
+
+struct ClickState {
+    last_click: Instant,
+    last_location: Point<Pixels>,
+    current_count: usize,
 }
 
 pub(crate) struct X11Client {
@@ -85,6 +94,11 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
+        let click_state = ClickState {
+            last_click: Instant::now(),
+            last_location: Point::new(px(0.0), px(0.0)),
+            current_count: 0,
+        };
         let client: Rc<X11Client> = Rc::new(Self {
             platform_inner: inner.clone(),
             xcb_connection: Rc::clone(&xcb_connection),
@@ -95,6 +109,7 @@ impl X11Client {
                 xkb: xkb_state,
                 clipboard: Rc::new(RefCell::new(clipboard)),
                 primary: Rc::new(RefCell::new(primary)),
+                click_state,
             }),
         });
 
@@ -213,11 +228,26 @@ impl X11Client {
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
                 if let Some(button) = super::button_of_key(event.detail) {
+                    let mut state = self.state.borrow_mut();
+                    let click_elapsed = state.click_state.last_click.elapsed();
+
+                    if click_elapsed < DOUBLE_CLICK_INTERVAL
+                        && is_within_click_distance(state.click_state.last_location, position)
+                    {
+                        state.click_state.current_count += 1;
+                    } else {
+                        state.click_state.current_count = 1;
+                    }
+
+                    state.click_state.last_click = Instant::now();
+                    state.click_state.last_location = position;
+
                     window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                         button,
                         position,
                         modifiers,
-                        click_count: 1,
+                        click_count: state.click_state.current_count,
+                        first_mouse: false,
                     }));
                 } else if event.detail >= 4 && event.detail <= 5 {
                     // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
@@ -238,12 +268,13 @@ impl X11Client {
                 let modifiers = super::modifiers_from_state(event.state);
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                let state = self.state.borrow();
                 if let Some(button) = super::button_of_key(event.detail) {
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                         button,
                         position,
                         modifiers,
-                        click_count: 1,
+                        click_count: state.click_state.current_count,
                     }));
                 }
             }

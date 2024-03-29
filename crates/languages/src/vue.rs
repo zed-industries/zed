@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 pub struct VueLspVersion {
     vue_version: String,
@@ -48,10 +48,8 @@ impl super::LspAdapter for VueLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(VueLspVersion {
-            vue_version: self
-                .node
-                .npm_package_latest_version("@vue/language-server")
-                .await?,
+            // We hardcode the version to 1.8 since we do not support @vue/language-server 2.0 yet.
+            vue_version: "1.8".to_string(),
             ts_version: self.node.npm_package_latest_version("typescript").await?,
         }) as Box<_>)
     }
@@ -211,7 +209,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: Arc<dyn NodeRuntime>,
 ) -> Option<(LanguageServerBinary, TypescriptPath)> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

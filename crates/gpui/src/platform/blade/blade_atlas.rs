@@ -159,7 +159,7 @@ impl BladeAtlasState {
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Polychrome => {
-                format = gpu::TextureFormat::Bgra8Unorm;
+                format = gpu::TextureFormat::Rgba8Unorm;
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Path => {

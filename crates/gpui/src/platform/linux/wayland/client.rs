@@ -796,7 +796,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             })
                         };
 
-                        if !keysym.is_modifier_key() {
+                        if !keysym.is_modifier_key()
+                            && (match state.repeat.current_keysym {
+                                Some(repeat_keysym) => keysym == repeat_keysym,
+                                None => false,
+                            })
+                        {
                             state.repeat.current_keysym = None;
                         }
 
@@ -933,6 +938,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientState {
                                 position: state.mouse_location,
                                 modifiers: state.modifiers,
                                 click_count: state.click_state.current_count,
+                                first_mouse: false,
                             }),
                         );
                     }

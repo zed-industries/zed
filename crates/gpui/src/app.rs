@@ -30,11 +30,11 @@ use util::{
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
-    PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
-    WindowContext, WindowHandle, WindowId,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window,
+    WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -188,6 +188,11 @@ impl App {
     /// Returns a reference to the [`TextSystem`] associated with this app.
     pub fn text_system(&self) -> Arc<TextSystem> {
         self.0.borrow().text_system.clone()
+    }
+
+    /// Returns the file URL of the executable with the specified name in the application bundle
+    pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+        self.0.borrow().path_for_auxiliary_executable(name)
     }
 }
 
@@ -523,6 +528,14 @@ impl AppContext {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns the display with the given ID, if one exists.
+    pub fn find_display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        self.displays()
+            .iter()
+            .find(|display| display.id() == id)
+            .cloned()
     }
 
     /// Returns the appearance of the application's windows.
@@ -895,17 +908,6 @@ impl AppContext {
             .unwrap_or_else(|| panic!("no global added for {}", std::any::type_name::<G>()))
             .downcast()
             .unwrap()
-    }
-
-    /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    pub fn update_global<G: Global, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
-        self.update(|cx| {
-            let mut global = cx.lease_global::<G>();
-            let result = f(&mut global, cx);
-            cx.end_global_lease(global);
-            result
-        })
     }
 
     /// Register a callback to be invoked when a global of the given type is updated.

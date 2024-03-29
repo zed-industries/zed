@@ -8,9 +8,9 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
-[dependencies]
-zed_extension_api = { path = "../../crates/extension_api" }
-
 [lib]
 path = "src/uiua.rs"
 crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.0.4"

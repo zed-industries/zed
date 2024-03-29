@@ -2,8 +2,8 @@ use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
-    UniformListScrollHandle, View, ViewContext, WindowContext,
+    EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton, MouseUpEvent, Render,
+    Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use head::Head;
 use std::{sync::Arc, time::Duration};
@@ -116,7 +116,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn nonsearchable_uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let head = Head::empty(cx);
+        let head = Head::empty(Self::on_empty_head_blur, cx);
 
         Self::new(delegate, ContainerKind::UniformList, head, cx)
     }
@@ -313,6 +313,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    fn on_empty_head_blur(&mut self, cx: &mut ViewContext<Self>) {
+        let Head::Empty(_) = &self.head else {
+            panic!("unexpected call");
+        };
+        self.cancel(&menu::Cancel, cx);
+    }
+
     pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
         let query = self.query(cx);
         self.update_matches(query, cx);
@@ -394,6 +401,16 @@ impl<D: PickerDelegate> Picker<D> {
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                 this.handle_click(ix, event.down.modifiers.command, cx)
             }))
+            // As of this writing, GPUI intercepts `ctrl-[mouse-event]`s on macOS
+            // and produces right mouse button events. This matches platforms norms
+            // but means that UIs which depend on holding ctrl down (such as the tab
+            // switcher) can't be clicked on. Hence, this handler.
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseUpEvent, cx| {
+                    this.handle_click(ix, event.modifiers.command, cx)
+                }),
+            )
             .children(
                 self.delegate
                     .render_match(ix, ix == self.delegate.selected_index(), cx),

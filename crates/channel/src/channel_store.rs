@@ -17,7 +17,7 @@ use rpc::{
 };
 use settings::Settings;
 use std::{mem, sync::Arc, time::Duration};
-use util::{async_maybe, maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -227,7 +227,7 @@ impl ChannelStore {
             _watch_connection_status: watch_connection_status,
             disconnect_channel_buffers_task: None,
             _update_channels: cx.spawn(|this, mut cx| async move {
-                async_maybe!({
+                maybe!(async move {
                     while let Some(update_channels) = update_channels_rx.next().await {
                         if let Some(this) = this.upgrade() {
                             let update_task = this.update(&mut cx, |this, cx| {

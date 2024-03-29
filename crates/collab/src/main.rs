@@ -137,18 +137,38 @@ async fn main() -> Result<()> {
                 );
 
             #[cfg(unix)]
+            let signal = async move {
+                let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
+                    .expect("failed to listen for interrupt signal");
+                let mut sigint = tokio::signal::unix::signal(SignalKind::interrupt())
+                    .expect("failed to listen for interrupt signal");
+                let sigterm = sigterm.recv();
+                let sigint = sigint.recv();
+                futures::pin_mut!(sigterm, sigint);
+                futures::future::select(sigterm, sigint).await;
+            };
+
+            #[cfg(windows)]
+            let signal = async move {
+                // todo(windows):
+                // `ctrl_close` does not work well, because tokio's signal handler always returns soon,
+                // but system termiates the application soon after returning CTRL+CLOSE handler.
+                // So we should implement blocking handler to treat CTRL+CLOSE signal.
+                let mut ctrl_break = tokio::signal::windows::ctrl_break()
+                    .expect("failed to listen for interrupt signal");
+                let mut ctrl_c = tokio::signal::windows::ctrl_c()
+                    .expect("failed to listen for interrupt signal");
+                let ctrl_break = ctrl_break.recv();
+                let ctrl_c = ctrl_c.recv();
+                futures::pin_mut!(ctrl_break, ctrl_c);
+                futures::future::select(ctrl_break, ctrl_c).await;
+            };
+
             axum::Server::from_tcp(listener)
                 .map_err(|e| anyhow!(e))?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
-                    let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())
-                        .expect("failed to listen for interrupt signal");
-                    let mut sigint = tokio::signal::unix::signal(SignalKind::interrupt())
-                        .expect("failed to listen for interrupt signal");
-                    let sigterm = sigterm.recv();
-                    let sigint = sigint.recv();
-                    futures::pin_mut!(sigterm, sigint);
-                    futures::future::select(sigterm, sigint).await;
+                    signal.await;
                     tracing::info!("Received interrupt signal");
 
                     if let Some(rpc_server) = rpc_server {
@@ -157,10 +177,6 @@ async fn main() -> Result<()> {
                 })
                 .await
                 .map_err(|e| anyhow!(e))?;
-
-            // todo("windows")
-            #[cfg(windows)]
-            unimplemented!();
         }
         _ => {
             Err(anyhow!(

@@ -22,6 +22,7 @@ async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 cap-std.workspace = true
+client.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -44,6 +45,8 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasmparser.workspace = true
 wit-component.workspace = true
+task.workspace = true
+serde_json_lenient.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
