@@ -6,11 +6,20 @@ struct CsharpExtension {
 }
 
 impl CsharpExtension {
-    fn language_server_binary_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
+    fn language_server_binary_path(
+        &mut self,
+        config: zed::LanguageServerConfig,
+        worktree: &zed::Worktree,
+    ) -> Result<String> {
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
                 return Ok(path.clone());
             }
+        }
+
+        if let Some(path) = worktree.which("OmniSharp") {
+            self.cached_binary_path = Some(path.clone());
+            return Ok(path);
         }
 
         zed::set_language_server_installation_status(
@@ -94,10 +103,10 @@ impl zed::Extension for CsharpExtension {
     fn language_server_command(
         &mut self,
         config: zed::LanguageServerConfig,
-        _worktree: &zed::Worktree,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         Ok(zed::Command {
-            command: self.language_server_binary_path(config)?,
+            command: self.language_server_binary_path(config, worktree)?,
             args: vec!["-lsp".to_string()],
             env: Default::default(),
         })
