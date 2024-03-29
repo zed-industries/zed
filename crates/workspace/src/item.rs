@@ -1112,10 +1112,6 @@ pub mod test {
                 is_dirty: false,
             })
         }
-
-        pub fn with_dirty(self, is_dirty: bool) -> Self {
-            Self { is_dirty, ..self }
-        }
     }
 
     impl TestItem {

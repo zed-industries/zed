@@ -22,8 +22,8 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
 use project::{
-    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, ProjectItem as _,
-    Project, ProjectPath,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
+    ProjectItem as _, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
