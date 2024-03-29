@@ -513,11 +513,11 @@ impl Platform for WindowsPlatform {
         let mut info = unsafe { std::mem::zeroed() };
         let status = unsafe { RtlGetVersion(&mut info) };
         if status.is_ok() {
-            Ok(SemanticVersion {
-                major: info.dwMajorVersion as _,
-                minor: info.dwMinorVersion as _,
-                patch: info.dwBuildNumber as _,
-            })
+            Ok(SemanticVersion::new(
+                info.dwMajorVersion as _,
+                info.dwMinorVersion as _,
+                info.dwBuildNumber as _,
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "unable to get Windows version: {}",
@@ -606,11 +606,11 @@ impl Platform for WindowsPlatform {
         let version_info = unsafe { &*(version_info_raw as *mut VS_FIXEDFILEINFO) };
         // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
         if version_info.dwSignature == 0xFEEF04BD {
-            return Ok(SemanticVersion {
-                major: ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
-                minor: (version_info.dwProductVersionMS & 0xFFFF) as usize,
-                patch: ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
-            });
+            return Ok(SemanticVersion::new(
+                ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
+                (version_info.dwProductVersionMS & 0xFFFF) as usize,
+                ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
+            ));
         } else {
             log::error!(
                 "no version info present: {}",
