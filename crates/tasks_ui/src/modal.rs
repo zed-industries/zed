@@ -170,7 +170,7 @@ impl PickerDelegate for TasksModalDelegate {
         Arc::from(format!(
             "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
             cx.keystroke_text_for(&picker::UseSelectedQuery),
-            cx.keystroke_text_for(&menu::SecondaryConfirm),
+            cx.keystroke_text_for(&picker::ConfirmInput {secondary: false}),
             cx.keystroke_text_for(&menu::Confirm),
         ))
     }
@@ -239,11 +239,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
         let task = if secondary {
-            if !self.prompt.trim().is_empty() {
-                self.spawn_oneshot(cx)
-            } else {
-                None
-            }
+            None
         } else {
             self.matches
                 .get(current_match_index)
@@ -325,6 +321,17 @@ impl PickerDelegate for TasksModalDelegate {
         }
         Some(spawn_prompt.command)
     }
+    fn confirm_input(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        let Some(task) = self.spawn_oneshot(cx) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
+            })
+            .ok();
+        cx.emit(DismissEvent);
+    }
 }
 
 #[cfg(test)]
@@ -402,7 +409,7 @@ mod tests {
             Vec::<String>::new(),
             "No task should be listed"
         );
-        cx.dispatch_action(menu::SecondaryConfirm);
+        cx.dispatch_action(picker::ConfirmInput { secondary: false });
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -425,7 +432,7 @@ mod tests {
             "New oneshot should match custom command query"
         );
 
-        cx.dispatch_action(menu::SecondaryConfirm);
+        cx.dispatch_action(picker::ConfirmInput { secondary: false });
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             query(&tasks_picker, cx),
