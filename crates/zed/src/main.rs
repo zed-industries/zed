@@ -28,6 +28,7 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
+use file_icons;
 use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
@@ -1082,7 +1083,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 cx.update_global(|file_types, _| {
-                    *file_types = project_panel::file_associations::FileAssociations::new(Assets);
+                    *file_types = file_icons::FileIcons::new(Assets);
                 });
             })
             .ok();

@@ -20,6 +20,7 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, MultiBufferSnapshot,
     ToOffset as _, ToPoint,
 };
+use file_icons::FileIcons;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
@@ -41,7 +42,7 @@ use theme::ThemeSettings;
 use ui::{
     prelude::*,
     utils::{DateTimeType, FormatDistance},
-    ButtonLike, Checkbox, Tab, TabBar, Tooltip,
+    ButtonLike, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -160,6 +161,11 @@ impl AssistantPanel {
                         }),
                     ];
                     let model = CompletionProvider::global(cx).default_model();
+
+                    cx.observe_global::<FileIcons>(|_, cx| {
+                        cx.notify();
+                    })
+                    .detach();
 
                     Self {
                         workspace: workspace_handle,
@@ -2485,28 +2491,19 @@ impl ConversationEditor {
         let buffer = buffer.read(cx);
         let icon_path;
         let path;
-        let focused;
         if let Some(singleton) = buffer.as_singleton() {
             let singleton = singleton.read(cx);
 
-            let language = singleton
-                .language()
-                .map(|l| l.name().to_string())
-                .unwrap_or_default();
-
-            icon_path = match language.to_lowercase().as_str() {
-                "rust" => "icons/file_icons/rust.svg".into(),
-                "python" => "icons/file_icons/python.svg".into(),
-                "typescript" => "icons/file_icons/typescript.svg".into(),
-                "javascript" => "icons/file_icons/javascript.svg".into(),
-                _ => "icons/file_icons/file.svg".into(),
-            };
             path = singleton.file().map(|file| file.full_path(cx));
-            focused = false;
+
+            icon_path = path
+                .as_ref()
+                .and_then(|path| FileIcons::get_icon(path.as_path(), cx))
+                .map(|arc_str| SharedString::from(arc_str))
+                .unwrap_or_else(|| SharedString::from("icons/file_icons/file.svg"));
         } else {
             icon_path = SharedString::from("icons/file_icons/file.svg");
             path = None;
-            focused = false;
         }
 
         let file_name = path.map_or("Untitled".to_string(), |path| {
@@ -2526,7 +2523,7 @@ impl ConversationEditor {
         };
 
         div()
-            .id("close-or-check")
+            .id("active-buffer")
             .h_flex()
             .cursor_pointer()
             .child(Icon::from_path(icon_path).color(file_name_text_color))

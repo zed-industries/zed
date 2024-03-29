@@ -1,11 +1,10 @@
-pub mod file_associations;
 mod project_panel_settings;
 use client::{ErrorCode, ErrorExt};
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions::Cancel, items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
-use file_associations::FileAssociations;
+use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
@@ -142,7 +141,7 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
-    file_associations::init(assets, cx);
+    file_icons::init(assets, cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -229,7 +228,7 @@ impl ProjectPanel {
             })
             .detach();
 
-            cx.observe_global::<FileAssociations>(|_, cx| {
+            cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
             })
             .detach();
@@ -1329,16 +1328,16 @@ impl ProjectPanel {
                     let icon = match entry.kind {
                         EntryKind::File(_) => {
                             if show_file_icons {
-                                FileAssociations::get_icon(&entry.path, cx)
+                                FileIcons::get_icon(&entry.path, cx)
                             } else {
                                 None
                             }
                         }
                         _ => {
                             if show_folder_icons {
-                                FileAssociations::get_folder_icon(is_expanded, cx)
+                                FileIcons::get_folder_icon(is_expanded, cx)
                             } else {
-                                FileAssociations::get_chevron_icon(is_expanded, cx)
+                                FileIcons::get_chevron_icon(is_expanded, cx)
                             }
                         }
                     };
