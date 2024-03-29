@@ -1,0 +1,64 @@
+0000000000000000000000000000000000000000 4 4 3
+author External file (--contents)
+author-mail <external.file>
+author-time 1710764166
+author-tz +0100
+committer External file (--contents)
+committer-mail <external.file>
+committer-time 1710764166
+committer-tz +0100
+summary Version of file_b.txt from file_b_memory.txt
+previous 4aaba34cb86b12f3a749dd6ddbf185de88de6527 file_b.txt
+filename file_b.txt
+0000000000000000000000000000000000000000 10 10 1
+previous 4aaba34cb86b12f3a749dd6ddbf185de88de6527 file_b.txt
+filename file_b.txt
+0000000000000000000000000000000000000000 15 15 2
+previous 4aaba34cb86b12f3a749dd6ddbf185de88de6527 file_b.txt
+filename file_b.txt
+4aaba34cb86b12f3a749dd6ddbf185de88de6527 4 7 2
+author Thorsten Ball
+author-mail <mrnugget@gmail.com>
+author-time 1710764113
+author-tz +0100
+committer Thorsten Ball
+committer-mail <mrnugget@gmail.com>
+committer-time 1710764113
+committer-tz +0100
+summary Another commit
+previous b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913 file_b.txt
+filename file_b.txt
+4aaba34cb86b12f3a749dd6ddbf185de88de6527 11 17 2
+previous b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913 file_b.txt
+filename file_b.txt
+b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913 6 9 1
+author Thorsten Ball
+author-mail <mrnugget@gmail.com>
+author-time 1710764087
+author-tz +0100
+committer Thorsten Ball
+committer-mail <mrnugget@gmail.com>
+committer-time 1710764087
+committer-tz +0100
+summary Another commit
+previous 7aef8a9a211ebc86824769c89f48e4f64aa6183f file_b.txt
+filename file_b.txt
+b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913 7 11 2
+previous 7aef8a9a211ebc86824769c89f48e4f64aa6183f file_b.txt
+filename file_b.txt
+e6d34e8fb494fe2b576d16037c61ba9d10722ba3 1 1 3
+author Thorsten Ball
+author-mail <mrnugget@gmail.com>
+author-time 1709299737
+author-tz +0100
+committer Thorsten Ball
+committer-mail <mrnugget@gmail.com>
+committer-time 1709299737
+committer-tz +0100
+summary Initial
+boundary
+filename file_b.txt
+e6d34e8fb494fe2b576d16037c61ba9d10722ba3 9 13 2
+filename file_b.txt
+e6d34e8fb494fe2b576d16037c61ba9d10722ba3 13 19 1
+filename file_b.txt

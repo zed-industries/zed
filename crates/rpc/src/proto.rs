@@ -296,6 +296,8 @@ messages!(
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
     (SetRoomParticipantRole, Foreground),
+    (BlameBuffer, Foreground),
+    (BlameBufferResponse, Foreground),
 );
 
 request_messages!(
@@ -386,6 +388,7 @@ request_messages!(
     (UpdateWorktree, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
+    (BlameBuffer, BlameBufferResponse),
 );
 
 entity_messages!(
@@ -393,6 +396,7 @@ entity_messages!(
     AddProjectCollaborator,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
+    BlameBuffer,
     BufferReloaded,
     BufferSaved,
     CopyProjectEntry,

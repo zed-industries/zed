@@ -1,4 +1,4 @@
-pub mod permalink;
+pub mod blame;
 
 use std::ops::Range;
 

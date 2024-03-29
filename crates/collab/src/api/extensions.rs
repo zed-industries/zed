@@ -18,6 +18,7 @@ use util::ResultExt;
 pub fn router() -> Router {
     Router::new()
         .route("/extensions", get(get_extensions))
+        .route("/extensions/:extension_id", get(get_extension_versions))
         .route(
             "/extensions/:extension_id/download",
             get(download_latest_extension),
@@ -32,29 +33,52 @@ pub fn router() -> Router {
 struct GetExtensionsParams {
     filter: Option<String>,
     #[serde(default)]
+    ids: Option<String>,
+    #[serde(default)]
     max_schema_version: i32,
-}
-
-#[derive(Debug, Deserialize)]
-struct DownloadLatestExtensionParams {
-    extension_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DownloadExtensionParams {
-    extension_id: String,
-    version: String,
 }
 
 async fn get_extensions(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<GetExtensionsParams>,
 ) -> Result<Json<GetExtensionsResponse>> {
-    let extensions = app
-        .db
-        .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
-        .await?;
+    let extension_ids = params
+        .ids
+        .as_ref()
+        .map(|s| s.split(',').map(|s| s.trim()).collect::<Vec<_>>());
+
+    let extensions = if let Some(extension_ids) = extension_ids {
+        app.db
+            .get_extensions_by_ids(&extension_ids, params.max_schema_version)
+            .await?
+    } else {
+        app.db
+            .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
+            .await?
+    };
+
     Ok(Json(GetExtensionsResponse { data: extensions }))
+}
+
+#[derive(Debug, Deserialize)]
+struct GetExtensionVersionsParams {
+    extension_id: String,
+}
+
+async fn get_extension_versions(
+    Extension(app): Extension<Arc<AppState>>,
+    Path(params): Path<GetExtensionVersionsParams>,
+) -> Result<Json<GetExtensionsResponse>> {
+    let extension_versions = app.db.get_extension_versions(&params.extension_id).await?;
+
+    Ok(Json(GetExtensionsResponse {
+        data: extension_versions,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadLatestExtensionParams {
+    extension_id: String,
 }
 
 async fn download_latest_extension(
@@ -74,6 +98,12 @@ async fn download_latest_extension(
         }),
     )
     .await
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadExtensionParams {
+    extension_id: String,
+    version: String,
 }
 
 async fn download_extension(

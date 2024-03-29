@@ -479,7 +479,7 @@ impl ExtensionBuilder {
 fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
     // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
     // contents of the computed fields, since we don't care what the existing values are.
-    if manifest.schema_version == 0 {
+    if manifest.schema_version.is_v0() {
         manifest.languages.clear();
         manifest.grammars.clear();
         manifest.themes.clear();
@@ -522,7 +522,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
 
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
     // the manifest using the contents of the `grammars` directory.
-    if manifest.schema_version == 0 {
+    if manifest.schema_version.is_v0() {
         let grammars_dir = extension_path.join("grammars");
         if grammars_dir.exists() {
             for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {

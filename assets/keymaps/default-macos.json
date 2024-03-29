@@ -17,6 +17,7 @@
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "cmd-escape": "menu::Cancel",
+      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "shift-enter": "menu::UseSelectedQuery",
       "cmd-shift-w": "workspace::CloseWindow",
@@ -317,13 +318,8 @@
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "alt-shift-up": [
-        "editor::DuplicateLine",
-        {
-          "move_upwards": true
-        }
-      ],
-      "alt-shift-down": "editor::DuplicateLine",
+      "alt-shift-up": "editor::DuplicateLineUp",
+      "alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
       "cmd-d": [
@@ -441,6 +437,8 @@
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
+      "ctrl-tab": "tab_switcher::Toggle",
+      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -602,6 +600,10 @@
   {
     "context": "FileFinder",
     "bindings": { "cmd-shift-p": "file_finder::SelectPrev" }
+  },
+  {
+    "context": "TabSwitcher",
+    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
   },
   {
     "context": "Terminal",

@@ -32,11 +32,9 @@ mod ruby;
 mod rust;
 mod tailwind;
 mod terraform;
-mod toml;
 mod typescript;
 mod vue;
 mod yaml;
-mod zig;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -100,12 +98,10 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
-        ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
-        ("zig", tree_sitter_zig::language()),
         ("dart", tree_sitter_dart::language()),
     ]);
 
@@ -212,7 +208,6 @@ pub fn init(
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
-    language!("zig", vec![Arc::new(zig::ZlsAdapter)]);
     language!(
         "heex",
         vec![
@@ -239,7 +234,6 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
         RustContextProvider
     );
-    language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
             language!(

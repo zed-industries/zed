@@ -286,6 +286,7 @@ impl LinuxTextSystemState {
                     params.glyph_id.0 as u16,
                     (params.font_size * params.scale_factor).into(),
                     (0.0, 0.0),
+                    cosmic_text::CacheKeyFlags::empty(),
                 )
                 .0,
             )
@@ -319,6 +320,7 @@ impl LinuxTextSystemState {
                         params.glyph_id.0 as u16,
                         (params.font_size * params.scale_factor).into(),
                         (0.0, 0.0),
+                        cosmic_text::CacheKeyFlags::empty(),
                     )
                     .0,
                 )
@@ -381,6 +383,7 @@ impl LinuxTextSystemState {
             font_size.0,
             f32::MAX, // We do our own wrapping
             cosmic_text::Wrap::None,
+            None,
         );
         let mut runs = Vec::new();
 
