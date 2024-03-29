@@ -45,7 +45,6 @@ tree-sitter-dart.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
-tree-sitter-erlang.workspace = true
 tree-sitter-glsl.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-gomod.workspace = true

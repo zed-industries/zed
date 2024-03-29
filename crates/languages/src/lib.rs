@@ -18,7 +18,6 @@ mod dart;
 mod deno;
 mod elixir;
 mod elm;
-mod erlang;
 mod go;
 mod html;
 mod json;
@@ -68,7 +67,6 @@ pub fn init(
             "embedded_template",
             tree_sitter_embedded_template::language(),
         ),
-        ("erlang", tree_sitter_erlang::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
@@ -199,7 +197,6 @@ pub fn init(
             );
         }
     }
-    language!("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
