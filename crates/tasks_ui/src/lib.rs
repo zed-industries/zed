@@ -31,7 +31,7 @@ pub fn init(cx: &mut AppContext) {
                             old_context
                         };
 
-                        schedule_task(workspace, task.as_ref(), task_context, cx)
+                        schedule_task(workspace, task.as_ref(), task_context, false, cx)
                     };
                 });
         },
@@ -70,7 +70,7 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                 let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
                 let cwd = task_cwd(this, cx).log_err().flatten();
                 let task_context = task_context(this, cwd, cx);
-                schedule_task(this, target_task.as_ref(), task_context, cx);
+                schedule_task(this, target_task.as_ref(), task_context, false, cx);
                 Some(())
             })
             .ok()
@@ -195,15 +195,18 @@ fn schedule_task(
     workspace: &Workspace,
     task: &dyn Task,
     task_cx: TaskContext,
+    omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
     let spawn_in_terminal = task.exec(task_cx.clone());
     if let Some(spawn_in_terminal) = spawn_in_terminal {
-        workspace.project().update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, _| {
-                inventory.task_scheduled(task.id().clone(), task_cx);
-            })
-        });
+        if !omit_history {
+            workspace.project().update(cx, |project, cx| {
+                project.task_inventory().update(cx, |inventory, _| {
+                    inventory.task_scheduled(task.id().clone(), task_cx);
+                })
+            });
+        }
         cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
     }
 }

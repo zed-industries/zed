@@ -6884,6 +6884,7 @@ dependencies = [
  "env_logger",
  "gpui",
  "menu",
+ "serde",
  "serde_json",
  "ui",
  "workspace",
