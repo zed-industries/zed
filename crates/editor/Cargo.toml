@@ -71,6 +71,7 @@ ui.workspace = true
 url.workspace = true
 util.workspace = true
 workspace.workspace = true
+clean-path = "=0.2.1"
 
 [dev-dependencies]
 ctor.workspace = true

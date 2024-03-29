@@ -12,7 +12,13 @@ use project::{
     ProjectPath, ResolveState,
 };
 
-use std::{cmp, ffi::OsStr, ops::Range};
+use clean_path::Clean;
+use std::{
+    cmp,
+    ffi::OsStr,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 use text::Point;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
@@ -506,29 +512,41 @@ pub fn show_link_definition(
         editor.hide_hovered_link(cx)
     }
     let project = editor.project.clone();
-    let mut project_files: Vec<ProjectPath> = Vec::new();
-    if let Some(ref model) = project {
-        for wrk in model.read(cx).worktrees() {
-            for entry in wrk.read(cx).entries(true) {
-                if entry.is_dir() || entry.is_symlink || entry.is_external {
-                    continue;
-                }
 
-                project_files.push(ProjectPath {
-                    path: entry.path.clone(), // TODO: make the path relative to file where the link was found.
-                    worktree_id: wrk.read(cx).id(),
-                });
+    let mut project_files: Vec<ProjectPath> = Vec::new();
+    let mut file_path: PathBuf = PathBuf::new();
+
+    if let Some(file) = buffer.read(cx).file().cloned() {
+        file_path = file_path.join(file.path());
+        if let Some(ref model) = project {
+            for wrk in model.read(cx).worktrees() {
+                let worktree_id = wrk.read(cx).id();
+                for entry in wrk.read(cx).entries(true) {
+                    if entry.is_dir() || entry.is_symlink || entry.is_external {
+                        continue;
+                    }
+
+                    project_files.push(ProjectPath {
+                        path: entry.path.clone(),
+                        worktree_id,
+                    });
+                }
             }
         }
     }
+
     let snapshot = snapshot.buffer_snapshot.clone();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, hover_link)) =
-                        find_url(&buffer, buffer_position, project_files, cx.clone())
-                    {
+                    if let Some((url_range, hover_link)) = find_url(
+                        &buffer,
+                        buffer_position,
+                        Some(file_path.as_os_str()),
+                        Some(project_files),
+                        cx.clone(),
+                    ) {
                         this.update(&mut cx, |_, _| {
                             let range = maybe!({
                                 let start =
@@ -645,7 +663,8 @@ pub fn show_link_definition(
 pub(crate) fn find_url(
     buffer: &Model<language::Buffer>,
     position: text::Anchor,
-    project_files: Vec<ProjectPath>,
+    file_path: Option<&OsStr>,
+    project_files: Option<Vec<ProjectPath>>,
     mut cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, HoverLink)> {
     const LIMIT: usize = 2048;
@@ -703,29 +722,33 @@ pub(crate) fn find_url(
         }
     }
 
-    if let Some(link) = is_relative_link(&input, project_files) {
-        let range =
-            snapshot.anchor_before(token_start)..snapshot.anchor_after(token_start + input.len());
-        return Some((range, HoverLink::Relative(link)));
+    if let Some(base) = file_path {
+        let mut combined_path = PathBuf::new().join(base);
+
+        if let Some(parent) = combined_path.parent() {
+            combined_path = parent.to_path_buf();
+        }
+        combined_path = combined_path.join(input.clone());
+        combined_path = combined_path.clean();
+
+        if let Some(link) = is_relative_link(combined_path.as_path(), project_files.unwrap()) {
+            let range = snapshot.anchor_before(token_start)
+                ..snapshot.anchor_after(token_start + input.len());
+            return Some((range, HoverLink::Relative(link)));
+        }
+        return None;
     }
 
     None
 }
 
 fn is_relative_link(
-    input: &String,
+    abs_path: &Path,
     project_files: Vec<ProjectPath>,
 ) -> std::option::Option<ProjectPath> {
-    if let Some(link) = input.strip_prefix("./") {
-        return project_files
-            .iter()
-            .find(|&pf| pf.path.as_os_str().eq(OsStr::new(link)))
-            .cloned();
-    }
-
     return project_files
         .iter()
-        .find(|&pf| pf.path.as_os_str().eq(OsStr::new(input)))
+        .find(|&pf| -> bool { pf.path.as_os_str().eq(abs_path.as_os_str()) })
         .cloned();
 }
 

@@ -7628,7 +7628,7 @@ impl Editor {
 
         cx.spawn(|editor, mut cx| async move {
             if let Some((_, hover_link)) =
-                find_url(&buffer, buffer_position, Vec::new(), cx.clone())
+                find_url(&buffer, buffer_position, None, None, cx.clone())
             {
                 match hover_link {
                     HoverLink::Url(url) => editor.update(&mut cx, |_, cx| {
