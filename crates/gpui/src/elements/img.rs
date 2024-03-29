@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::{fs, hash::Hash};
 
 use crate::{
-    hash, point, px, size, svg_fontdb, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength,
-    DevicePixels, Element, ElementContext, Hitbox, ImageData, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, UriOrPath,
+    hash, point, px, size, svg_fontdb, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels,
+    Element, ElementContext, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
-use image::ImageError;
+use image::{ImageBuffer, ImageError};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 
@@ -234,7 +234,7 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {
-                    if let Some(data) = data.img(dbg!(bounds.size), cx) {
+                    if let Some(data) = data.img(cx) {
                         cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
                             .log_err();
                     }
@@ -315,18 +315,10 @@ impl RasterOrVector {
         }
     }
 
-    fn img(&self, size: Size<Pixels>, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
+    fn img(&self, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
         match self.clone() {
             RasterOrVector::Raster(data) => Some(data),
-            RasterOrVector::Vector { data, id } => {
-                let scaled = size.scale(cx.scale_factor());
-                let key = {
-                    let size = scaled.map(|x| x.into());
-                    VectorKey { data, id, size }
-                };
-
-                cx.use_cached_asset::<Vector>(&key)
-            }
+            RasterOrVector::Vector { data, id } => cx.use_cached_asset::<Svg>(&SvgKey { data, id }),
         }
     }
 }
@@ -337,7 +329,7 @@ impl Asset for RasterOrVector {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
 
@@ -382,49 +374,49 @@ impl Asset for RasterOrVector {
 }
 
 #[derive(Clone)]
-struct VectorKey {
+struct SvgKey {
     data: Arc<resvg::usvg::Tree>,
     id: u64,
-    size: Size<DevicePixels>,
 }
 
-impl Hash for VectorKey {
+impl Hash for SvgKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
-        self.size.hash(state);
     }
 }
 
-struct Vector;
+enum Svg {}
 
-impl Asset for Vector {
-    type Source = VectorKey;
+impl Asset for Svg {
+    type Source = SvgKey;
     type Output = Arc<ImageData>;
 
     fn load(
         source: Self::Source,
-        _cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let scale_factor = cx.scale_factor();
         async move {
             let mut pixmap = resvg::tiny_skia::Pixmap::new(
-                (source.size.width.0 as u32).max(5),
-                (source.size.height.0 as u32).max(5),
+                (source.data.size().width() * scale_factor) as u32,
+                (source.data.size().height() * scale_factor) as u32,
             )
             .expect("Attempted to render SVG with 0 size");
 
-            let ratio = source.size.width.0 as f32 / source.data.size().width();
-
             resvg::render(
                 &source.data,
-                resvg::tiny_skia::Transform::from_scale(ratio, ratio),
+                resvg::tiny_skia::Transform::from_scale(scale_factor, scale_factor),
                 &mut pixmap.as_mut(),
             );
 
-            let png = pixmap.encode_png().unwrap();
-            let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap();
-            let image_data = Arc::new(ImageData::new(image.into_rgba8()));
+            let buffer = ImageBuffer::from_raw(
+                (source.data.size().width() * scale_factor) as u32,
+                (source.data.size().height() * scale_factor) as u32,
+                pixmap.take(),
+            )
+            .unwrap();
 
-            image_data
+            Arc::new(ImageData::new(buffer))
         }
     }
 }

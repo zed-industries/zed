@@ -1,4 +1,4 @@
-use crate::{AppContext, SharedUri};
+use crate::{SharedUri, WindowContext};
 use collections::FxHashMap;
 use futures::Future;
 use parking_lot::Mutex;
@@ -36,7 +36,7 @@ pub trait Asset {
     /// Load the asset asynchronously
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
