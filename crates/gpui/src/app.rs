@@ -217,11 +217,10 @@ pub struct AppContext {
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) svg_renderer: SvgRenderer,
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
-
+    pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
@@ -643,6 +642,11 @@ impl AppContext {
     /// Returns the http client assigned to GPUI
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
+    }
+
+    /// Returns the SVG renderer GPUI uses
+    pub(crate) fn svg_renderer(&self) -> SvgRenderer {
+        self.svg_renderer.clone()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {

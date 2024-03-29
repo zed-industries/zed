@@ -1,12 +1,11 @@
-use std::hash::Hasher;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{fs, hash::Hash};
 
 use crate::{
-    hash, point, px, size, svg_fontdb, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels,
-    Element, ElementContext, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, UriOrPath, WindowContext,
+    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
+    ElementContext, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use image::{ImageBuffer, ImageError};
@@ -234,10 +233,8 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {
-                    if let Some(data) = data.img(cx) {
-                        cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
-                            .log_err();
-                    }
+                    cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
+                        .log_err();
                 }
 
                 match source {
@@ -275,7 +272,7 @@ impl InteractiveElement for Img {
 }
 
 impl ImageSource {
-    fn data(&self, cx: &mut ElementContext) -> Option<RasterOrVector> {
+    fn data(&self, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
         match self {
             ImageSource::Uri(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
@@ -284,11 +281,10 @@ impl ImageSource {
                     _ => unreachable!(),
                 };
 
-                cx.use_cached_asset::<RasterOrVector>(&uri_or_path)?
-                    .log_err()
+                cx.use_cached_asset::<Image>(&uri_or_path)?.log_err()
             }
 
-            ImageSource::Data(data) => Some(RasterOrVector::Raster(data.to_owned())),
+            ImageSource::Data(data) => Some(data.to_owned()),
             #[cfg(target_os = "macos")]
             ImageSource::Surface(_) => None,
         }
@@ -296,43 +292,19 @@ impl ImageSource {
 }
 
 #[derive(Clone)]
-enum RasterOrVector {
-    Raster(Arc<ImageData>),
-    Vector {
-        data: Arc<resvg::usvg::Tree>,
-        id: u64,
-    },
-}
+enum Image {}
 
-impl RasterOrVector {
-    fn size(&self) -> Size<DevicePixels> {
-        match self {
-            RasterOrVector::Raster(data) => data.size(),
-            RasterOrVector::Vector { data, .. } => size(
-                DevicePixels(data.size().width() as i32),
-                DevicePixels(data.size().height() as i32),
-            ),
-        }
-    }
-
-    fn img(&self, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
-        match self.clone() {
-            RasterOrVector::Raster(data) => Some(data),
-            RasterOrVector::Vector { data, id } => cx.use_cached_asset::<Svg>(&SvgKey { data, id }),
-        }
-    }
-}
-
-impl Asset for RasterOrVector {
+impl Asset for Image {
     type Source = UriOrPath;
-    type Output = Result<Self, ImageCacheError>;
+    type Output = Result<Arc<ImageData>, ImageCacheError>;
 
     fn load(
         source: Self::Source,
         cx: &mut WindowContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
-
+        let scale_factor = cx.scale_factor();
+        let svg_renderer = cx.svg_renderer();
         async move {
             let bytes = match source.clone() {
                 UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
@@ -352,71 +324,18 @@ impl Asset for RasterOrVector {
 
             let data = if let Ok(format) = image::guess_format(&bytes) {
                 let data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
-                Self::Raster(Arc::new(ImageData::new(data)))
+                ImageData::new(data)
             } else {
-                let data = resvg::usvg::Tree::from_data(
-                    &bytes,
-                    &resvg::usvg::Options::default(),
-                    svg_fontdb(),
-                )?;
+                let pixmap =
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(scale_factor))?;
 
-                let id = hash(&source);
+                let buffer =
+                    ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                Self::Vector {
-                    data: Arc::new(data),
-                    id,
-                }
+                ImageData::new(buffer)
             };
 
-            Ok(data)
-        }
-    }
-}
-
-#[derive(Clone)]
-struct SvgKey {
-    data: Arc<resvg::usvg::Tree>,
-    id: u64,
-}
-
-impl Hash for SvgKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-enum Svg {}
-
-impl Asset for Svg {
-    type Source = SvgKey;
-    type Output = Arc<ImageData>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut WindowContext,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let scale_factor = cx.scale_factor();
-        async move {
-            let mut pixmap = resvg::tiny_skia::Pixmap::new(
-                (source.data.size().width() * scale_factor) as u32,
-                (source.data.size().height() * scale_factor) as u32,
-            )
-            .expect("Attempted to render SVG with 0 size");
-
-            resvg::render(
-                &source.data,
-                resvg::tiny_skia::Transform::from_scale(scale_factor, scale_factor),
-                &mut pixmap.as_mut(),
-            );
-
-            let buffer = ImageBuffer::from_raw(
-                (source.data.size().width() * scale_factor) as u32,
-                (source.data.size().height() * scale_factor) as u32,
-                pixmap.take(),
-            )
-            .unwrap();
-
-            Arc::new(ImageData::new(buffer))
+            Ok(Arc::new(data))
         }
     }
 }
