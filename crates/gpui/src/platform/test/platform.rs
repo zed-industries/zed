@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -239,9 +239,7 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
-
-    fn clear_recent_documents(&self) {}
+    fn add_recent_document(&self, _paths: &Path) {}
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 

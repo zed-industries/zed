@@ -16,8 +16,11 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
         [
             ("astro", "astro"),
             ("beancount", "beancount"),
+            ("csharp", "cs"),
             ("dockerfile", "Dockerfile"),
             ("elisp", "el"),
+            ("erlang", "erl"),
+            ("erlang", "hrl"),
             ("fish", "fish"),
             ("git-firefly", ".gitconfig"),
             ("git-firefly", ".gitignore"),
