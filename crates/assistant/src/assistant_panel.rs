@@ -48,7 +48,7 @@ use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
-    Save, Toast, ToggleZoom, Toolbar, Workspace,
+    Event as WorkspaceEvent, Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
 
 pub fn init(cx: &mut AppContext) {
@@ -2042,7 +2042,7 @@ impl ConversationEditor {
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
-            cx.observe(&workspace, Self::handle_workspace_notify),
+            cx.subscribe(&workspace, Self::handle_workspace_event),
         ];
 
         let mut this = Self {
@@ -2187,18 +2187,27 @@ impl ConversationEditor {
         }
     }
 
-    fn handle_workspace_notify(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
-        let active_buffer = workspace
-            .read(cx)
-            .active_item(cx)
-            .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
+    fn handle_workspace_event(
+        &mut self,
+        workspace: View<Workspace>,
+        event: &WorkspaceEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            WorkspaceEvent::ActiveItemChanged => {
+                let active_buffer = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
 
-        self.conversation.update(cx, |conversation, cx| {
-            conversation.embedded_scope.set_active_buffer(active_buffer);
-            // TODO: Notify, without causing a cycle.
-            // cx.notify();
-            conversation.count_remaining_tokens(cx);
-        });
+                self.conversation.update(cx, |conversation, cx| {
+                    conversation.embedded_scope.set_active_buffer(active_buffer);
+                    conversation.count_remaining_tokens(cx);
+                    cx.notify();
+                });
+            }
+            _ => {}
+        }
     }
 
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {

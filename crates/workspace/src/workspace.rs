@@ -2363,6 +2363,8 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
+                // COMEBACK
+                cx.emit(Event::ActiveItemChanged);
                 if *local {
                     self.unfollow(&pane, cx);
                 }
@@ -2373,11 +2375,13 @@ impl Workspace {
             }
             pane::Event::ChangeItemTitle => {
                 if pane == self.active_pane {
+                    cx.emit(Event::ActiveItemChanged);
                     self.active_item_path_changed(cx);
                 }
                 self.update_window_edited(cx);
             }
             pane::Event::RemoveItem { item_id } => {
+                cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
                     if entry.get().entity_id() == pane.entity_id() {
