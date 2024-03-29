@@ -92,6 +92,8 @@ pub struct GrammarManifestEntry {
     pub repository: String,
     #[serde(alias = "commit")]
     pub rev: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
