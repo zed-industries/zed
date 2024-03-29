@@ -464,6 +464,28 @@ mod tests {
             vec![query_str],
             "Only custom task should be listed"
         );
+
+        let query_str = "0";
+        cx.simulate_input(query_str);
+        assert_eq!(query(&tasks_picker, cx), "echo 40");
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "New oneshot should not match any command query"
+        );
+
+        cx.dispatch_action(picker::ConfirmInput { secondary: true });
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "",
+            "Query should be reset after confirming"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["echo 4", "another one", "example task", "echo 40"],
+            "Last recently used one show task should be listed last, as it is a fire-and-forget task"
+        );
     }
 
     fn open_spawn_tasks(
