@@ -2363,8 +2363,6 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
-                // COMEBACK
-                cx.emit(Event::ActiveItemChanged);
                 if *local {
                     self.unfollow(&pane, cx);
                 }
@@ -2375,7 +2373,6 @@ impl Workspace {
             }
             pane::Event::ChangeItemTitle => {
                 if pane == self.active_pane {
-                    cx.emit(Event::ActiveItemChanged);
                     self.active_item_path_changed(cx);
                 }
                 self.update_window_edited(cx);
@@ -2752,7 +2749,8 @@ impl Workspace {
             .any(|state| state.leader_id == peer_id)
     }
 
-    fn active_item_path_changed(&mut self, cx: &mut WindowContext) {
+    fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         self.project
             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
