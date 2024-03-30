@@ -104,3 +104,22 @@ For example, here's how to set `problems.shortenToSingleLine`:
   }
 }
 ```
+
+#### Configure ESLint's `rulesCustomizations`:
+
+You can configure ESLint's `rulesCustomizations` setting (requires Zed `0.134.x`):
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "rulesCustomizations": [
+          // set all eslint errors/warnings to show as warnings
+          { "rule": "*", "severity": "warn" }
+        ]
+      }
+    }
+  }
+}
+```
