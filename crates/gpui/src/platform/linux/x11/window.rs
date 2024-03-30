@@ -43,8 +43,10 @@ struct Callbacks {
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
+        UTF8_STRING,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
+        _NET_WM_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
@@ -95,6 +97,7 @@ pub(crate) struct X11WindowState {
     x_window: xproto::Window,
     callbacks: RefCell<Callbacks>,
     inner: RefCell<LinuxWindowInner>,
+    atoms: XcbAtoms,
 }
 
 #[derive(Clone)]
@@ -250,6 +253,7 @@ impl X11WindowState {
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
             }),
+            atoms: atoms.clone(),
         }
     }
 
@@ -415,6 +419,17 @@ impl PlatformWindow for X11Window {
                 self.0.x_window,
                 xproto::AtomEnum::WM_NAME,
                 xproto::AtomEnum::STRING,
+                title.as_bytes(),
+            )
+            .unwrap();
+
+        self.0
+            .xcb_connection
+            .change_property8(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                self.0.atoms._NET_WM_NAME,
+                self.0.atoms.UTF8_STRING,
                 title.as_bytes(),
             )
             .unwrap();
