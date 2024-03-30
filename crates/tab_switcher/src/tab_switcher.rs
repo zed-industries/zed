@@ -3,9 +3,9 @@ mod tab_switcher_tests;
 
 use collections::HashMap;
 use gpui::{
-    impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId, EventEmitter,
-    FocusHandle, FocusableView, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseUpEvent, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use serde::Deserialize;
@@ -27,6 +27,7 @@ pub struct Toggle {
 }
 
 impl_actions!(tab_switcher, [Toggle]);
+actions!(tab_switcher, [CloseSelectedItem]);
 
 pub struct TabSwitcher {
     picker: View<Picker<TabSwitcherDelegate>>,
@@ -87,6 +88,14 @@ impl TabSwitcher {
             }
         }
     }
+
+    fn handle_close_selected_item(&mut self, _: &CloseSelectedItem, cx: &mut ViewContext<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .close_item_at(picker.delegate.selected_index(), cx)
+        });
+    }
 }
 
 impl EventEmitter<DismissEvent> for TabSwitcher {}
@@ -103,6 +112,7 @@ impl Render for TabSwitcher {
             .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_action(cx.listener(Self::handle_close_selected_item))
             .child(self.picker.clone())
     }
 }
@@ -217,13 +227,12 @@ impl TabSwitcherDelegate {
         item_id: EntityId,
         cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>,
     ) {
-        if let Some(selected_idx) = self
+        let selected_idx = self
             .matches
             .iter()
             .position(|tab_match| tab_match.item.item_id() == item_id)
-        {
-            self.set_selected_index(selected_idx, cx);
-        }
+            .unwrap_or(0);
+        self.set_selected_index(selected_idx, cx);
     }
 
     fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>) {
