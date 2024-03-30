@@ -10,7 +10,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
 use util::ResultExt;
 use workspace::{
-    item::{Item, ProjectItem},
+    item::{Item, ProjectItem, TabContentParams},
     ItemId, Pane, Workspace, WorkspaceId,
 };
 
@@ -69,12 +69,7 @@ pub struct ImageView {
 impl Item for ImageView {
     type Event = ();
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        selected: bool,
-        _cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
         let title = self
             .path
             .file_name()
@@ -82,7 +77,7 @@ impl Item for ImageView {
             .to_string_lossy()
             .to_string();
         Label::new(title)
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{
-    item::ItemHandle,
+    item::{ItemHandle, TabContentParams},
     pane::{render_item_indicator, tab_details, Event as PaneEvent},
     ModalView, Pane, Workspace,
 };
@@ -273,7 +273,12 @@ impl PickerDelegate for TabSwitcherDelegate {
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
-        let label = tab_match.item.tab_content(Some(tab_match.detail), true, cx);
+        let params = TabContentParams {
+            detail: Some(tab_match.detail),
+            selected: true,
+            preview: false,
+        };
+        let label = tab_match.item.tab_content(params, cx);
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
 
         Some(
