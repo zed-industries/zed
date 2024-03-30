@@ -353,7 +353,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(h_flex().w_full().child(label))
-                .when(true, |el| {
+                .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)
                     } else {
