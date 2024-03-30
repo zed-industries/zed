@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use futures::future;
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind},
     point_from_lsp, point_to_lsp, prepare_completion_documentation,
@@ -899,11 +899,8 @@ impl LspCommand for GetReferences {
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
 
-    fn status(&self, buffer: &Buffer) -> Option<String> {
-        return Some(
-            "Finding references to ".to_owned()
-                + &buffer.chars_at(self.position).next().unwrap().to_string(),
-        );
+    fn status(&self, _buffer: &Buffer) -> Option<String> {
+        return Some("Finding references...".to_owned());
     }
 
     fn to_lsp(

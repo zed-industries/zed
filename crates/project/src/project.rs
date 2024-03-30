@@ -52,7 +52,7 @@ use language::{
 };
 use log::error;
 use lsp::{
-    request::Request, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
     MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
 };
@@ -4840,7 +4840,7 @@ impl Project {
 
     #[inline(never)]
     fn definition_impl(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4853,7 +4853,7 @@ impl Project {
         )
     }
     pub fn definition<T: ToPointUtf16>(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4863,7 +4863,7 @@ impl Project {
     }
 
     fn type_definition_impl(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4877,7 +4877,7 @@ impl Project {
     }
 
     pub fn type_definition<T: ToPointUtf16>(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4887,7 +4887,7 @@ impl Project {
     }
 
     fn implementation_impl(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4901,7 +4901,7 @@ impl Project {
     }
 
     pub fn implementation<T: ToPointUtf16>(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4911,7 +4911,7 @@ impl Project {
     }
 
     fn references_impl(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4924,7 +4924,7 @@ impl Project {
         )
     }
     pub fn references<T: ToPointUtf16>(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -4934,7 +4934,7 @@ impl Project {
     }
 
     fn document_highlights_impl(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -4948,7 +4948,7 @@ impl Project {
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -5188,7 +5188,7 @@ impl Project {
     }
 
     fn hover_impl(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -5269,7 +5269,7 @@ impl Project {
     }
 
     pub fn hover<T: ToPointUtf16>(
-        &mut self,
+        &self,
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -6586,7 +6586,7 @@ impl Project {
     }
 
     pub fn request_lsp<R: LspCommand>(
-        &mut self,
+        &self,
         buffer_handle: Model<Buffer>,
         server: LanguageServerToQuery,
         request: R,
@@ -6613,16 +6613,14 @@ impl Project {
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
                 let status = request.status(&buffer);
-                println!("{status:?}");
                 return cx.spawn(move |this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
-                    let _request_method = R::LspRequest::METHOD;
                     let id = language_server.next_id().load(SeqCst);
 
                     if status.is_some() {
-                        let _ = cx.update(|cx| {
+                        cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_start(
                                     language_server.server_id(),
@@ -6635,12 +6633,13 @@ impl Project {
                                     cx,
                                 );
                             })
-                        });
+                        })
+                        .log_err();
                     }
 
                     let result = language_server.request::<R::LspRequest>(lsp_params).await;
                     if status.is_some() {
-                        let _ = cx.update(|cx| {
+                        cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_end(
                                     language_server.server_id(),
@@ -6648,7 +6647,8 @@ impl Project {
                                     cx,
                                 );
                             })
-                        });
+                        })
+                        .log_err();
                     }
                     let response = match result {
                         Ok(response) => response,
