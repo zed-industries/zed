@@ -47,7 +47,10 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
         clippy_command.arg("--workspace");
     }
 
-    clippy_command.arg("--release").arg("--all-features");
+    clippy_command
+        .arg("--release")
+        .arg("--all-targets")
+        .arg("--all-features");
 
     if args.fix {
         clippy_command.arg("--fix");
@@ -56,9 +59,6 @@ fn run_clippy(args: ClippyArgs) -> Result<()> {
     clippy_command.arg("--");
 
     // Deny all warnings.
-    // We don't do this yet on Windows, as it still has some warnings present.
-    // todo(windows)
-    #[cfg(not(target_os = "windows"))]
     clippy_command.args(["--deny", "warnings"]);
 
     eprintln!(

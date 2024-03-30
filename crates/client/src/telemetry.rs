@@ -12,12 +12,11 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{
-    CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
-};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, MemoryEvent, SettingEvent,
+    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
+    SettingEvent,
 };
 use tempfile::NamedTempFile;
 use util::http::{self, HttpClient, HttpClientWithUrl, Method};
@@ -175,7 +174,7 @@ impl Telemetry {
         cx.spawn(|_| async move {
             // Avoiding calling `System::new_all()`, as there have been crashes related to it
             let refresh_kind = RefreshKind::new()
-                .with_memory() // For memory usage
+                .with_memory(MemoryRefreshKind::everything()) // For memory usage
                 .with_processes(ProcessRefreshKind::everything()) // For process usage
                 .with_cpu(CpuRefreshKind::everything()); // For core count
 
@@ -263,7 +262,7 @@ impl Telemetry {
         self: &Arc<Self>,
         conversation_id: Option<String>,
         kind: AssistantKind,
-        model: &str,
+        model: String,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
@@ -326,6 +325,13 @@ impl Telemetry {
         });
 
         self.report_event(event)
+    }
+
+    pub fn report_extension_event(self: &Arc<Self>, extension_id: Arc<str>, version: Arc<str>) {
+        self.report_event(Event::Extension(ExtensionEvent {
+            extension_id,
+            version,
+        }))
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
@@ -472,7 +478,11 @@ impl Telemetry {
 
                     let request = http::Request::builder()
                         .method(Method::POST)
-                        .uri(this.http_client.build_zed_api_url("/telemetry/events"))
+                        .uri(
+                            this.http_client
+                                .build_zed_api_url("/telemetry/events", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "text/plain")
                         .header("x-zed-checksum", checksum)
                         .body(json_bytes.into());
@@ -580,7 +590,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    async fn test_telemetry_flush_on_flush_interval(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let clock = Arc::new(FakeSystemClock::new(
             Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),

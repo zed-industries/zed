@@ -1,5 +1,6 @@
 use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
+use extension::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
     actions, svg, AppContext, CursorStyle, EventEmitter, InteractiveElement as _, Model,
@@ -205,7 +206,7 @@ impl ActivityIndicator {
                 }
                 LanguageServerBinaryStatus::Downloading => downloading.push(status.name.0.as_ref()),
                 LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.0.as_ref()),
-                LanguageServerBinaryStatus::Downloaded | LanguageServerBinaryStatus::Cached => {}
+                LanguageServerBinaryStatus::None => {}
             }
         }
 
@@ -237,6 +238,17 @@ impl ActivityIndicator {
                 ),
                 on_click: Some(Arc::new(|this, cx| {
                     this.show_error_message(&Default::default(), cx)
+                })),
+            };
+        }
+
+        // Show any formatting failure
+        if let Some(failure) = self.project.read(cx).last_formatting_failure() {
+            return Content {
+                icon: Some(WARNING_ICON),
+                message: format!("Formatting failed: {}. Click to see logs.", failure),
+                on_click: Some(Arc::new(|_, cx| {
+                    cx.dispatch_action(Box::new(workspace::OpenLog));
                 })),
             };
         }
@@ -275,6 +287,18 @@ impl ActivityIndicator {
                 },
                 AutoUpdateStatus::Idle => Default::default(),
             };
+        }
+
+        if let Some(extension_store) =
+            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+        {
+            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
+                return Content {
+                    icon: Some(DOWNLOAD_ICON),
+                    message: format!("Updating {extension_id} extension…"),
+                    on_click: None,
+                };
+            }
         }
 
         Default::default()

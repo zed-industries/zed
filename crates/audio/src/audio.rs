@@ -1,6 +1,6 @@
 use assets::SoundRegistry;
 use derive_more::{Deref, DerefMut};
-use gpui::{AppContext, AssetSource, Global};
+use gpui::{AppContext, AssetSource, BorrowAppContext, Global};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
 

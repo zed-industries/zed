@@ -705,11 +705,6 @@ impl BufferSearchBar {
         option.as_button(is_active, action)
     }
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
-        assert_ne!(
-            mode,
-            SearchMode::Semantic,
-            "Semantic search is not supported in buffer search"
-        );
         if mode == self.current_mode {
             return;
         }
@@ -1022,7 +1017,7 @@ impl BufferSearchBar {
         }
     }
     fn cycle_mode(&mut self, _: &CycleMode, cx: &mut ViewContext<Self>) {
-        self.activate_search_mode(next_mode(&self.current_mode, false), cx);
+        self.activate_search_mode(next_mode(&self.current_mode), cx);
     }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
@@ -1921,6 +1916,114 @@ mod tests {
         "#
             .unindent()
         );
+    }
+
+    struct ReplacementTestParams<'a> {
+        editor: &'a View<Editor>,
+        search_bar: &'a View<BufferSearchBar>,
+        cx: &'a mut VisualTestContext,
+        search_mode: SearchMode,
+        search_text: &'static str,
+        search_options: Option<SearchOptions>,
+        replacement_text: &'static str,
+        replace_all: bool,
+        expected_text: String,
+    }
+
+    async fn run_replacement_test(options: ReplacementTestParams<'_>) {
+        options
+            .search_bar
+            .update(options.cx, |search_bar, cx| {
+                search_bar.activate_search_mode(options.search_mode, cx);
+                search_bar.search(options.search_text, options.search_options, cx)
+            })
+            .await
+            .unwrap();
+
+        options.search_bar.update(options.cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text(options.replacement_text, cx);
+            });
+
+            if options.replace_all {
+                search_bar.replace_all(&ReplaceAll, cx)
+            } else {
+                search_bar.replace_next(&ReplaceNext, cx)
+            }
+        });
+
+        assert_eq!(
+            options
+                .editor
+                .update(options.cx, |this, cx| { this.text(cx) }),
+            options.expected_text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replace_special_characters(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_mode: SearchMode::Text,
+            search_text: "expression",
+            search_options: None,
+            replacement_text: r"\n",
+            replace_all: true,
+            expected_text: r#"
+            A regular \n (shortened as regex or regexp;[1] also referred to as
+            rational \n[2][3]) is a sequence of characters that specifies a search
+            pattern in text. Usually such patterns are used by string-searching algorithms
+            for "find" or "find and replace" operations on strings, or for input validation.
+            "#
+            .unindent(),
+        })
+        .await;
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_mode: SearchMode::Regex,
+            search_text: "or",
+            search_options: Some(SearchOptions::WHOLE_WORD),
+            replacement_text: r"\\\n\\\\",
+            replace_all: false,
+            expected_text: r#"
+            A regular \n (shortened as regex \
+            \\ regexp;[1] also referred to as
+            rational \n[2][3]) is a sequence of characters that specifies a search
+            pattern in text. Usually such patterns are used by string-searching algorithms
+            for "find" or "find and replace" operations on strings, or for input validation.
+            "#
+            .unindent(),
+        })
+        .await;
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_mode: SearchMode::Regex,
+            search_text: r"(that|used) ",
+            search_options: None,
+            replacement_text: r"$1\n",
+            replace_all: true,
+            expected_text: r#"
+            A regular \n (shortened as regex \
+            \\ regexp;[1] also referred to as
+            rational \n[2][3]) is a sequence of characters that
+            specifies a search
+            pattern in text. Usually such patterns are used
+            by string-searching algorithms
+            for "find" or "find and replace" operations on strings, or for input validation.
+            "#
+            .unindent(),
+        })
+        .await;
     }
 
     #[gpui::test]

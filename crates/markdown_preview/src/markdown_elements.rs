@@ -68,6 +68,7 @@ pub struct ParsedMarkdownCodeBlock {
     pub source_range: Range<usize>,
     pub language: Option<String>,
     pub contents: SharedString,
+    pub highlights: Option<Vec<(Range<usize>, HighlightId)>>,
 }
 
 #[derive(Debug)]

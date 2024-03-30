@@ -5,9 +5,9 @@ use client::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, overlay, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusableView,
-    Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, anchored, deferred, div, AppContext, ClipboardItem, DismissEvent, EventEmitter,
+    FocusableView, Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -174,7 +174,7 @@ impl Render for ChannelModal {
                     .child(
                         h_flex()
                             .w_full()
-                            .h(rems(22. / 16.))
+                            .h(rems_from_px(22.))
                             .justify_between()
                             .line_height(rems(1.25))
                             .child(CheckboxWithLabel::new(
@@ -408,11 +408,11 @@ impl PickerDelegate for ChannelModalDelegate {
                             .when(is_me, |el| el.child(Label::new("You").color(Color::Muted)))
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
-                                    Some(
-                                        overlay()
+                                    Some(deferred(
+                                        anchored()
                                             .anchor(gpui::AnchorCorner::TopRight)
                                             .child(menu.clone()),
-                                    )
+                                    ))
                                 } else {
                                     None
                                 },

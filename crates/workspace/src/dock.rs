@@ -1,11 +1,11 @@
 use crate::persistence::model::DockData;
-use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
+use crate::{DraggedDock, Event};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, ParentElement,
-    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -140,6 +140,8 @@ impl From<&dyn PanelHandle> for AnyView {
     }
 }
 
+/// A container with a fixed [`DockPosition`] adjacent to a certain widown edge.
+/// Can contain multiple panels and show/hide itself with all contents.
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
@@ -147,7 +149,8 @@ pub struct Dock {
     active_panel_index: usize,
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
-    _focus_subscription: Subscription,
+    resizeable: bool,
+    _subscriptions: [Subscription; 2],
 }
 
 impl FocusableView for Dock {
@@ -193,11 +196,17 @@ pub struct PanelButtons {
 impl Dock {
     pub fn new(position: DockPosition, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let focus_handle = cx.focus_handle();
-
+        let workspace = cx.view().clone();
         let dock = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
                 if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
                     active_entry.panel.focus_handle(cx).focus(cx)
+                }
+            });
+            let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
+                if matches!(e, Event::ZoomChanged) {
+                    let is_zoomed = workspace.read(cx).zoomed.is_some();
+                    dock.resizeable = !is_zoomed;
                 }
             });
             Self {
@@ -206,8 +215,9 @@ impl Dock {
                 active_panel_index: 0,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
-                _focus_subscription: focus_subscription,
+                _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
+                resizeable: true,
             }
         });
 
@@ -227,6 +237,7 @@ impl Dock {
                     workspace.zoomed = None;
                     workspace.zoomed_position = None;
                 }
+                cx.emit(Event::ZoomChanged);
                 workspace.dismiss_zoomed_items_to_reveal(Some(position), cx);
                 workspace.update_active_view_for_followers(cx)
             }
@@ -239,6 +250,7 @@ impl Dock {
                     if panel.is_zoomed(cx) {
                         workspace.zoomed = Some(panel.to_any().downgrade());
                         workspace.zoomed_position = Some(position);
+                        cx.emit(Event::ZoomChanged);
                         return;
                     }
                 }
@@ -246,6 +258,7 @@ impl Dock {
             if workspace.zoomed_position == Some(position) {
                 workspace.zoomed = None;
                 workspace.zoomed_position = None;
+                cx.emit(Event::ZoomChanged);
             }
         })
         .detach();
@@ -378,6 +391,7 @@ impl Dock {
                         .update(cx, |workspace, cx| {
                             workspace.zoomed = Some(panel.downgrade().into());
                             workspace.zoomed_position = Some(panel.read(cx).position(cx));
+                            cx.emit(Event::ZoomChanged);
                         })
                         .ok();
                 }
@@ -388,6 +402,7 @@ impl Dock {
                             if workspace.zoomed_position == Some(this.position) {
                                 workspace.zoomed = None;
                                 workspace.zoomed_position = None;
+                                cx.emit(Event::ZoomChanged);
                             }
                             cx.notify();
                         })
@@ -551,50 +566,50 @@ impl Render for Dock {
             let size = entry.panel.size(cx);
 
             let position = self.position;
-            let mut handle = div()
-                .id("resize-handle")
-                .on_drag(DraggedDock(position), |dock, cx| {
-                    cx.stop_propagation();
-                    cx.new_view(|_| dock.clone())
-                })
-                .on_click(cx.listener(|v, e: &ClickEvent, cx| {
-                    if e.down.button == MouseButton::Left && e.down.click_count == 2 {
-                        v.resize_active_panel(None, cx);
+            let create_resize_handle = || {
+                let handle = div()
+                    .id("resize-handle")
+                    .on_drag(DraggedDock(position), |dock, cx| {
                         cx.stop_propagation();
-                    }
-                }))
-                .z_index(1)
-                .block_mouse();
-
-            match self.position() {
-                DockPosition::Left => {
-                    handle = handle
-                        .absolute()
-                        .right(px(0.))
-                        .top(px(0.))
-                        .h_full()
-                        .w(RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize();
+                        cx.new_view(|_| dock.clone())
+                    })
+                    .on_click(cx.listener(|v, e: &ClickEvent, cx| {
+                        if e.down.button == MouseButton::Left && e.down.click_count == 2 {
+                            v.resize_active_panel(None, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .occlude();
+                match self.position() {
+                    DockPosition::Left => deferred(
+                        handle
+                            .absolute()
+                            .right(-RESIZE_HANDLE_SIZE / 2.)
+                            .top(px(0.))
+                            .h_full()
+                            .w(RESIZE_HANDLE_SIZE)
+                            .cursor_col_resize(),
+                    ),
+                    DockPosition::Bottom => deferred(
+                        handle
+                            .absolute()
+                            .top(-RESIZE_HANDLE_SIZE / 2.)
+                            .left(px(0.))
+                            .w_full()
+                            .h(RESIZE_HANDLE_SIZE)
+                            .cursor_row_resize(),
+                    ),
+                    DockPosition::Right => deferred(
+                        handle
+                            .absolute()
+                            .top(px(0.))
+                            .left(-RESIZE_HANDLE_SIZE / 2.)
+                            .h_full()
+                            .w(RESIZE_HANDLE_SIZE)
+                            .cursor_col_resize(),
+                    ),
                 }
-                DockPosition::Bottom => {
-                    handle = handle
-                        .absolute()
-                        .top(px(0.))
-                        .left(px(0.))
-                        .w_full()
-                        .h(RESIZE_HANDLE_SIZE)
-                        .cursor_row_resize();
-                }
-                DockPosition::Right => {
-                    handle = handle
-                        .absolute()
-                        .top(px(0.))
-                        .left(px(0.))
-                        .h_full()
-                        .w(RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize();
-                }
-            }
+            };
 
             div()
                 .key_context(dispatch_context)
@@ -618,9 +633,14 @@ impl Render for Dock {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
-                        .child(entry.panel.to_any().cached()),
+                        .child(
+                            entry
+                                .panel
+                                .to_any()
+                                .cached(StyleRefinement::default().v_flex().size_full()),
+                        ),
                 )
-                .child(handle)
+                .when(self.resizeable, |this| this.child(create_resize_handle()))
         } else {
             div()
                 .key_context(dispatch_context)

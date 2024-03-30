@@ -456,7 +456,7 @@ impl LspLogView {
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
-            editor.set_show_copilot_suggestions(false);
+            editor.set_show_inline_completions(false);
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -807,7 +807,7 @@ impl Render for LspLogToolbarItemView {
                                         .justify_between()
                                         .child(Label::new(RPC_MESSAGES))
                                         .child(
-                                            div().z_index(120).child(
+                                            div().child(
                                                 Checkbox::new(
                                                     ix,
                                                     if row.rpc_trace_enabled {

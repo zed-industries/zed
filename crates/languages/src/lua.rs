@@ -8,15 +8,14 @@ use lsp::LanguageServerBinary;
 use smol::fs;
 use std::{any::Any, env::consts, path::PathBuf};
 use util::{
-    async_maybe,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::LspAdapter for LuaLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("lua-language-server".into())
@@ -79,7 +78,7 @@ impl super::LspAdapter for LuaLspAdapter {
             archive.unpack(container_dir).await?;
         }
 
-        // todo(windows)
+        // todo("windows")
         #[cfg(not(windows))]
         {
             fs::set_permissions(
@@ -117,7 +116,7 @@ impl super::LspAdapter for LuaLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

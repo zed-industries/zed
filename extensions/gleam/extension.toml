@@ -1,8 +1,10 @@
 id = "gleam"
 name = "Gleam"
-description = "Gleam support for Zed"
-version = "0.0.1"
+description = "Gleam support."
+version = "0.0.2"
+schema_version = 1
 authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
 
 [language_servers.gleam]
 name = "Gleam LSP"

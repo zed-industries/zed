@@ -100,6 +100,9 @@ pub struct MouseDownEvent {
 
     /// The number of times the button has been clicked.
     pub click_count: usize,
+
+    /// Whether this is the first, focusing click.
+    pub first_mouse: bool,
 }
 
 impl Sealed for MouseDownEvent {}
@@ -436,6 +439,7 @@ impl PlatformInput {
 
 #[cfg(test)]
 mod test {
+
     use crate::{
         self as gpui, div, Element, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
         Keystroke, ParentElement, Render, TestAppContext, VisualContext,

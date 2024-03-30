@@ -20,7 +20,6 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
 pub use model_context::*;
-use refineable::Refineable;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{
@@ -29,13 +28,13 @@ use util::{
 };
 
 use crate::{
-    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
-    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
-    PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
-    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
+    current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
+    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window,
+    WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -190,6 +189,11 @@ impl App {
     pub fn text_system(&self) -> Arc<TextSystem> {
         self.0.borrow().text_system.clone()
     }
+
+    /// Returns the file URL of the executable with the specified name in the application bundle
+    pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+        self.0.borrow().path_for_auxiliary_executable(name)
+    }
 }
 
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
@@ -213,10 +217,11 @@ pub struct AppContext {
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) svg_renderer: SvgRenderer,
+    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
-    pub(crate) image_cache: ImageCache,
-    pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    pub(crate) svg_renderer: SvgRenderer,
+    http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -276,9 +281,10 @@ impl AppContext {
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
+                asset_cache: AssetCache::new(),
+                loading_assets: Default::default(),
                 asset_source,
-                image_cache: ImageCache::new(http_client),
-                text_style_stack: Vec::new(),
+                http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -523,6 +529,19 @@ impl AppContext {
         self.platform.displays()
     }
 
+    /// Returns the primary display that will be used for new windows.
+    pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.platform.primary_display()
+    }
+
+    /// Returns the display with the given ID, if one exists.
+    pub fn find_display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        self.displays()
+            .iter()
+            .find(|display| display.id() == id)
+            .cloned()
+    }
+
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
@@ -582,11 +601,6 @@ impl AppContext {
         self.platform.path_for_auxiliary_executable(name)
     }
 
-    /// Returns the maximum duration in which a second mouse click must occur for an event to be a double-click event.
-    pub fn double_click_interval(&self) -> Duration {
-        self.platform.double_click_interval()
-    }
-
     /// Displays a platform modal for selecting paths.
     /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
@@ -623,6 +637,16 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Returns the http client assigned to GPUI
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
+    }
+
+    /// Returns the SVG renderer GPUI uses
+    pub(crate) fn svg_renderer(&self) -> SvgRenderer {
+        self.svg_renderer.clone()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {
@@ -829,15 +853,6 @@ impl AppContext {
         &self.text_system
     }
 
-    /// The current text style. Which is composed of all the style refinements provided to `with_text_style`.
-    pub fn text_style(&self) -> TextStyle {
-        let mut style = TextStyle::default();
-        for refinement in &self.text_style_stack {
-            style.refine(refinement);
-        }
-        style
-    }
-
     /// Check whether a global of the given type has been assigned.
     pub fn has_global<G: Global>(&self) -> bool {
         self.globals_by_type.contains_key(&TypeId::of::<G>())
@@ -907,17 +922,6 @@ impl AppContext {
             .unwrap_or_else(|| panic!("no global added for {}", std::any::type_name::<G>()))
             .downcast()
             .unwrap()
-    }
-
-    /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    pub fn update_global<G: Global, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
-        self.update(|cx| {
-            let mut global = cx.lease_global::<G>();
-            let result = f(&mut global, cx);
-            cx.end_global_lease(global);
-            result
-        })
     }
 
     /// Register a callback to be invoked when a global of the given type is updated.
@@ -1021,14 +1025,6 @@ impl AppContext {
         inner(&mut self.keystroke_observers, Box::new(f))
     }
 
-    pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
-        self.text_style_stack.push(text_style);
-    }
-
-    pub(crate) fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
-    }
-
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
@@ -1127,21 +1123,32 @@ impl AppContext {
     /// Checks if the given action is bound in the current context, as defined by the app's current focus,
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
+        let mut action_available = false;
         if let Some(window) = self.active_window() {
             if let Ok(window_action_available) =
                 window.update(self, |_, cx| cx.is_action_available(action))
             {
-                return window_action_available;
+                action_available = window_action_available;
             }
         }
 
-        self.global_action_listeners
-            .contains_key(&action.as_any().type_id())
+        action_available
+            || self
+                .global_action_listeners
+                .contains_key(&action.as_any().type_id())
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.borrow());
+    }
+
+    /// Adds given path to the bottom of the list of recent paths for the application.
+    /// The list is usually shown on the application icon's context menu in the dock,
+    /// and allows to open the recent files via that context menu.
+    /// If the path is already in the list, it will be moved to the bottom of the list.
+    pub fn add_recent_document(&mut self, path: &Path) {
+        self.platform.add_recent_document(path);
     }
 
     /// Dispatch an action to the currently active window or global action handler
@@ -1152,14 +1159,41 @@ impl AppContext {
                 .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
                 .log_err();
         } else {
-            self.propagate_event = true;
+            self.dispatch_global_action(action);
+        }
+    }
 
+    fn dispatch_global_action(&mut self, action: &dyn Action) {
+        self.propagate_event = true;
+
+        if let Some(mut global_listeners) = self
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in &global_listeners {
+                listener(action.as_any(), DispatchPhase::Capture, self);
+                if !self.propagate_event {
+                    break;
+                }
+            }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
+
+        if self.propagate_event {
             if let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
             {
-                for listener in &global_listeners {
-                    listener(action.as_any(), DispatchPhase::Capture, self);
+                for listener in global_listeners.iter().rev() {
+                    listener(action.as_any(), DispatchPhase::Bubble, self);
                     if !self.propagate_event {
                         break;
                     }
@@ -1173,29 +1207,6 @@ impl AppContext {
 
                 self.global_action_listeners
                     .insert(action.as_any().type_id(), global_listeners);
-            }
-
-            if self.propagate_event {
-                if let Some(mut global_listeners) = self
-                    .global_action_listeners
-                    .remove(&action.as_any().type_id())
-                {
-                    for listener in global_listeners.iter().rev() {
-                        listener(action.as_any(), DispatchPhase::Bubble, self);
-                        if !self.propagate_event {
-                            break;
-                        }
-                    }
-
-                    global_listeners.extend(
-                        self.global_action_listeners
-                            .remove(&action.as_any().type_id())
-                            .unwrap_or_default(),
-                    );
-
-                    self.global_action_listeners
-                        .insert(action.as_any().type_id(), global_listeners);
-                }
             }
         }
     }

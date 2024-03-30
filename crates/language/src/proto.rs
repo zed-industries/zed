@@ -18,12 +18,6 @@ pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
     fingerprint.to_hex()
 }
 
-/// Deserializes a [`RopeFingerprint`] from the RPC representation.
-pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
-    RopeFingerprint::from_hex(fingerprint)
-        .map_err(|error| anyhow!("invalid fingerprint: {}", error))
-}
-
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {

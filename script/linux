@@ -1,4 +1,9 @@
-#!/usr/bin/bash -e
+#!/usr/bin/bash
+
+set -e
+
+# install the wasm toolchain
+rustup target add wasm32-wasi
 
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || command -v doas || true)
@@ -14,7 +19,7 @@ if [[ -n $apt ]]; then
     libxkbcommon-x11-dev
     libssl-dev
     libzstd-dev
-    libvulkan-dev
+    libvulkan1
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -25,14 +30,22 @@ fi
 dnf=$(command -v dnf || true)
 if [[ -n $dnf ]]; then
   deps=(
+    gcc
+    g++
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    libvulkan-devel
+    vulkan-loader
   )
+
+  # libxkbcommon-x11-devel is in the crb repo on RHEL and CentOS, not needed for Fedora
+  if ! grep -q "Fedora" /etc/redhat-release; then
+    $maysudo "$dnf" config-manager --set-enabled crb
+  fi
+
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0
 fi
@@ -48,7 +61,7 @@ if [[ -n $zyp ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    libvulkan-devel
+    vulkan-loader
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -82,7 +95,7 @@ if [[ -n $xbps ]]; then
     libzstd-devel
     openssl-devel
     wayland-devel
-    libvulkan-devel
+    vulkan-loader
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0

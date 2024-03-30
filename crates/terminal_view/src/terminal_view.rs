@@ -6,9 +6,9 @@ use collections::HashSet;
 use editor::{scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
-    Render, Styled, Subscription, Task, View, VisualContext, WeakView,
+    anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -20,7 +20,7 @@ use terminal::{
         term::{search::RegexSearch, TermMode},
     },
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
-    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
+    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
 };
 use terminal_element::TerminalElement;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
@@ -455,9 +455,7 @@ fn subscribe_for_terminal_events(
                 cx.emit(ItemEvent::UpdateTab);
                 let terminal = this.terminal().read(cx);
                 if terminal.task().is_none() {
-                    if let Some(foreground_info) = &terminal.foreground_process_info {
-                        let cwd = foreground_info.cwd.clone();
-
+                    if let Some(cwd) = terminal.get_cwd() {
                         let item_id = cx.entity_id();
                         let workspace_id = this.workspace_id;
                         cx.background_executor()
@@ -767,10 +765,12 @@ impl Render for TerminalView {
                 )),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay()
-                    .position(*position)
-                    .anchor(gpui::AnchorCorner::TopLeft)
-                    .child(menu.clone())
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .child(menu.clone()),
+                )
             }))
     }
 }
@@ -785,10 +785,19 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = if terminal.task().is_some() {
-            IconName::Play
-        } else {
-            IconName::Terminal
+        let icon = match terminal.task() {
+            Some(terminal_task) => match &terminal_task.status {
+                TaskStatus::Unknown => IconName::ExclamationTriangle,
+                TaskStatus::Running => IconName::Play,
+                TaskStatus::Completed { success } => {
+                    if *success {
+                        IconName::Check
+                    } else {
+                        IconName::XCircle
+                    }
+                }
+            },
+            None => IconName::Terminal,
         };
         h_flex()
             .gap_2()
@@ -826,7 +835,7 @@ impl Item for TerminalView {
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
         match self.terminal.read(cx).task() {
-            Some(task) => !task.completed,
+            Some(task) => task.status == TaskStatus::Running,
             None => self.has_bell(),
         }
     }

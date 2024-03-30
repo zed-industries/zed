@@ -20,6 +20,7 @@ test-support = ["collections/test-support", "gpui/test-support"]
 anyhow.workspace = true
 async-tungstenite = "0.16"
 base64.workspace = true
+chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui = { workspace = true, optional = true }
@@ -35,7 +36,7 @@ util.workspace = true
 zstd = "0.11"
 
 [build-dependencies]
-prost-build = "0.9"
+prost-build.workspace = true
 
 [dev-dependencies]
 collections.workspace = true

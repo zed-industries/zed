@@ -45,7 +45,7 @@ impl_actions!(task, [Rerun, Spawn]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<(TaskSourceKind, Arc<dyn Task>)>,
+    candidates: Option<Vec<(TaskSourceKind, Arc<dyn Task>)>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -62,7 +62,7 @@ impl TasksModalDelegate {
         Self {
             inventory,
             workspace,
-            candidates: Vec::new(),
+            candidates: None,
             matches: Vec::new(),
             selected_index: 0,
             prompt: String::default(),
@@ -84,10 +84,10 @@ impl TasksModalDelegate {
     }
 
     fn active_item_path(
-        &mut self,
+        workspace: &WeakView<Workspace>,
         cx: &mut ViewContext<'_, Picker<Self>>,
     ) -> Option<(PathBuf, ProjectPath)> {
-        let workspace = self.workspace.upgrade()?.read(cx);
+        let workspace = workspace.upgrade()?.read(cx);
         let project = workspace.project().read(cx);
         let active_item = workspace.active_item(cx)?;
         active_item.project_path(cx).and_then(|project_path| {
@@ -169,8 +169,8 @@ impl PickerDelegate for TasksModalDelegate {
     fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
         Arc::from(format!(
             "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
-            cx.keystroke_text_for(&menu::UseSelectedQuery),
-            cx.keystroke_text_for(&menu::SecondaryConfirm),
+            cx.keystroke_text_for(&picker::UseSelectedQuery),
+            cx.keystroke_text_for(&picker::ConfirmInput {secondary: false}),
             cx.keystroke_text_for(&menu::Confirm),
         ))
     }
@@ -183,19 +183,20 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
-                    let (path, worktree) = match picker.delegate.active_item_path(cx) {
-                        Some((abs_path, project_path)) => {
-                            (Some(abs_path), Some(project_path.worktree_id))
-                        }
-                        None => (None, None),
-                    };
-                    picker.delegate.candidates =
+                    let candidates = picker.delegate.candidates.get_or_insert_with(|| {
+                        let (path, worktree) =
+                            match Self::active_item_path(&picker.delegate.workspace, cx) {
+                                Some((abs_path, project_path)) => {
+                                    (Some(abs_path), Some(project_path.worktree_id))
+                                }
+                                None => (None, None),
+                            };
                         picker.delegate.inventory.update(cx, |inventory, cx| {
                             inventory.list_tasks(path.as_deref(), worktree, true, cx)
-                        });
-                    picker
-                        .delegate
-                        .candidates
+                        })
+                    });
+
+                    candidates
                         .iter()
                         .enumerate()
                         .map(|(index, (_, candidate))| StringMatchCandidate {
@@ -235,28 +236,30 @@ impl PickerDelegate for TasksModalDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, omit_history_entry: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let task = if secondary {
-            if !self.prompt.trim().is_empty() {
-                self.spawn_oneshot(cx)
-            } else {
-                None
-            }
-        } else {
-            self.matches.get(current_match_index).map(|current_match| {
+        let task = self
+            .matches
+            .get(current_match_index)
+            .and_then(|current_match| {
                 let ix = current_match.candidate_id;
-                self.candidates[ix].1.clone()
-            })
-        };
-
+                self.candidates
+                    .as_ref()
+                    .map(|candidates| candidates[ix].1.clone())
+            });
         let Some(task) = task else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
+                schedule_task(
+                    workspace,
+                    task.as_ref(),
+                    self.task_context.clone(),
+                    omit_history_entry,
+                    cx,
+                );
             })
             .ok();
         cx.emit(DismissEvent);
@@ -272,10 +275,12 @@ impl PickerDelegate for TasksModalDelegate {
         selected: bool,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &self.candidates[hit.candidate_id];
+        let (source_kind, _) = &candidates[hit.candidate_id];
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
+            TaskSourceKind::Buffer => "language extension".to_string(),
             TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
                 abs_path.compact().to_string_lossy().to_string()
             }
@@ -303,7 +308,37 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn selected_as_query(&self) -> Option<String> {
-        Some(self.matches.get(self.selected_index())?.string.clone())
+        use itertools::intersperse;
+        let task_index = self.matches.get(self.selected_index())?.candidate_id;
+        let tasks = self.candidates.as_ref()?;
+        let (_, task) = tasks.get(task_index)?;
+        // .exec doesn't actually spawn anything; it merely prepares a spawning command,
+        // which we can use for substitution.
+        let mut spawn_prompt = task.exec(self.task_context.clone())?;
+        if !spawn_prompt.args.is_empty() {
+            spawn_prompt.command.push(' ');
+            spawn_prompt
+                .command
+                .extend(intersperse(spawn_prompt.args, " ".to_string()));
+        }
+        Some(spawn_prompt.command)
+    }
+    fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
+        let Some(task) = self.spawn_oneshot(cx) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                schedule_task(
+                    workspace,
+                    task.as_ref(),
+                    self.task_context.clone(),
+                    omit_history_entry,
+                    cx,
+                );
+            })
+            .ok();
+        cx.emit(DismissEvent);
     }
 }
 
@@ -371,18 +406,18 @@ mod tests {
             "Only one task should match the query {query_str}"
         );
 
-        cx.dispatch_action(menu::UseSelectedQuery);
+        cx.dispatch_action(picker::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
-            "example task",
-            "Query should be set to the selected task's name"
+            "echo 4",
+            "Query should be set to the selected task's command"
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["example task"],
-            "No other tasks should be listed"
+            Vec::<String>::new(),
+            "No task should be listed"
         );
-        cx.dispatch_action(menu::Confirm);
+        cx.dispatch_action(picker::ConfirmInput { secondary: false });
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -392,8 +427,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["example task", "another one"],
-            "Last recently used task should be listed first"
+            vec!["echo 4", "another one", "example task"],
+            "New oneshot task should be listed first"
         );
 
         let query_str = "echo 4";
@@ -401,11 +436,11 @@ mod tests {
         assert_eq!(query(&tasks_picker, cx), query_str);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "No tasks should match custom command query"
+            vec!["echo 4"],
+            "New oneshot should match custom command query"
         );
 
-        cx.dispatch_action(menu::SecondaryConfirm);
+        cx.dispatch_action(picker::ConfirmInput { secondary: false });
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             query(&tasks_picker, cx),
@@ -414,11 +449,11 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec![query_str, "example task", "another one"],
+            vec![query_str, "another one", "example task"],
             "Last recently used one show task should be listed first"
         );
 
-        cx.dispatch_action(menu::UseSelectedQuery);
+        cx.dispatch_action(picker::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
             query_str,
@@ -428,6 +463,28 @@ mod tests {
             task_names(&tasks_picker, cx),
             vec![query_str],
             "Only custom task should be listed"
+        );
+
+        let query_str = "0";
+        cx.simulate_input(query_str);
+        assert_eq!(query(&tasks_picker, cx), "echo 40");
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "New oneshot should not match any command query"
+        );
+
+        cx.dispatch_action(picker::ConfirmInput { secondary: true });
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "",
+            "Query should be reset after confirming"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["echo 4", "another one", "example task", "echo 40"],
+            "Last recently used one show task should be listed last, as it is a fire-and-forget task"
         );
     }
 

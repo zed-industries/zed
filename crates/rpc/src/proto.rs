@@ -149,7 +149,11 @@ messages!(
     (CallCanceled, Foreground),
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
+    (ChannelMessageUpdate, Foreground),
+    (CompleteWithLanguageModel, Background),
     (CopyProjectEntry, Foreground),
+    (CountTokensWithLanguageModel, Background),
+    (CountTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -160,6 +164,7 @@ messages!(
     (DeleteChannel, Foreground),
     (DeleteNotification, Foreground),
     (DeleteProjectEntry, Foreground),
+    (EndStream, Foreground),
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
     (ExpandProjectEntryResponse, Foreground),
@@ -211,6 +216,7 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
+    (LanguageModelResponse, Background),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
@@ -239,6 +245,7 @@ messages!(
     (ReloadBuffersResponse, Foreground),
     (RemoveChannelMember, Foreground),
     (RemoveChannelMessage, Foreground),
+    (UpdateChannelMessage, Foreground),
     (RemoveContact, Foreground),
     (RemoveProjectCollaborator, Foreground),
     (RenameChannel, Foreground),
@@ -289,6 +296,8 @@ messages!(
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
     (SetRoomParticipantRole, Foreground),
+    (BlameBuffer, Foreground),
+    (BlameBufferResponse, Foreground),
 );
 
 request_messages!(
@@ -300,6 +309,8 @@ request_messages!(
     (Call, Ack),
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
+    (CompleteWithLanguageModel, LanguageModelResponse),
+    (CountTokensWithLanguageModel, CountTokensResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -351,6 +362,7 @@ request_messages!(
     (ReloadBuffers, ReloadBuffersResponse),
     (RemoveChannelMember, Ack),
     (RemoveChannelMessage, Ack),
+    (UpdateChannelMessage, Ack),
     (RemoveContact, Ack),
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
@@ -376,6 +388,7 @@ request_messages!(
     (UpdateWorktree, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
+    (BlameBuffer, BlameBufferResponse),
 );
 
 entity_messages!(
@@ -383,6 +396,7 @@ entity_messages!(
     AddProjectCollaborator,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
+    BlameBuffer,
     BufferReloaded,
     BufferSaved,
     CopyProjectEntry,
@@ -435,7 +449,9 @@ entity_messages!(
 entity_messages!(
     {channel_id, Channel},
     ChannelMessageSent,
+    ChannelMessageUpdate,
     RemoveChannelMessage,
+    UpdateChannelMessage,
     UpdateChannelBuffer,
     UpdateChannelBufferCollaborators,
 );

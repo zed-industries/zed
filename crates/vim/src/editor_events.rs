@@ -1,6 +1,8 @@
 use crate::{insert::NormalBefore, Vim, VimModeSetting};
 use editor::{Editor, EditorEvent};
-use gpui::{Action, AppContext, Entity, EntityId, View, ViewContext, WindowContext};
+use gpui::{
+    Action, AppContext, BorrowAppContext, Entity, EntityId, View, ViewContext, WindowContext,
+};
 use settings::{Settings, SettingsStore};
 
 pub fn init(cx: &mut AppContext) {
@@ -29,7 +31,6 @@ pub fn init(cx: &mut AppContext) {
     })
     .detach();
 }
-
 fn focused(editor: View<Editor>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         if !vim.enabled {

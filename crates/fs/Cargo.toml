@@ -26,6 +26,7 @@ tempfile.workspace = true
 lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
+git.workspace = true
 git2.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -43,10 +44,7 @@ fsevent.workspace = true
 notify = "6.1.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.52", features = [
-    "Win32_Foundation",
-    "Win32_Storage_FileSystem",
-] }
+windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

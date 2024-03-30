@@ -3,7 +3,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu,
     MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowOptions,
+    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
@@ -48,7 +48,6 @@ use std::{
     rc::Rc,
     slice, str,
     sync::Arc,
-    time::Duration,
 };
 use time::UtcOffset;
 
@@ -137,6 +136,7 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+
         decl.register()
     }
 }
@@ -477,6 +477,10 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(MacDisplay::primary()))
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
@@ -494,7 +498,7 @@ impl Platform for MacPlatform {
     fn open_window(
         &self,
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         // Clippy thinks that this evaluates to `()`, for some reason.
         #[allow(clippy::unit_arg, clippy::clone_on_copy)]
@@ -548,6 +552,11 @@ impl Platform for MacPlatform {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             let scheme: id = ns_string(scheme);
             let app: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+            if app == nil {
+                return Task::ready(Err(anyhow!(
+                    "Cannot register URL scheme until app is installed"
+                )));
+            }
             let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |error: id| {
                 let result = if error == nil {
@@ -705,22 +714,15 @@ impl Platform for MacPlatform {
         "macOS"
     }
 
-    fn double_click_interval(&self) -> Duration {
-        unsafe {
-            let double_click_interval: f64 = msg_send![class!(NSEvent), doubleClickInterval];
-            Duration::from_secs_f64(double_click_interval)
-        }
-    }
-
     fn os_version(&self) -> Result<SemanticVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             let version = process_info.operatingSystemVersion();
-            Ok(SemanticVersion {
-                major: version.majorVersion as usize,
-                minor: version.minorVersion as usize,
-                patch: version.patchVersion as usize,
-            })
+            Ok(SemanticVersion::new(
+                version.majorVersion as usize,
+                version.minorVersion as usize,
+                version.patchVersion as usize,
+            ))
         }
     }
 
@@ -759,6 +761,17 @@ impl Platform for MacPlatform {
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
             app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
+        }
+    }
+
+    fn add_recent_document(&self, path: &Path) {
+        if let Some(path_str) = path.to_str() {
+            unsafe {
+                let document_controller: id =
+                    msg_send![class!(NSDocumentController), sharedDocumentController];
+                let url: id = NSURL::fileURLWithPath_(nil, ns_string(path_str));
+                let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
+            }
         }
     }
 
@@ -1058,7 +1071,6 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
-
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {

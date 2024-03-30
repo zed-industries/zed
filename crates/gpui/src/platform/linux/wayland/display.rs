@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use uuid::Uuid;
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Size};
 
 #[derive(Debug)]
 pub(crate) struct WaylandDisplay {}
@@ -19,12 +19,12 @@ impl PlatformDisplay for WaylandDisplay {
     }
 
     // todo(linux)
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         Bounds {
             origin: Default::default(),
             size: Size {
-                width: GlobalPixels(1000f32),
-                height: GlobalPixels(500f32),
+                width: DevicePixels(1000),
+                height: DevicePixels(500),
             },
         } // return some fake data so it doesn't panic
     }

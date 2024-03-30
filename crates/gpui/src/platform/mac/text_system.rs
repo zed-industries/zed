@@ -233,9 +233,34 @@ impl MacTextSystemState {
             let mut font = font.load()?;
 
             open_type::apply_features(&mut font, features);
-            let Some(_) = font.glyph_for_char('m') else {
-                continue;
-            };
+
+            // This block contains a precautionary fix to guard against loading fonts
+            // that might cause panics due to `.unwrap()`s up the chain.
+            {
+                // We use the 'm' character for text measurements in various spots
+                // (e.g., the editor). However, at time of writing some of those usages
+                // will panic if the font has no 'm' glyph.
+                //
+                // Therefore, we check up front that the font has the necessary glyph.
+                let has_m_glyph = font.glyph_for_char('m').is_some();
+
+                // HACK: The 'Segoe Fluent Icons' font does not have an 'm' glyph,
+                // but we need to be able to load it for rendering Windows icons in
+                // the Storybook (on macOS).
+                let is_segoe_fluent_icons = font.full_name() == "Segoe Fluent Icons";
+
+                if !has_m_glyph && !is_segoe_fluent_icons {
+                    // I spent far too long trying to track down why a font missing the 'm'
+                    // character wasn't loading. This log statement will hopefully save
+                    // someone else from suffering the same fate.
+                    log::warn!(
+                        "font '{}' has no 'm' character and was not loaded",
+                        font.full_name()
+                    );
+                    continue;
+                }
+            }
+
             // We've seen a number of panics in production caused by calling font.properties()
             // which unwraps a downcast to CFNumber. This is an attempt to avoid the panic,
             // and to try and identify the incalcitrant font.
@@ -400,9 +425,8 @@ impl MacTextSystemState {
                 );
 
             if params.is_emoji {
-                // Convert from RGBA with premultiplied alpha to BGRA with straight alpha.
+                // Convert from RGBA with premultiplied alpha to RGBA with straight alpha.
                 for pixel in bytes.chunks_exact_mut(4) {
-                    pixel.swap(0, 2);
                     let a = pixel[3] as f32 / 255.;
                     pixel[0] = (pixel[0] as f32 / a) as u8;
                     pixel[1] = (pixel[1] as f32 / a) as u8;

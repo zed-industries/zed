@@ -270,6 +270,11 @@ async fn test_status_indicator(cx: &mut gpui::TestAppContext) {
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
         Some(Mode::Insert)
     );
+    cx.simulate_keystrokes(["escape", "shift-r"]);
+    assert_eq!(
+        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
+        Some(Mode::Replace)
+    );
 
     // shows even in search
     cx.simulate_keystrokes(["escape", "v", "/"]);
@@ -980,4 +985,56 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.set_state("12ˇ34", Mode::Normal);
     cx.simulate_keystrokes(["g", "t"]);
     cx.assert_state("12ˇ 34", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_undo(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("hello quˇoel world").await;
+    cx.simulate_shared_keystrokes(["v", "i", "w", "s", "c", "o", "escape", "u"])
+        .await;
+    cx.assert_shared_state("hello ˇquoel world").await;
+    cx.simulate_shared_keystrokes(["ctrl-r"]).await;
+    cx.assert_shared_state("hello ˇco world").await;
+    cx.simulate_shared_keystrokes(["a", "o", "right", "l", "escape"])
+        .await;
+    cx.assert_shared_state("hello cooˇl world").await;
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state("hello cooˇ world").await;
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state("hello cˇo world").await;
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state("hello ˇquoel world").await;
+
+    cx.set_shared_state("hello quˇoel world").await;
+    cx.simulate_shared_keystrokes(["v", "i", "w", "~", "u"])
+        .await;
+    cx.assert_shared_state("hello ˇquoel world").await;
+
+    cx.set_shared_state("\nhello quˇoel world\n").await;
+    cx.simulate_shared_keystrokes(["shift-v", "s", "c", "escape", "u"])
+        .await;
+    cx.assert_shared_state("\nˇhello quoel world\n").await;
+
+    cx.set_shared_state(indoc! {"
+        ˇ1
+        2
+        3"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["ctrl-v", "shift-g", "ctrl-a"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        ˇ2
+        3
+        4"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["u"]).await;
+    cx.assert_shared_state(indoc! {"
+        ˇ1
+        2
+        3"})
+        .await;
 }

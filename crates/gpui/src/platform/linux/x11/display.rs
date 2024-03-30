@@ -1,29 +1,30 @@
 use anyhow::Result;
 use uuid::Uuid;
+use x11rb::{connection::Connection as _, xcb_ffi::XCBConnection};
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Size};
 
 #[derive(Debug)]
 pub(crate) struct X11Display {
-    x_screen_index: i32,
-    bounds: Bounds<GlobalPixels>,
+    x_screen_index: usize,
+    bounds: Bounds<DevicePixels>,
     uuid: Uuid,
 }
 
 impl X11Display {
-    pub(crate) fn new(xc: &xcb::Connection, x_screen_index: i32) -> Self {
-        let screen = xc.get_setup().roots().nth(x_screen_index as usize).unwrap();
-        Self {
-            x_screen_index,
+    pub(crate) fn new(xc: &XCBConnection, x_screen_index: usize) -> Option<Self> {
+        let screen = xc.setup().roots.get(x_screen_index).unwrap();
+        Some(Self {
+            x_screen_index: x_screen_index,
             bounds: Bounds {
                 origin: Default::default(),
                 size: Size {
-                    width: GlobalPixels(screen.width_in_pixels() as f32),
-                    height: GlobalPixels(screen.height_in_pixels() as f32),
+                    width: DevicePixels(screen.width_in_pixels as i32),
+                    height: DevicePixels(screen.height_in_pixels as i32),
                 },
             },
             uuid: Uuid::from_bytes([0; 16]),
-        }
+        })
     }
 }
 
@@ -36,7 +37,7 @@ impl PlatformDisplay for X11Display {
         Ok(self.uuid)
     }
 
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.bounds
     }
 }

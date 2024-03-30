@@ -1,5 +1,5 @@
 use editor::test::editor_test_context::ContextHandle;
-use gpui::{px, size, Context};
+use gpui::{px, size, BorrowAppContext, Context};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{

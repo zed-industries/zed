@@ -3,12 +3,15 @@
 
 pub mod oneshot_source;
 pub mod static_source;
+mod vscode_format;
 
 use collections::HashMap;
 use gpui::ModelContext;
+use static_source::RevealStrategy;
 use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
@@ -34,6 +37,21 @@ pub struct SpawnInTerminal {
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     pub allow_concurrent_runs: bool,
+    /// What to do with the terminal pane and tab, after the command was started.
+    pub reveal: RevealStrategy,
+}
+
+type VariableName = String;
+type VariableValue = String;
+
+/// Container for predefined environment variables that describe state of Zed at the time the task was spawned.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskVariables(pub HashMap<VariableName, VariableValue>);
+
+impl FromIterator<(String, String)> for TaskVariables {
+    fn from_iter<T: IntoIterator<Item = (String, String)>>(iter: T) -> Self {
+        Self(HashMap::from_iter(iter))
+    }
 }
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
@@ -42,7 +60,7 @@ pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,
     /// Additional environment variables associated with a given task.
-    pub env: HashMap<String, String>,
+    pub task_variables: TaskVariables,
 }
 
 /// Represents a short lived recipe of a task, whose main purpose

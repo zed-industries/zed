@@ -29,8 +29,7 @@ use std::{
     sync::Arc,
 };
 use util::{
-    async_maybe, fs::remove_matching, github::latest_github_release, http::HttpClient, paths,
-    ResultExt,
+    fs::remove_matching, github::latest_github_release, http::HttpClient, maybe, paths, ResultExt,
 };
 
 actions!(
@@ -66,33 +65,26 @@ pub fn init(
         let copilot_auth_action_types = [TypeId::of::<SignOut>()];
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
-        let filter = cx.default_global::<CommandPaletteFilter>();
+        let filter = CommandPaletteFilter::global_mut(cx);
 
         match status {
             Status::Disabled => {
-                filter.hidden_action_types.extend(copilot_action_types);
-                filter.hidden_action_types.extend(copilot_auth_action_types);
-                filter
-                    .hidden_action_types
-                    .extend(copilot_no_auth_action_types);
+                filter.hide_action_types(&copilot_action_types);
+                filter.hide_action_types(&copilot_auth_action_types);
+                filter.hide_action_types(&copilot_no_auth_action_types);
             }
             Status::Authorized => {
-                filter
-                    .hidden_action_types
-                    .extend(copilot_no_auth_action_types);
-                for type_id in copilot_action_types
-                    .iter()
-                    .chain(&copilot_auth_action_types)
-                {
-                    filter.hidden_action_types.remove(type_id);
-                }
+                filter.hide_action_types(&copilot_no_auth_action_types);
+                filter.show_action_types(
+                    copilot_action_types
+                        .iter()
+                        .chain(&copilot_auth_action_types),
+                );
             }
             _ => {
-                filter.hidden_action_types.extend(copilot_action_types);
-                filter.hidden_action_types.extend(copilot_auth_action_types);
-                for type_id in &copilot_no_auth_action_types {
-                    filter.hidden_action_types.remove(type_id);
-                }
+                filter.hide_action_types(&copilot_action_types);
+                filter.hide_action_types(&copilot_auth_action_types);
+                filter.show_action_types(copilot_no_auth_action_types.iter());
             }
         }
     })
@@ -384,6 +376,7 @@ impl Copilot {
         use node_runtime::FakeNodeRuntime;
 
         let (server, fake_server) = FakeLanguageServer::new(
+            LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/copilot".into(),
                 arguments: vec![],
@@ -805,7 +798,7 @@ impl Copilot {
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
-            Err(error) => return Task::ready(Err(error)),
+            Err(_) => return Task::ready(Ok(())),
         };
         let request =
             server
@@ -1013,7 +1006,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         e @ Err(..) => {
             e.log_err();
             // Fetch a cached binary, if it exists
-            async_maybe!({
+            maybe!(async {
                 let mut last_version_dir = None;
                 let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
                 while let Some(entry) = entries.next().await {
@@ -1220,7 +1213,7 @@ mod tests {
             Some(self)
         }
 
-        fn mtime(&self) -> std::time::SystemTime {
+        fn mtime(&self) -> Option<std::time::SystemTime> {
             unimplemented!()
         }
 
@@ -1272,7 +1265,7 @@ mod tests {
             _: &clock::Global,
             _: language::RopeFingerprint,
             _: language::LineEnding,
-            _: std::time::SystemTime,
+            _: Option<std::time::SystemTime>,
             _: &mut AppContext,
         ) {
             unimplemented!()

@@ -19,16 +19,9 @@ OPTIONS
 const { spawn, execFileSync } = require("child_process");
 const assert = require("assert");
 
-const defaultUsers = require("../crates/collab/.admins.default.json");
-let users = defaultUsers;
-try {
-  const customUsers = require("../crates/collab/.admins.json");
-  assert(customUsers.length > 0);
-  assert(customUsers.every((user) => typeof user === "string"));
-  users = customUsers.concat(
-    defaultUsers.filter((user) => !customUsers.includes(user)),
-  );
-} catch (_) {}
+const users = require(
+  process.env.SEED_PATH || "../crates/collab/seed.default.json",
+).admins;
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/;

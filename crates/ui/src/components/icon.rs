@@ -1,4 +1,4 @@
-use gpui::{rems, svg, IntoElement, Rems};
+use gpui::{svg, IntoElement, Rems, Transformation};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -15,10 +15,10 @@ pub enum IconSize {
 impl IconSize {
     pub fn rems(self) -> Rems {
         match self {
-            IconSize::Indicator => rems(10. / 16.),
-            IconSize::XSmall => rems(12. / 16.),
-            IconSize::Small => rems(14. / 16.),
-            IconSize::Medium => rems(16. / 16.),
+            IconSize::Indicator => rems_from_px(10.),
+            IconSize::XSmall => rems_from_px(12.),
+            IconSize::Small => rems_from_px(14.),
+            IconSize::Medium => rems_from_px(16.),
         }
     }
 }
@@ -93,6 +93,7 @@ pub enum IconName {
     Option,
     PageDown,
     PageUp,
+    Pencil,
     Play,
     Plus,
     Public,
@@ -101,7 +102,8 @@ pub enum IconName {
     ReplaceAll,
     ReplaceNext,
     Return,
-    ReplyArrow,
+    ReplyArrowRight,
+    ReplyArrowLeft,
     Screen,
     SelectAll,
     Shift,
@@ -187,6 +189,7 @@ impl IconName {
             IconName::Option => "icons/option.svg",
             IconName::PageDown => "icons/page_down.svg",
             IconName::PageUp => "icons/page_up.svg",
+            IconName::Pencil => "icons/pencil.svg",
             IconName::Play => "icons/play.svg",
             IconName::Plus => "icons/plus.svg",
             IconName::Public => "icons/public.svg",
@@ -195,7 +198,8 @@ impl IconName {
             IconName::ReplaceAll => "icons/replace_all.svg",
             IconName::ReplaceNext => "icons/replace_next.svg",
             IconName::Return => "icons/return.svg",
-            IconName::ReplyArrow => "icons/reply_arrow.svg",
+            IconName::ReplyArrowRight => "icons/reply_arrow_right.svg",
+            IconName::ReplyArrowLeft => "icons/reply_arrow_left.svg",
             IconName::Screen => "icons/desktop.svg",
             IconName::SelectAll => "icons/select_all.svg",
             IconName::Shift => "icons/shift.svg",
@@ -217,6 +221,7 @@ pub struct Icon {
     path: SharedString,
     color: Color,
     size: IconSize,
+    transformation: Transformation,
 }
 
 impl Icon {
@@ -225,6 +230,7 @@ impl Icon {
             path: icon.path().into(),
             color: Color::default(),
             size: IconSize::default(),
+            transformation: Transformation::default(),
         }
     }
 
@@ -233,6 +239,7 @@ impl Icon {
             path: path.into(),
             color: Color::default(),
             size: IconSize::default(),
+            transformation: Transformation::default(),
         }
     }
 
@@ -245,11 +252,17 @@ impl Icon {
         self.size = size;
         self
     }
+
+    pub fn transform(mut self, transformation: Transformation) -> Self {
+        self.transformation = transformation;
+        self
+    }
 }
 
 impl RenderOnce for Icon {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         svg()
+            .with_transformation(self.transformation)
             .size(self.size.rems())
             .flex_none()
             .path(self.path)

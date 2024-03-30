@@ -125,6 +125,11 @@ spec:
                 secretKeyRef:
                   name: livekit
                   key: secret
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai
+                  key: api_key
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -185,6 +190,8 @@ spec:
               value: "true"
             - name: ZED_ENVIRONMENT
               value: ${ZED_ENVIRONMENT}
+            - name: AUTO_JOIN_CHANNEL_ID
+              value: "${AUTO_JOIN_CHANNEL_ID}"
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.

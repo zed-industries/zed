@@ -48,7 +48,7 @@ impl FakeServer {
                         let mut state = state.lock();
                         state.auth_count += 1;
                         let access_token = state.access_token.to_string();
-                        Ok(Credentials {
+                        Ok(Credentials::User {
                             user_id: client_user_id,
                             access_token,
                         })
@@ -71,9 +71,12 @@ impl FakeServer {
                             )))?
                         }
 
-                        assert_eq!(credentials.user_id, client_user_id);
-
-                        if credentials.access_token != state.lock().access_token.to_string() {
+                        if credentials
+                            != (Credentials::User {
+                                user_id: client_user_id,
+                                access_token: state.lock().access_token.to_string(),
+                            })
+                        {
                             Err(EstablishConnectionError::Unauthorized)?
                         }
 

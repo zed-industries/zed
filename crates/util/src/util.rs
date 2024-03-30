@@ -3,15 +3,12 @@ pub mod fs;
 pub mod github;
 pub mod http;
 pub mod paths;
-mod semantic_version;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub use backtrace::Backtrace;
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
-pub use semantic_version::SemanticVersion;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -32,7 +29,7 @@ macro_rules! debug_panic {
         if cfg!(debug_assertions) {
             panic!( $($fmt_arg)* );
         } else {
-            let backtrace = $crate::Backtrace::new();
+            let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
     };
@@ -88,6 +85,19 @@ pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     match truncation_ix {
         Some(length) => "…".to_string() + &s[length..],
         None => s.to_string(),
+    }
+}
+
+/// Takes only `max_lines` from the string and, if there were more than `max_lines-1`, appends a
+/// a newline and "..." to the string, so that `max_lines` are returned.
+/// Returns string unchanged if its length is smaller than max_lines.
+pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
+    let mut lines = s.lines().take(max_lines).collect::<Vec<_>>();
+    if lines.len() > max_lines - 1 {
+        lines.pop();
+        lines.join("\n") + "\n…"
+    } else {
+        lines.join("\n")
     }
 }
 
@@ -427,21 +437,20 @@ pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
     }
 }
 
-/// Evaluates to an immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result
+/// Expands to an immediately-invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result.
+///
+/// Accepts a normal block, an async block, or an async move block.
 #[macro_export]
 macro_rules! maybe {
     ($block:block) => {
         (|| $block)()
     };
-}
-
-/// Evaluates to an immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result, but async.
-#[macro_export]
-macro_rules! async_maybe {
-    ($block:block) => {
-        (|| async move { $block })()
+    (async $block:block) => {
+        (|| async $block)()
+    };
+    (async move $block:block) => {
+        (|| async move $block)()
     };
 }
 
@@ -524,6 +533,22 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
         Some(self.cmp(other))
     }
 }
+lazy_static! {
+    static ref EMOJI_REGEX: regex::Regex = regex::Regex::new("(\\p{Emoji}|\u{200D})").unwrap();
+}
+
+/// Returns true if the given string consists of emojis only.
+/// E.g. "👨‍👩‍👧‍👧👋" will return true, but "👋!" will return false.
+pub fn word_consists_of_emojis(s: &str) -> bool {
+    let mut prev_end = 0;
+    for capture in EMOJI_REGEX.find_iter(s) {
+        if capture.start() != prev_end {
+            return false;
+        }
+        prev_end = capture.end();
+    }
+    prev_end == s.len()
+}
 
 #[cfg(test)]
 mod tests {
@@ -582,5 +607,49 @@ mod tests {
                 "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
             )
         }
+    }
+
+    #[test]
+    fn test_word_consists_of_emojis() {
+        let words_to_test = vec![
+            ("👨‍👩‍👧‍👧👋🥒", true),
+            ("👋", true),
+            ("!👋", false),
+            ("👋!", false),
+            ("👋 ", false),
+            (" 👋", false),
+            ("Test", false),
+        ];
+
+        for (text, expected_result) in words_to_test {
+            assert_eq!(word_consists_of_emojis(text), expected_result);
+        }
+    }
+
+    #[test]
+    fn test_truncate_lines_and_trailoff() {
+        let text = r#"Line 1
+Line 2
+Line 3"#;
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 2),
+            r#"Line 1
+…"#
+        );
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 3),
+            r#"Line 1
+Line 2
+…"#
+        );
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 4),
+            r#"Line 1
+Line 2
+Line 3"#
+        );
     }
 }

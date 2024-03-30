@@ -3,9 +3,9 @@ use std::ops::Deref;
 use futures::channel::oneshot;
 
 use crate::{
-    div, opaque_grey, white, AnyElement, AnyView, ElementContext, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
-    StatefulInteractiveElement, Styled, View, ViewContext, VisualContext, WindowContext,
+    div, opaque_grey, white, AnyView, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ParentElement, PromptLevel, Render, StatefulInteractiveElement, Styled, View,
+    ViewContext, VisualContext, WindowContext,
 };
 
 /// The event emitted when a prompt's option is selected.
@@ -57,13 +57,7 @@ impl PromptHandle {
 
 /// A prompt handle capable of being rendered in a window.
 pub struct RenderablePromptHandle {
-    view: Box<dyn PromptViewHandle>,
-}
-
-impl RenderablePromptHandle {
-    pub(crate) fn paint(&mut self, _: &mut ElementContext) -> AnyElement {
-        self.view.any_view().into_any_element()
-    }
+    pub(crate) view: Box<dyn PromptViewHandle>,
 }
 
 /// Use this function in conjunction with [AppContext::set_prompt_renderer] to force
@@ -146,7 +140,6 @@ impl Render for FallbackPromptRenderer {
 
         div()
             .size_full()
-            .z_index(u16::MAX)
             .child(
                 div()
                     .size_full()
@@ -184,7 +177,7 @@ impl FocusableView for FallbackPromptRenderer {
     }
 }
 
-trait PromptViewHandle {
+pub(crate) trait PromptViewHandle {
     fn any_view(&self) -> AnyView;
 }
 

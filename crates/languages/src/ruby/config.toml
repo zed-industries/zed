@@ -3,6 +3,7 @@ grammar = "ruby"
 path_suffixes = [
     "rb",
     "Gemfile",
+    "Guardfile",
     "rake",
     "Rakefile",
     "ru",
@@ -37,4 +38,3 @@ brackets = [
     ] },
 ]
 collapsed_placeholder = "# ..."
-word_characters = ["_", "$", "=", "@", "!", ":", "?"]

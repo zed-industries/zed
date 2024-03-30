@@ -9,9 +9,11 @@ use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
-use repository::GitRepository;
+use repository::{GitRepository, RealGitRepository};
 use rope::Rope;
-use smol::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(any(test, feature = "test-support"))]
+use smol::io::AsyncReadExt;
+use smol::io::AsyncWriteExt;
 use std::io::Write;
 use std::sync::Arc;
 use std::{
@@ -56,6 +58,7 @@ pub trait Fs: Send + Sync {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
+    async fn is_dir(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
     async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
@@ -108,7 +111,16 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
-pub struct RealFs;
+#[derive(Default)]
+pub struct RealFs {
+    git_binary_path: Option<PathBuf>,
+}
+
+impl RealFs {
+    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
+        Self { git_binary_path }
+    }
+}
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
@@ -117,11 +129,15 @@ impl Fs for RealFs {
     }
 
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
-        #[cfg(target_family = "unix")]
+        #[cfg(unix)]
         smol::fs::unix::symlink(target, path).await?;
 
-        #[cfg(target_family = "windows")]
-        Err(anyhow!("not supported yet on windows"))?;
+        #[cfg(windows)]
+        if smol::fs::metadata(&target).await?.is_dir() {
+            smol::fs::windows::symlink_dir(target, path).await?
+        } else {
+            smol::fs::windows::symlink_file(target, path).await?
+        }
 
         Ok(())
     }
@@ -199,6 +215,21 @@ impl Fs for RealFs {
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        #[cfg(windows)]
+        if let Ok(Some(metadata)) = self.metadata(path).await {
+            if metadata.is_symlink && metadata.is_dir {
+                self.remove_dir(
+                    path,
+                    RemoveOptions {
+                        recursive: false,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
         match smol::fs::remove_file(path).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
@@ -213,12 +244,9 @@ impl Fs for RealFs {
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
-        let mut file = smol::fs::File::open(path).await?;
-        // We use `read_exact` here instead of `read_to_string` as the latter is *very*
-        // happy to reallocate often, which comes into play when we're loading large files.
-        let mut storage = vec![0; file.metadata().await?.len() as usize];
-        file.read_exact(&mut storage).await?;
-        Ok(String::from_utf8(storage)?)
+        let path = path.to_path_buf();
+        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
+        Ok(text)
     }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
@@ -262,6 +290,12 @@ impl Fs for RealFs {
         smol::fs::metadata(path)
             .await
             .map_or(false, |metadata| metadata.is_file())
+    }
+
+    async fn is_dir(&self, path: &Path) -> bool {
+        smol::fs::metadata(path)
+            .await
+            .map_or(false, |metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
@@ -406,7 +440,10 @@ impl Fs for RealFs {
         LibGitRepository::open(dotgit_path)
             .log_err()
             .map::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
-                Arc::new(Mutex::new(libgit_repository))
+                Arc::new(Mutex::new(RealGitRepository::new(
+                    libgit_repository,
+                    self.git_binary_path.clone(),
+                )))
             })
     }
 
@@ -500,7 +537,12 @@ impl FakeFsState {
     fn read_path(&self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
             .try_read_path(target, true)
-            .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
+            .ok_or_else(|| {
+                anyhow!(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("not found: {}", target.display())
+                ))
+            })?
             .0)
     }
 
@@ -790,6 +832,17 @@ impl FakeFs {
                 head_state
                     .iter()
                     .map(|(path, content)| (path.to_path_buf(), content.clone())),
+            );
+        });
+    }
+
+    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(&Path, git::blame::Blame)>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.blames.clear();
+            state.blames.extend(
+                blames
+                    .into_iter()
+                    .map(|(path, blame)| (path.to_path_buf(), blame)),
             );
         });
     }
@@ -1260,6 +1313,12 @@ impl Fs for FakeFs {
         }
     }
 
+    async fn is_dir(&self, path: &Path) -> bool {
+        self.metadata(path)
+            .await
+            .is_ok_and(|metadata| metadata.is_some_and(|metadata| metadata.is_dir))
+    }
+
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
@@ -1478,7 +1537,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use std::os::windows::io::AsRawHandle;
 
     use smol::fs::windows::OpenOptionsExt;
-    use windows_sys::Win32::{
+    use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
             GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
@@ -1487,7 +1546,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 
     let file = smol::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
         .open(path)
         .await?;
 
@@ -1495,10 +1554,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
     // This function supports Windows XP+
     smol::unblock(move || {
-        let ret = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
-        if ret == 0 {
-            return Err(anyhow!(format!("{}", std::io::Error::last_os_error())));
-        };
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
 
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })

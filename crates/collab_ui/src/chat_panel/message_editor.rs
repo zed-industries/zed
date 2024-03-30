@@ -37,6 +37,7 @@ pub struct MessageEditor {
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
     reply_to_message_id: Option<u64>,
+    edit_message_id: Option<u64>,
 }
 
 struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
@@ -131,6 +132,7 @@ impl MessageEditor {
             mentions: Vec::new(),
             mentions_task: None,
             reply_to_message_id: None,
+            edit_message_id: None,
         }
     }
 
@@ -144,6 +146,18 @@ impl MessageEditor {
 
     pub fn clear_reply_to_message_id(&mut self) {
         self.reply_to_message_id = None;
+    }
+
+    pub fn edit_message_id(&self) -> Option<u64> {
+        self.edit_message_id
+    }
+
+    pub fn set_edit_message_id(&mut self, edit_message_id: u64) {
+        self.edit_message_id = Some(edit_message_id);
+    }
+
+    pub fn clear_edit_message_id(&mut self) {
+        self.edit_message_id = None;
     }
 
     pub fn set_channel(
@@ -407,6 +421,23 @@ impl MessageEditor {
                     if next_char.is_none() || next_char.unwrap().is_whitespace() {
                         return Some(query.chars().rev().collect::<String>());
                     }
+
+                    // If the previous character is not a whitespace, we are in the middle of a word
+                    // and we only want to complete the shortcode if the word is made up of other emojis
+                    let mut containing_word = String::new();
+                    for ch in buffer
+                        .reversed_chars_at(end_offset - query.len() - 1)
+                        .take(100)
+                    {
+                        if ch.is_whitespace() {
+                            break;
+                        }
+                        containing_word.push(ch);
+                    }
+                    let containing_word = containing_word.chars().rev().collect::<String>();
+                    if util::word_consists_of_emojis(containing_word.as_str()) {
+                        return Some(query.chars().rev().collect::<String>());
+                    }
                     break;
                 }
                 if ch.is_whitespace() || !ch.is_ascii() {
@@ -607,7 +638,7 @@ mod tests {
             MessageEditorSettings::register(cx);
         });
 
-        let language_registry = Arc::new(LanguageRegistry::test());
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         language_registry.add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Markdown".into(),

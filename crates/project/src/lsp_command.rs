@@ -97,7 +97,7 @@ pub(crate) struct PerformRename {
     pub push_to_history: bool,
 }
 
-pub(crate) struct GetDefinition {
+pub struct GetDefinition {
     pub position: PointUtf16,
 }
 
@@ -1557,9 +1557,19 @@ impl LspCommand for GetCompletions {
                             (range, text)
                         }
 
-                        Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
-                            log::info!("unsupported insert/replace completion");
-                            return None;
+                        Some(lsp::CompletionTextEdit::InsertAndReplace(edit)) => {
+                            let range = range_from_lsp(edit.insert);
+
+                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                            if start != range.start.0 || end != range.end.0 {
+                                log::info!("completion out of expected range");
+                                return None;
+                            }
+                            (
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                edit.new_text.clone(),
+                            )
                         }
                     };
 
@@ -1842,6 +1852,17 @@ impl GetCodeActions {
             .and_then(|options| match options {
                 lsp::CodeActionProviderCapability::Simple(_is_supported) => None,
                 lsp::CodeActionProviderCapability::Options(options) => options.resolve_provider,
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn supports_code_actions(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_action_provider
+            .as_ref()
+            .map(|options| match options {
+                lsp::CodeActionProviderCapability::Simple(is_supported) => *is_supported,
+                lsp::CodeActionProviderCapability::Options(_) => true,
             })
             .unwrap_or(false)
     }

@@ -595,27 +595,18 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
-        let git_status = if ItemSettings::get_global(cx).git_status {
+        let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
                 .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
-                .and_then(|entry| entry.git_status())
+                .map(|entry| {
+                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
+                })
+                .unwrap_or_else(|| entry_label_color(params.selected))
         } else {
-            None
-        };
-        let label_color = match git_status {
-            Some(GitFileStatus::Added) => Color::Created,
-            Some(GitFileStatus::Modified) => Color::Modified,
-            Some(GitFileStatus::Conflict) => Color::Conflict,
-            None => {
-                if params.selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }
-            }
+            entry_label_color(params.selected)
         };
 
         let description = params.detail.and_then(|detail| {
@@ -712,43 +703,37 @@ impl Item for Editor {
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|this, mut cx| async move {
             if format {
-                this.update(&mut cx, |this, cx| {
-                    this.perform_format(project.clone(), FormatTrigger::Save, cx)
+                this.update(&mut cx, |editor, cx| {
+                    editor.perform_format(project.clone(), FormatTrigger::Save, cx)
                 })?
                 .await?;
             }
 
-            if buffers.len() == 1 {
-                project
-                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))?
-                    .await?;
-            } else {
-                // For multi-buffers, only save those ones that contain changes. For clean buffers
-                // we simulate saving by calling `Buffer::did_save`, so that language servers or
-                // other downstream listeners of save events get notified.
-                let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
-                    buffer
-                        .update(&mut cx, |buffer, _| {
-                            buffer.is_dirty() || buffer.has_conflict()
-                        })
-                        .unwrap_or(false)
-                });
+            // Only format and save the buffers with changes. For clean buffers,
+            // we simulate saving by calling `Buffer::did_save`, so that language servers or
+            // other downstream listeners of save events get notified.
+            let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.is_dirty() || buffer.has_conflict()
+                    })
+                    .unwrap_or(false)
+            });
 
-                project
-                    .update(&mut cx, |project, cx| {
-                        project.save_buffers(dirty_buffers, cx)
-                    })?
-                    .await?;
-                for buffer in clean_buffers {
-                    buffer
-                        .update(&mut cx, |buffer, cx| {
-                            let version = buffer.saved_version().clone();
-                            let fingerprint = buffer.saved_version_fingerprint();
-                            let mtime = buffer.saved_mtime();
-                            buffer.did_save(version, fingerprint, mtime, cx);
-                        })
-                        .ok();
-                }
+            project
+                .update(&mut cx, |project, cx| {
+                    project.save_buffers(dirty_buffers, cx)
+                })?
+                .await?;
+            for buffer in clean_buffers {
+                buffer
+                    .update(&mut cx, |buffer, cx| {
+                        let version = buffer.saved_version().clone();
+                        let fingerprint = buffer.saved_version_fingerprint();
+                        let mtime = buffer.saved_mtime();
+                        buffer.did_save(version, fingerprint, mtime, cx);
+                    })
+                    .ok();
             }
 
             Ok(())
@@ -1199,6 +1184,31 @@ pub fn active_match_index(
     }
 }
 
+pub fn entry_label_color(selected: bool) -> Color {
+    if selected {
+        Color::Default
+    } else {
+        Color::Muted
+    }
+}
+
+pub fn entry_git_aware_label_color(
+    git_status: Option<GitFileStatus>,
+    ignored: bool,
+    selected: bool,
+) -> Color {
+    if ignored {
+        Color::Disabled
+    } else {
+        match git_status {
+            Some(GitFileStatus::Added) => Color::Created,
+            Some(GitFileStatus::Modified) => Color::Modified,
+            Some(GitFileStatus::Conflict) => Color::Conflict,
+            None => entry_label_color(selected),
+        }
+    }
+}
+
 fn path_for_buffer<'a>(
     buffer: &Model<MultiBuffer>,
     height: usize,
@@ -1251,65 +1261,15 @@ fn path_for_file<'a>(
 mod tests {
     use super::*;
     use gpui::AppContext;
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-        time::SystemTime,
-    };
+    use language::TestFile;
+    use std::path::Path;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut AppContext) {
         let file = TestFile {
             path: Path::new("").into(),
-            full_path: PathBuf::from(""),
+            root_name: String::new(),
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
-    }
-
-    struct TestFile {
-        path: Arc<Path>,
-        full_path: PathBuf,
-    }
-
-    impl language::File for TestFile {
-        fn path(&self) -> &Arc<Path> {
-            &self.path
-        }
-
-        fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
-            self.full_path.clone()
-        }
-
-        fn as_local(&self) -> Option<&dyn language::LocalFile> {
-            unimplemented!()
-        }
-
-        fn mtime(&self) -> SystemTime {
-            unimplemented!()
-        }
-
-        fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn worktree_id(&self) -> usize {
-            0
-        }
-
-        fn is_deleted(&self) -> bool {
-            unimplemented!()
-        }
-
-        fn as_any(&self) -> &dyn std::any::Any {
-            unimplemented!()
-        }
-
-        fn to_proto(&self) -> rpc::proto::File {
-            unimplemented!()
-        }
-
-        fn is_private(&self) -> bool {
-            false
-        }
     }
 }

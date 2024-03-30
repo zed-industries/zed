@@ -1,8 +1,8 @@
 use copilot::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     div, svg, AppContext, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, Styled,
-    Subscription, ViewContext,
+    FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent, ParentElement, Render,
+    Styled, Subscription, ViewContext,
 };
 use ui::{prelude::*, Button, IconName, Label};
 use workspace::ModalView;
@@ -185,11 +185,18 @@ impl Render for CopilotCodeVerification {
 
         v_flex()
             .id("copilot code verification")
+            .track_focus(&self.focus_handle)
             .elevation_3(cx)
             .w_96()
             .items_center()
             .p_4()
             .gap_2()
+            .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
+                cx.focus(&this.focus_handle);
+            }))
             .child(
                 svg()
                     .w_32()

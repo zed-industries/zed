@@ -14,12 +14,12 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
-    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset,
-    ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WhiteSpace,
+    actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
+    AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
+    IntoElement, ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -989,7 +989,6 @@ impl CollabPanel {
                     .children(has_channel_buffer_changed.then(|| {
                         div()
                             .w_1p5()
-                            .z_index(1)
                             .absolute()
                             .right(px(2.))
                             .top(px(2.))
@@ -1022,7 +1021,6 @@ impl CollabPanel {
                     .children(has_messages_notification.then(|| {
                         div()
                             .w_1p5()
-                            .z_index(1)
                             .absolute()
                             .right(px(2.))
                             .top(px(4.))
@@ -1804,7 +1802,7 @@ impl CollabPanel {
         }
     }
 
-    fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
+    fn show_inline_context_menu(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
         let Some(bounds) = self
             .selection
             .and_then(|ix| self.list_state.bounds_for_item(ix))
@@ -2617,7 +2615,6 @@ impl CollabPanel {
                             .children(has_notes_notification.then(|| {
                                 div()
                                     .w_1p5()
-                                    .z_index(1)
                                     .absolute()
                                     .right(px(-1.))
                                     .top(px(-1.))
@@ -2632,49 +2629,44 @@ impl CollabPanel {
                     ),
             )
             .child(
-                h_flex()
-                    .absolute()
-                    .right(rems(0.))
-                    .z_index(1)
-                    .h_full()
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .px_1()
-                            .child(
-                                IconButton::new("channel_chat", IconName::MessageBubbles)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_messages_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.join_channel_chat(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-                                    .visible_on_hover(""),
-                            )
-                            .child(
-                                IconButton::new("channel_notes", IconName::File)
-                                    .style(ButtonStyle::Filled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_notes_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.open_channel_notes(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-                                    .visible_on_hover(""),
-                            ),
-                    ),
+                h_flex().absolute().right(rems(0.)).h_full().child(
+                    h_flex()
+                        .h_full()
+                        .gap_1()
+                        .px_1()
+                        .child(
+                            IconButton::new("channel_chat", IconName::MessageBubbles)
+                                .style(ButtonStyle::Filled)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(if has_messages_notification {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                })
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.join_channel_chat(channel_id, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Open channel chat", cx))
+                                .visible_on_hover(""),
+                        )
+                        .child(
+                            IconButton::new("channel_notes", IconName::File)
+                                .style(ButtonStyle::Filled)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(if has_notes_notification {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                })
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.open_channel_notes(channel_id, cx)
+                                }))
+                                .tooltip(|cx| Tooltip::text("Open channel notes", cx))
+                                .visible_on_hover(""),
+                        ),
+                ),
             )
             .tooltip({
                 let channel_store = self.channel_store.clone();
@@ -2720,31 +2712,34 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
     let thickness = px(1.);
     let color = cx.theme().colors().text;
 
-    canvas(move |bounds, cx| {
-        let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
-        let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
-        let right = bounds.right();
-        let top = bounds.top();
+    canvas(
+        |_, _| {},
+        move |bounds, _, cx| {
+            let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
+            let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
+            let right = bounds.right();
+            let top = bounds.top();
 
-        cx.paint_quad(fill(
-            Bounds::from_corners(
-                point(start_x, top),
-                point(
-                    start_x + thickness,
-                    if is_last {
-                        start_y
-                    } else {
-                        bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
-                    },
+            cx.paint_quad(fill(
+                Bounds::from_corners(
+                    point(start_x, top),
+                    point(
+                        start_x + thickness,
+                        if is_last {
+                            start_y
+                        } else {
+                            bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
+                        },
+                    ),
                 ),
-            ),
-            color,
-        ));
-        cx.paint_quad(fill(
-            Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
-            color,
-        ));
-    })
+                color,
+            ));
+            cx.paint_quad(fill(
+                Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
+                color,
+            ));
+        },
+    )
     .w(width)
     .h(line_height)
 }
@@ -2772,10 +2767,12 @@ impl Render for CollabPanel {
                 self.render_signed_in(cx)
             })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay()
-                    .position(*position)
-                    .anchor(gpui::AnchorCorner::TopLeft)
-                    .child(menu.clone())
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .child(menu.clone()),
+                )
             }))
     }
 }
