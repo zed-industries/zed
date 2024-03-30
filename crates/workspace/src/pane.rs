@@ -513,6 +513,10 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
+    pub fn preview_item_id(&self) -> Option<EntityId> {
+        self.preview_item_id
+    }
+
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
     pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
