@@ -214,7 +214,6 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     cx.dispatch_action(CloseSelectedItem);
-    cx.run_until_parked();
     tab_switcher.update(cx, |tab_switcher, _| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
         assert_match_selection(tab_switcher, 0, tab_2);

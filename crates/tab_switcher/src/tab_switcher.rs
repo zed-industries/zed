@@ -159,7 +159,7 @@ impl TabSwitcherDelegate {
                         let selected_item_id = picker.delegate.selected_item_id();
                         picker.delegate.update_matches(cx);
                         if let Some(item_id) = selected_item_id {
-                            picker.delegate.select_item_id(item_id, cx);
+                            picker.delegate.select_item(item_id, cx);
                         }
                         cx.notify();
                     })
@@ -222,7 +222,7 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-    fn select_item_id(
+    fn select_item(
         &mut self,
         item_id: EntityId,
         cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>,
@@ -254,6 +254,10 @@ impl PickerDelegate for TabSwitcherDelegate {
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "".into()
+    }
+
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+        "No tabs".into()
     }
 
     fn match_count(&self) -> usize {
