@@ -317,6 +317,9 @@ pub struct ThemeColorsContent {
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<String>,
 
+    #[serde(rename = "pane_group.border")]
+    pub pane_group_border: Option<String>,
+
     /// The color of the scrollbar thumb.
     #[serde(
         rename = "scrollbar.thumb.background",
@@ -672,6 +675,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             pane_focused_border: self
                 .pane_focused_border
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            pane_group_border: self
+                .pane_group_border
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             scrollbar_thumb_background: self
