@@ -114,6 +114,7 @@ actions!(
         SplitUp,
         SplitRight,
         SplitDown,
+        TogglePreviewTab,
     ]
 );
 
@@ -1833,6 +1834,15 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
+            }))
+            .on_action(cx.listener(|pane: &mut Self, _: &TogglePreviewTab, cx| {
+                if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                    if pane.preview_item_id() == Some(active_item_id) {
+                        pane.set_preview_item_id(None, cx);
+                    } else {
+                        pane.set_preview_item_id(Some(active_item_id), cx);
+                    }
+                }
             }))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
