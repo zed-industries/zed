@@ -64,7 +64,7 @@ pub struct BufferSearchBar {
     replacement_editor: View<Editor>,
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
-    active_match_index: Option<usize>,
+    pub active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches:
@@ -953,7 +953,7 @@ impl BufferSearchBar {
         done_rx
     }
 
-    fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
         let new_index = self
             .active_searchable_item
             .as_ref()

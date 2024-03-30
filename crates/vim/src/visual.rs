@@ -11,7 +11,8 @@ use editor::{
 };
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
-use workspace::Workspace;
+use search::BufferSearchBar;
+use workspace::{searchable::Direction, Workspace};
 
 use crate::{
     motion::{start_of_line, Motion},
@@ -488,15 +489,32 @@ pub fn select_previous(
 
 // Support for gn command
 pub fn select_next_match(
-    _: &mut Workspace,
+    workspace: &mut Workspace,
     _: &SelectNextMatch,
     cx: &mut ViewContext<Workspace>,
 ) -> Result<()> {
-    Vim::update(cx, |vim, cx| {
+    let mut operator: Option<Operator> = Default::default();
+    let result = Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx).unwrap_or(1);
         let query = vim.workspace_state.search.initial_query.clone();
+        operator = vim.maybe_pop_operator();
         if query.is_empty() {
             return Some(Ok(()));
+        }
+        let pane = workspace.active_pane().clone();
+        if vim.state().mode == Mode::Normal {
+            pane.update(cx, |pane, cx| {
+                if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+                    search_bar.update(cx, |search_bar, cx| {
+                        // without update_match_index there are some bugs when the cursor is before any match
+                        search_bar.update_match_index(cx);
+                        search_bar.select_match(Direction::Prev, 1, cx);
+                        search_bar.update_match_index(cx);
+                        search_bar.select_match(Direction::Next, 1, cx);
+                        search_bar.update_match_index(cx);
+                    });
+                }
+            });
         }
         vim.update_active_editor(cx, |_, editor, cx| {
             let old_select_next_state = editor.select_next_state.clone();
@@ -524,7 +542,14 @@ pub fn select_next_match(
             Ok(())
         })
     })
-    .unwrap_or(Ok(()))
+    .unwrap_or(Ok(()));
+    // Basic operator support
+    match operator {
+        Some(Operator::Delete) => delete(workspace, &Default::default(), cx),
+        Some(Operator::Yank) => yank(workspace, &Default::default(), cx),
+        _ => {} // Ignoring other operators for now
+    }
+    result
 }
 
 #[cfg(test)]
