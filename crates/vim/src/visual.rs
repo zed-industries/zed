@@ -1,12 +1,13 @@
 use anyhow::Result;
 use std::sync::Arc;
 
+use aho_corasick::AhoCorasick;
 use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Bias, DisplayPoint, Editor,
+    Bias, DisplayPoint, Editor, SelectNextState,
 };
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
@@ -31,6 +32,7 @@ actions!(
         OtherEnd,
         SelectNext,
         SelectPrevious,
+        SelectNextMatch,
     ]
 );
 
@@ -55,6 +57,9 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     });
     workspace.register_action(|workspace, action, cx| {
         select_previous(workspace, action, cx).ok();
+    });
+    workspace.register_action(|workspace, action, cx| {
+        select_next_match(workspace, action, cx).ok();
     });
 }
 
@@ -475,6 +480,47 @@ pub fn select_previous(
                     _ => {}
                 }
             }
+            Ok(())
+        })
+    })
+    .unwrap_or(Ok(()))
+}
+
+// Support for gn command
+pub fn select_next_match(
+    _: &mut Workspace,
+    _: &SelectNextMatch,
+    cx: &mut ViewContext<Workspace>,
+) -> Result<()> {
+    Vim::update(cx, |vim, cx| {
+        let count = vim.take_count(cx).unwrap_or(1);
+        let query = vim.workspace_state.search.initial_query.clone();
+        if query.is_empty() {
+            return Some(Ok(()));
+        }
+        vim.update_active_editor(cx, |_, editor, cx| {
+            let old_select_next_state = editor.select_next_state.clone();
+            // we modify editor.select_next_state so that editor.select_next
+            // makes the selections for us
+            editor.select_next_state = Some(SelectNextState {
+                query: AhoCorasick::new(&[query])?,
+                wordwise: false,
+                done: false,
+            });
+            for _ in 0..count {
+                match editor.select_next(&Default::default(), cx) {
+                    Err(a) => return Err(a),
+                    _ => {}
+                }
+            }
+            // we merge all the selections
+            let start_selection = editor.selections.first::<usize>(cx).start.clone();
+            let end_selection = editor.selections.last::<usize>(cx).end.clone();
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.clear_pending();
+                s.insert_range(start_selection..end_selection);
+            });
+            editor.select_next_state = old_select_next_state;
             Ok(())
         })
     })

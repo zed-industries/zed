@@ -127,9 +127,9 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
 
                     // in the case that the query has changed, the search bar
                     // will have selected the next match already.
-                    if (search_bar.query(cx) != state.initial_query)
-                        && state.direction == Direction::Next
+                    if search_bar.query(cx) != state.initial_query
                     {
+                        state.initial_query = search_bar.query(cx);
                         count = count.saturating_sub(1)
                     }
                     state.count = 1;

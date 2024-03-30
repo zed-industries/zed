@@ -370,8 +370,8 @@ pub struct Editor {
     pub scroll_manager: ScrollManager,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
-    select_next_state: Option<SelectNextState>,
-    select_prev_state: Option<SelectNextState>,
+    pub select_next_state: Option<SelectNextState>,
+    pub select_prev_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
@@ -587,10 +587,10 @@ struct AddSelectionsState {
 }
 
 #[derive(Clone)]
-struct SelectNextState {
-    query: AhoCorasick,
-    wordwise: bool,
-    done: bool,
+pub struct SelectNextState {
+    pub query: AhoCorasick,
+    pub wordwise: bool,
+    pub done: bool,
 }
 
 impl std::fmt::Debug for SelectNextState {
