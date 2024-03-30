@@ -42,8 +42,7 @@ pub trait LspCommand: 'static + Sized + Send {
         true
     }
 
-    #[allow(unused_variables)]
-    fn status(&self, buffer: &Buffer) -> Option<String> {
+    fn status(&self) -> Option<String> {
         None
     }
 
@@ -899,7 +898,7 @@ impl LspCommand for GetReferences {
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
 
-    fn status(&self, _buffer: &Buffer) -> Option<String> {
+    fn status(&self) -> Option<String> {
         return Some("Finding references...".to_owned());
     }
 
