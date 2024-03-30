@@ -24,20 +24,21 @@ use std::{
 use anyhow::Result;
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
+use futures::{future::Shared, FutureExt};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 
 use crate::{
-    prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
-    ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
-    DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
-    GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
-    LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels,
-    PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window, WindowContext,
-    SUBPIXEL_VARIANTS,
+    hash, prelude::*, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace, Bounds,
+    BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase,
+    DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent,
+    LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad,
+    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+    Style, Task, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window,
+    WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -663,6 +664,83 @@ impl<'a> ElementContext<'a> {
         let result = f(self);
         self.window_mut().next_frame.element_offset_stack.pop();
         result
+    }
+
+    /// Remove an asset from GPUI's cache
+    pub fn remove_cached_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> Option<A::Output> {
+        self.asset_cache.remove::<A>(source)
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    /// Your view will be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call.
+    /// The results of that call will be cached, and returned on subsequent uses of this API.
+    ///
+    /// Use [Self::remove_cached_asset] to reload your asset.
+    pub fn use_cached_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> Option<A::Output> {
+        self.asset_cache.get::<A>(source).or_else(|| {
+            if let Some(asset) = self.use_asset::<A>(source) {
+                self.asset_cache
+                    .insert::<A>(source.to_owned(), asset.clone());
+                Some(asset)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    /// Your view will be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    ///
+    /// This asset will not be cached by default, see [Self::use_cached_asset]
+    pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        let mut is_first = false;
+        let task = self
+            .loading_assets
+            .remove(&asset_id)
+            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
+            .unwrap_or_else(|| {
+                is_first = true;
+                let future = A::load(source.clone(), self);
+                let task = self.background_executor().spawn(future).shared();
+                task
+            });
+
+        task.clone().now_or_never().or_else(|| {
+            if is_first {
+                let parent_id = self.parent_view_id();
+                self.spawn({
+                    let task = task.clone();
+                    |mut cx| async move {
+                        task.await;
+
+                        cx.on_next_frame(move |cx| {
+                            if let Some(parent_id) = parent_id {
+                                cx.notify(parent_id)
+                            } else {
+                                cx.refresh()
+                            }
+                        });
+                    }
+                })
+                .detach();
+            }
+
+            self.loading_assets.insert(asset_id, Box::new(task));
+
+            None
+        })
     }
 
     /// Obtain the current element offset.

@@ -34,6 +34,11 @@ impl AssetSource for () {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ImageId(usize);
 
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub(crate) struct RenderImageParams {
+    pub(crate) image_id: ImageId,
+}
+
 /// A cached and processed image.
 pub struct ImageData {
     /// The ID associated with this image

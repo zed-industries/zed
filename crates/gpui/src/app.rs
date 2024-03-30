@@ -28,8 +28,8 @@ use util::{
 };
 
 use crate::{
-    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
-    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
+    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
@@ -217,9 +217,11 @@ pub struct AppContext {
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) svg_renderer: SvgRenderer,
+    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
-    pub(crate) image_cache: ImageCache,
+    pub(crate) svg_renderer: SvgRenderer,
+    http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -279,8 +281,10 @@ impl AppContext {
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
+                asset_cache: AssetCache::new(),
+                loading_assets: Default::default(),
                 asset_source,
-                image_cache: ImageCache::new(http_client),
+                http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -633,6 +637,16 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Returns the http client assigned to GPUI
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
+    }
+
+    /// Returns the SVG renderer GPUI uses
+    pub(crate) fn svg_renderer(&self) -> SvgRenderer {
+        self.svg_renderer.clone()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {

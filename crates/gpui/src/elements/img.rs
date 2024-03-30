@@ -1,15 +1,19 @@
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    point, px, size, AbsoluteLength, Bounds, DefiniteLength, DevicePixels, Element, ElementContext,
-    Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels,
-    SharedUri, Size, StyleRefinement, Styled, UriOrPath,
+    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
+    ElementContext, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
 };
-use futures::FutureExt;
+use futures::{AsyncReadExt, Future};
+use image::{ImageBuffer, ImageError};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
-use util::ResultExt;
+
+use thiserror::Error;
+use util::{http, ResultExt};
 
 /// A source of image content.
 #[derive(Clone, Debug)]
@@ -66,44 +70,6 @@ impl From<Arc<ImageData>> for ImageSource {
 impl From<CVImageBuffer> for ImageSource {
     fn from(value: CVImageBuffer) -> Self {
         Self::Surface(value)
-    }
-}
-
-impl ImageSource {
-    fn data(&self, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
-        match self {
-            ImageSource::Uri(_) | ImageSource::File(_) => {
-                let uri_or_path: UriOrPath = match self {
-                    ImageSource::Uri(uri) => uri.clone().into(),
-                    ImageSource::File(path) => path.clone().into(),
-                    _ => unreachable!(),
-                };
-
-                let image_future = cx.image_cache.get(uri_or_path.clone(), cx);
-                if let Some(data) = image_future
-                    .clone()
-                    .now_or_never()
-                    .and_then(|result| result.ok())
-                {
-                    return Some(data);
-                } else {
-                    cx.spawn(|mut cx| async move {
-                        if image_future.await.ok().is_some() {
-                            cx.on_next_frame(|cx| cx.refresh());
-                        }
-                    })
-                    .detach();
-
-                    return None;
-                }
-            }
-
-            ImageSource::Data(data) => {
-                return Some(data.clone());
-            }
-            #[cfg(target_os = "macos")]
-            ImageSource::Surface(_) => None,
-        }
     }
 }
 
@@ -201,6 +167,15 @@ impl ObjectFit {
 }
 
 impl Img {
+    /// A list of all format extensions currently supported by this img element
+    pub fn extensions() -> &'static [&'static str] {
+        // This is the list in [image::ImageFormat::from_extension] + `svg`
+        &[
+            "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
+            "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
+        ]
+    }
+
     /// Set the image to be displayed in grayscale.
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
@@ -235,6 +210,7 @@ impl Element for Img {
                     _ => {}
                 }
             }
+
             cx.request_layout(&style, [])
         });
         (layout_id, ())
@@ -262,28 +238,20 @@ impl Element for Img {
             .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                match source.data(cx) {
-                    Some(data) => {
-                        let bounds = self.object_fit.get_bounds(bounds, data.size());
-                        cx.paint_image(bounds, corner_radii, data, self.grayscale)
-                            .log_err();
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    None => {
-                        // No renderable image loaded yet. Do nothing.
-                    }
+                if let Some(data) = source.data(cx) {
+                    cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
+                        .log_err();
+                }
+
+                match source {
                     #[cfg(target_os = "macos")]
-                    None => match source {
-                        ImageSource::Surface(surface) => {
-                            let size = size(surface.width().into(), surface.height().into());
-                            let new_bounds = self.object_fit.get_bounds(bounds, size);
-                            // TODO: Add support for corner_radii and grayscale.
-                            cx.paint_surface(new_bounds, surface);
-                        }
-                        _ => {
-                            // No renderable image loaded yet. Do nothing.
-                        }
-                    },
+                    ImageSource::Surface(surface) => {
+                        let size = size(surface.width().into(), surface.height().into());
+                        let new_bounds = self.object_fit.get_bounds(bounds, size);
+                        // TODO: Add support for corner_radii and grayscale.
+                        cx.paint_surface(new_bounds, surface);
+                    }
+                    _ => {}
                 }
             })
     }
@@ -306,5 +274,117 @@ impl Styled for Img {
 impl InteractiveElement for Img {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
+    }
+}
+
+impl ImageSource {
+    fn data(&self, cx: &mut ElementContext) -> Option<Arc<ImageData>> {
+        match self {
+            ImageSource::Uri(_) | ImageSource::File(_) => {
+                let uri_or_path: UriOrPath = match self {
+                    ImageSource::Uri(uri) => uri.clone().into(),
+                    ImageSource::File(path) => path.clone().into(),
+                    _ => unreachable!(),
+                };
+
+                cx.use_cached_asset::<Image>(&uri_or_path)?.log_err()
+            }
+
+            ImageSource::Data(data) => Some(data.to_owned()),
+            #[cfg(target_os = "macos")]
+            ImageSource::Surface(_) => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum Image {}
+
+impl Asset for Image {
+    type Source = UriOrPath;
+    type Output = Result<Arc<ImageData>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut WindowContext,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+        let scale_factor = cx.scale_factor();
+        let svg_renderer = cx.svg_renderer();
+        async move {
+            let bytes = match source.clone() {
+                UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
+                UriOrPath::Uri(uri) => {
+                    let mut response = client.get(uri.as_ref(), ().into(), true).await?;
+                    let mut body = Vec::new();
+                    response.body_mut().read_to_end(&mut body).await?;
+                    if !response.status().is_success() {
+                        return Err(ImageCacheError::BadStatus {
+                            status: response.status(),
+                            body: String::from_utf8_lossy(&body).into_owned(),
+                        });
+                    }
+                    body
+                }
+            };
+
+            let data = if let Ok(format) = image::guess_format(&bytes) {
+                let data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+                ImageData::new(data)
+            } else {
+                let pixmap =
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(scale_factor))?;
+
+                let buffer =
+                    ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+
+                ImageData::new(buffer)
+            };
+
+            Ok(Arc::new(data))
+        }
+    }
+}
+
+/// An error that can occur when interacting with the image cache.
+#[derive(Debug, Error, Clone)]
+pub enum ImageCacheError {
+    /// An error that occurred while fetching an image from a remote source.
+    #[error("http error: {0}")]
+    Client(#[from] http::Error),
+    /// An error that occurred while reading the image from disk.
+    #[error("IO error: {0}")]
+    Io(Arc<std::io::Error>),
+    /// An error that occurred while processing an image.
+    #[error("unexpected http status: {status}, body: {body}")]
+    BadStatus {
+        /// The HTTP status code.
+        status: http::StatusCode,
+        /// The HTTP response body.
+        body: String,
+    },
+    /// An error that occurred while processing an image.
+    #[error("image error: {0}")]
+    Image(Arc<ImageError>),
+    /// An error that occurred while processing an SVG.
+    #[error("svg error: {0}")]
+    Usvg(Arc<resvg::usvg::Error>),
+}
+
+impl From<std::io::Error> for ImageCacheError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(Arc::new(error))
+    }
+}
+
+impl From<ImageError> for ImageCacheError {
+    fn from(error: ImageError) -> Self {
+        Self::Image(Arc::new(error))
+    }
+}
+
+impl From<resvg::usvg::Error> for ImageCacheError {
+    fn from(error: resvg::usvg::Error) -> Self {
+        Self::Usvg(Arc::new(error))
     }
 }
