@@ -516,11 +516,12 @@ pub struct ThemeColorsContent {
 impl ThemeColorsContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeColorsContent`].
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
+        let border = self
+            .border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
-            border: self
-                .border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            border,
             border_variant: self
                 .border_variant
                 .as_ref()
@@ -680,7 +681,8 @@ impl ThemeColorsContent {
             pane_group_border: self
                 .pane_group_border
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                .or(border),
             scrollbar_thumb_background: self
                 .scrollbar_thumb_background
                 .as_ref()
