@@ -6638,18 +6638,6 @@ impl Project {
                     }
 
                     let result = language_server.request::<R::LspRequest>(lsp_params).await;
-                    if status.is_some() {
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.on_lsp_work_end(
-                                    language_server.server_id(),
-                                    id.to_string(),
-                                    cx,
-                                );
-                            })
-                        })
-                        .log_err();
-                    }
                     let response = match result {
                         Ok(response) => response,
 
@@ -6662,15 +6650,30 @@ impl Project {
                             return Err(err);
                         }
                     };
-                    request
+                    let result = request
                         .response_from_lsp(
                             response,
                             this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
                             buffer_handle,
                             language_server.server_id(),
-                            cx,
+                            cx.clone(),
                         )
-                        .await
+                        .await;
+
+                    if status.is_some() {
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.on_lsp_work_end(
+                                    language_server.server_id(),
+                                    id.to_string(),
+                                    cx,
+                                );
+                            })
+                        })
+                        .log_err();
+                    }
+
+                    result
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
