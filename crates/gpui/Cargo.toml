@@ -120,7 +120,6 @@ xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-truetype = "0.47"
 
 [[example]]
 name = "hello_world"
