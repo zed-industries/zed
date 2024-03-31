@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::ZedDotDevModel, count_open_ai_tokens, CompletionProvider,
+    assistant_settings::ZedDotDevModel, count_open_ai_tokens, CompletionProvider, LanguageModel,
     LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
@@ -78,13 +78,21 @@ impl ZedDotDevCompletionProvider {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         match request.model {
-            crate::LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
-            crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptFour)
-            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptFourTurbo)
-            | crate::LanguageModel::ZedDotDev(ZedDotDevModel::GptThreePointFiveTurbo) => {
+            LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
+            LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
+            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
+            | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            crate::LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {
+            LanguageModel::ZedDotDev(
+                ZedDotDevModel::Claude3Opus
+                | ZedDotDevModel::Claude3Sonnet
+                | ZedDotDevModel::Claude3Haiku,
+            ) => {
+                // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
+                count_open_ai_tokens(request, cx.background_executor())
+            }
+            LanguageModel::ZedDotDev(ZedDotDevModel::Custom(model)) => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
                     model,
                     messages: request

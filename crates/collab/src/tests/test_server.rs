@@ -512,6 +512,7 @@ impl TestServer {
                 blob_store_bucket: None,
                 openai_api_key: None,
                 google_ai_api_key: None,
+                anthropic_api_key: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,
