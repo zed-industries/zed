@@ -51,6 +51,8 @@ pub fn all_language_settings<'a>(
 pub struct AllLanguageSettings {
     /// The settings for GitHub Copilot.
     pub copilot: CopilotSettings,
+    /// The settings for Supermaven.
+    pub supermaven: SupermavenSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
@@ -116,6 +118,13 @@ pub struct CopilotSettings {
     pub feature_enabled: bool,
     /// A list of globs representing files that Copilot should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
+}
+
+/// The settings for [Supermaven](https://supermaven.com).
+#[derive(Clone, Debug, Default)]
+pub struct SupermavenSettings {
+    /// Whether Supermaven is enabled.
+    pub feature_enabled: bool,
 }
 
 /// The settings for all languages.
@@ -261,6 +270,8 @@ pub struct CopilotSettingsContent {
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
+    /// Whether the Supermaven feature is enabled.
+    pub supermaven: Option<bool>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -495,6 +506,12 @@ impl settings::Settings for AllLanguageSettings {
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
 
+        let mut supermaven_enabled = default_value
+            .features
+            .as_ref()
+            .and_then(|f| f.supermaven)
+            .ok_or_else(Self::missing_default)?;
+
         for user_settings in user_settings {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = copilot;
@@ -505,6 +522,10 @@ impl settings::Settings for AllLanguageSettings {
                 .and_then(|f| f.disabled_globs.as_ref())
             {
                 copilot_globs = globs;
+            }
+
+            if let Some(supermaven) = user_settings.features.as_ref().and_then(|f| f.supermaven) {
+                supermaven_enabled = supermaven;
             }
 
             // A user's global settings override the default global settings and
@@ -542,6 +563,9 @@ impl settings::Settings for AllLanguageSettings {
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
+            },
+            supermaven: SupermavenSettings {
+                feature_enabled: supermaven_enabled,
             },
             defaults,
             languages,

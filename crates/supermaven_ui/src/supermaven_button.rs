@@ -1,21 +1,17 @@
-use crate::sign_in::CopilotCodeVerification;
-use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
-use editor::{scroll::Autoscroll, Editor};
+use editor::Editor;
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
-    Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    div, Action, AnchorCorner, AppContext, Entity, IntoElement, ParentElement,
+    Render, Subscription, View, ViewContext,
 };
 use language::{
-    language_settings::{self, all_language_settings, AllLanguageSettings},
+    language_settings::{all_language_settings, AllLanguageSettings},
     File, Language,
 };
-use settings::{update_settings_file, Settings, SettingsStore};
-use std::{path::Path, sync::Arc};
-use util::{paths, ResultExt};
+use settings::{update_settings_file, SettingsStore};
+use std::sync::Arc;
 use workspace::{
-    create_and_open_local_file,
     item::ItemHandle,
     ui::{
         popover_menu, ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, Tooltip,
@@ -25,7 +21,7 @@ use workspace::{
 use zed_actions::OpenBrowser;
 
 const SUPERMAVEN_SETTINGS_URL: &str = "https://supermaven.com/account";
-const SUPERMAVEN_STARTING_TOAST_ID: usize = 4000;
+const SUPERMAVEN_ACTIVATE_TOAST_ID: usize = 4000;
 const SUPERMAVEN_ERROR_TOAST_ID: usize = 4001;
 
 pub struct SupermavenButton {
@@ -39,7 +35,7 @@ pub struct SupermavenButton {
 impl Render for SupermavenButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
-        if !all_language_settings.copilot.feature_enabled {
+        if !all_language_settings.supermaven.feature_enabled {
             return div();
         }
 
@@ -104,9 +100,9 @@ impl Render for SupermavenButton {
             popover_menu("supermaven")
                 .menu(move |cx| match status {
                     Status::Authorized => {
-                        Some(this.update(cx, |this, cx| this.build_copilot_menu(cx)))
+                        Some(this.update(cx, |this, cx| this.build_supermaven_menu(cx)))
                     }
-                    _ => Some(this.update(cx, |this, cx| this.build_copilot_start_menu(cx))),
+                    _ => Some(this.update(cx, |this, cx| this.build_supermaven_start_menu(cx))),
                 })
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(
@@ -135,78 +131,42 @@ impl SupermavenButton {
         }
     }
 
-    pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    pub fn build_supermaven_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
-        ContextMenu::build(cx, |menu, _| {
-            menu.entry("Sign In", None, initiate_sign_in).entry(
-                "Disable Supermaven",
-                None,
-                move |cx| hide_copilot(fs.clone(), cx),
-            )
+        ContextMenu::build(cx, |menu, _cx| {
+            menu.entry("Activate Supermaven", None, move |cx| {
+                if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    SUPERMAVEN_ACTIVATE_TOAST_ID,
+                                    format!("Supermaven needs to be activated before it can be used."),
+                                )
+                                .on_click(
+                                    "Activate Supermaven",
+                                    |_cx| {
+                                        println!("hi");
+                                    },
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }).entry("Disable Supermaven", None, move |cx| {
+                hide_supermaven(fs.clone(), cx)
+            })
         })
     }
 
-    pub fn build_copilot_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    pub fn build_supermaven_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
 
-        ContextMenu::build(cx, move |mut menu, cx| {
-            if let Some(language) = self.language.clone() {
-                let fs = fs.clone();
-                let language_enabled =
-                    language_settings::language_settings(Some(&language), None, cx)
-                        .show_copilot_suggestions;
-
-                menu = menu.entry(
-                    format!(
-                        "{} Suggestions for {}",
-                        if language_enabled { "Hide" } else { "Show" },
-                        language.name()
-                    ),
-                    None,
-                    move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
-                );
-            }
-
-            let settings = AllLanguageSettings::get_global(cx);
-
-            if let Some(file) = &self.file {
-                let path = file.path().clone();
-                let path_enabled = settings.copilot_enabled_for_path(&path);
-
-                menu = menu.entry(
-                    format!(
-                        "{} Suggestions for This Path",
-                        if path_enabled { "Hide" } else { "Show" }
-                    ),
-                    None,
-                    move |cx| {
-                        if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
-                            if let Ok(workspace) = workspace.root_view(cx) {
-                                let workspace = workspace.downgrade();
-                                cx.spawn(|cx| {
-                                    configure_disabled_globs(
-                                        workspace,
-                                        path_enabled.then_some(path.clone()),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                            }
-                        }
-                    },
-                );
-            }
-
-            let globally_enabled = settings.copilot_enabled(None, None);
-            menu.entry(
-                if globally_enabled {
-                    "Hide Suggestions for All Files"
-                } else {
-                    "Show Suggestions for All Files"
-                },
-                None,
-                move |cx| toggle_copilot_globally(fs.clone(), cx),
-            )
+        ContextMenu::build(cx, move |menu, _cx| {
+            menu.entry("Disable Supermaven", None, move |cx| {
+                hide_supermaven(fs.clone(), cx)
+            })
             .separator()
             .link(
                 "Supermaven Settings",
@@ -225,14 +185,8 @@ impl SupermavenButton {
         let suggestion_anchor = editor.selections.newest_anchor().start;
         let language = snapshot.language_at(suggestion_anchor);
         let file = snapshot.file_at(suggestion_anchor).cloned();
-        self.editor_enabled = {
-            let file = file.as_ref();
-            Some(
-                file.map(|file| !file.is_private()).unwrap_or(true)
-                    && all_language_settings(file, cx)
-                        .copilot_enabled(language, file.map(|file| file.path().as_ref())),
-            )
-        };
+        let all_language_settings = all_language_settings(None, cx);
+        self.editor_enabled = Some(all_language_settings.supermaven.feature_enabled);
         self.language = language.cloned();
         self.file = file;
 
@@ -257,135 +211,8 @@ impl StatusItemView for SupermavenButton {
     }
 }
 
-async fn configure_disabled_globs(
-    workspace: WeakView<Workspace>,
-    path_to_disable: Option<Arc<Path>>,
-    mut cx: AsyncWindowContext,
-) -> Result<()> {
-    let settings_editor = workspace
-        .update(&mut cx, |_, cx| {
-            create_and_open_local_file(&paths::SETTINGS, cx, || {
-                settings::initial_user_settings_content().as_ref().into()
-            })
-        })?
-        .await?
-        .downcast::<Editor>()
-        .unwrap();
-
-    settings_editor.downgrade().update(&mut cx, |item, cx| {
-        let text = item.buffer().read(cx).snapshot(cx).text();
-
-        let settings = cx.global::<SettingsStore>();
-        let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-            let copilot = file.copilot.get_or_insert_with(Default::default);
-            let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                settings
-                    .get::<AllLanguageSettings>(None)
-                    .copilot
-                    .disabled_globs
-                    .iter()
-                    .map(|glob| glob.glob().to_string())
-                    .collect()
-            });
-
-            if let Some(path_to_disable) = &path_to_disable {
-                globs.push(path_to_disable.to_string_lossy().into_owned());
-            } else {
-                globs.clear();
-            }
-        });
-
-        if !edits.is_empty() {
-            item.change_selections(Some(Autoscroll::newest()), cx, |selections| {
-                selections.select_ranges(edits.iter().map(|e| e.0.clone()));
-            });
-
-            // When *enabling* a path, don't actually perform an edit, just select the range.
-            if path_to_disable.is_some() {
-                item.edit(edits.iter().cloned(), cx);
-            }
-        }
-    })?;
-
-    anyhow::Ok(())
-}
-
-fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions = all_language_settings(None, cx).copilot_enabled(None, None);
+fn hide_supermaven(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
-        file.defaults.show_copilot_suggestions = Some(!show_copilot_suggestions)
+        file.features.get_or_insert(Default::default()).supermaven = Some(false);
     });
-}
-
-fn toggle_copilot_for_language(language: Arc<Language>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions =
-        all_language_settings(None, cx).copilot_enabled(Some(&language), None);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
-        file.languages
-            .entry(language.name())
-            .or_default()
-            .show_copilot_suggestions = Some(!show_copilot_suggestions);
-    });
-}
-
-fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
-        file.features.get_or_insert(Default::default()).copilot = Some(false);
-    });
-}
-
-pub fn initiate_sign_in(cx: &mut WindowContext) {
-    let Some(copilot) = Copilot::global(cx) else {
-        return;
-    };
-    let status = copilot.read(cx).status();
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-        return;
-    };
-    match status {
-        Status::Starting { task } => {
-            let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-                return;
-            };
-
-            let Ok(workspace) = workspace.update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(SUPERMAVEN_STARTING_TOAST_ID, "Supermaven is starting..."),
-                    cx,
-                );
-                workspace.weak_handle()
-            }) else {
-                return;
-            };
-
-            cx.spawn(|mut cx| async move {
-                task.await;
-                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
-                    workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                            Status::Authorized => workspace.show_toast(
-                                Toast::new(SUPERMAVEN_STARTING_TOAST_ID, "Supermaven has started!"),
-                                cx,
-                            ),
-                            _ => {
-                                workspace.dismiss_toast(SUPERMAVEN_STARTING_TOAST_ID, cx);
-                                copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                    .detach_and_log_err(cx);
-                            }
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
-        }
-        _ => {
-            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
-            workspace
-                .update(cx, |this, cx| {
-                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
-                })
-                .ok();
-        }
-    }
 }
