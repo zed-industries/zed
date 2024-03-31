@@ -3521,7 +3521,7 @@ impl ScrollbarLayout {
 
     fn ys_for_marker(&self, start_row: u32, end_row: u32) -> (Pixels, Pixels) {
         let start_y = self.y_for_row(start_row as f32);
-        let mut end_y = self.y_for_row((end_row + 1) as f32);
+        let end_y = self.y_for_row((end_row + 1) as f32);
         (start_y, Self::normalize_marker_end(start_y, end_y))
     }
 
