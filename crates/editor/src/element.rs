@@ -33,6 +33,7 @@ use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
+use pad::PadStr;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -2926,9 +2927,11 @@ fn render_blame_entry(
                 .text_color(sha_color.cursor)
                 .child(short_commit_id)
                 .mr_2(),
-            div()
-                .text_color(cx.theme().status().hint)
-                .child(format!("{:20} {: >14}", name, relative_timestamp)),
+            div().text_color(cx.theme().status().hint).child(format!(
+                "{:20} {: >14}",
+                name.with_exact_width(20),
+                relative_timestamp
+            )),
         ])
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();

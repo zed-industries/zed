@@ -216,6 +216,7 @@ workspace = { path = "crates/workspace" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+pad = "0.1.6"
 anyhow = "1.0.57"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-fs = "1.6"
