@@ -239,7 +239,8 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {
-                    cx.paint_image(bounds, corner_radii, data.clone(), self.grayscale)
+                    let new_bounds = self.object_fit.get_bounds(bounds, data.size());
+                    cx.paint_image(new_bounds, corner_radii, data.clone(), self.grayscale)
                         .log_err();
                 }
 
