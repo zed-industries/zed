@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/activity_indicator",
+    "crates/anthropic",
     "crates/assets",
     "crates/assistant",
     "crates/audio",
@@ -111,7 +112,7 @@ members = [
     "extensions/uiua",
     "extensions/zig",
 
-    "tooling/xtask", "crates/anthropic",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -119,6 +120,7 @@ resolver = "2"
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
+anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 audio = { path = "crates/audio" }

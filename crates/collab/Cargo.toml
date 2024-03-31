@@ -18,6 +18,7 @@ sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 test-support = ["sqlite"]
 
 [dependencies]
+anthropic.workspace = true
 anyhow.workspace = true
 async-tungstenite = "0.16"
 aws-config = { version = "1.1.5" }

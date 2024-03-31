@@ -84,7 +84,11 @@ impl ZedDotDevCompletionProvider {
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {
                 count_open_ai_tokens(request, cx.background_executor())
             }
-            LanguageModel::ZedDotDev(ZedDotDevModel::Claude3) => {
+            LanguageModel::ZedDotDev(
+                ZedDotDevModel::Claude3Opus
+                | ZedDotDevModel::Claude3Sonnet
+                | ZedDotDevModel::Claude3Haiku,
+            ) => {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())
             }

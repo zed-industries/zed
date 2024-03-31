@@ -2226,6 +2226,7 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "async-trait",
  "async-tungstenite",

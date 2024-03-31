@@ -16,6 +16,18 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn from_id(id: &str) -> Result<Self> {
+        if id.starts_with("claude-3-opus") {
+            Ok(Self::Claude3Opus)
+        } else if id.starts_with("claude-3-sonnet") {
+            Ok(Self::Claude3Sonnet)
+        } else if id.starts_with("claude-3-haiku") {
+            Ok(Self::Claude3Haiku)
+        } else {
+            Err(anyhow!("Invalid model id: {}", id))
+        }
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Claude3Opus => "Claude 3 Opus",
@@ -74,7 +86,7 @@ pub struct RequestMessage {
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResponseData {
+pub enum ResponseEvent {
     MessageStart {
         message: ResponseMessage,
     },
@@ -133,7 +145,7 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
-) -> Result<BoxStream<'static, Result<ResponseData>>> {
+) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let uri = format!("{api_url}/v1/messages");
     let request = HttpRequest::builder()
         .method(Method::POST)
@@ -167,7 +179,7 @@ pub async fn stream_completion(
 
         let body_str = std::str::from_utf8(&body)?;
 
-        match serde_json::from_str::<ResponseData>(body_str) {
+        match serde_json::from_str::<ResponseEvent>(body_str) {
             Ok(_) => Err(anyhow!(
                 "Unexpected success response while expecting an error: {}",
                 body_str,

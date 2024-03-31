@@ -770,11 +770,15 @@ impl AssistantPanel {
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
                 ZedDotDevModel::Gpt4 => ZedDotDevModel::Gpt4Turbo,
-                ZedDotDevModel::Gpt4Turbo => ZedDotDevModel::Claude3,
-                ZedDotDevModel::Claude3 => match CompletionProvider::global(cx).default_model() {
-                    LanguageModel::ZedDotDev(custom) => custom,
-                    _ => ZedDotDevModel::Gpt3Point5Turbo,
-                },
+                ZedDotDevModel::Gpt4Turbo => ZedDotDevModel::Claude3Opus,
+                ZedDotDevModel::Claude3Opus => ZedDotDevModel::Claude3Sonnet,
+                ZedDotDevModel::Claude3Sonnet => ZedDotDevModel::Claude3Haiku,
+                ZedDotDevModel::Claude3Haiku => {
+                    match CompletionProvider::global(cx).default_model() {
+                        LanguageModel::ZedDotDev(custom) => custom,
+                        _ => ZedDotDevModel::Gpt3Point5Turbo,
+                    }
+                }
                 ZedDotDevModel::Custom(_) => ZedDotDevModel::Gpt3Point5Turbo,
             }),
         };
