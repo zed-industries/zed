@@ -24,7 +24,11 @@ use std::{
 use anyhow::Result;
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
-use futures::{future::Shared, FutureExt};
+use futures::{
+    future::Shared,
+    stream::{AbortHandle, Abortable, Aborted},
+    FutureExt,
+};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
@@ -617,6 +621,11 @@ impl<'a> ElementContext<'a> {
         }
     }
 
+    /// Returns the current global element id
+    pub fn global_element_id(&self) -> GlobalElementId {
+        self.window.element_id_stack.clone()
+    }
+
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask.
     pub fn with_content_mask<R>(
@@ -671,6 +680,7 @@ impl<'a> ElementContext<'a> {
         &mut self,
         source: &A::Source,
     ) -> Option<A::Output> {
+        self.asset_abort::<A>(source);
         self.asset_cache.remove::<A>(source)
     }
 
@@ -686,7 +696,7 @@ impl<'a> ElementContext<'a> {
         source: &A::Source,
     ) -> Option<A::Output> {
         self.asset_cache.get::<A>(source).or_else(|| {
-            if let Some(asset) = self.use_asset::<A>(source) {
+            if let Some(Ok(asset)) = self.use_asset::<A>(source) {
                 self.asset_cache
                     .insert::<A>(source.to_owned(), asset.clone());
                 Some(asset)
@@ -703,27 +713,40 @@ impl<'a> ElementContext<'a> {
     /// time.
     ///
     /// This asset will not be cached by default, see [Self::use_cached_asset]
-    pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
+    pub fn use_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> Option<Result<A::Output, Aborted>> {
         let asset_id = (TypeId::of::<A>(), hash(source));
         let mut is_first = false;
         let task = self
             .loading_assets
             .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
+            .map(|boxed_task| {
+                *boxed_task
+                    .downcast::<(Arc<AbortHandle>, Shared<Task<Result<A::Output, Aborted>>>)>()
+                    .unwrap()
+            })
             .unwrap_or_else(|| {
                 is_first = true;
-                let future = A::load(source.clone(), self);
+                let (handle, registration) = AbortHandle::new_pair();
+                let future = Abortable::new(A::load(source.clone(), self), registration);
                 let task = self.background_executor().spawn(future).shared();
-                task
+                (Arc::new(handle), task)
             });
 
-        task.clone().now_or_never().or_else(|| {
+        if task.0.is_aborted() {
+            return None;
+        }
+        task.1.clone().now_or_never().or_else(|| {
             if is_first {
                 let parent_id = self.parent_view_id();
                 self.spawn({
-                    let task = task.clone();
+                    let task = task.1.clone();
                     |mut cx| async move {
-                        task.await;
+                        if task.await.is_err() {
+                            return;
+                        };
 
                         cx.on_next_frame(move |cx| {
                             if let Some(parent_id) = parent_id {
@@ -741,6 +764,17 @@ impl<'a> ElementContext<'a> {
 
             None
         })
+    }
+    /// Abort the loading of an asset.
+    pub fn asset_abort<A: Asset + 'static>(&mut self, source: &A::Source) {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        if let Some((handle, _)) = self.loading_assets.remove(&asset_id).map(|boxed_task| {
+            *boxed_task
+                .downcast::<(Arc<AbortHandle>, Shared<Task<Result<A::Output, Aborted>>>)>()
+                .unwrap()
+        }) {
+            handle.abort();
+        };
     }
 
     /// Obtain the current element offset.

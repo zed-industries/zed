@@ -19,7 +19,6 @@ pub(crate) struct SvgRenderer {
 
 pub enum SvgSize {
     Size(Size<DevicePixels>),
-    ScaleFactor(f32),
 }
 
 impl SvgRenderer {
@@ -35,7 +34,8 @@ impl SvgRenderer {
         // Load the tree.
         let bytes = self.asset_source.load(&params.path)?;
 
-        let pixmap = self.render_pixmap(&bytes, SvgSize::Size(params.size))?;
+        let tree = self.tree(&bytes)?;
+        let pixmap = self.render_pixmap(&tree, SvgSize::Size(params.size))?;
 
         // Convert the pixmap's pixels into an alpha mask.
         let alpha_mask = pixmap
@@ -46,23 +46,27 @@ impl SvgRenderer {
         Ok(alpha_mask)
     }
 
-    pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, resvg::usvg::Error> {
-        let tree =
-            resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default(), svg_fontdb())?;
+    pub fn tree(&self, bytes: &[u8]) -> Result<resvg::usvg::Tree, resvg::usvg::Error> {
+        resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default(), svg_fontdb())
+    }
 
+    pub fn render_pixmap(
+        &self,
+        tree: &resvg::usvg::Tree,
+        size: SvgSize,
+    ) -> Result<Pixmap, resvg::usvg::Error> {
         let size = match size {
             SvgSize::Size(size) => size,
-            SvgSize::ScaleFactor(scale) => crate::size(
-                DevicePixels((tree.size().width() * scale) as i32),
-                DevicePixels((tree.size().height() * scale) as i32),
-            ),
         };
 
-        // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap =
-            resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into()).unwrap();
-
         let ratio = size.width.0 as f32 / tree.size().width();
+
+        // Render the SVG to a pixmap with the specified width and height.
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(
+            (tree.size().width() * ratio) as u32,
+            (tree.size().height() * ratio) as u32,
+        )
+        .unwrap();
 
         resvg::render(
             &tree,

@@ -25,6 +25,15 @@ impl From<Arc<PathBuf>> for UriOrPath {
     }
 }
 
+impl AsRef<str> for UriOrPath {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Uri(uri) => uri.as_ref(),
+            Self::Path(path) => path.as_ref().to_str().unwrap(),
+        }
+    }
+}
+
 /// A trait for asynchronous asset loading.
 pub trait Asset {
     /// The source of the asset.
