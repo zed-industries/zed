@@ -2188,59 +2188,40 @@ impl EditorElement {
                 let right = scrollbar_layout.hitbox.right();
                 let column_width =
                     px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
+                let rows_per_pixel = ((layout.max_row as f32 + 1.0)
+                    / (scrollbar_layout.hitbox.bottom().0 - scrollbar_layout.hitbox.top().0))
+                    .floor() as u32;
+
                 if is_singleton && scrollbar_settings.selections {
-                    let start_anchor = Anchor::min();
-                    let end_anchor = Anchor::max();
-                    let background_ranges = self
-                        .editor
-                        .read(cx)
-                        .background_highlight_row_ranges::<BufferSearchHighlights>(
-                            start_anchor..end_anchor,
-                            &layout.position_map.snapshot,
-                            50000,
+                    let marker = self
+                        .collect_scrollbar_highlight_markers::<BufferSearchHighlights>(
+                            rows_per_pixel,
+                            layout,
+                            scrollbar_layout,
+                            cx,
                         );
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    for range in background_ranges {
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(range.start().row(), range.end().row());
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
+                    let color = cx.theme().status().info;
+                    Self::paint_scrollbar_markers(&marker, 1, color, scrollbar_layout, cx);
                 }
 
                 if is_singleton && scrollbar_settings.symbols_selections {
-                    let selection_ranges = self.editor.read(cx).background_highlights_in_range(
-                        Anchor::min()..Anchor::max(),
-                        &layout.position_map.snapshot,
-                        cx.theme().colors(),
+                    let mut markers = self
+                        .collect_scrollbar_highlight_markers::<DocumentHighlightRead>(
+                            rows_per_pixel,
+                            layout,
+                            scrollbar_layout,
+                            cx,
+                        );
+                    markers.extend(
+                        self.collect_scrollbar_highlight_markers::<DocumentHighlightWrite>(
+                            rows_per_pixel,
+                            layout,
+                            scrollbar_layout,
+                            cx,
+                        ),
                     );
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    for hunk in selection_ranges {
-                        let start_display = Point::new(hunk.0.start.row(), 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = Point::new(hunk.0.end.row(), 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
+                    let color = cx.theme().status().info;
+                    Self::paint_scrollbar_markers(&markers, 1, color, scrollbar_layout, cx);
                 }
 
                 if is_singleton && scrollbar_settings.git_diff {
@@ -2428,6 +2409,94 @@ impl EditorElement {
                     });
                 }
             });
+        }
+    }
+
+    fn collect_scrollbar_highlight_markers<T: 'static>(
+        &self,
+        rows_per_pixel: u32,
+        layout: &EditorLayout,
+        scrollbar_layout: &ScrollbarLayout,
+        cx: &mut ElementContext,
+    ) -> Vec<Range<Pixels>> {
+        let mut quads = Vec::new();
+        let Some(ranges) = self.editor.read(cx).get_background_highlights::<T>() else {
+            return quads;
+        };
+
+        let anchor_to_row =
+            |anchor: Anchor| anchor.to_display_point(&layout.position_map.snapshot).row();
+        let mut idx = 0;
+        let mut row = 0;
+        let mut quad: Option<Range<Pixels>> = None;
+
+        while idx < ranges.len() {
+            let next_idx = match ranges[idx..]
+                .binary_search_by(|probe| anchor_to_row(probe.start).cmp(&row))
+            {
+                Ok(next_idx) | Err(next_idx) => idx + next_idx,
+            };
+            let Some(range) = ranges.get(next_idx) else {
+                break;
+            };
+            let (start_row, end_row) = (anchor_to_row(range.start), anchor_to_row(range.end));
+            let start_y = scrollbar_layout.y_for_row(start_row as f32);
+            let end_y = scrollbar_layout.y_for_row((end_row + 1) as f32);
+            idx = next_idx + 1;
+            row = end_row + rows_per_pixel + 1;
+
+            // Start new quad
+            let Some(mut n_quad) = quad.take() else {
+                quad = Some(Range {
+                    start: start_y,
+                    end: ScrollbarLayout::normalize_marker_end(start_y, end_y),
+                });
+                continue;
+            };
+
+            // Try merge into the pending quad
+            if start_y <= n_quad.end + px(1.0) {
+                // println!(">> quad merged");
+                n_quad.end = n_quad.end.max(end_y);
+                quad = Some(n_quad);
+                continue;
+            }
+
+            // Pending quad is finished. Start new one.
+            quads.push(n_quad);
+            quad = Some(Range {
+                start: start_y,
+                end: ScrollbarLayout::normalize_marker_end(start_y, end_y),
+            });
+        }
+        if let Some(n_quad) = quad.take() {
+            quads.push(n_quad);
+        }
+        quads
+    }
+
+    fn paint_scrollbar_markers(
+        markers: &Vec<Range<Pixels>>,
+        column: usize,
+        color: Hsla,
+        scrollbar_layout: &ScrollbarLayout,
+        cx: &mut ElementContext,
+    ) {
+        const COLUMNS_COUNT: usize = 3;
+        let left = scrollbar_layout.hitbox.left();
+        let right = scrollbar_layout.hitbox.right();
+        let column_width =
+            px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / COLUMNS_COUNT as f32).floor());
+        let left_x = left + ScrollbarLayout::BORDER_WIDTH + px(column as f32) * column_width;
+        let right_x = if column == COLUMNS_COUNT - 1 {
+            right
+        } else {
+            left_x + column_width
+        };
+        for marker in markers {
+            let bounds =
+                Bounds::from_corners(point(left_x, marker.start), point(right_x, marker.end));
+            cx.paint_quad(fill(bounds, color));
         }
     }
 
@@ -3453,10 +3522,15 @@ impl ScrollbarLayout {
     fn ys_for_marker(&self, start_row: u32, end_row: u32) -> (Pixels, Pixels) {
         let start_y = self.y_for_row(start_row as f32);
         let mut end_y = self.y_for_row((end_row + 1) as f32);
-        if end_y - start_y < Self::MIN_MARKER_HEIGHT {
-            end_y = start_y + Self::MIN_MARKER_HEIGHT;
+        (start_y, Self::normalize_marker_end(start_y, end_y))
+    }
+
+    fn normalize_marker_end(start: Pixels, end: Pixels) -> Pixels {
+        if end - start >= Self::MIN_MARKER_HEIGHT {
+            end
+        } else {
+            start + Self::MIN_MARKER_HEIGHT
         }
-        (start_y, end_y)
     }
 }
 
