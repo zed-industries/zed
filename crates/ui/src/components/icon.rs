@@ -110,12 +110,17 @@ pub enum IconName {
     Snip,
     Space,
     Split,
+    Supermaven,
+    SupermavenDisabled,
+    SupermavenError,
+    SupermavenInit,
     Tab,
     Terminal,
     Update,
     WholeWord,
     XCircle,
     ZedXCopilot,
+    ZedXSupermaven,
 }
 
 impl IconName {
@@ -206,12 +211,17 @@ impl IconName {
             IconName::Snip => "icons/snip.svg",
             IconName::Space => "icons/space.svg",
             IconName::Split => "icons/split.svg",
+            IconName::Supermaven => "icons/supermaven.svg",
+            IconName::SupermavenDisabled => "icons/supermaven_disabled.svg",
+            IconName::SupermavenError => "icons/supermaven_error.svg",
+            IconName::SupermavenInit => "icons/supermaven_init.svg",
             IconName::Tab => "icons/tab.svg",
             IconName::Terminal => "icons/terminal.svg",
             IconName::Update => "icons/update.svg",
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
+            IconName::ZedXSupermaven => "icons/zed_x_supermaven.svg",
         }
     }
 }

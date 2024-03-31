@@ -9217,6 +9217,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "supermaven_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "editor",
+ "fs",
+ "gpui",
+ "language",
+ "menu",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "sval"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12557,6 +12575,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "supermaven_ui",
  "task",
  "tasks_ui",
  "terminal_view",
