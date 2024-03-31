@@ -123,7 +123,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        let supermaven = cx.new_view(|cx| supermaven_ui::SupermavenButton::new(app_state.fs.clone(), cx));
+        let supermaven =
+            cx.new_view(|cx| supermaven_ui::SupermavenButton::new(app_state.fs.clone(), cx));
         let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
