@@ -213,6 +213,14 @@ impl Modifiers {
         }
     }
 
+    /// helper method for Modifiers with just control
+    pub fn control() -> Modifiers {
+        Modifiers {
+            control: true,
+            ..Default::default()
+        }
+    }
+
     /// helper method for Modifiers with just shift
     pub fn shift() -> Modifiers {
         Modifiers {

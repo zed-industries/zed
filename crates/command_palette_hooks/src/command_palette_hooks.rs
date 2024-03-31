@@ -6,7 +6,7 @@ use std::any::TypeId;
 
 use collections::HashSet;
 use derive_more::{Deref, DerefMut};
-use gpui::{Action, AppContext, Global};
+use gpui::{Action, AppContext, BorrowAppContext, Global};
 
 /// Initializes the command palette hooks.
 pub fn init(cx: &mut AppContext) {

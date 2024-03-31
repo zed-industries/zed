@@ -1,6 +1,7 @@
 use crate::wasm_host::{wit::LanguageServerConfig, WasmExtension, WasmHost};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{Language, LanguageServerName, LspAdapter, LspAdapterDelegate};
@@ -56,6 +57,19 @@ impl LspAdapter for ExtensionLspAdapter {
                 .host
                 .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
 
+            // TODO: Eventually we'll want to expose an extension API for doing this, but for
+            // now we just manually set the file permissions for extensions that we know need it.
+            if ["toml", "zig"].contains(&self.extension.manifest.id.as_ref()) {
+                #[cfg(not(windows))]
+                {
+                    use std::fs::{self, Permissions};
+                    use std::os::unix::fs::PermissionsExt;
+
+                    fs::set_permissions(&path, Permissions::from_mode(0o755))
+                        .context("failed to set file permissions")?;
+                }
+            }
+
             Ok(LanguageServerBinary {
                 path,
                 arguments: command.args.into_iter().map(|arg| arg.into()).collect(),
@@ -93,6 +107,17 @@ impl LspAdapter for ExtensionLspAdapter {
         None
     }
 
+    fn language_ids(&self) -> HashMap<String, String> {
+        // TODO: Eventually we'll want to expose an extension API for doing this, but for
+        // now we just manually language ID mappings for extensions that we know need it.
+
+        if self.extension.manifest.id.as_ref() == "php" {
+            return HashMap::from_iter([("PHP".into(), "php".into())]);
+        }
+
+        Default::default()
+    }
+
     async fn initialization_options(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -120,7 +145,9 @@ impl LspAdapter for ExtensionLspAdapter {
             })
             .await?;
         Ok(if let Some(json_options) = json_options {
-            serde_json::from_str(&json_options)?
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse initialization_options from extension: {json_options}")
+            })?
         } else {
             None
         })

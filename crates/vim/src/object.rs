@@ -165,9 +165,10 @@ impl Object {
     pub fn range(
         self,
         map: &DisplaySnapshot,
-        relative_to: DisplayPoint,
+        selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
+        let relative_to = selection.head();
         match self {
             Object::Word { ignore_punctuation } => {
                 if around {
@@ -193,7 +194,7 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
-            Object::Tag => surrounding_html_tag(map, relative_to, around),
+            Object::Tag => surrounding_html_tag(map, selection, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -213,7 +214,7 @@ impl Object {
         selection: &mut Selection<DisplayPoint>,
         around: bool,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.head(), around) {
+        if let Some(range) = self.range(map, selection.clone(), around) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -256,8 +257,8 @@ fn in_word(
 
 fn surrounding_html_tag(
     map: &DisplaySnapshot,
-    relative_to: DisplayPoint,
-    surround: bool,
+    selection: Selection<DisplayPoint>,
+    around: bool,
 ) -> Option<Range<DisplayPoint>> {
     fn read_tag(chars: impl Iterator<Item = char>) -> String {
         chars
@@ -278,7 +279,7 @@ fn surrounding_html_tag(
     }
 
     let snapshot = &map.buffer_snapshot;
-    let offset = relative_to.to_offset(map, Bias::Left);
+    let offset = selection.head().to_offset(map, Bias::Left);
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
@@ -298,11 +299,18 @@ fn surrounding_html_tag(
             if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
-                if open_tag.is_some()
-                    && open_tag == close_tag
-                    && (first_child.end_byte() + 1..last_child.start_byte()).contains(&offset)
+                // It needs to be handled differently according to the selection length
+                let is_valid = if selection.end.to_offset(map, Bias::Left)
+                    - selection.start.to_offset(map, Bias::Left)
+                    <= 1
                 {
-                    let range = if surround {
+                    offset <= last_child.end_byte()
+                } else {
+                    selection.start.to_offset(map, Bias::Left) >= first_child.start_byte()
+                        && selection.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
+                };
+                if open_tag.is_some() && open_tag == close_tag && is_valid {
+                    let range = if around {
                         first_child.byte_range().start..last_child.byte_range().end
                     } else {
                         first_child.byte_range().end..last_child.byte_range().start
@@ -320,6 +328,7 @@ fn surrounding_html_tag(
     }
     None
 }
+
 /// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
 ///
@@ -1594,6 +1603,64 @@ mod test {
         cx.simulate_keystrokes(["a", "t"]);
         cx.assert_state(
             "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            Mode::Visual,
+        );
+
+        // The cursor is before the tag
+        cx.set_state(
+            "<html><head></head><body> ˇ  <b>hi!</b></body>",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>   <b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>   «<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+
+        // The cursor is in the open tag
+        cx.set_state(
+            "<html><head></head><body><bˇ>hi!</b><b>hello!</b></body>",
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["v", "a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»<b>hello!</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b><b>hello!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+
+        // current selection length greater than 1
+        cx.set_state(
+            "<html><head></head><body><«b>hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["i", "t"]);
+        cx.assert_state(
+            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            Mode::Visual,
+        );
+        cx.simulate_keystrokes(["a", "t"]);
+        cx.assert_state(
+            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            Mode::Visual,
+        );
+
+        cx.set_state(
+            "<html><head></head><body><«b>hi!</ˇ»b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes(["a", "t"]);

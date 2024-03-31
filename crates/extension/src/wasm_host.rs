@@ -14,11 +14,12 @@ use futures::{
 use gpui::BackgroundExecutor;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
+use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, SemanticVersion};
+use util::http::HttpClient;
 use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,
@@ -40,7 +41,7 @@ pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub(crate) manifest: Arc<ExtensionManifest>,
     #[allow(unused)]
-    zed_api_version: SemanticVersion,
+    pub zed_api_version: SemanticVersion,
 }
 
 pub(crate) struct WasmState {
@@ -93,28 +94,10 @@ impl WasmHost {
     ) -> impl 'static + Future<Output = Result<WasmExtension>> {
         let this = self.clone();
         async move {
+            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
+
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-
-            let mut zed_api_version = None;
-            for part in wasmparser::Parser::new(0).parse_all(&wasm_bytes) {
-                if let wasmparser::Payload::CustomSection(s) = part? {
-                    if s.name() == "zed:api-version" {
-                        zed_api_version = parse_extension_version(s.data());
-                        if zed_api_version.is_none() {
-                            bail!(
-                                "extension {} has invalid zed:api-version section: {:?}",
-                                manifest.id,
-                                s.data()
-                            );
-                        }
-                    }
-                }
-            }
-
-            let Some(zed_api_version) = zed_api_version else {
-                bail!("extension {} has no zed:api-version section", manifest.id);
-            };
 
             let mut store = wasmtime::Store::new(
                 &this.engine,
@@ -196,13 +179,36 @@ impl WasmHost {
     }
 }
 
-fn parse_extension_version(data: &[u8]) -> Option<SemanticVersion> {
+pub fn parse_wasm_extension_version(
+    extension_id: &str,
+    wasm_bytes: &[u8],
+) -> Result<SemanticVersion> {
+    for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
+        if let wasmparser::Payload::CustomSection(s) = part? {
+            if s.name() == "zed:api-version" {
+                let version = parse_wasm_extension_version_custom_section(s.data());
+                if let Some(version) = version {
+                    return Ok(version);
+                } else {
+                    bail!(
+                        "extension {} has invalid zed:api-version section: {:?}",
+                        extension_id,
+                        s.data()
+                    );
+                }
+            }
+        }
+    }
+    bail!("extension {} has no zed:api-version section", extension_id)
+}
+
+fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
     if data.len() == 6 {
-        Some(SemanticVersion {
-            major: u16::from_be_bytes([data[0], data[1]]) as _,
-            minor: u16::from_be_bytes([data[2], data[3]]) as _,
-            patch: u16::from_be_bytes([data[4], data[5]]) as _,
-        })
+        Some(SemanticVersion::new(
+            u16::from_be_bytes([data[0], data[1]]) as _,
+            u16::from_be_bytes([data[2], data[3]]) as _,
+            u16::from_be_bytes([data[4], data[5]]) as _,
+        ))
     } else {
         None
     }
