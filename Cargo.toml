@@ -100,7 +100,7 @@ members = [
     "extensions/uiua",
     "extensions/svelte",
 
-    "tooling/xtask",
+    "tooling/xtask", "crates/anthropic",
 ]
 default-members = ["crates/zed"]
 resolver = "2"

@@ -3504,6 +3504,7 @@ async fn complete_with_language_model(
     session: Session,
     open_ai_api_key: Option<Arc<str>>,
     google_ai_api_key: Option<Arc<str>>,
+    anthropic_api_key: Option<Arc<str>>,
 ) -> Result<()> {
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
@@ -3522,6 +3523,10 @@ async fn complete_with_language_model(
         let api_key = google_ai_api_key
             .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
         complete_with_google_ai(request, response, session, api_key).await?;
+    } else if request.model.starts_with("claude") {
+        let api_key = anthropic_api_key
+            .ok_or_else(|| anyhow!("no Anthropic AI API key configured on the server"))?;
+        complete_with_claude(request, response, session, api_key).await?;
     }
 
     Ok(())
@@ -3616,6 +3621,15 @@ async fn complete_with_google_ai(
         })?;
     }
 
+    Ok(())
+}
+
+async fn complete_with_claude(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: UserSession,
+    api_key: Arc<str>,
+) -> Result<()> {
     Ok(())
 }
 

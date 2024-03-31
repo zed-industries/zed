@@ -213,6 +213,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "util",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"

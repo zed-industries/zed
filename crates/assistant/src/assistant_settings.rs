@@ -98,6 +98,7 @@ impl ZedDotDevModel {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo-preview",
+            Self::Claude3 => "claude-3",
             Self::Custom(id) => id,
         }
     }
@@ -107,6 +108,7 @@ impl ZedDotDevModel {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo",
+            Self::Claude3 => "claude-3",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -116,6 +118,7 @@ impl ZedDotDevModel {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
             Self::Gpt4Turbo => 128000,
+            Self::Claude3 => 200000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
