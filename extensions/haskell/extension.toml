@@ -1,0 +1,18 @@
+id = "haskell"
+name = "Haskell"
+description = "Haskell support."
+version = "0.0.1"
+schema_version = 1
+authors = [
+    "Pseudomata <pseudomata@proton.me>",
+    "Lei <45155667+leifu1128@users.noreply.github.com>"
+]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.hls]
+name = "Haskell Language Server"
+language = "Haskell"
+
+[grammars.haskell]
+repository = "https://github.com/tree-sitter/tree-sitter-haskell"
+commit = "8a99848fc734f9c4ea523b3f2a07df133cbbcec2"

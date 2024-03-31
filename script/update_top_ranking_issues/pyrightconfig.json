@@ -1,4 +1,4 @@
 {
-    "venvPath": ".",
-    "venv": "virtual_environment"
+  "venvPath": ".",
+  "venv": ".venv"
 }

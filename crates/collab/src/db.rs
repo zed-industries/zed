@@ -12,7 +12,7 @@ use futures::StreamExt;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::{
     proto::{self},
-    ConnectionId,
+    ConnectionId, ExtensionMetadata,
 };
 use sea_orm::{
     entity::prelude::*,
@@ -726,20 +726,8 @@ pub struct NewExtensionVersion {
     pub authors: Vec<String>,
     pub repository: String,
     pub schema_version: i32,
+    pub wasm_api_version: Option<String>,
     pub published_at: PrimitiveDateTime,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct ExtensionMetadata {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub authors: Vec<String>,
-    pub description: String,
-    pub repository: String,
-    #[serde(serialize_with = "serialize_iso8601")]
-    pub published_at: PrimitiveDateTime,
-    pub download_count: u64,
 }
 
 pub fn serialize_iso8601<S: Serializer>(

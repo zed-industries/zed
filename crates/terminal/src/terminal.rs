@@ -595,8 +595,34 @@ pub struct Terminal {
 pub struct TaskState {
     pub id: TaskId,
     pub label: String,
-    pub completed: bool,
+    pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
+}
+
+/// A status of the current terminal tab's task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskStatus {
+    /// The task had been started, but got cancelled or somehow otherwise it did not
+    /// report its exit code before the terminal event loop was shut down.
+    Unknown,
+    /// The task is started and running currently.
+    Running,
+    /// After the start, the task stopped running and reported its error code back.
+    Completed { success: bool },
+}
+
+impl TaskStatus {
+    fn register_terminal_exit(&mut self) {
+        if self == &Self::Running {
+            *self = Self::Unknown;
+        }
+    }
+
+    fn register_task_exit(&mut self, error_code: i32) {
+        *self = TaskStatus::Completed {
+            success: error_code == 0,
+        };
+    }
 }
 
 impl Terminal {
@@ -630,7 +656,7 @@ impl Terminal {
             }
             AlacTermEvent::Exit => match &mut self.task {
                 Some(task) => {
-                    task.completed = true;
+                    task.status.register_terminal_exit();
                     self.completion_tx.try_send(()).ok();
                 }
                 None => cx.emit(Event::CloseTerminal),
@@ -649,8 +675,11 @@ impl Terminal {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
             }
-            AlacTermEvent::ChildExit(_) => {
-                // TODO: Handle child exit
+            AlacTermEvent::ChildExit(error_code) => {
+                if let Some(task) = &mut self.task {
+                    task.status.register_task_exit(*error_code);
+                    self.completion_tx.try_send(()).ok();
+                }
             }
         }
     }
@@ -1381,19 +1410,15 @@ impl Terminal {
     }
 
     pub fn wait_for_completed_task(&self, cx: &mut AppContext) -> Task<()> {
-        match self.task() {
-            Some(task) => {
-                if task.completed {
-                    Task::ready(())
-                } else {
-                    let mut completion_receiver = task.completion_rx.clone();
-                    cx.spawn(|_| async move {
-                        completion_receiver.next().await;
-                    })
-                }
+        if let Some(task) = self.task() {
+            if task.status == TaskStatus::Running {
+                let mut completion_receiver = task.completion_rx.clone();
+                return cx.spawn(|_| async move {
+                    completion_receiver.next().await;
+                });
             }
-            None => Task::ready(()),
         }
+        Task::ready(())
     }
 }
 

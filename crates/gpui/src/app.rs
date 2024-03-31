@@ -28,13 +28,13 @@ use util::{
 };
 
 use crate::{
-    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
-    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder,
-    PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
-    WindowContext, WindowHandle, WindowId,
+    current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
+    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window,
+    WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -189,6 +189,11 @@ impl App {
     pub fn text_system(&self) -> Arc<TextSystem> {
         self.0.borrow().text_system.clone()
     }
+
+    /// Returns the file URL of the executable with the specified name in the application bundle
+    pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+        self.0.borrow().path_for_auxiliary_executable(name)
+    }
 }
 
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
@@ -212,9 +217,11 @@ pub struct AppContext {
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) svg_renderer: SvgRenderer,
+    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
-    pub(crate) image_cache: ImageCache,
+    pub(crate) svg_renderer: SvgRenderer,
+    http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
@@ -274,8 +281,10 @@ impl AppContext {
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
+                asset_cache: AssetCache::new(),
+                loading_assets: Default::default(),
                 asset_source,
-                image_cache: ImageCache::new(http_client),
+                http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
@@ -525,6 +534,14 @@ impl AppContext {
         self.platform.primary_display()
     }
 
+    /// Returns the display with the given ID, if one exists.
+    pub fn find_display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        self.displays()
+            .iter()
+            .find(|display| display.id() == id)
+            .cloned()
+    }
+
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
@@ -620,6 +637,16 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Returns the http client assigned to GPUI
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
+    }
+
+    /// Returns the SVG renderer GPUI uses
+    pub(crate) fn svg_renderer(&self) -> SvgRenderer {
+        self.svg_renderer.clone()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {
@@ -897,17 +924,6 @@ impl AppContext {
             .unwrap()
     }
 
-    /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    pub fn update_global<G: Global, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
-        self.update(|cx| {
-            let mut global = cx.lease_global::<G>();
-            let result = f(&mut global, cx);
-            cx.end_global_lease(global);
-            result
-        })
-    }
-
     /// Register a callback to be invoked when a global of the given type is updated.
     pub fn observe_global<G: Global>(
         &mut self,
@@ -1127,17 +1143,14 @@ impl AppContext {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Adds given path to list of recent paths for the application.
+    /// Adds given path to the bottom of the list of recent paths for the application.
     /// The list is usually shown on the application icon's context menu in the dock,
     /// and allows to open the recent files via that context menu.
-    pub fn add_recent_documents(&mut self, paths: &[PathBuf]) {
-        self.platform.add_recent_documents(paths);
+    /// If the path is already in the list, it will be moved to the bottom of the list.
+    pub fn add_recent_document(&mut self, path: &Path) {
+        self.platform.add_recent_document(path);
     }
 
-    /// Clears the list of recent paths from the application.
-    pub fn clear_recent_documents(&mut self) {
-        self.platform.clear_recent_documents();
-    }
     /// Dispatch an action to the currently active window or global action handler
     /// See [action::Action] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {

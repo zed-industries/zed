@@ -48,7 +48,25 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             true,
                         )
                     } else {
-                        motion.expand_selection(map, selection, times, false, &text_layout_details)
+                        let result = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            false,
+                            &text_layout_details,
+                        );
+                        if let Motion::CurrentLine = motion {
+                            let scope = map
+                                .buffer_snapshot
+                                .language_scope_at(selection.start.to_point(&map));
+                            for (ch, _) in map.chars_at(selection.start) {
+                                if ch == '\n' || char_kind(&scope, ch) != CharKind::Whitespace {
+                                    break;
+                                }
+                                *selection.start.column_mut() += 1;
+                            }
+                        }
+                        result
                     };
                 });
             });
@@ -394,6 +412,40 @@ mod test {
             jumps over
             ˇ"},
             ["c", "shift-g"],
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_change_cc(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+           The quick
+             brownˇ fox
+           jumps over
+           the lazy"},
+            ["c", "c"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
+           ˇThe quick
+           brown fox
+           jumps over
+           the lazy"},
+            ["c", "c"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
+           The quick
+             broˇwn fox
+           jumˇps over
+           the lazy"},
+            ["c", "c"],
         )
         .await;
     }

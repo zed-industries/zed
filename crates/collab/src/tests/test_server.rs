@@ -19,7 +19,6 @@ use futures::{channel::oneshot, StreamExt as _};
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
-
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -27,6 +26,7 @@ use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
 };
+use semantic_version::SemanticVersion;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -39,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use util::{http::FakeHttpClient, SemanticVersion};
+use util::http::FakeHttpClient;
 use workspace::{Workspace, WorkspaceId, WorkspaceStore};
 
 pub struct TestServer {

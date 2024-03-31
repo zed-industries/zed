@@ -205,7 +205,10 @@ message Envelope {
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
         UpdateChannelMessage update_channel_message = 170;
-        ChannelMessageUpdate channel_message_update = 171;  // current max
+        ChannelMessageUpdate channel_message_update = 171;
+
+        BlameBuffer blame_buffer = 172;
+        BlameBufferResponse blame_buffer_response = 173; // Current max
     }
 
     reserved 158 to 161;
@@ -1783,4 +1786,49 @@ message CountTokensWithLanguageModel {
 
 message CountTokensResponse {
     uint32 token_count = 1;
+}
+
+message BlameBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message BlameEntry {
+    bytes sha = 1;
+
+    uint32 start_line = 2;
+    uint32 end_line = 3;
+    uint32 original_line_number = 4;
+
+    optional string author = 5;
+    optional string author_mail = 6;
+    optional int64 author_time = 7;
+    optional string author_tz = 8;
+
+    optional string committer = 9;
+    optional string committer_mail = 10;
+    optional int64 committer_time = 11;
+    optional string committer_tz = 12;
+
+    optional string summary = 13;
+    optional string previous = 14;
+
+    string filename = 15;
+}
+
+message CommitMessage {
+    bytes oid = 1;
+    string message = 2;
+}
+
+message CommitPermalink {
+    bytes oid = 1;
+    string permalink = 2;
+}
+
+message BlameBufferResponse {
+    repeated BlameEntry entries = 1;
+    repeated CommitMessage messages = 2;
+    repeated CommitPermalink permalinks = 3;
 }

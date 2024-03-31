@@ -104,8 +104,9 @@ impl RenderOnce for TitleBar {
                     .w_full()
                     .children(self.children),
             )
-            .when(self.platform_style == PlatformStyle::Windows, |title_bar| {
-                title_bar.child(WindowsWindowControls::new(height))
-            })
+            .when(
+                self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
+                |title_bar| title_bar.child(WindowsWindowControls::new(height)),
+            )
     }
 }

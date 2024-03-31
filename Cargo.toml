@@ -1,4 +1,3 @@
-
 [workspace]
 members = [
     "crates/activity_indicator",
@@ -29,6 +28,7 @@ members = [
     "crates/feature_flags",
     "crates/feedback",
     "crates/file_finder",
+    "crates/file_icons",
     "crates/fs",
     "crates/fsevent",
     "crates/fuzzy",
@@ -71,6 +71,7 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
+    "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
     "crates/sqlez",
@@ -79,6 +80,7 @@ members = [
     "crates/storybook",
     "crates/sum_tree",
     "crates/supermaven_ui",
+    "crates/tab_switcher",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
@@ -97,9 +99,18 @@ members = [
     "crates/zed",
     "crates/zed_actions",
 
+    "extensions/astro",
+    "extensions/csharp",
+    "extensions/erlang",
     "extensions/gleam",
-    "extensions/uiua",
+    "extensions/haskell",
+    "extensions/php",
+    "extensions/prisma",
+    "extensions/purescript",
     "extensions/svelte",
+    "extensions/toml",
+    "extensions/uiua",
+    "extensions/zig",
 
     "tooling/xtask",
 ]
@@ -136,6 +147,7 @@ extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
+file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
@@ -179,6 +191,7 @@ rpc = { path = "crates/rpc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
+semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
@@ -187,6 +200,7 @@ story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven_ui = { path = "crates/supermaven_ui" }
+tab_switcher = { path = "crates/tab_switcher" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
@@ -276,6 +290,8 @@ tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
 time = { version = "0.3", features = [
+    "macros",
+    "parsing",
     "serde",
     "serde-well-known",
     "formatting",
@@ -284,24 +300,19 @@ toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
-tree-sitter-astro = { git = "https://github.com/virchau13/tree-sitter-astro.git", rev = "e924787e12e8a03194f36a113290ac11d6dc10f3" }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
 tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts" }
-tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
-tree-sitter-dockerfile = { git = "https://github.com/camdencheek/tree-sitter-dockerfile", rev = "33e22c33bcdbfc33d42806ee84cfd0b1248cc392" }
 tree-sitter-dart = { git = "https://github.com/agent3bood/tree-sitter-dart", rev = "48934e3bf757a9b78f17bdfaa3e2b4284656fdc7" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-erlang = "0.4.0"
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
-tree-sitter-haskell = { git = "https://github.com/tree-sitter/tree-sitter-haskell", rev = "8a99848fc734f9c4ea523b3f2a07df133cbbcec2" }
 tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
 rustc-demangle = "0.1.23"
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
@@ -313,21 +324,16 @@ tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown",
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "7dd29f9616822e5fc259f5b4ae6c4ded9a71a132" }
 tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", rev = "4abfdc1c7af2c6c77a370aee974627be1c285b3b" }
-tree-sitter-php = "0.21.1"
-tree-sitter-prisma-io = { git = "https://github.com/victorhqc/tree-sitter-prisma" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
-tree-sitter-purescript = { git = "https://github.com/postsolar/tree-sitter-purescript", rev = "v0.1.0" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
 tree-sitter-regex = "0.20.0"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
 tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
-tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
-tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 unindent = "0.1.7"
 unicase = "2.6"
 url = "2.2"

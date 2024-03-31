@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -125,9 +125,8 @@ impl Platform for TestPlatform {
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        // todo("windows")
         #[cfg(target_os = "windows")]
-        unimplemented!()
+        return Arc::new(crate::platform::windows::WindowsTextSystem::new());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -240,9 +239,7 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
-
-    fn clear_recent_documents(&self) {}
+    fn add_recent_document(&self, _paths: &Path) {}
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 

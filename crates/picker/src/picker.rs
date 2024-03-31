@@ -1,11 +1,12 @@
 use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
-    div, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Length, ListState, Render, Task,
-    UniformListScrollHandle, View, ViewContext, WindowContext,
+    actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
+    DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton,
+    MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use head::Head;
+use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
@@ -17,6 +18,17 @@ enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),
 }
+
+actions!(picker, [UseSelectedQuery]);
+
+/// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
+/// performing some kind of action on it.
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ConfirmInput {
+    pub secondary: bool,
+}
+
+impl_actions!(picker, [ConfirmInput]);
 
 struct PendingUpdateMatches {
     delegate_update_matches: Option<Task<()>>,
@@ -65,6 +77,9 @@ pub trait PickerDelegate: Sized + 'static {
     }
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
+    /// Instead of interacting with currently selected entry, treats editor input literally,
+    /// performing some kind of action on it.
+    fn confirm_input(&mut self, _secondary: bool, _: &mut ViewContext<Picker<Self>>) {}
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
     fn selected_as_query(&self) -> Option<String> {
         None
@@ -116,7 +131,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn nonsearchable_uniform_list(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let head = Head::empty(cx);
+        let head = Head::empty(Self::on_empty_head_blur, cx);
 
         Self::new(delegate, ContainerKind::UniformList, head, cx)
     }
@@ -278,7 +293,11 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn use_selected_query(&mut self, _: &menu::UseSelectedQuery, cx: &mut ViewContext<Self>) {
+    fn confirm_input(&mut self, input: &ConfirmInput, cx: &mut ViewContext<Self>) {
+        self.delegate.confirm_input(input.secondary, cx);
+    }
+
+    fn use_selected_query(&mut self, _: &UseSelectedQuery, cx: &mut ViewContext<Self>) {
         if let Some(new_query) = self.delegate.selected_as_query() {
             self.set_query(new_query, cx);
             cx.stop_propagation();
@@ -311,6 +330,13 @@ impl<D: PickerDelegate> Picker<D> {
             }
             _ => {}
         }
+    }
+
+    fn on_empty_head_blur(&mut self, cx: &mut ViewContext<Self>) {
+        let Head::Empty(_) = &self.head else {
+            panic!("unexpected call");
+        };
+        self.cancel(&menu::Cancel, cx);
     }
 
     pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
@@ -394,6 +420,16 @@ impl<D: PickerDelegate> Picker<D> {
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                 this.handle_click(ix, event.down.modifiers.command, cx)
             }))
+            // As of this writing, GPUI intercepts `ctrl-[mouse-event]`s on macOS
+            // and produces right mouse button events. This matches platforms norms
+            // but means that UIs which depend on holding ctrl down (such as the tab
+            // switcher) can't be clicked on. Hence, this handler.
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseUpEvent, cx| {
+                    this.handle_click(ix, event.modifiers.command, cx)
+                }),
+            )
             .children(
                 self.delegate
                     .render_match(ix, ix == self.delegate.selected_index(), cx),
@@ -455,6 +491,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::use_selected_query))
+            .on_action(cx.listener(Self::confirm_input))
             .child(match &self.head {
                 Head::Editor(editor) => v_flex()
                     .child(

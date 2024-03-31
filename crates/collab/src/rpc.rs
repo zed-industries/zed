@@ -46,6 +46,7 @@ use rpc::{
     },
     Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
+use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
@@ -68,7 +69,7 @@ use tracing::{
     field::{self},
     info_span, instrument, Instrument,
 };
-use util::{http::IsahcHttpClient, SemanticVersion};
+use util::http::IsahcHttpClient;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -366,6 +367,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
+            .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)

@@ -22,8 +22,8 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
-    PromptLevel, Size, WindowAppearance, WindowParams,
+    px, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
+    PromptLevel, Size, WindowAppearance, WindowBackgroundAppearance, WindowParams,
 };
 
 #[derive(Default)]
@@ -274,7 +274,7 @@ impl HasDisplayHandle for WaylandWindow {
 
 impl PlatformWindow for WaylandWindow {
     // todo(linux)
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         unimplemented!()
     }
 
@@ -346,8 +346,17 @@ impl PlatformWindow for WaylandWindow {
         // todo(linux)
     }
 
+    // todo(linux)
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0.toplevel.set_title(title.to_string());
+    }
+
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(linux)
     }
 
     fn set_edited(&mut self, edited: bool) {
