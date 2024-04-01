@@ -418,7 +418,7 @@ impl<D: PickerDelegate> Picker<D> {
             .id(("item", ix))
             .cursor_pointer()
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                this.handle_click(ix, event.down.modifiers.command, cx)
+                this.handle_click(ix, event.down.modifiers.cmd_or_ctrl_held(), cx)
             }))
             // As of this writing, GPUI intercepts `ctrl-[mouse-event]`s on macOS
             // and produces right mouse button events. This matches platforms norms
@@ -427,7 +427,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, cx| {
-                    this.handle_click(ix, event.modifiers.command, cx)
+                    this.handle_click(ix, event.modifiers.cmd_or_ctrl_held(), cx)
                 }),
             )
             .children(

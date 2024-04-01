@@ -93,7 +93,7 @@ impl Editor {
         modifiers: Modifiers,
         cx: &mut ViewContext<Self>,
     ) {
-        if !modifiers.command || self.has_pending_selection() {
+        if !modifiers.cmd_or_ctrl_held() || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
         }
@@ -113,7 +113,7 @@ impl Editor {
                     &snapshot,
                     point_for_position,
                     self,
-                    modifiers.command,
+                    modifiers.cmd_or_ctrl_held(),
                     modifiers.shift,
                     cx,
                 );

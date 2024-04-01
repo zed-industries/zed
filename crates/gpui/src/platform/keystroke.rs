@@ -200,6 +200,16 @@ impl Modifiers {
         self.control || self.alt || self.shift || self.command || self.function
     }
 
+    /// Checks whether the command key is held (on macOS) or
+    /// if the control key is held (on any other platform)
+    pub fn cmd_or_ctrl_held(&self) -> bool {
+        if cfg!(macos) {
+            self.command
+        } else {
+            self.control
+        }
+    }
+
     /// helper method for Modifiers with no modifiers
     pub fn none() -> Modifiers {
         Default::default()
