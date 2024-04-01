@@ -7088,7 +7088,6 @@ dependencies = [
  "settings",
  "sha2 0.10.7",
  "similar",
- "smallvec",
  "smol",
  "task",
  "terminal",
