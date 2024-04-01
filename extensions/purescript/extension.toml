@@ -1,0 +1,15 @@
+id = "purescript"
+name = "PureScript"
+description = "PureScript support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Iván Molina Rebolledo <ivanmolinarebolledo@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.purescript-language-server]
+name = "PureScript Language Server"
+language = "PureScript"
+
+[grammars.purescript]
+repository = "https://github.com/postsolar/tree-sitter-purescript"
+commit = "0554811a512b9cec08b5a83ce9096eb22da18213"

@@ -34,6 +34,7 @@ use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
+use theme::ActiveTheme;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -95,7 +96,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
-            traffic_light_position: Some(point(px(9.5), px(9.5))),
+            traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
         bounds: None,
         focus: false,
@@ -104,6 +105,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         is_movable: true,
         display_id: display.map(|display| display.id()),
         fullscreen: false,
+        window_background: cx.theme().window_background_appearance(),
     }
 }
 
@@ -879,8 +881,8 @@ mod tests {
     use collections::HashSet;
     use editor::{scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
-        VisualTestContext, WindowHandle,
+        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
+        TestAppContext, VisualTestContext, WindowHandle,
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{Project, ProjectPath, WorktreeSettings};

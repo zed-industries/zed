@@ -72,8 +72,8 @@ impl MetalRenderer {
 
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
-        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        layer.set_opaque(true);
+        layer.set_pixel_format(MTLPixelFormat::RGBA8Unorm);
+        layer.set_opaque(false);
         layer.set_maximum_drawable_count(3);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
@@ -128,7 +128,7 @@ impl MetalRenderer {
             "path_sprites",
             "path_sprite_vertex",
             "path_sprite_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
         let shadows_pipeline_state = build_pipeline_state(
             &device,
@@ -136,7 +136,7 @@ impl MetalRenderer {
             "shadows",
             "shadow_vertex",
             "shadow_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
         let quads_pipeline_state = build_pipeline_state(
             &device,
@@ -144,7 +144,7 @@ impl MetalRenderer {
             "quads",
             "quad_vertex",
             "quad_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
@@ -152,7 +152,7 @@ impl MetalRenderer {
             "underlines",
             "underline_vertex",
             "underline_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -160,7 +160,7 @@ impl MetalRenderer {
             "monochrome_sprites",
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -168,7 +168,7 @@ impl MetalRenderer {
             "polychrome_sprites",
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
@@ -176,7 +176,7 @@ impl MetalRenderer {
             "surfaces",
             "surface_vertex",
             "surface_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::RGBA8Unorm,
         );
 
         let command_queue = device.new_command_queue();

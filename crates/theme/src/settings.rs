@@ -244,6 +244,12 @@ impl ThemeSettings {
         if let Some(theme_overrides) = &self.theme_overrides {
             let mut base_theme = (*self.active_theme).clone();
 
+            if let Some(window_background_appearance) = theme_overrides.window_background_appearance
+            {
+                base_theme.styles.window_background_appearance =
+                    window_background_appearance.into();
+            }
+
             base_theme
                 .styles
                 .colors

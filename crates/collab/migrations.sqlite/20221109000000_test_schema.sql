@@ -374,6 +374,7 @@ CREATE TABLE extension_versions (
     repository TEXT NOT NULL,
     description TEXT NOT NULL,
     schema_version INTEGER NOT NULL DEFAULT 0,
+    wasm_api_version TEXT,
     download_count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (extension_id, version)
 );

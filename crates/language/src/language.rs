@@ -134,11 +134,15 @@ pub struct CachedLspAdapter {
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
+    /// Indicates whether this language server is the primary language server
+    /// for a given language. Currently, most LSP-backed features only work
+    /// with one language server, so one server needs to be primary.
+    pub is_primary: bool,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
 impl CachedLspAdapter {
-    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>, is_primary: bool) -> Arc<Self> {
         let name = adapter.name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
@@ -150,6 +154,7 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            is_primary,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
@@ -293,7 +298,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
                         self.name(),
@@ -464,7 +468,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
         .await;
 
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
     binary
 }
 
@@ -482,6 +486,8 @@ pub struct CodeLabel {
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
+    /// The name of this language for a Markdown code fence block
+    pub code_fence_block_name: Option<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -605,6 +611,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
+            code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -1179,6 +1186,13 @@ impl Language {
 
     pub fn name(&self) -> Arc<str> {
         self.config.name.clone()
+    }
+
+    pub fn code_fence_block_name(&self) -> Arc<str> {
+        self.config
+            .code_fence_block_name
+            .clone()
+            .unwrap_or_else(|| self.config.name.to_lowercase().into())
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {

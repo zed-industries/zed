@@ -1,16 +1,19 @@
 pub mod extension_builder;
 mod extension_lsp_adapter;
 mod extension_manifest;
+mod extension_settings;
 mod wasm_host;
 
 #[cfg(test)]
 mod extension_store_test;
 
+use crate::extension_manifest::SchemaVersion;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
+use collections::{btree_map, BTreeMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -21,16 +24,21 @@ use futures::{
     io::BufReader,
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use gpui::{actions, AppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
+use gpui::{
+    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
+    WeakModel,
+};
 use language::{
     ContextProviderWithTasks, LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
+use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
+use std::str::FromStr;
 use std::{
     cmp::Ordering,
-    ffi::OsStr,
     path::{self, Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -39,34 +47,42 @@ use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
 use util::{
     http::{AsyncBody, HttpClient, HttpClientWithUrl},
+    maybe,
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
-use wasm_host::{WasmExtension, WasmHost};
+use wasm_host::{wit::is_supported_wasm_api_version, WasmExtension, WasmHost};
 
 pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
 };
+pub use extension_settings::ExtensionSettings;
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+/// The current extension [`SchemaVersion`] supported by Zed.
+const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
-#[derive(Deserialize)]
-pub struct ExtensionsApiResponse {
-    pub data: Vec<ExtensionApiResponse>,
-}
+/// Returns whether the given extension version is compatible with this version of Zed.
+pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
+    let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
+    if CURRENT_SCHEMA_VERSION.0 < schema_version {
+        return false;
+    }
 
-#[derive(Clone, Deserialize)]
-pub struct ExtensionApiResponse {
-    pub id: Arc<str>,
-    pub name: String,
-    pub version: Arc<str>,
-    pub description: Option<String>,
-    pub authors: Vec<String>,
-    pub repository: String,
-    pub download_count: usize,
+    if let Some(wasm_api_version) = extension_version
+        .manifest
+        .wasm_api_version
+        .as_ref()
+        .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
+    {
+        if !is_supported_wasm_api_version(wasm_api_version) {
+            return false;
+        }
+    }
+
+    true
 }
 
 pub struct ExtensionStore {
@@ -74,10 +90,11 @@ pub struct ExtensionStore {
     extension_index: ExtensionIndex,
     fs: Arc<dyn Fs>,
     http_client: Arc<HttpClientWithUrl>,
+    telemetry: Option<Arc<Telemetry>>,
     reload_tx: UnboundedSender<Option<Arc<str>>>,
     reload_complete_senders: Vec<oneshot::Sender<()>>,
     installed_dir: PathBuf,
-    outstanding_operations: HashMap<Arc<str>, ExtensionOperation>,
+    outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
@@ -87,17 +104,8 @@ pub struct ExtensionStore {
     tasks: Vec<Task<()>>,
 }
 
-#[derive(Clone)]
-pub enum ExtensionStatus {
-    NotInstalled,
-    Installing,
-    Upgrading,
-    Installed(Arc<str>),
-    Removing,
-}
-
 #[derive(Clone, Copy)]
-enum ExtensionOperation {
+pub enum ExtensionOperation {
     Upgrade,
     Install,
     Remove,
@@ -108,6 +116,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionFailedToLoad(Arc<str>),
 }
 
 impl EventEmitter<Event> for ExtensionStore {}
@@ -125,8 +134,8 @@ pub struct ExtensionIndex {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexEntry {
-    manifest: Arc<ExtensionManifest>,
-    dev: bool,
+    pub manifest: Arc<ExtensionManifest>,
+    pub dev: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
@@ -147,18 +156,21 @@ actions!(zed, [ReloadExtensions]);
 
 pub fn init(
     fs: Arc<fs::RealFs>,
-    http_client: Arc<HttpClientWithUrl>,
+    client: Arc<Client>,
     node_runtime: Arc<dyn NodeRuntime>,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
 ) {
+    ExtensionSettings::register(cx);
+
     let store = cx.new_model(move |cx| {
         ExtensionStore::new(
             EXTENSIONS_DIR.clone(),
             None,
             fs,
-            http_client,
+            client.http_client().clone(),
+            Some(client.telemetry().clone()),
             node_runtime,
             language_registry,
             theme_registry,
@@ -175,6 +187,11 @@ pub fn init(
 }
 
 impl ExtensionStore {
+    pub fn try_global(cx: &AppContext) -> Option<Model<Self>> {
+        cx.try_global::<GlobalExtensionStore>()
+            .map(|store| store.0.clone())
+    }
+
     pub fn global(cx: &AppContext) -> Model<Self> {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
@@ -185,6 +202,7 @@ impl ExtensionStore {
         build_dir: Option<PathBuf>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
+        telemetry: Option<Arc<Telemetry>>,
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
@@ -214,6 +232,7 @@ impl ExtensionStore {
             wasm_extensions: Vec::new(),
             fs,
             http_client,
+            telemetry,
             language_registry,
             theme_registry,
             reload_tx,
@@ -253,9 +272,19 @@ impl ExtensionStore {
         // Immediately load all of the extensions in the initial manifest. If the
         // index needs to be rebuild, then enqueue
         let load_initial_extensions = this.extensions_updated(extension_index, cx);
+        let mut reload_future = None;
         if extension_index_needs_rebuild {
-            let _ = this.reload(None, cx);
+            reload_future = Some(this.reload(None, cx));
         }
+
+        cx.spawn(|this, mut cx| async move {
+            if let Some(future) = reload_future {
+                future.await;
+            }
+            this.update(&mut cx, |this, cx| this.check_for_updates(cx))
+                .ok();
+        })
+        .detach();
 
         // Perform all extension loading in a single task to ensure that we
         // never attempt to simultaneously load/unload extensions from multiple
@@ -346,16 +375,12 @@ impl ExtensionStore {
         self.installed_dir.clone()
     }
 
-    pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
-        match self.outstanding_operations.get(extension_id) {
-            Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
-            Some(ExtensionOperation::Remove) => ExtensionStatus::Removing,
-            Some(ExtensionOperation::Upgrade) => ExtensionStatus::Upgrading,
-            None => match self.extension_index.extensions.get(extension_id) {
-                Some(extension) => ExtensionStatus::Installed(extension.manifest.version.clone()),
-                None => ExtensionStatus::NotInstalled,
-            },
-        }
+    pub fn outstanding_operations(&self) -> &BTreeMap<Arc<str>, ExtensionOperation> {
+        &self.outstanding_operations
+    }
+
+    pub fn installed_extensions(&self) -> &BTreeMap<Arc<str>, ExtensionIndexEntry> {
+        &self.extension_index.extensions
     }
 
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
@@ -380,14 +405,105 @@ impl ExtensionStore {
         &self,
         search: Option<&str>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<ExtensionApiResponse>>> {
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let version = CURRENT_SCHEMA_VERSION.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
         if let Some(search) = search {
             query.push(("filter", search));
         }
 
-        let url = self.http_client.build_zed_api_url("/extensions", &query);
+        self.fetch_extensions_from_api("/extensions", query, cx)
+    }
+
+    pub fn fetch_extensions_with_update_available(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        let version = CURRENT_SCHEMA_VERSION.to_string();
+        let mut query = vec![("max_schema_version", version.as_str())];
+        let extension_settings = ExtensionSettings::get_global(cx);
+        let extension_ids = self
+            .extension_index
+            .extensions
+            .keys()
+            .map(|id| id.as_ref())
+            .filter(|id| extension_settings.should_auto_update(id))
+            .collect::<Vec<_>>()
+            .join(",");
+        query.push(("ids", &extension_ids));
+
+        let task = self.fetch_extensions_from_api("/extensions", query, cx);
+        cx.spawn(move |this, mut cx| async move {
+            let extensions = task.await?;
+            this.update(&mut cx, |this, _cx| {
+                extensions
+                    .into_iter()
+                    .filter(|extension| {
+                        this.extension_index.extensions.get(&extension.id).map_or(
+                            true,
+                            |installed_extension| {
+                                installed_extension.manifest.version != extension.manifest.version
+                            },
+                        )
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    pub fn fetch_extension_versions(
+        &self,
+        extension_id: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), Vec::new(), cx)
+    }
+
+    pub fn check_for_updates(&mut self, cx: &mut ModelContext<Self>) {
+        let task = self.fetch_extensions_with_update_available(cx);
+        cx.spawn(move |this, mut cx| async move {
+            Self::upgrade_extensions(this, task.await?, &mut cx).await
+        })
+        .detach();
+    }
+
+    async fn upgrade_extensions(
+        this: WeakModel<Self>,
+        extensions: Vec<ExtensionMetadata>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        for extension in extensions {
+            let task = this.update(cx, |this, cx| {
+                if let Some(installed_extension) =
+                    this.extension_index.extensions.get(&extension.id)
+                {
+                    let installed_version =
+                        SemanticVersion::from_str(&installed_extension.manifest.version).ok()?;
+                    let latest_version =
+                        SemanticVersion::from_str(&extension.manifest.version).ok()?;
+
+                    if installed_version >= latest_version {
+                        return None;
+                    }
+                }
+
+                Some(this.upgrade_extension(extension.id, extension.manifest.version, cx))
+            })?;
+
+            if let Some(task) = task {
+                task.await.log_err();
+            }
+        }
+        anyhow::Ok(())
+    }
+
+    fn fetch_extensions_from_api(
+        &self,
+        path: &str,
+        query: Vec<(&str, &str)>,
+        cx: &mut ModelContext<'_, ExtensionStore>,
+    ) -> Task<Result<Vec<ExtensionMetadata>>> {
+        let url = self.http_client.build_zed_api_url(path, &query);
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
             let mut response = http_client
@@ -409,8 +525,7 @@ impl ExtensionStore {
                 );
             }
 
-            let response: ExtensionsApiResponse = serde_json::from_slice(&body)?;
-
+            let response: GetExtensionsResponse = serde_json::from_slice(&body)?;
             Ok(response.data)
         })
     }
@@ -422,6 +537,7 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Install, cx)
+            .detach_and_log_err(cx);
     }
 
     fn install_or_upgrade_extension_at_endpoint(
@@ -430,14 +546,16 @@ impl ExtensionStore {
         url: Url,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
-    ) {
-        let extensions_dir = self.extensions_dir();
+    ) -> Task<Result<()>> {
+        let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            hash_map::Entry::Occupied(_) => return,
-            hash_map::Entry::Vacant(e) => e.insert(operation),
+            btree_map::Entry::Occupied(_) => return Task::ready(Ok(())),
+            btree_map::Entry::Vacant(e) => e.insert(operation),
         };
+        cx.notify();
 
         cx.spawn(move |this, mut cx| async move {
             let _finish = util::defer({
@@ -457,11 +575,19 @@ impl ExtensionStore {
                 .get(&url.as_ref(), Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+
+            fs.remove_dir(
+                &extension_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let archive = Archive::new(decompressed_bytes);
-            archive
-                .unpack(extensions_dir.join(extension_id.as_ref()))
-                .await?;
+            archive.unpack(extension_dir).await?;
             this.update(&mut cx, |this, cx| {
                 this.reload(Some(extension_id.clone()), cx)
             })?
@@ -479,7 +605,6 @@ impl ExtensionStore {
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
     }
 
     pub fn install_latest_extension(
@@ -502,7 +627,8 @@ impl ExtensionStore {
             url,
             ExtensionOperation::Install,
             cx,
-        );
+        )
+        .detach_and_log_err(cx);
     }
 
     pub fn upgrade_extension(
@@ -510,7 +636,7 @@ impl ExtensionStore {
         extension_id: Arc<str>,
         version: Arc<str>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
     }
 
@@ -520,7 +646,7 @@ impl ExtensionStore {
         version: Arc<str>,
         operation: ExtensionOperation,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         log::info!("installing extension {extension_id} {version}");
         let Some(url) = self
             .http_client
@@ -530,19 +656,19 @@ impl ExtensionStore {
             )
             .log_err()
         else {
-            return;
+            return Task::ready(Ok(()));
         };
 
-        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx);
+        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
     }
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
-        let extensions_dir = self.extensions_dir();
+        let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            hash_map::Entry::Occupied(_) => return,
-            hash_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
+            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
         cx.spawn(move |this, mut cx| async move {
@@ -560,7 +686,7 @@ impl ExtensionStore {
             });
 
             fs.remove_dir(
-                &extensions_dir.join(extension_id.as_ref()),
+                &extension_dir,
                 RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: true,
@@ -585,14 +711,14 @@ impl ExtensionStore {
         let builder = self.builder.clone();
 
         cx.spawn(move |this, mut cx| async move {
-            let extension_manifest =
-                Self::load_extension_manifest(fs.clone(), &extension_source_path).await?;
+            let mut extension_manifest =
+                ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
             if !this.update(&mut cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
-                    hash_map::Entry::Occupied(_) => return false,
-                    hash_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
+                    btree_map::Entry::Occupied(_) => return false,
+                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
                 };
                 cx.notify();
                 true
@@ -620,7 +746,7 @@ impl ExtensionStore {
                         builder
                             .compile_extension(
                                 &extension_source_path,
-                                &extension_manifest,
+                                &mut extension_manifest,
                                 CompileExtensionOptions { release: false },
                             )
                             .await
@@ -659,15 +785,19 @@ impl ExtensionStore {
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            hash_map::Entry::Occupied(_) => return,
-            hash_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Upgrade),
+            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Upgrade),
         };
 
         cx.notify();
         let compile = cx.background_executor().spawn(async move {
-            let manifest = Self::load_extension_manifest(fs, &path).await?;
+            let mut manifest = ExtensionManifest::load(fs, &path).await?;
             builder
-                .compile_extension(&path, &manifest, CompileExtensionOptions { release: true })
+                .compile_extension(
+                    &path,
+                    &mut manifest,
+                    CompileExtensionOptions { release: true },
+                )
                 .await
         });
 
@@ -756,6 +886,17 @@ impl ExtensionStore {
             reload_count,
             extensions_to_unload.len() - reload_count
         );
+
+        if let Some(telemetry) = &self.telemetry {
+            for extension_id in &extensions_to_load {
+                if let Some(extension) = new_index.extensions.get(extension_id) {
+                    telemetry.report_extension_event(
+                        extension_id.clone(),
+                        extension.manifest.version.clone(),
+                    );
+                }
+            }
+        }
 
         let themes_to_remove = old_index
             .themes
@@ -886,41 +1027,40 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let mut path = root_dir.clone();
-                path.extend([extension.manifest.id.as_ref(), "extension.wasm"]);
-                let Some(mut wasm_file) = fs
-                    .open_sync(&path)
-                    .await
-                    .context("failed to open wasm file")
-                    .log_err()
-                else {
-                    continue;
-                };
+                let wasm_extension = maybe!(async {
+                    let mut path = root_dir.clone();
+                    path.extend([extension.manifest.clone().id.as_ref(), "extension.wasm"]);
+                    let mut wasm_file = fs
+                        .open_sync(&path)
+                        .await
+                        .context("failed to open wasm file")?;
 
-                let mut wasm_bytes = Vec::new();
-                if wasm_file
-                    .read_to_end(&mut wasm_bytes)
-                    .context("failed to read wasm")
-                    .log_err()
-                    .is_none()
-                {
-                    continue;
+                    let mut wasm_bytes = Vec::new();
+                    wasm_file
+                        .read_to_end(&mut wasm_bytes)
+                        .context("failed to read wasm")?;
+
+                    wasm_host
+                        .load_extension(
+                            wasm_bytes,
+                            extension.manifest.clone().clone(),
+                            cx.background_executor().clone(),
+                        )
+                        .await
+                        .with_context(|| {
+                            format!("failed to load wasm extension {}", extension.manifest.id)
+                        })
+                })
+                .await;
+
+                if let Some(wasm_extension) = wasm_extension.log_err() {
+                    wasm_extensions.push((extension.manifest.clone(), wasm_extension));
+                } else {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                    })
+                    .ok();
                 }
-
-                let Some(wasm_extension) = wasm_host
-                    .load_extension(
-                        wasm_bytes,
-                        extension.manifest.clone(),
-                        cx.background_executor().clone(),
-                    )
-                    .await
-                    .context("failed to load wasm extension")
-                    .log_err()
-                else {
-                    continue;
-                };
-
-                wasm_extensions.push((extension.manifest.clone(), wasm_extension));
             }
 
             this.update(&mut cx, |this, cx| {
@@ -990,8 +1130,7 @@ impl ExtensionStore {
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
     ) -> Result<()> {
-        let mut extension_manifest =
-            Self::load_extension_manifest(fs.clone(), &extension_dir).await?;
+        let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
 
         // TODO: distinguish dev extensions more explicitly, by the absence
@@ -1082,72 +1221,6 @@ impl ExtensionStore {
         );
 
         Ok(())
-    }
-
-    pub async fn load_extension_manifest(
-        fs: Arc<dyn Fs>,
-        extension_dir: &Path,
-    ) -> Result<ExtensionManifest> {
-        let extension_name = extension_dir
-            .file_name()
-            .and_then(OsStr::to_str)
-            .ok_or_else(|| anyhow!("invalid extension name"))?;
-
-        let mut extension_manifest_path = extension_dir.join("extension.json");
-        if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
-
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
-        } else {
-            extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
-        }
-    }
-}
-
-fn manifest_from_old_manifest(
-    manifest_json: OldExtensionManifest,
-    extension_id: &str,
-) -> ExtensionManifest {
-    ExtensionManifest {
-        id: extension_id.into(),
-        name: manifest_json.name,
-        version: manifest_json.version,
-        description: manifest_json.description,
-        repository: manifest_json.repository,
-        authors: manifest_json.authors,
-        schema_version: 0,
-        lib: Default::default(),
-        themes: {
-            let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort();
-            themes.dedup();
-            themes
-        },
-        languages: {
-            let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort();
-            languages.dedup();
-            languages
-        },
-        grammars: manifest_json
-            .grammars
-            .into_keys()
-            .map(|grammar_name| (grammar_name, Default::default()))
-            .collect(),
-        language_servers: Default::default(),
     }
 }
 

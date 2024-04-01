@@ -66,9 +66,14 @@ impl OneshotSource {
 
     /// Spawns a certain task based on the user prompt.
     pub fn spawn(&mut self, prompt: String) -> Arc<dyn Task> {
-        let ret = Arc::new(OneshotTask::new(prompt));
-        self.tasks.push(ret.clone());
-        ret
+        if let Some(task) = self.tasks.iter().find(|task| task.id().0 == prompt) {
+            // If we already have an oneshot task with that command, let's just reuse it.
+            task.clone()
+        } else {
+            let new_oneshot = Arc::new(OneshotTask::new(prompt));
+            self.tasks.push(new_oneshot.clone());
+            new_oneshot
+        }
     }
 }
 

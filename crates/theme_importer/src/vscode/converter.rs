@@ -56,6 +56,7 @@ impl VsCodeThemeConverter {
             name: self.theme_metadata.name,
             appearance,
             style: ThemeStyleContent {
+                window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
                 colors: theme_colors,
                 status: status_colors,
                 players: Vec::new(),
@@ -166,6 +167,7 @@ impl VsCodeThemeConverter {
             scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
             scrollbar_track_background: vscode_editor_background.clone(),
             scrollbar_track_border: vscode_colors.editor_overview_ruler.border.clone(),
+            pane_group_border: vscode_colors.editor_group.border.clone(),
             editor_foreground: vscode_editor_foreground
                 .clone()
                 .or(vscode_token_colors_foreground.clone()),

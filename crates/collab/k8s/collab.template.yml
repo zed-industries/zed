@@ -130,6 +130,11 @@ spec:
                 secretKeyRef:
                   name: openai
                   key: api_key
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic
+                  key: api_key
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

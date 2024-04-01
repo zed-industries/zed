@@ -131,6 +131,7 @@ impl PlatformInput {
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        first_mouse: false,
                     })
                 })
             }

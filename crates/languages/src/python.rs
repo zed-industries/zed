@@ -180,7 +180,7 @@ async fn get_cached_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, ModelContext, TestAppContext};
+    use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;

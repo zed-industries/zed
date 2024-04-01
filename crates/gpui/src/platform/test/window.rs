@@ -1,7 +1,8 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult,
-    GlobalPixels, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowParams,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
+    DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
+    WindowBackgroundAppearance, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -12,7 +13,7 @@ use std::{
 };
 
 pub(crate) struct TestWindowState {
-    pub(crate) bounds: Bounds<GlobalPixels>,
+    pub(crate) bounds: Bounds<DevicePixels>,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
@@ -78,7 +79,7 @@ impl TestWindow {
         let Some(mut callback) = lock.resize_callback.take() else {
             return;
         };
-        lock.bounds.size = size.map(|pixels| f64::from(pixels).into());
+        lock.bounds.size = size.map(|pixels| (pixels.0 as i32).into());
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
@@ -107,7 +108,7 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.0.lock().bounds
     }
 
@@ -181,8 +182,16 @@ impl PlatformWindow for TestWindow {
             .set_active_window(Some(self.clone()))
     }
 
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0.lock().title = Some(title.to_owned());
+    }
+
+    fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
+        unimplemented!()
     }
 
     fn set_edited(&mut self, edited: bool) {

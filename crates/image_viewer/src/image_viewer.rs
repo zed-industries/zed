@@ -1,6 +1,6 @@
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
-    Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model,
+    EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Model,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use persistence::IMAGE_VIEWER;
@@ -36,8 +36,7 @@ impl project::Item for ImageItem {
             .and_then(OsStr::to_str)
             .unwrap_or_default();
 
-        let format = gpui::ImageFormat::from_extension(ext);
-        if format.is_some() {
+        if Img::extensions().contains(&ext) {
             Some(cx.spawn(|mut cx| async move {
                 let abs_path = project
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
@@ -73,14 +72,21 @@ impl Item for ImageView {
     fn tab_content(
         &self,
         _detail: Option<usize>,
-        _selected: bool,
+        selected: bool,
         _cx: &WindowContext,
     ) -> AnyElement {
-        self.path
+        let title = self
+            .path
             .file_name()
             .unwrap_or_else(|| self.path.as_os_str())
             .to_string_lossy()
-            .to_string()
+            .to_string();
+        Label::new(title)
+            .color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
             .into_any_element()
     }
 
@@ -149,8 +155,6 @@ impl FocusableView for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let im = img(self.path.clone()).into_any();
-
         div()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -203,10 +207,12 @@ impl Render for ImageView {
                 .left_0(),
             )
             .child(
-                v_flex()
-                    .h_full()
-                    .justify_around()
-                    .child(h_flex().w_full().justify_around().child(im)),
+                v_flex().h_full().justify_around().child(
+                    h_flex()
+                        .w_full()
+                        .justify_around()
+                        .child(img(self.path.clone())),
+                ),
             )
     }
 }

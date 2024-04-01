@@ -255,16 +255,21 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
-                        let mut head = selection.head();
+                        let mut mut_selection = selection.clone();
 
                         // all our motions assume that the current character is
                         // after the cursor; however in the case of a visual selection
                         // the current character is before the cursor.
-                        if !selection.reversed {
-                            head = movement::left(map, head);
+                        // But this will affect the judgment of the html tag
+                        // so the html tag needs to skip this logic.
+                        if !selection.reversed && object != Object::Tag {
+                            mut_selection.set_head(
+                                movement::left(map, mut_selection.head()),
+                                mut_selection.goal,
+                            );
                         }
 
-                        if let Some(range) = object.range(map, head, around) {
+                        if let Some(range) = object.range(map, mut_selection, around) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
                                     || selection.is_empty()

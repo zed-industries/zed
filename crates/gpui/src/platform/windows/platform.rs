@@ -12,13 +12,14 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use ::util::{ResultExt, SemanticVersion};
+use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
+use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
 use windows::{
@@ -62,6 +63,8 @@ pub(crate) struct WindowsPlatformInner {
     pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
     pub icon: HICON,
+    // NOTE: standard cursor handles don't need to close.
+    pub(crate) current_cursor: Cell<HCURSOR>,
 }
 
 impl WindowsPlatformInner {
@@ -157,6 +160,7 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let icon = load_icon().unwrap_or_default();
+        let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
         let inner = Rc::new(WindowsPlatformInner {
             background_executor,
             foreground_executor,
@@ -167,6 +171,7 @@ impl WindowsPlatform {
             dispatch_event,
             settings,
             icon,
+            current_cursor,
         });
         Self { inner }
     }
@@ -509,11 +514,11 @@ impl Platform for WindowsPlatform {
         let mut info = unsafe { std::mem::zeroed() };
         let status = unsafe { RtlGetVersion(&mut info) };
         if status.is_ok() {
-            Ok(SemanticVersion {
-                major: info.dwMajorVersion as _,
-                minor: info.dwMinorVersion as _,
-                patch: info.dwBuildNumber as _,
-            })
+            Ok(SemanticVersion::new(
+                info.dwMajorVersion as _,
+                info.dwMinorVersion as _,
+                info.dwBuildNumber as _,
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "unable to get Windows version: {}",
@@ -602,11 +607,11 @@ impl Platform for WindowsPlatform {
         let version_info = unsafe { &*(version_info_raw as *mut VS_FIXEDFILEINFO) };
         // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
         if version_info.dwSignature == 0xFEEF04BD {
-            return Ok(SemanticVersion {
-                major: ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
-                minor: (version_info.dwProductVersionMS & 0xFFFF) as usize,
-                patch: ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
-            });
+            return Ok(SemanticVersion::new(
+                ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
+                (version_info.dwProductVersionMS & 0xFFFF) as usize,
+                ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
+            ));
         } else {
             log::error!(
                 "no version info present: {}",
@@ -646,29 +651,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        let handle = match style {
-            CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => unsafe {
-                load_cursor(IDC_IBEAM)
-            },
-            CursorStyle::Crosshair => unsafe { load_cursor(IDC_CROSS) },
-            CursorStyle::PointingHand | CursorStyle::DragLink => unsafe { load_cursor(IDC_HAND) },
-            CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => unsafe {
-                load_cursor(IDC_SIZEWE)
-            },
-            CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => unsafe {
-                load_cursor(IDC_SIZENS)
-            },
-            CursorStyle::OperationNotAllowed => unsafe { load_cursor(IDC_NO) },
-            _ => unsafe { load_cursor(IDC_ARROW) },
-        };
-        if handle.is_err() {
-            log::error!(
-                "Error loading cursor image: {}",
-                std::io::Error::last_os_error()
-            );
-            return;
-        }
-        let _ = unsafe { SetCursor(HCURSOR(handle.unwrap().0)) };
+        self.inner.current_cursor.set(load_cursor(style));
     }
 
     // todo(windows)
@@ -740,9 +723,7 @@ impl Platform for WindowsPlatform {
                         (*credentials).CredentialBlobSize as usize,
                     )
                 };
-                let mut password: Vec<u8> = Vec::with_capacity(credential_blob.len());
-                password.resize(password.capacity(), 0);
-                password.clone_from_slice(&credential_blob);
+                let password = credential_blob.to_vec();
                 unsafe { CredFree(credentials as *const c_void) };
                 Ok(Some((username, password)))
             }
@@ -771,10 +752,6 @@ impl Drop for WindowsPlatform {
             OleUninitialize();
         }
     }
-}
-
-unsafe fn load_cursor(name: PCWSTR) -> Result<HANDLE> {
-    LoadImageW(None, name, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED).map_err(|e| anyhow!(e))
 }
 
 fn open_target(target: &str) {

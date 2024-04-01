@@ -1,18 +1,20 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
+use project::project_settings::ProjectSettings;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
+use serde_json::Value;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
     env::consts,
     ops::Deref,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
@@ -20,10 +22,9 @@ use std::{
 };
 use task::static_source::{Definition, TaskDefinitions};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -273,6 +274,18 @@ impl LspAdapter for ElixirLspAdapter {
             filter_range,
         })
     }
+
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        let settings = ProjectSettings::get_global(cx)
+            .lsp
+            .get("elixir-ls")
+            .and_then(|s| s.settings.clone())
+            .unwrap_or_default();
+
+        serde_json::json!({
+            "elixirLS": settings
+        })
+    }
 }
 
 async fn get_cached_server_binary_elixir_ls(
@@ -413,7 +426,7 @@ impl LspAdapter for NextLspAdapter {
 }
 
 async fn get_cached_server_binary_next(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

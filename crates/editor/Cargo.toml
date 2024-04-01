@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 test-support = [
-    "copilot/test-support",
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
@@ -34,7 +33,6 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 convert_case = "0.6.0"
-copilot.workspace = true
 db.workspace = true
 emojis.workspace = true
 futures.workspace = true
@@ -63,6 +61,8 @@ smol.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+time.workspace = true
+time_format.workspace = true
 theme.workspace = true
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
@@ -73,7 +73,6 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-copilot = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

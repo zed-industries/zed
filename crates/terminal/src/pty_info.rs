@@ -60,7 +60,7 @@ impl ProcessIdGetter {
             }
             return Some(Pid::from_u32(self.fallback_pid));
         }
-        Some(Pid::from_u32(pid as u32))
+        Some(Pid::from_u32(pid))
     }
 }
 

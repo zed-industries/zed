@@ -37,6 +37,7 @@ use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
+use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
