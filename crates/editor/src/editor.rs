@@ -121,7 +121,7 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, KeyIcon, ListItem,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem,
     Popover, Tooltip,
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
