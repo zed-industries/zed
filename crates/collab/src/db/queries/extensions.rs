@@ -44,7 +44,7 @@ impl Database {
                 .await?;
 
             let mut max_versions = self
-                .get_latest_versions_for_extensions(&extensions, constraints, &*tx)
+                .get_latest_versions_for_extensions(&extensions, constraints, &tx)
                 .await?;
 
             Ok(extensions
@@ -69,7 +69,7 @@ impl Database {
                 extension_version::Column::ExtensionId
                     .is_in(extensions.iter().map(|extension| extension.id)),
             )
-            .stream(&*tx)
+            .stream(tx)
             .await?;
 
         let mut max_versions =
@@ -165,7 +165,7 @@ impl Database {
 
             let extensions = [extension];
             let mut versions = self
-                .get_latest_versions_for_extensions(&extensions, constraints, &*tx)
+                .get_latest_versions_for_extensions(&extensions, constraints, &tx)
                 .await?;
             let [extension] = extensions;
 
