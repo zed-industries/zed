@@ -1107,6 +1107,14 @@ impl ExtensionStore {
                     let Ok(extension_dir) = extension_dir else {
                         continue;
                     };
+
+                    if extension_dir
+                        .file_name()
+                        .map_or(false, |file_name| file_name == ".DS_Store")
+                    {
+                        continue;
+                    }
+
                     Self::add_extension_to_index(fs.clone(), extension_dir, &mut index)
                         .await
                         .log_err();
