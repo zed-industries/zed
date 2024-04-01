@@ -36,8 +36,10 @@ use windows::{
             Dxgi::Common::{DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM},
             Gdi::{
                 CreateBitmap, CreateCompatibleBitmap, CreateCompatibleDC, DeleteObject,
-                GetCurrentObject, GetDIBits, GetObjectW, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER,
-                BI_RGB, DIBSECTION, DIB_RGB_COLORS, HDC, OBJ_BITMAP,
+                GetCurrentObject, GetDIBits, GetObjectW, GetStockObject, Rectangle, ReleaseDC,
+                SelectObject, SetBoundsRect, SetDCBrushColor, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+                DCB_ENABLE, DCB_RESET, DC_BRUSH, DIBSECTION, DIB_RGB_COLORS, HDC, NULL_PEN,
+                OBJ_BITMAP, SET_BOUNDS_RECT_FLAGS,
             },
         },
     },
@@ -46,7 +48,7 @@ use windows::{
 use crate::{
     point, px, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
     FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
-    ShapedGlyph, ShapedRun, Size,
+    ShapedGlyph, ShapedRun, Size, SUBPIXEL_VARIANTS,
 };
 
 struct FontInfo {
@@ -62,10 +64,10 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    d2d1_factory: ID2D1Factory,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
-    analyzer: IDWriteTextAnalyzer,
+    gdi: IDWriteGdiInterop,
+    render_target: IDWriteBitmapRenderTarget3,
 }
 
 struct DirectWriteState {
@@ -80,23 +82,24 @@ impl DirectWriteComponent {
     pub fn new() -> Self {
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
-            let d2d1_factory: ID2D1Factory =
-                D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None).unwrap();
             let in_memory_loader = factory.CreateInMemoryFontFileLoader().unwrap();
             factory.RegisterFontFileLoader(&in_memory_loader).unwrap();
             let builder = factory.CreateFontSetBuilder2().unwrap();
             let mut locale_vec = vec![0u16; 512];
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
-            let analyzer = factory.CreateTextAnalyzer().unwrap();
+            let gdi = factory.GetGdiInterop().unwrap();
+            let bitmap_render_target = gdi.CreateBitmapRenderTarget(None, 10, 10).unwrap();
+            let render_target: IDWriteBitmapRenderTarget3 =
+                std::mem::transmute(bitmap_render_target);
 
             DirectWriteComponent {
                 locale,
                 factory,
-                d2d1_factory,
                 in_memory_loader,
                 builder,
-                analyzer,
+                gdi,
+                render_target,
             }
         }
     }
@@ -776,6 +779,10 @@ impl DirectWriteState {
             dx: 0.0,
             dy: 0.0,
         };
+        let subpixel_shift = params
+            .subpixel_variant
+            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+        println!("Subpixel shift: {:#?}", subpixel_shift);
         unsafe {
             if params.is_emoji {
                 // TODO:
@@ -795,245 +802,98 @@ impl DirectWriteState {
                     right: glyph_bounds.right().0,
                     bottom: glyph_bounds.bottom().0,
                 };
-                // let baseline_origin = D2D_POINT_2F {
-                //     x: glyph_bounds.left().0 as f32,
-                //     y: glyph_bounds.top().0 as f32,
-                // };
-                let baseline_origin = D2D_POINT_2F { x: 0.0, y: 0.0 };
+
                 let mut bitmap = vec![0u8; total_bytes];
-                // let enumerator = self
-                //     .components
-                //     .factory
-                //     .TranslateColorGlyphRun2(
-                //         // D2D_POINT_2F { x: 0.0, y: 0.0 },
-                //         baseline_origin,
-                //         &glyph_run as _,
-                //         None,
-                //         DWRITE_GLYPH_IMAGE_FORMATS_COLR,
-                //         DWRITE_MEASURING_MODE_NATURAL,
-                //         Some(&transform as _),
-                //         0,
-                //     )
-                //     .unwrap();
+                let enumerator = self
+                    .components
+                    .factory
+                    .TranslateColorGlyphRun2(
+                        D2D_POINT_2F { x: 0.0, y: 0.0 },
+                        &glyph_run as _,
+                        None,
+                        DWRITE_GLYPH_IMAGE_FORMATS_COLR,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                        Some(&transform as _),
+                        0,
+                    )
+                    .unwrap();
 
-                let gdi = self.components.factory.GetGdiInterop()?;
-                let bitmap_render_target = gdi.CreateBitmapRenderTarget(
-                    None,
-                    bitmap_size.width.0 as _,
-                    bitmap_size.height.0 as _,
-                )?;
-                let bitmap_render_target: IDWriteBitmapRenderTarget3 =
-                    std::mem::transmute(bitmap_render_target);
+                let bitmap_hdc = self.components.render_target.GetMemoryDC();
+                SetBoundsRect(
+                    bitmap_hdc,
+                    Some(&texture_bounds),
+                    SET_BOUNDS_RECT_FLAGS(DCB_ENABLE.0 | DCB_RESET.0),
+                );
+                // clear the bitmap
+                {
+                    let size = self.components.render_target.GetSize().unwrap();
+                    println!("Bitmap size: {:#?}", size);
+                    SetDCBrushColor(bitmap_hdc, COLORREF(0xFFFFFF));
+                    SelectObject(bitmap_hdc, GetStockObject(NULL_PEN));
+                    SelectObject(bitmap_hdc, GetStockObject(DC_BRUSH));
+                    Rectangle(bitmap_hdc, 0, 0, size.cx + 1, size.cy + 1);
+                }
 
-                // let render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
-                //     r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-                //     pixelFormat: D2D1_PIXEL_FORMAT {
-                //         format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                //         alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                //     },
-                //     dpiX: 96.0,
-                //     dpiY: 96.0,
-                //     usage: D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
-                //     minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-                // };
-                // let render_target = self
-                //     .components
-                //     .d2d1_factory
-                //     .CreateDCRenderTarget(&render_target_property)
-                //     .unwrap();
+                let current_transform = DWRITE_MATRIX {
+                    m11: 1.0,
+                    m12: 0.0,
+                    m21: 0.0,
+                    m22: 1.0,
+                    dx: -(glyph_bounds.origin.x.0 / 2) as f32,
+                    dy: ((glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) / 2) as f32,
+                };
+                println!("Trans: {:#?}", current_transform);
+                self.components
+                    .render_target
+                    .SetCurrentTransform(Some(&current_transform));
 
                 let render_params = self.components.factory.CreateRenderingParams()?;
-                // let render_params = self.components.factory.CreateMonitorRenderingParams(None)?;
-                bitmap_render_target
-                    .DrawGlyphRunWithColorSupport(
-                        0.0,
-                        0.0,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                        &glyph_run,
-                        &render_params,
-                        COLORREF(0x77777777),
-                        0,
-                        None,
-                    )
-                    .inspect_err(|e| {
-                        println!("Error: {}, msg: {}", e, std::io::Error::last_os_error())
-                    });
-
-                let start_x = glyph_bounds.center().x.0 as f32
-                    - params.font_size.0 * params.scale_factor / 2.0;
-                let start_y = glyph_bounds.center().y.0 as f32
-                    - params.font_size.0 * params.scale_factor / 2.0;
-                // while enumerator.MoveNext().is_ok() {
-                //     let Ok(run) = enumerator.GetCurrentRun2() else {
-                //         break;
-                //     };
-                //     let emoji = &*run;
-                //     println!("Get emoji: {:?}", emoji.glyphImageFormat);
-                //     let x = bitmap_render_target.DrawGlyphRunWithColorSupport(
+                // bitmap_render_target
+                //     .DrawGlyphRunWithColorSupport(
                 //         0.0,
                 //         0.0,
                 //         DWRITE_MEASURING_MODE_NATURAL,
-                //         &emoji.Base.glyphRun,
+                //         &glyph_run,
                 //         &render_params,
-                //         translate_color(&emoji.Base.runColor),
-                //         emoji.Base.paletteIndex as u32,
+                //         COLORREF(0x77777777),
+                //         0,
                 //         None,
-                //     );
-                //     if x.is_err() {
-                //         println!("Err: {}", std::io::Error::last_os_error());
-                //     }
-                //     x.unwrap();
-                // bitmap_render_target.DrawGlyphRun(
-                // -offset[0].advanceOffset,
-                // baseline_origin.y + glyph_bounds.size.height.0 as f32 / 2.0,
-                // start_x,
-                // start_y,
-                // glyph_bounds.left().0 as f32,
-                // glyph_bounds.bottom().0 as f32,
-                //     0.0,
-                //     0.0,
-                //     DWRITE_MEASURING_MODE_NATURAL,
-                //     &emoji.Base.glyphRun,
-                //     &render_params,
-                //     translate_color(&emoji.Base.runColor),
-                //     None,
-                // )?;
+                //     )
+                //     .inspect_err(|e| {
+                //         println!("Error: {}, msg: {}", e, std::io::Error::last_os_error())
+                //     });
 
-                // let color: D2D1_COLOR_F = std::mem::transmute(emoji.Base.runColor);
-                // let brush = render_target.CreateSolidColorBrush(&color, None).unwrap();
-                // render_target.DrawGlyphRun(
-                //     D2D_POINT_2F { x: 0.0, y: 0.0 },
-                //     &glyph_run,
-                //     &brush,
-                //     DWRITE_MEASURING_MODE_NATURAL,
-                // );
-                // }
-
-                // let bitmap_render_target =
-                //     &bitmap_render_target as *const IDWriteBitmapRenderTarget;
-                // let bitmap_render_target = &*bitmap_render_target;
-
-                // let size = D2D_SIZE_U {
-                //     width: bitmap_size.width.0 as u32,
-                //     height: bitmap_size.height.0 as u32,
-                // };
-                // let bitmap_property = D2D1_BITMAP_PROPERTIES {
-                //     pixelFormat: D2D1_PIXEL_FORMAT {
-                //         format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                //         alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                //     },
-                //     dpiX: 96.0,
-                //     dpiY: 96.0,
-                // };
-                // let bitmap_property = D2D1_BITMAP_PROPERTIES1 {
-                //     pixelFormat: D2D1_PIXEL_FORMAT {
-                //         format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                //         alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                //         // alphaMode: D2D1_ALPHA_MODE_IGNORE,
-                //     },
-                //     dpiX: 96.0,
-                //     dpiY: 96.0,
-                //     bitmapOptions: D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                //     colorContext: ManuallyDrop::new(None),
-                // };
-                // let bitmap = render_target
-                //     .CreateBitmap(size, None, 0, &bitmap_property as *const _ as _)
-                //     .unwrap();
-                // let bitmap: ID2D1Bitmap1 = std::mem::transmute(bitmap);
-
-                // let mut bitmap_rawdata = bitmap_render_target.GetBitmapData()?;
-                let hdc = bitmap_render_target.GetMemoryDC();
-                let hmap = GetCurrentObject(hdc, OBJ_BITMAP);
-                let mut bitmap_info = DIBSECTION::default();
-                let ret = GetObjectW(
-                    hmap,
-                    std::mem::size_of::<DIBSECTION>() as _,
-                    Some(&mut bitmap_info as *mut _ as _),
-                );
-                if ret == 0 {
-                    println!("Error => {}", std::io::Error::last_os_error());
+                while enumerator.MoveNext().is_ok() {
+                    let Ok(run) = enumerator.GetCurrentRun2() else {
+                        break;
+                    };
+                    let emoji = &*run;
+                    self.components
+                        .render_target
+                        .DrawGlyphRun(
+                            0.0,
+                            (glyph_bounds.size.height.0 / 2) as f32,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                            &emoji.Base.glyphRun,
+                            &render_params,
+                            translate_color(&emoji.Base.runColor),
+                            None,
+                        )
+                        .unwrap();
                 }
-                // let raw_bytes = Vec::from_raw_parts(
-                //     bitmap_info.dsBm.bmBits as *mut u8,
-                //     total_bytes,
-                //     total_bytes,
-                // );
-                let x = std::slice::from_raw_parts(bitmap_info.dsBm.bmBits as *mut u8, total_bytes);
-                let raw_bytes = x.to_vec();
-                println!("Bytes: {:?}", raw_bytes);
 
-                // let map = CreateCompatibleBitmap(hdc, bitmap_size.width.0, bitmap_size.height.0);
-                // let mut bitmap_info = BITMAPINFO::default();
-                // bitmap_info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-                // bitmap_info.bmiHeader.biBitCount = 32;
-                // bitmap_info.bmiHeader.biCompression = BI_RGB.0;
-                // bitmap_info.bmiHeader.biHeight = -bitmap_size.height.0;
-                // bitmap_info.bmiHeader.biPlanes = 1;
-                // bitmap_info.bmiHeader.biSizeImage = total_bytes as u32;
-                // bitmap_info.bmiHeader.biWidth = bitmap_size.width.0;
-
-                // let mut raw_bytes = vec![0u8; total_bytes];
-                // // get data
-                // let ret = GetDIBits(
-                //     hdc,
-                //     map,
-                //     0,
-                //     bitmap_info.bmiHeader.biHeight as u32,
-                //     Some(raw_bytes.as_mut_ptr() as _),
-                //     &mut bitmap_info,
-                //     DIB_RGB_COLORS,
-                // );
-                // if ret == 0 {
-                //     println!("Error => {}", std::io::Error::last_os_error());
-                // }
-                // println!("Emoji: {:?}", raw_bytes);
-                // DeleteObject(map);
-
-                // let bitmap_rawdata = bitmap.Map(D2D1_MAP_OPTIONS_READ).unwrap();
-                // let stride = bitmap_data.pitch as usize;
-                // let mut buffer: Vec<u8> = vec![0; stride * height as usize];
-                // for y in 0..height as usize {
-                //     let src_offset = y * stride;
-                //     let dest_offset = y * stride;
-                //     std::ptr::copy_nonoverlapping(
-                //         bitmap_data.bits.offset(src_offset as isize),
-                //         buffer.as_mut_ptr().offset(dest_offset as isize),
-                //         stride,
-                //     );
-                // }
-                // let height = bitmap_size.height.0 as usize;
-                // let stride = bitmap_rawdata.pitch as usize;
-                // let mut raw_bytes: Vec<u8> = vec![0; stride * height as usize];
-                // for y in 0..height as usize {
-                //     let src_offset = y * stride;
-                //     let dest_offset = y * stride;
-                //     std::ptr::copy_nonoverlapping(
-                //         bitmap_rawdata.bits.offset(src_offset as isize),
-                //         raw_bytes.as_mut_ptr().offset(dest_offset as isize),
-                //         stride,
-                //     );
-                // }
-                // let raw_bytes = Vec::from_raw_parts(bitmap_rawdata.bits, total_bytes, total_bytes);
-                // bitmap.Unmap();
-                // let length = bitmap_rawdata.height as usize * bitmap_rawdata.width as usize;
-                // let raw_u32 = std::slice::from_raw_parts(bitmap_rawdata.pixels, total_bytes / 4);
-                // println!("Image: {:#?}", raw_u32);
-                // let mut raw_bytes = Vec::with_capacity(total_bytes);
-                // for color in raw_u32 {
-                //     // let bytes = u32::to_ne_bytes(*color);
-                //     let bytes = [
-                //         (color & 0xFF) as u8,
-                //         (color >> 8 & 0xFF) as u8,
-                //         (color >> 16 & 0xFF) as u8,
-                //         // (color >> 24 & 0xFF) as u8,
-                //         0xFF,
-                //     ];
-                //     if *color != 0 {
-                //         println!("Color {} => bytes: {:?}", color, bytes);
-                //     }
-                //     // let bytes = [0xFF, 0x77, 0x77, 0xFF];
-                //     raw_bytes.extend(bytes);
-                // }
+                let mut raw_bytes = vec![0u8; total_bytes];
+                let bitmap_data = self.components.render_target.GetBitmapData().unwrap();
+                let raw_u32 = std::slice::from_raw_parts(bitmap_data.pixels, total_bytes / 4);
+                for (bytes, color) in raw_bytes.chunks_exact_mut(4).zip(raw_u32.iter()) {
+                    bytes[3] = 0xFF;
+                    if *color == 0 {
+                        continue;
+                    }
+                    bytes[0] = (color >> 16 & 0xFF) as u8;
+                    bytes[1] = (color >> 8 & 0xFF) as u8;
+                    bytes[2] = (color & 0xFF) as u8;
+                }
                 Ok((bitmap_size, raw_bytes))
             } else {
                 let bitmap_size = glyph_bounds.size;
