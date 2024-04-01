@@ -219,7 +219,6 @@ pub fn render_parsed_markdown(
 pub(crate) enum InlayId {
     Suggestion(usize),
     Hint(usize),
-    GitHunk(usize, DiffHunkStatus),
 }
 
 impl InlayId {
@@ -227,7 +226,6 @@ impl InlayId {
         match self {
             Self::Suggestion(id) => *id,
             Self::Hint(id) => *id,
-            Self::GitHunk(id, _) => *id,
         }
     }
 }
@@ -461,7 +459,7 @@ pub struct Editor {
     active_inline_completion: Option<Inlay>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
-    git_inlays: HashMap<InlayId, Inlay>,
+    git_blocks: HashSet<BlockId>,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1503,7 +1501,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-            git_inlays: HashMap::default(),
+            git_blocks: HashSet::default(),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -2385,8 +2383,8 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.clear_row_highlights::<GitRowHighlight>();
-        let to_remove = self.git_inlays.drain().map(|(id, _)| id).collect();
-        self.splice_inlays(to_remove, Vec::new(), cx);
+        let to_remove = std::mem::take(&mut self.git_blocks);
+        self.remove_blocks(to_remove, None, cx);
         if self.dismiss_menus_and_popups(cx) {
             return;
         }

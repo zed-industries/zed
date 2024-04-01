@@ -369,7 +369,6 @@ pub struct DisplaySnapshot {
     inlay_snapshot: inlay_map::InlaySnapshot,
     tab_snapshot: tab_map::TabSnapshot,
     wrap_snapshot: wrap_map::WrapSnapshot,
-    // TODO kb try this instead of git inlays
     block_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
@@ -560,7 +559,6 @@ impl DisplaySnapshot {
                 inlay_hint: Some(editor_style.inlay_hints_style),
                 suggestion: Some(editor_style.suggestions_style),
                 git_created: Some(HighlightStyle {
-                    // TODO kb background is not on the whole line
                     background_color: Some(editor_style.status.git().created),
                     ..HighlightStyle::default()
                 }),

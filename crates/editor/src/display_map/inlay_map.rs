@@ -1,6 +1,5 @@
 use crate::{HighlightStyles, InlayId};
 use collections::{BTreeMap, BTreeSet};
-use git::diff::DiffHunkStatus;
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferRows, MultiBufferSnapshot, ToOffset};
@@ -64,19 +63,6 @@ impl Inlay {
     pub fn suggestion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::Suggestion(id),
-            position,
-            text: text.into(),
-        }
-    }
-
-    pub fn git_hunk<T: Into<Rope>>(
-        id: usize,
-        position: Anchor,
-        text: T,
-        git_status: DiffHunkStatus,
-    ) -> Self {
-        Self {
-            id: InlayId::GitHunk(id, git_status),
             position,
             text: text.into(),
         }
@@ -322,11 +308,6 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mut highlight_style = match inlay.id {
                     InlayId::Suggestion(_) => self.highlight_styles.suggestion,
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
-                    InlayId::GitHunk(_, status) => match status {
-                        DiffHunkStatus::Added => self.highlight_styles.git_created,
-                        DiffHunkStatus::Modified => self.highlight_styles.git_modified,
-                        DiffHunkStatus::Removed => self.highlight_styles.git_deleted,
-                    },
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;

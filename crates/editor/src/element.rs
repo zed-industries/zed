@@ -14,8 +14,8 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
     BlockDisposition, BlockProperties, CursorShape, DisplayPoint, DocumentHighlightRead,
     DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-   ExpandExcerpts, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, Inlay, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
+   ExpandExcerpts, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
     CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
@@ -60,7 +60,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
-use util::{post_inc, ResultExt};
+use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
@@ -3338,6 +3338,7 @@ fn deploy_blame_entry_context_menu(
 }
 
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
+// TODO kb do not draw git diff hunks for the expanded ones
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
@@ -3357,7 +3358,7 @@ fn try_click_diff_hunk(
     match hovered_hunk.status {
         DiffHunkStatus::Removed => {
             let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            let height = original_text.lines().count() as u8;
+            let height = original_text.lines().count() as u8 + 1;
             let new_block_ids = editor.insert_blocks(
                 Some(BlockProperties {
                     position,
@@ -3383,14 +3384,14 @@ fn try_click_diff_hunk(
                             editor
                         });
 
-                        Arc::new(move |_| removed_editor.clone().into_any_element())
+                        Box::new(move |_| removed_editor.clone().into_any_element())
                     },
                     disposition: BlockDisposition::Above,
                 }),
                 None,
                 cx,
             );
-            dbg!("TODO kb remove on esc", new_block_ids);
+            editor.git_blocks.extend(new_block_ids);
         }
         DiffHunkStatus::Added => {
             editor.highlight_rows::<GitRowHighlight>(
@@ -3401,15 +3402,42 @@ fn try_click_diff_hunk(
             );
         }
         DiffHunkStatus::Modified => {
+            // TODO kb deduplicate
             let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            let inlay = Inlay::git_hunk(
-                post_inc(&mut editor.next_inlay_id),
-                position,
-                original_text,
-                DiffHunkStatus::Removed,
+            let height = original_text.lines().count() as u8 + 1;
+            let new_block_ids = editor.insert_blocks(
+                Some(BlockProperties {
+                    position,
+                    height,
+                    style: BlockStyle::Flex,
+                    // TODO kb render a proper element that is displayed entirely, allows copying the text and has proper line numbers in its gutter...
+                    // How are exterpts rendered? Reuse them?
+                    render: {
+                        let removed_editor = cx.new_view(|cx| {
+                            let mut editor = Editor::multi_line(cx);
+                            editor.set_text(original_text.clone(), cx);
+                            editor.set_read_only(true);
+                            let editor_snapshot = editor.snapshot(cx);
+                            let start = editor_snapshot.buffer_snapshot.anchor_before(0);
+                            let end = editor_snapshot
+                                .buffer_snapshot
+                                .anchor_after(editor.buffer.read(cx).len(cx));
+                            editor.highlight_rows::<GitRowHighlight>(
+                                start..end,
+                                Some(cx.theme().status().git().deleted),
+                                cx,
+                            );
+                            editor
+                        });
+
+                        Box::new(move |_| removed_editor.clone().into_any_element())
+                    },
+                    disposition: BlockDisposition::Above,
+                }),
+                None,
+                cx,
             );
-            editor.git_inlays.insert(inlay.id, inlay.clone());
-            editor.splice_inlays(Vec::new(), vec![inlay], cx);
+            editor.git_blocks.extend(new_block_ids);
             editor.highlight_rows::<GitRowHighlight>(
                 buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
                     ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
