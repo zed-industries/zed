@@ -49,7 +49,7 @@ pub trait PickerDelegate: Sized + 'static {
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
         "No matches".into()
     }
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;

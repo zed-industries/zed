@@ -256,7 +256,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         "".into()
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
         "No tabs".into()
     }
 
