@@ -449,7 +449,8 @@ impl EditorElement {
                 },
                 cx,
             );
-        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
+        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary()
+        {
             editor.select(
                 SelectPhase::Extend {
                     position,
@@ -513,7 +514,7 @@ impl EditorElement {
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.command,
+            MultiCursorModifier::Alt => event.modifiers.secondary(),
             MultiCursorModifier::Cmd => event.modifiers.alt,
         };
 

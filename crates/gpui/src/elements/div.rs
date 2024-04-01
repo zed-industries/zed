@@ -1510,12 +1510,12 @@ impl Interactivity {
                     };
                     if self.location.is_some()
                         && text_bounds.contains(&cx.mouse_position())
-                        && cx.modifiers().command
+                        && cx.modifiers().secondary()
                     {
-                        let command_held = cx.modifiers().command;
+                        let secondary_held = cx.modifiers().secondary();
                         cx.on_key_event({
                             move |e: &crate::ModifiersChangedEvent, _phase, cx| {
-                                if e.modifiers.command != command_held
+                                if e.modifiers.secondary() != secondary_held
                                     && text_bounds.contains(&cx.mouse_position())
                                 {
                                     cx.refresh();

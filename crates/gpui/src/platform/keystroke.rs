@@ -200,6 +200,19 @@ impl Modifiers {
         self.control || self.alt || self.shift || self.command || self.function
     }
 
+    /// TODO
+    pub fn secondary(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            return self.command;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            return self.control;
+        }
+    }
+
     /// helper method for Modifiers with no modifiers
     pub fn none() -> Modifiers {
         Default::default()
