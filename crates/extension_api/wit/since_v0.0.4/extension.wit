@@ -62,9 +62,12 @@ world extension {
     /// Gets the latest release for the given GitHub repository.
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
-    /// Downloads a file from the given url, and saves it to the given filename within the extension's
+    /// Downloads a file from the given url, and saves it to the given path within the extension's
     /// working directory. Extracts the file according to the given file type.
-    import download-file: func(url: string, output-filename: string, file-type: downloaded-file-type) -> result<_, string>;
+    import download-file: func(url: string, file-path: string, file-type: downloaded-file-type) -> result<_, string>;
+
+    /// Makes the file at the given path executable.
+    import make-file-executable: func(filepath: string) -> result<_, string>;
 
     /// Updates the installation status for the given language server.
     import set-language-server-installation-status: func(language-server-name: string, status: language-server-installation-status);
