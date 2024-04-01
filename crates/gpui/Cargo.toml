@@ -57,6 +57,7 @@ refineable.workspace = true
 resvg = "0.40"
 schemars.workspace = true
 seahash = "4.1"
+semantic_version.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

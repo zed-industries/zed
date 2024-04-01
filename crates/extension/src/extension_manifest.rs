@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Context, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageServerName;
+use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
@@ -9,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::SemanticVersion;
 
 /// This is the old version of the extension manifest, from when it was `extension.json`.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -92,11 +92,15 @@ pub struct GrammarManifestEntry {
     pub repository: String,
     #[serde(alias = "commit")]
     pub rev: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     pub language: Arc<str>,
+    #[serde(default)]
+    pub language_ids: HashMap<String, String>,
 }
 
 impl ExtensionManifest {

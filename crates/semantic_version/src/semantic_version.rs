@@ -1,3 +1,7 @@
+//! Constructs for working with [semantic versions](https://semver.org/).
+
+#![deny(missing_docs)]
+
 use std::{
     fmt::{self, Display},
     str::FromStr,
@@ -6,34 +10,46 @@ use std::{
 use anyhow::{anyhow, Result};
 use serde::{de::Error, Deserialize, Serialize};
 
-/// A datastructure representing a semantic version number
+/// A [semantic version](https://semver.org/) number.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SemanticVersion {
-    pub major: usize,
-    pub minor: usize,
-    pub patch: usize,
-}
-
-pub fn semver(major: usize, minor: usize, patch: usize) -> SemanticVersion {
-    SemanticVersion {
-        major,
-        minor,
-        patch,
-    }
+    major: usize,
+    minor: usize,
+    patch: usize,
 }
 
 impl SemanticVersion {
-    pub fn new(major: usize, minor: usize, patch: usize) -> Self {
+    /// Returns a new [`SemanticVersion`] from the given components.
+    pub const fn new(major: usize, minor: usize, patch: usize) -> Self {
         Self {
             major,
             minor,
             patch,
         }
     }
+
+    /// Returns the major version number.
+    #[inline(always)]
+    pub fn major(&self) -> usize {
+        self.major
+    }
+
+    /// Returns the minor version number.
+    #[inline(always)]
+    pub fn minor(&self) -> usize {
+        self.minor
+    }
+
+    /// Returns the patch version number.
+    #[inline(always)]
+    pub fn patch(&self) -> usize {
+        self.patch
+    }
 }
 
 impl FromStr for SemanticVersion {
     type Err = anyhow::Error;
+
     fn from_str(s: &str) -> Result<Self> {
         let mut components = s.trim().split('.');
         let major = components

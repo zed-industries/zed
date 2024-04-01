@@ -587,12 +587,11 @@ impl ExtensionsPage {
                     .disabled(disabled)
                     .on_click(cx.listener({
                         let extension_id = extension.id.clone();
-                        let version = extension.manifest.version.clone();
                         move |this, _, cx| {
                             this.telemetry
                                 .report_app_event("extensions: install extension".to_string());
                             ExtensionStore::global(cx).update(cx, |store, cx| {
-                                store.install_extension(extension_id.clone(), version.clone(), cx)
+                                store.install_latest_extension(extension_id.clone(), cx)
                             });
                         }
                     })),

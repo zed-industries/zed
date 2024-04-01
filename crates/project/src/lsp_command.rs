@@ -1855,6 +1855,17 @@ impl GetCodeActions {
             })
             .unwrap_or(false)
     }
+
+    pub fn supports_code_actions(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_action_provider
+            .as_ref()
+            .map(|options| match options {
+                lsp::CodeActionProviderCapability::Simple(is_supported) => *is_supported,
+                lsp::CodeActionProviderCapability::Options(_) => true,
+            })
+            .unwrap_or(false)
+    }
 }
 
 #[async_trait(?Send)]

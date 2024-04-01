@@ -3,19 +3,15 @@ use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
+use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
-use util::SemanticVersion;
 use wasmtime::component::{Linker, Resource};
 
-pub const VERSION: SemanticVersion = SemanticVersion {
-    major: 0,
-    minor: 0,
-    patch: 1,
-};
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 1);
 
 wasmtime::component::bindgen!({
     async: true,
-    path: "../extension_api/wit/0.0.1",
+    path: "../extension_api/wit/since_v0.0.1",
     with: {
          "worktree": ExtensionWorktree,
     },
