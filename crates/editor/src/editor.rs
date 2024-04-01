@@ -967,7 +967,8 @@ impl CompletionsMenu {
                             );
 
                         let completion_kind_icon =
-                            completion_kind_icon(&completion.lsp_completion.kind);
+                            completion_kind_icon(&completion.lsp_completion.kind)
+                                .color(Color::Muted);
 
                         div()
                             .min_w(px(widest_completion_pixels + padding_width))
