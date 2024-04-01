@@ -139,7 +139,7 @@ pub enum IconName {
     Struct,
     Event,
     Operator,
-    TypeParameter
+    TypeParameter,
 }
 
 impl IconName {
@@ -259,7 +259,7 @@ impl IconName {
             IconName::Method => "icons/completion_icons/method.svg",
             IconName::Function => "icons/completion_icons/function.svg",
             IconName::Constructor => "icons/completion_icons/constructor.svg",
-            IconName::TypeParameter => "icons/completion_icons/type_parameter.svg"
+            IconName::TypeParameter => "icons/completion_icons/type_parameter.svg",
         }
     }
 }

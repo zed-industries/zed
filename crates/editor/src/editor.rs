@@ -121,7 +121,8 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, KeyIcon, ListItem, Popover, Tooltip
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, KeyIcon, ListItem,
+    Popover, Tooltip,
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
@@ -965,7 +966,8 @@ impl CompletionsMenu {
                                 max_completion_len,
                             );
 
-                        let completion_kind_icon = completion_kind_icon(&completion.lsp_completion.kind);
+                        let completion_kind_icon =
+                            completion_kind_icon(&completion.lsp_completion.kind);
 
                         div()
                             .min_w(px(widest_completion_pixels + padding_width))
@@ -985,7 +987,13 @@ impl CompletionsMenu {
                                             task.detach_and_log_err(cx)
                                         }
                                     }))
-                                    .child(h_flex().overflow_hidden().gap_1().child(completion_kind_icon).child(completion_label))
+                                    .child(
+                                        h_flex()
+                                            .overflow_hidden()
+                                            .gap_1()
+                                            .child(completion_kind_icon)
+                                            .child(completion_label),
+                                    )
                                     .end_slot(documentation_label),
                             )
                     })
@@ -1399,7 +1407,6 @@ impl CompletionsMenu {
     }
 }
 
-
 fn completion_kind_icon(completion_kind: &Option<CompletionItemKind>) -> Icon {
     match completion_kind {
         Some(CompletionItemKind::REFERENCE) => Icon::new(IconName::Reference),
@@ -1429,7 +1436,6 @@ fn completion_kind_icon(completion_kind: &Option<CompletionItemKind>) -> Icon {
         Some(CompletionItemKind::TEXT) | _ => Icon::new(IconName::Text),
     }
 }
-
 
 #[derive(Clone)]
 struct CodeActionsMenu {
