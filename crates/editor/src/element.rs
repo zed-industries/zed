@@ -513,10 +513,18 @@ impl EditorElement {
         }
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.alt,
-            MultiCursorModifier::Cmd => event.modifiers.command,
-            MultiCursorModifier::Ctrl => event.modifiers.control,
+        let multi_cursor_modifier = if PlatformStyle::platform() == PlatformStyle::Mac {
+            match multi_cursor_setting {
+                MultiCursorModifier::Alt => event.modifiers.command,
+                MultiCursorModifier::Cmd => event.modifiers.alt,
+                MultiCursorModifier::Ctrl => event.modifiers.command
+            }
+        } else {
+            match multi_cursor_setting {
+                MultiCursorModifier::Alt => event.modifiers.control,
+                MultiCursorModifier::Cmd => event.modifiers.alt,
+                MultiCursorModifier::Ctrl => event.modifiers.alt
+            }
         };
 
         if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(cx) {
