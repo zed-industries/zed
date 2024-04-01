@@ -1433,7 +1433,8 @@ fn completion_kind_icon(completion_kind: &Option<CompletionItemKind>) -> Icon {
         Some(CompletionItemKind::EVENT) => Icon::new(IconName::Event),
         Some(CompletionItemKind::OPERATOR) => Icon::new(IconName::Operator),
         Some(CompletionItemKind::TYPE_PARAMETER) => Icon::new(IconName::TypeParameter),
-        Some(CompletionItemKind::TEXT) | _ => Icon::new(IconName::Text),
+        Some(CompletionItemKind::TEXT) => Icon::new(IconName::Text),
+        _ => Icon::new(IconName::Text),
     }
 }
 
