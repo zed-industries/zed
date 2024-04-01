@@ -16,7 +16,8 @@ pub struct Deferred {
 }
 
 impl Deferred {
-    /// The `priority` parameter determines the drawing order relative to other deferred elements,
+    /// Sets the `priority` value of the `deferred` element, which
+    /// determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
     pub fn with_priority(mut self, priority: usize) -> Self {
         self.priority = priority;
