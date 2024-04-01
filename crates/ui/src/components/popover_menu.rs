@@ -182,8 +182,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         this.resolved_attach().corner(child_bounds) + this.resolved_offset(cx),
                     );
                 }
-                let mut element =
-                    deferred(anchored.child(div().occlude().child(menu.clone()))).into_any();
+                let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
+                    .with_priority(1)
+                    .into_any();
 
                 menu_layout_id = Some(element.before_layout(cx));
                 element
