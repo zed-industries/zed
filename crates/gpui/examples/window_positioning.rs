@@ -48,6 +48,7 @@ fn main() {
                     display_id: Some(screen.id()),
 
                     titlebar: None,
+                    window_background: WindowBackgroundAppearance::default(),
                     focus: false,
                     show: true,
                     kind: WindowKind::PopUp,

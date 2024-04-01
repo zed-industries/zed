@@ -42,6 +42,7 @@ env_logger.workspace = true
 extension.workspace = true
 extensions_ui.workspace = true
 feedback.workspace = true
+file_icons.workspace = true
 file_finder.workspace = true
 fs.workspace = true
 futures.workspace = true

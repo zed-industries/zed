@@ -53,10 +53,10 @@ pub use keystroke::*;
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
+pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
-pub use util::SemanticVersion;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
@@ -118,8 +118,7 @@ pub(crate) trait Platform: 'static {
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
-    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
-    fn clear_recent_documents(&self) {}
+    fn add_recent_document(&self, _path: &Path) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -190,6 +189,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
     fn set_edited(&mut self, edited: bool);
     fn show_character_palette(&self);
     fn minimize(&self);
@@ -533,6 +533,9 @@ pub struct WindowOptions {
     /// The display to create the window on, if this is None,
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
+
+    /// The appearance of the window background.
+    pub window_background: WindowBackgroundAppearance,
 }
 
 /// The variables that can be configured when creating a new window
@@ -555,6 +558,8 @@ pub(crate) struct WindowParams {
     pub show: bool,
 
     pub display_id: Option<DisplayId>,
+
+    pub window_background: WindowBackgroundAppearance,
 }
 
 impl Default for WindowOptions {
@@ -572,6 +577,7 @@ impl Default for WindowOptions {
             is_movable: true,
             display_id: None,
             fullscreen: false,
+            window_background: WindowBackgroundAppearance::default(),
         }
     }
 }
@@ -631,6 +637,27 @@ impl Default for WindowAppearance {
     fn default() -> Self {
         Self::Light
     }
+}
+
+/// The appearance of the background of the window itself, when there is
+/// no content or the content is transparent.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub enum WindowBackgroundAppearance {
+    /// Opaque.
+    ///
+    /// This lets the window manager know that content behind this
+    /// window does not need to be drawn.
+    ///
+    /// Actual color depends on the system and themes should define a fully
+    /// opaque background color instead.
+    #[default]
+    Opaque,
+    /// Plain alpha transparency.
+    Transparent,
+    /// Transparency, but the contents behind the window are blurred.
+    ///
+    /// Not always supported.
+    Blurred,
 }
 
 /// The options that can be configured for a file dialog prompt

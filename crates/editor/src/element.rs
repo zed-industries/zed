@@ -20,13 +20,14 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
-    div, fill, outline, overlay, point, px, quad, relative, size, svg, transparent_black, Action,
-    AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds, ClipboardItem, ContentMask, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementContext, ElementInputHandler, Entity,
-    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
-    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WindowContext,
+    anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
+    transparent_black, Action, AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds,
+    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
+    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
+    ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -1111,6 +1112,7 @@ impl EditorElement {
         let start_x = em_width * 1;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+        let text_style = &self.style.text;
 
         let shaped_lines = blamed_rows
             .into_iter()
@@ -1121,6 +1123,7 @@ impl EditorElement {
                         ix,
                         &blame,
                         blame_entry,
+                        text_style,
                         &mut last_used_color,
                         self.editor.clone(),
                         cx,
@@ -1802,12 +1805,16 @@ impl EditorElement {
 
     fn layout_mouse_context_menu(&self, cx: &mut ElementContext) -> Option<AnyElement> {
         let mouse_context_menu = self.editor.read(cx).mouse_context_menu.as_ref()?;
-        let mut element = overlay()
-            .position(mouse_context_menu.position)
-            .child(mouse_context_menu.context_menu.clone())
-            .anchor(AnchorCorner::TopLeft)
-            .snap_to_window()
-            .into_any();
+        let mut element = deferred(
+            anchored()
+                .position(mouse_context_menu.position)
+                .child(mouse_context_menu.context_menu.clone())
+                .anchor(AnchorCorner::TopLeft)
+                .snap_to_window(),
+        )
+        .with_priority(1)
+        .into_any();
+
         element.layout(gpui::Point::default(), AvailableSpace::min_size(), cx);
         Some(element)
     }
@@ -2868,6 +2875,7 @@ fn render_blame_entry(
     ix: usize,
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
+    text_style: &TextStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: View<Editor>,
     cx: &mut ElementContext<'_>,
@@ -2911,6 +2919,8 @@ fn render_blame_entry(
     let commit_message = blame.read(cx).message_for_entry(&blame_entry);
 
     h_flex()
+        .font(text_style.font().family)
+        .line_height(text_style.line_height)
         .id(("blame", ix))
         .children([
             div()
@@ -3006,11 +3016,8 @@ impl Render for BlameEntryTooltip {
         };
 
         let message = match &self.commit_message {
-            Some(message) => message.clone(),
-            None => {
-                println!("can't find commit message");
-                self.blame_entry.summary.clone().unwrap_or_default()
-            }
+            Some(message) => util::truncate_lines_and_trailoff(message, 15),
+            None => self.blame_entry.summary.clone().unwrap_or_default(),
         };
 
         let pretty_commit_id = format!("{}", self.blame_entry.sha);

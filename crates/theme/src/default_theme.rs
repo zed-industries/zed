@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use gpui::WindowBackgroundAppearance;
+
 use crate::prelude::*;
 
 use crate::{
@@ -15,6 +17,7 @@ fn zed_pro_daylight() -> Theme {
         name: "Zed Pro Daylight".into(),
         appearance: Appearance::Light,
         styles: ThemeStyles {
+            window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
             colors: ThemeColors::light(),
             status: StatusColors::light(),
@@ -45,6 +48,7 @@ pub(crate) fn zed_pro_moonlight() -> Theme {
         name: "Zed Pro Moonlight".into(),
         appearance: Appearance::Dark,
         styles: ThemeStyles {
+            window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
             colors: ThemeColors::dark(),
             status: StatusColors::dark(),

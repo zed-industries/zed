@@ -5192,14 +5192,80 @@ impl Project {
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Hover>>> {
-        let request_task = self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            GetHover { position },
-            cx,
-        );
-        cx.spawn(|_, _| async move { request_task.await.map(|hover| hover.into_iter().collect()) })
+    ) -> Task<Vec<Hover>> {
+        fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
+            hover
+                .contents
+                .retain(|hover_block| !hover_block.text.trim().is_empty());
+            if hover.contents.is_empty() {
+                None
+            } else {
+                Some(hover)
+            }
+        }
+
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let mut hover_responses = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| match server.capabilities().hover_provider {
+                    Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+                    Some(lsp::HoverProviderCapability::Options(_)) => true,
+                    None => false,
+                })
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .map(|server_id| {
+                    self.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetHover { position },
+                        cx,
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+
+            cx.spawn(|_, _| async move {
+                let mut hovers = Vec::with_capacity(hover_responses.len());
+                while let Some(hover_response) = hover_responses.next().await {
+                    if let Some(hover) = hover_response
+                        .log_err()
+                        .flatten()
+                        .and_then(remove_empty_hover_blocks)
+                    {
+                        hovers.push(hover);
+                    }
+                }
+                hovers
+            })
+        } else if self.is_remote() {
+            let request_task = self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::Primary,
+                GetHover { position },
+                cx,
+            );
+            cx.spawn(|_, _| async move {
+                request_task
+                    .await
+                    .log_err()
+                    .flatten()
+                    .and_then(remove_empty_hover_blocks)
+                    .map(|hover| vec![hover])
+                    .unwrap_or_default()
+            })
+        } else {
+            log::error!("cannot show hovers: project does not have a remote id");
+            Task::ready(Vec::new())
+        }
     }
 
     pub fn hover<T: ToPointUtf16>(
@@ -5207,7 +5273,7 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Hover>>> {
+    ) -> Task<Vec<Hover>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.hover_impl(buffer, position, cx)
     }
@@ -5561,13 +5627,54 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
-        self.request_lsp(
-            buffer_handle.clone(),
-            LanguageServerToQuery::Primary,
-            GetCodeActions { range, kinds: None },
-            cx,
-        )
+    ) -> Task<Vec<CodeAction>> {
+        if self.is_local() {
+            let snapshot = buffer_handle.read(cx).snapshot();
+            let offset = range.start.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let mut hover_responses = self
+                .language_servers_for_buffer(buffer_handle.read(cx), cx)
+                .filter(|(_, server)| GetCodeActions::supports_code_actions(server.capabilities()))
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .map(|server_id| {
+                    self.request_lsp(
+                        buffer_handle.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetCodeActions {
+                            range: range.clone(),
+                            kinds: None,
+                        },
+                        cx,
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+
+            cx.spawn(|_, _| async move {
+                let mut hovers = Vec::with_capacity(hover_responses.len());
+                while let Some(hover_response) = hover_responses.next().await {
+                    hovers.extend(hover_response.log_err().unwrap_or_default());
+                }
+                hovers
+            })
+        } else if self.is_remote() {
+            let request_task = self.request_lsp(
+                buffer_handle.clone(),
+                LanguageServerToQuery::Primary,
+                GetCodeActions { range, kinds: None },
+                cx,
+            );
+            cx.spawn(|_, _| async move { request_task.await.log_err().unwrap_or_default() })
+        } else {
+            log::error!("cannot fetch actions: project does not have a remote id");
+            Task::ready(Vec::new())
+        }
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
@@ -5575,7 +5682,7 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Vec<CodeAction>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.code_actions_impl(buffer_handle, range, cx)
@@ -6642,6 +6749,12 @@ impl Project {
                         let worktree = worktree?;
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
+
+                        cx.update(|cx| {
+                            cx.add_recent_document(&path);
+                        })
+                        .log_err();
+
                         Ok(worktree)
                     }
                     .map_err(Arc::new)
@@ -6994,11 +7107,12 @@ impl Project {
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 let receiver = receiver.clone();
                 let path = path.clone();
+                let abs_path = worktree_handle.read(cx).absolutize(&path).ok()?;
                 Some(async move {
                     wait_for_loading_buffer(receiver)
                         .await
                         .ok()
-                        .map(|buffer| (buffer, path))
+                        .map(|buffer| (buffer, path, abs_path))
                 })
             })
             .collect::<FuturesUnordered<_>>();
@@ -7017,7 +7131,7 @@ impl Project {
                 changed_repos
                     .iter()
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                Some((buffer, path.clone()))
+                Some((buffer, path.clone(), file.abs_path(cx)))
             })
             .collect::<Vec<_>>();
 
@@ -7027,6 +7141,7 @@ impl Project {
 
         let remote_id = self.remote_id();
         let client = self.client.clone();
+        let fs = self.fs.clone();
         cx.spawn(move |_, mut cx| async move {
             // Wait for all of the buffers to load.
             let future_buffers = future_buffers.collect::<Vec<_>>().await;
@@ -7037,20 +7152,47 @@ impl Project {
             let diff_bases_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
-                    future_buffers
+                    let mut diff_base_tasks = future_buffers
                         .into_iter()
                         .flatten()
                         .chain(current_buffers)
-                        .filter_map(|(buffer, path)| {
+                        .filter_map(|(buffer, path, abs_path)| {
                             let (work_directory, repo) =
                                 snapshot.repository_and_work_directory_for_path(&path)?;
                             let repo_entry = snapshot.get_local_repo(&repo)?;
-                            let relative_path = path.strip_prefix(&work_directory).ok()?;
-                            let base_text = repo_entry.repo().lock().load_index_text(relative_path);
-
-                            Some((buffer, base_text))
+                            Some((buffer, path, abs_path, work_directory, repo_entry))
                         })
-                        .collect::<Vec<_>>()
+                        .map(|(buffer, path, abs_path, work_directory, repo_entry)| {
+                            let fs = fs.clone();
+                            async move {
+                                let abs_path_metadata = fs
+                                    .metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("loading file and FS metadata for {path:?}")
+                                    })
+                                    .log_err()
+                                    .flatten()?;
+                                let base_text = if abs_path_metadata.is_dir
+                                    || abs_path_metadata.is_symlink
+                                {
+                                    None
+                                } else {
+                                    let relative_path = path.strip_prefix(&work_directory).ok()?;
+                                    repo_entry.repo().lock().load_index_text(relative_path)
+                                };
+                                Some((buffer, base_text))
+                            }
+                        })
+                        .collect::<FuturesUnordered<_>>();
+
+                    let mut diff_bases = Vec::with_capacity(diff_base_tasks.len());
+                    while let Some(diff_base) = diff_base_tasks.next().await {
+                        if let Some(diff_base) = diff_base {
+                            diff_bases.push(diff_base);
+                        }
+                    }
+                    diff_bases
                 })
                 .await;
 

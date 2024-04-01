@@ -9,6 +9,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "editor",
+ "extension",
  "futures 0.3.28",
  "gpui",
  "language",
@@ -213,6 +214,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "util",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -327,6 +340,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "gpui",
@@ -2212,6 +2226,7 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "async-trait",
  "async-tungstenite",
@@ -2264,6 +2279,7 @@ dependencies = [
  "rustc-demangle",
  "scrypt",
  "sea-orm",
+ "semantic_version",
  "semver",
  "serde",
  "serde_derive",
@@ -3557,6 +3573,7 @@ dependencies = [
  "parking_lot",
  "project",
  "schemars",
+ "semantic_version",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -3603,10 +3620,13 @@ dependencies = [
  "db",
  "editor",
  "extension",
+ "fs",
  "fuzzy",
  "gpui",
  "language",
+ "picker",
  "project",
+ "semantic_version",
  "serde",
  "settings",
  "smallvec",
@@ -3743,6 +3763,18 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "file_icons"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -4443,6 +4475,7 @@ dependencies = [
  "resvg",
  "schemars",
  "seahash",
+ "semantic_version",
  "serde",
  "serde_derive",
  "serde_json",
@@ -5428,7 +5461,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
- "tree-sitter-c-sharp",
  "tree-sitter-clojure",
  "tree-sitter-cpp",
  "tree-sitter-css",
@@ -5436,7 +5468,6 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
- "tree-sitter-erlang",
  "tree-sitter-glsl",
  "tree-sitter-go",
  "tree-sitter-gomod",
@@ -5451,7 +5482,6 @@ dependencies = [
  "tree-sitter-nix",
  "tree-sitter-nu",
  "tree-sitter-ocaml",
- "tree-sitter-php",
  "tree-sitter-proto",
  "tree-sitter-python",
  "tree-sitter-racket",
@@ -5459,7 +5489,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-scheme",
- "tree-sitter-toml",
  "tree-sitter-typescript",
  "tree-sitter-vue",
  "tree-sitter-yaml",
@@ -6878,6 +6907,7 @@ dependencies = [
  "env_logger",
  "gpui",
  "menu",
+ "serde",
  "serde_json",
  "ui",
  "workspace",
@@ -7230,6 +7260,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "file_icons",
  "gpui",
  "language",
  "menu",
@@ -7629,11 +7660,9 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
- "collections",
  "editor",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
  "language",
  "menu",
  "ordered-float 2.10.0",
@@ -8493,6 +8522,14 @@ name = "self_cell"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58bf37232d3bb9a2c4e641ca2a11d83b5062066f88df7fed36c28772046d65ba"
+
+[[package]]
+name = "semantic_version"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+]
 
 [[package]]
 name = "semver"
@@ -9579,6 +9616,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "terminal_view",
  "theme",
  "ui",
  "util",
@@ -9638,6 +9676,7 @@ dependencies = [
  "editor",
  "fuzzy",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "menu",
  "picker",
@@ -9656,8 +9695,8 @@ dependencies = [
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
+ "semantic_version",
  "serde",
- "util",
 ]
 
 [[package]]
@@ -10351,15 +10390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-c-sharp"
-version = "0.20.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-c-sharp?rev=dd5e59721a5f8dae34604060833902b882023aaf#dd5e59721a5f8dae34604060833902b882023aaf"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-clojure"
 version = "0.0.9"
 source = "git+https://github.com/prcastro/tree-sitter-clojure?branch=update-ts#38b4f8d264248b2fd09575fbce66f7c22e8929d5"
@@ -10418,16 +10448,6 @@ name = "tree-sitter-embedded-template"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33817ade928c73a32d4f904a602321e09de9fc24b71d106f3b4b3f8ab30dcc38"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-erlang"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93ced5145ebb17f83243bf055b74e108da7cc129e12faab4166df03f59b287f4"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -10572,16 +10592,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-php"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0db3788e709a5adfb583683a4b686a084e41a0f9e5a2fcb9a8e358f11481036a"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-proto"
 version = "0.0.2"
 source = "git+https://github.com/rewinfrey/tree-sitter-proto?rev=36d54f288aee112f13a67b550ad32634d0c2cb52#36d54f288aee112f13a67b550ad32634d0c2cb52"
@@ -10643,15 +10653,6 @@ dependencies = [
 name = "tree-sitter-scheme"
 version = "0.2.0"
 source = "git+https://github.com/6cdh/tree-sitter-scheme?rev=af0fd1fa452cb2562dc7b5c8a8c55551c39273b9#af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-toml"
-version = "0.5.1"
-source = "git+https://github.com/tree-sitter/tree-sitter-toml?rev=342d9be207c2dba869b9967124c679b5e6fd0ebe#342d9be207c2dba869b9967124c679b5e6fd0ebe"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12605,6 +12606,7 @@ dependencies = [
  "extensions_ui",
  "feedback",
  "file_finder",
+ "file_icons",
  "fs",
  "futures 0.3.28",
  "go_to_line",
@@ -12672,6 +12674,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_csharp"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_erlang"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "zed_extension_api"
 version = "0.0.4"
 dependencies = [
@@ -12702,6 +12718,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_php"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "zed_prisma"
 version = "0.0.1"
 dependencies = [
@@ -12718,6 +12741,13 @@ dependencies = [
 [[package]]
 name = "zed_svelte"
 version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_toml"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

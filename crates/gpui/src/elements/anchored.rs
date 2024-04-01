@@ -6,71 +6,70 @@ use crate::{
     Pixels, Point, Size, Style,
 };
 
-/// The state that the overlay element uses to track its children.
-pub struct OverlayState {
+/// The state that the anchored element element uses to track its children.
+pub struct AnchoredState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
-    offset: Point<Pixels>,
 }
 
-/// An overlay element that can be used to display UI that
-/// floats on top of other UI elements.
-pub struct Overlay {
+/// An anchored element that can be used to display UI that
+/// will avoid overflowing the window bounds.
+pub struct Anchored {
     children: SmallVec<[AnyElement; 2]>,
     anchor_corner: AnchorCorner,
-    fit_mode: OverlayFitMode,
+    fit_mode: AnchoredFitMode,
     anchor_position: Option<Point<Pixels>>,
-    position_mode: OverlayPositionMode,
+    position_mode: AnchoredPositionMode,
 }
 
-/// overlay gives you a floating element that will avoid overflowing the window bounds.
+/// anchored gives you an element that will avoid overflowing the window bounds.
 /// Its children should have no margin to avoid measurement issues.
-pub fn overlay() -> Overlay {
-    Overlay {
+pub fn anchored() -> Anchored {
+    Anchored {
         children: SmallVec::new(),
         anchor_corner: AnchorCorner::TopLeft,
-        fit_mode: OverlayFitMode::SwitchAnchor,
+        fit_mode: AnchoredFitMode::SwitchAnchor,
         anchor_position: None,
-        position_mode: OverlayPositionMode::Window,
+        position_mode: AnchoredPositionMode::Window,
     }
 }
 
-impl Overlay {
-    /// Sets which corner of the overlay should be anchored to the current position.
+impl Anchored {
+    /// Sets which corner of the anchored element should be anchored to the current position.
     pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
         self.anchor_corner = anchor;
         self
     }
 
     /// Sets the position in window coordinates
-    /// (otherwise the location the overlay is rendered is used)
+    /// (otherwise the location the anchored element is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
         self
     }
 
-    /// Sets the position mode for this overlay. Local will have this
-    /// interpret its [`Overlay::position`] as relative to the parent element.
+    /// Sets the position mode for this anchored element. Local will have this
+    /// interpret its [`Anchored::position`] as relative to the parent element.
     /// While Window will have it interpret the position as relative to the window.
-    pub fn position_mode(mut self, mode: OverlayPositionMode) -> Self {
+    pub fn position_mode(mut self, mode: AnchoredPositionMode) -> Self {
         self.position_mode = mode;
         self
     }
 
     /// Snap to window edge instead of switching anchor corner when an overflow would occur.
     pub fn snap_to_window(mut self) -> Self {
-        self.fit_mode = OverlayFitMode::SnapToWindow;
+        self.fit_mode = AnchoredFitMode::SnapToWindow;
         self
     }
 }
 
-impl ParentElement for Overlay {
+impl ParentElement for Anchored {
     fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
 
-impl Element for Overlay {
-    type BeforeLayout = OverlayState;
+impl Element for Anchored {
+    type BeforeLayout = AnchoredState;
     type AfterLayout = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
@@ -80,21 +79,15 @@ impl Element for Overlay {
             .map(|child| child.before_layout(cx))
             .collect::<SmallVec<_>>();
 
-        let overlay_style = Style {
+        let anchored_style = Style {
             position: Position::Absolute,
             display: Display::Flex,
             ..Style::default()
         };
 
-        let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
+        let layout_id = cx.request_layout(&anchored_style, child_layout_ids.iter().copied());
 
-        (
-            layout_id,
-            OverlayState {
-                child_layout_ids,
-                offset: Point::default(),
-            },
-        )
+        (layout_id, AnchoredState { child_layout_ids })
     }
 
     fn after_layout(
@@ -128,7 +121,7 @@ impl Element for Overlay {
             size: cx.viewport_size(),
         };
 
-        if self.fit_mode == OverlayFitMode::SwitchAnchor {
+        if self.fit_mode == AnchoredFitMode::SwitchAnchor {
             let mut anchor_corner = self.anchor_corner;
 
             if desired.left() < limits.left() || desired.right() > limits.right() {
@@ -151,7 +144,7 @@ impl Element for Overlay {
             }
         }
 
-        // Snap the horizontal edges of the overlay to the horizontal edges of the window if
+        // Snap the horizontal edges of the anchored element to the horizontal edges of the window if
         // its horizontal bounds overflow, aligning to the left if it is wider than the limits.
         if desired.right() > limits.right() {
             desired.origin.x -= desired.right() - limits.right();
@@ -160,7 +153,7 @@ impl Element for Overlay {
             desired.origin.x = limits.origin.x;
         }
 
-        // Snap the vertical edges of the overlay to the vertical edges of the window if
+        // Snap the vertical edges of the anchored element to the vertical edges of the window if
         // its vertical bounds overflow, aligning to the top if it is taller than the limits.
         if desired.bottom() > limits.bottom() {
             desired.origin.y -= desired.bottom() - limits.bottom();
@@ -169,15 +162,14 @@ impl Element for Overlay {
             desired.origin.y = limits.origin.y;
         }
 
-        before_layout.offset = cx.element_offset() + desired.origin - bounds.origin;
-        before_layout.offset = point(
-            before_layout.offset.x.round(),
-            before_layout.offset.y.round(),
-        );
+        let offset = desired.origin - bounds.origin;
+        let offset = point(offset.x.round(), offset.y.round());
 
-        for child in self.children.drain(..) {
-            cx.defer_draw(child, before_layout.offset, 1);
-        }
+        cx.with_element_offset(offset, |cx| {
+            for child in &mut self.children {
+                child.after_layout(cx);
+            }
+        })
     }
 
     fn paint(
@@ -185,12 +177,15 @@ impl Element for Overlay {
         _bounds: crate::Bounds<crate::Pixels>,
         _before_layout: &mut Self::BeforeLayout,
         _after_layout: &mut Self::AfterLayout,
-        _cx: &mut ElementContext,
+        cx: &mut ElementContext,
     ) {
+        for child in &mut self.children {
+            child.paint(cx);
+        }
     }
 }
 
-impl IntoElement for Overlay {
+impl IntoElement for Anchored {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -203,25 +198,25 @@ enum Axis {
     Vertical,
 }
 
-/// Which algorithm to use when fitting the overlay to be inside the window.
+/// Which algorithm to use when fitting the anchored element to be inside the window.
 #[derive(Copy, Clone, PartialEq)]
-pub enum OverlayFitMode {
-    /// Snap the overlay to the window edge
+pub enum AnchoredFitMode {
+    /// Snap the anchored element to the window edge
     SnapToWindow,
-    /// Switch which corner anchor this overlay is attached to
+    /// Switch which corner anchor this anchored element is attached to
     SwitchAnchor,
 }
 
-/// Which algorithm to use when positioning the overlay.
+/// Which algorithm to use when positioning the anchored element.
 #[derive(Copy, Clone, PartialEq)]
-pub enum OverlayPositionMode {
-    /// Position the overlay relative to the window
+pub enum AnchoredPositionMode {
+    /// Position the anchored element relative to the window
     Window,
-    /// Position the overlay relative to its parent
+    /// Position the anchored element relative to its parent
     Local,
 }
 
-impl OverlayPositionMode {
+impl AnchoredPositionMode {
     fn get_position_and_bounds(
         &self,
         anchor_position: Option<Point<Pixels>>,
@@ -230,12 +225,12 @@ impl OverlayPositionMode {
         bounds: Bounds<Pixels>,
     ) -> (Point<Pixels>, Bounds<Pixels>) {
         match self {
-            OverlayPositionMode::Window => {
+            AnchoredPositionMode::Window => {
                 let anchor_position = anchor_position.unwrap_or(bounds.origin);
                 let bounds = anchor_corner.get_bounds(anchor_position, size);
                 (anchor_position, bounds)
             }
-            OverlayPositionMode::Local => {
+            AnchoredPositionMode::Local => {
                 let anchor_position = anchor_position.unwrap_or_default();
                 let bounds = anchor_corner.get_bounds(bounds.origin + anchor_position, size);
                 (anchor_position, bounds)
@@ -244,7 +239,7 @@ impl OverlayPositionMode {
     }
 }
 
-/// Which corner of the overlay should be considered the anchor.
+/// Which corner of the anchored element should be considered the anchor.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AnchorCorner {
     /// The top left corner

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::gen::SchemaGenerator;
@@ -33,6 +33,25 @@ pub enum AppearanceContent {
     Dark,
 }
 
+/// The background appearance of the window.
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowBackgroundContent {
+    Opaque,
+    Transparent,
+    Blurred,
+}
+
+impl From<WindowBackgroundContent> for WindowBackgroundAppearance {
+    fn from(value: WindowBackgroundContent) -> Self {
+        match value {
+            WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
+            WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
+            WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
+        }
+    }
+}
+
 /// The content of a serialized theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
@@ -53,6 +72,9 @@ pub struct ThemeContent {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ThemeStyleContent {
+    #[serde(default, rename = "background.appearance")]
+    pub window_background_appearance: Option<WindowBackgroundContent>,
+
     #[serde(flatten, default)]
     pub colors: ThemeColorsContent,
 
@@ -295,6 +317,9 @@ pub struct ThemeColorsContent {
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<String>,
 
+    #[serde(rename = "pane_group.border")]
+    pub pane_group_border: Option<String>,
+
     /// The color of the scrollbar thumb.
     #[serde(
         rename = "scrollbar.thumb.background",
@@ -491,11 +516,12 @@ pub struct ThemeColorsContent {
 impl ThemeColorsContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeColorsContent`].
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
+        let border = self
+            .border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
-            border: self
-                .border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            border,
             border_variant: self
                 .border_variant
                 .as_ref()
@@ -652,6 +678,11 @@ impl ThemeColorsContent {
                 .pane_focused_border
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            pane_group_border: self
+                .pane_group_border
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(border),
             scrollbar_thumb_background: self
                 .scrollbar_thumb_background
                 .as_ref()

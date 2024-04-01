@@ -2,9 +2,10 @@ use crate::db::{ChannelId, ChannelRole, UserId};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
+use semantic_version::SemanticVersion;
 use serde::Serialize;
+use std::fmt;
 use tracing::instrument;
-use util::{semver, SemanticVersion};
 
 #[derive(Default, Serialize)]
 pub struct ConnectionPool {
@@ -20,7 +21,6 @@ struct ConnectedUser {
 
 #[derive(Debug, Serialize)]
 pub struct ZedVersion(pub SemanticVersion);
-use std::fmt;
 
 impl fmt::Display for ZedVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,7 +30,7 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= semver(0, 127, 3)
+        self.0 >= SemanticVersion::new(0, 127, 3)
     }
 }
 

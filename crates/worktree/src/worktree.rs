@@ -1081,10 +1081,25 @@ impl LocalWorktree {
                 {
                     if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
                         let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.lock().load_index_text(&repo_path) }),
-                        );
+                        index_task = Some(cx.background_executor().spawn({
+                            let fs = fs.clone();
+                            let abs_path = abs_path.clone();
+                            async move {
+                                let abs_path_metadata = fs
+                                    .metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("loading file and FS metadata for {abs_path:?}")
+                                    })
+                                    .log_err()
+                                    .flatten()?;
+                                if abs_path_metadata.is_dir || abs_path_metadata.is_symlink {
+                                    None
+                                } else {
+                                    git_repo.lock().load_index_text(&repo_path)
+                                }
+                            }
+                        }));
                     }
                 }
             }
