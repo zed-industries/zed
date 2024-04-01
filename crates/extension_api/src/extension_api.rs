@@ -53,7 +53,7 @@ pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "
 mod wit {
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/0.0.4",
+        path: "./wit/since_v0.0.4",
     });
 }
 

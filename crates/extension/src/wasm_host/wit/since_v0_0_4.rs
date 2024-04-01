@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use futures::io::BufReader;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
+use std::path::Path;
 use std::{
     env,
     path::PathBuf,
@@ -14,11 +15,12 @@ use std::{
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 5);
 
 wasmtime::component::bindgen!({
     async: true,
-    path: "../extension_api/wit/0.0.4",
+    path: "../extension_api/wit/since_v0.0.4",
     with: {
          "worktree": ExtensionWorktree,
     },
@@ -273,6 +275,28 @@ impl ExtensionImports for WasmState {
         })
         .await;
         convert_result(result)
+    }
+
+    async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
+        #[allow(unused)]
+        let path = self
+            .host
+            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+
+        #[cfg(unix)]
+        {
+            use std::fs::{self, Permissions};
+            use std::os::unix::fs::PermissionsExt;
+
+            return convert_result(
+                fs::set_permissions(&path, Permissions::from_mode(0o755)).map_err(|error| {
+                    anyhow!("failed to set permissions for path {path:?}: {error}")
+                }),
+            );
+        }
+
+        #[cfg(not(unix))]
+        Ok(Ok(()))
     }
 }
 
