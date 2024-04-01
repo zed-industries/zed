@@ -57,8 +57,13 @@ impl LspAdapter for ExtensionLspAdapter {
                 .host
                 .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
 
-            // TODO: Eventually we'll want to expose an extension API for doing this, but for
-            // now we just manually set the file permissions for extensions that we know need it.
+            // TODO: This should now be done via the `zed::make_file_executable` function in
+            // Zed extension API, but we're leaving these existing usages in place temporarily
+            // to avoid any compatibility issues between Zed and the extension versions.
+            //
+            // We can remove once the following extension versions no longer see any use:
+            // - toml@0.0.2
+            // - zig@0.0.1
             if ["toml", "zig"].contains(&self.extension.manifest.id.as_ref()) {
                 #[cfg(not(windows))]
                 {

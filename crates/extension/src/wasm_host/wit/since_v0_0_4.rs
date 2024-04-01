@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use futures::io::BufReader;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
+use std::path::Path;
 use std::{
     env,
     path::PathBuf,
@@ -277,6 +278,10 @@ impl ExtensionImports for WasmState {
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
+        let path = self
+            .host
+            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+
         #[cfg(unix)]
         {
             use std::fs::{self, Permissions};
@@ -284,7 +289,7 @@ impl ExtensionImports for WasmState {
 
             return convert_result(
                 fs::set_permissions(&path, Permissions::from_mode(0o755)).map_err(|error| {
-                    anyhow!("failed to set permissions for path '{path}': {error}")
+                    anyhow!("failed to set permissions for path {path:?}: {error}")
                 }),
             );
         }
