@@ -42,10 +42,15 @@ pub struct CursorPositionUpdateMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResponseItem {
+    // A completion
     Text { text: String },
+    // Vestigial message type from old versions -- safe to ignore
     Del { text: String },
+    // Be able to delete whitespace prior to the cursor, likely for the rest of the completion
     Dedent { text: String },
+    // When the completion is over
     End,
+    // Got the closing parentheses and shouldn't show any more after
     Barrier,
 }
 
