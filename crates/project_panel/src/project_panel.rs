@@ -1590,6 +1590,7 @@ impl Render for ProjectPanel {
                             .anchor(gpui::AnchorCorner::TopLeft)
                             .child(menu.clone()),
                     )
+                    .with_priority(1)
                 }))
         } else {
             v_flex()

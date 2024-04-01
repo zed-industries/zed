@@ -110,8 +110,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 }
                 anchored = anchored.position(*element_state.position.borrow());
 
-                let mut element =
-                    deferred(anchored.child(div().occlude().child(menu.clone()))).into_any();
+                let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
+                    .with_priority(1)
+                    .into_any();
 
                 menu_layout_id = Some(element.before_layout(cx));
                 element

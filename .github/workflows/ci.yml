@@ -54,6 +54,9 @@ jobs:
       - name: Check unused dependencies
         uses: bnjbvr/cargo-machete@main
 
+      - name: Check license generation
+        run: script/generate-licenses /tmp/zed_licenses_output
+
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
         run: |

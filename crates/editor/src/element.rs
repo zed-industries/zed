@@ -1812,6 +1812,7 @@ impl EditorElement {
                 .anchor(AnchorCorner::TopLeft)
                 .snap_to_window(),
         )
+        .with_priority(1)
         .into_any();
 
         element.layout(gpui::Point::default(), AvailableSpace::min_size(), cx);

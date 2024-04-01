@@ -768,15 +768,18 @@ impl AssistantPanel {
                 open_ai::Model::FourTurbo => open_ai::Model::ThreePointFiveTurbo,
             }),
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
-                ZedDotDevModel::GptThreePointFiveTurbo => ZedDotDevModel::GptFour,
-                ZedDotDevModel::GptFour => ZedDotDevModel::GptFourTurbo,
-                ZedDotDevModel::GptFourTurbo => {
+                ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
+                ZedDotDevModel::Gpt4 => ZedDotDevModel::Gpt4Turbo,
+                ZedDotDevModel::Gpt4Turbo => ZedDotDevModel::Claude3Opus,
+                ZedDotDevModel::Claude3Opus => ZedDotDevModel::Claude3Sonnet,
+                ZedDotDevModel::Claude3Sonnet => ZedDotDevModel::Claude3Haiku,
+                ZedDotDevModel::Claude3Haiku => {
                     match CompletionProvider::global(cx).default_model() {
                         LanguageModel::ZedDotDev(custom) => custom,
-                        _ => ZedDotDevModel::GptThreePointFiveTurbo,
+                        _ => ZedDotDevModel::Gpt3Point5Turbo,
                     }
                 }
-                ZedDotDevModel::Custom(_) => ZedDotDevModel::GptThreePointFiveTurbo,
+                ZedDotDevModel::Custom(_) => ZedDotDevModel::Gpt3Point5Turbo,
             }),
         };
 

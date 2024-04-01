@@ -7107,11 +7107,12 @@ impl Project {
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 let receiver = receiver.clone();
                 let path = path.clone();
+                let abs_path = worktree_handle.read(cx).absolutize(&path).ok()?;
                 Some(async move {
                     wait_for_loading_buffer(receiver)
                         .await
                         .ok()
-                        .map(|buffer| (buffer, path))
+                        .map(|buffer| (buffer, path, abs_path))
                 })
             })
             .collect::<FuturesUnordered<_>>();
@@ -7130,7 +7131,7 @@ impl Project {
                 changed_repos
                     .iter()
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                Some((buffer, path.clone()))
+                Some((buffer, path.clone(), file.abs_path(cx)))
             })
             .collect::<Vec<_>>();
 
@@ -7140,6 +7141,7 @@ impl Project {
 
         let remote_id = self.remote_id();
         let client = self.client.clone();
+        let fs = self.fs.clone();
         cx.spawn(move |_, mut cx| async move {
             // Wait for all of the buffers to load.
             let future_buffers = future_buffers.collect::<Vec<_>>().await;
@@ -7150,20 +7152,47 @@ impl Project {
             let diff_bases_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
-                    future_buffers
+                    let mut diff_base_tasks = future_buffers
                         .into_iter()
                         .flatten()
                         .chain(current_buffers)
-                        .filter_map(|(buffer, path)| {
+                        .filter_map(|(buffer, path, abs_path)| {
                             let (work_directory, repo) =
                                 snapshot.repository_and_work_directory_for_path(&path)?;
                             let repo_entry = snapshot.get_local_repo(&repo)?;
-                            let relative_path = path.strip_prefix(&work_directory).ok()?;
-                            let base_text = repo_entry.repo().lock().load_index_text(relative_path);
-
-                            Some((buffer, base_text))
+                            Some((buffer, path, abs_path, work_directory, repo_entry))
                         })
-                        .collect::<Vec<_>>()
+                        .map(|(buffer, path, abs_path, work_directory, repo_entry)| {
+                            let fs = fs.clone();
+                            async move {
+                                let abs_path_metadata = fs
+                                    .metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("loading file and FS metadata for {path:?}")
+                                    })
+                                    .log_err()
+                                    .flatten()?;
+                                let base_text = if abs_path_metadata.is_dir
+                                    || abs_path_metadata.is_symlink
+                                {
+                                    None
+                                } else {
+                                    let relative_path = path.strip_prefix(&work_directory).ok()?;
+                                    repo_entry.repo().lock().load_index_text(relative_path)
+                                };
+                                Some((buffer, base_text))
+                            }
+                        })
+                        .collect::<FuturesUnordered<_>>();
+
+                    let mut diff_bases = Vec::with_capacity(diff_base_tasks.len());
+                    while let Some(diff_base) = diff_base_tasks.next().await {
+                        if let Some(diff_base) = diff_base {
+                            diff_bases.push(diff_base);
+                        }
+                    }
+                    diff_bases
                 })
                 .await;
 

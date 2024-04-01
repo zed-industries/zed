@@ -771,6 +771,7 @@ impl Render for TerminalView {
                         .anchor(gpui::AnchorCorner::TopLeft)
                         .child(menu.clone()),
                 )
+                .with_priority(1)
             }))
     }
 }
