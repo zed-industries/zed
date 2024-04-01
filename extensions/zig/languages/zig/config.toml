@@ -1,6 +1,6 @@
 name = "Zig"
 grammar = "zig"
-path_suffixes = ["zig"]
+path_suffixes = ["zig", "zig.zon"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
