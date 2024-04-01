@@ -35,21 +35,81 @@ impl Database {
     pub async fn get_extensions_by_ids(
         &self,
         ids: &[&str],
-        max_schema_version: i32,
+        constraints: Option<&ExtensionVersionConstraints>,
     ) -> Result<Vec<ExtensionMetadata>> {
         self.transaction(|tx| async move {
-            let condition = Condition::all()
-                .add(
-                    extension::Column::LatestVersion
-                        .into_expr()
-                        .eq(extension_version::Column::Version.into_expr()),
-                )
-                .add(extension::Column::ExternalId.is_in(ids.iter().copied()))
-                .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
+            let extensions = extension::Entity::find()
+                .filter(extension::Column::ExternalId.is_in(ids.iter().copied()))
+                .all(&*tx)
+                .await?;
 
-            self.get_extensions_where(condition, None, &tx).await
+            let mut max_versions = self
+                .get_latest_versions_for_extensions(&extensions, constraints, &*tx)
+                .await?;
+
+            Ok(extensions
+                .into_iter()
+                .filter_map(|extension| {
+                    let (version, _) = max_versions.remove(&extension.id)?;
+                    Some(metadata_from_extension_and_version(extension, version))
+                })
+                .collect())
         })
         .await
+    }
+
+    async fn get_latest_versions_for_extensions(
+        &self,
+        extensions: &[extension::Model],
+        constraints: Option<&ExtensionVersionConstraints>,
+        tx: &DatabaseTransaction,
+    ) -> Result<HashMap<ExtensionId, (extension_version::Model, SemanticVersion)>> {
+        let mut versions = extension_version::Entity::find()
+            .filter(
+                extension_version::Column::ExtensionId
+                    .is_in(extensions.iter().map(|extension| extension.id)),
+            )
+            .stream(&*tx)
+            .await?;
+
+        let mut max_versions =
+            HashMap::<ExtensionId, (extension_version::Model, SemanticVersion)>::default();
+        while let Some(version) = versions.next().await {
+            let version = version?;
+            let Some(extension_version) = SemanticVersion::from_str(&version.version).log_err()
+            else {
+                continue;
+            };
+
+            if let Some((_, max_extension_version)) = &max_versions.get(&version.extension_id) {
+                if max_extension_version > &extension_version {
+                    continue;
+                }
+            }
+
+            if let Some(constraints) = constraints {
+                if !constraints
+                    .schema_versions
+                    .contains(&version.schema_version)
+                {
+                    continue;
+                }
+
+                if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
+                    if let Some(version) = SemanticVersion::from_str(wasm_api_version).log_err() {
+                        if !constraints.wasm_api_versions.contains(&version) {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+            }
+
+            max_versions.insert(version.extension_id, (version, extension_version));
+        }
+
+        Ok(max_versions)
     }
 
     /// Returns all of the versions for the extension with the given ID.
@@ -103,49 +163,13 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such extension: {extension_id}"))?;
 
-            let mut versions = extension_version::Entity::find()
-                .filter(extension_version::Column::ExtensionId.eq(extension.id))
-                .stream(&*tx)
+            let extensions = [extension];
+            let mut versions = self
+                .get_latest_versions_for_extensions(&extensions, constraints, &*tx)
                 .await?;
+            let [extension] = extensions;
 
-            let mut max_version: Option<(extension_version::Model, SemanticVersion)> = None;
-            while let Some(version) = versions.next().await {
-                let version = version?;
-                let Some(extension_version) = SemanticVersion::from_str(&version.version).log_err()
-                else {
-                    continue;
-                };
-
-                if let Some((_, max_extension_version)) = &max_version {
-                    if max_extension_version > &extension_version {
-                        continue;
-                    }
-                }
-
-                if let Some(constraints) = constraints {
-                    if !constraints
-                        .schema_versions
-                        .contains(&version.schema_version)
-                    {
-                        continue;
-                    }
-
-                    if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
-                        if let Some(version) = SemanticVersion::from_str(wasm_api_version).log_err()
-                        {
-                            if !constraints.wasm_api_versions.contains(&version) {
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-
-                max_version = Some((version, extension_version));
-            }
-
-            Ok(max_version.map(|(max_version, _)| {
+            Ok(versions.remove(&extension.id).map(|(max_version, _)| {
                 metadata_from_extension_and_version(extension, max_version)
             }))
         })

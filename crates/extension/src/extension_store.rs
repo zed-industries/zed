@@ -421,15 +421,15 @@ impl ExtensionStore {
             query.push(("filter", search));
         }
 
-        self.fetch_extensions_from_api("/extensions", query, cx)
+        self.fetch_extensions_from_api("/extensions", &query, cx)
     }
 
     pub fn fetch_extensions_with_update_available(
         &mut self,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        let version = CURRENT_SCHEMA_VERSION.to_string();
-        let mut query = vec![("max_schema_version", version.as_str())];
+        let schema_versions = schema_version_range();
+        let wasm_api_versions = wasm_api_version_range();
         let extension_settings = ExtensionSettings::get_global(cx);
         let extension_ids = self
             .extension_index
@@ -439,9 +439,20 @@ impl ExtensionStore {
             .filter(|id| extension_settings.should_auto_update(id))
             .collect::<Vec<_>>()
             .join(",");
-        query.push(("ids", &extension_ids));
-
-        let task = self.fetch_extensions_from_api("/extensions", query, cx);
+        let task = self.fetch_extensions_from_api(
+            "/extensions/updates",
+            &[
+                ("min_schema_version", &schema_versions.start().to_string()),
+                ("max_schema_version", &schema_versions.end().to_string()),
+                (
+                    "min_wasm_api_version",
+                    &wasm_api_versions.start().to_string(),
+                ),
+                ("max_wasm_api_version", &wasm_api_versions.end().to_string()),
+                ("ids", &extension_ids),
+            ],
+            cx,
+        );
         cx.spawn(move |this, mut cx| async move {
             let extensions = task.await?;
             this.update(&mut cx, |this, _cx| {
@@ -465,7 +476,7 @@ impl ExtensionStore {
         extension_id: &str,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), Vec::new(), cx)
+        self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), &[], cx)
     }
 
     pub fn check_for_updates(&mut self, cx: &mut ModelContext<Self>) {
@@ -509,7 +520,7 @@ impl ExtensionStore {
     fn fetch_extensions_from_api(
         &self,
         path: &str,
-        query: Vec<(&str, &str)>,
+        query: &[(&str, &str)],
         cx: &mut ModelContext<'_, ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url(path, &query);

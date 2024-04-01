@@ -20,6 +20,7 @@ use util::{maybe, ResultExt};
 pub fn router() -> Router {
     Router::new()
         .route("/extensions", get(get_extensions))
+        .route("/extensions/updates", get(get_extension_updates))
         .route("/extensions/:extension_id", get(get_extension_versions))
         .route(
             "/extensions/:extension_id/download",
@@ -50,14 +51,40 @@ async fn get_extensions(
         .map(|s| s.split(',').map(|s| s.trim()).collect::<Vec<_>>());
 
     let extensions = if let Some(extension_ids) = extension_ids {
-        app.db
-            .get_extensions_by_ids(&extension_ids, params.max_schema_version)
-            .await?
+        app.db.get_extensions_by_ids(&extension_ids, None).await?
     } else {
         app.db
             .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
             .await?
     };
+
+    Ok(Json(GetExtensionsResponse { data: extensions }))
+}
+
+#[derive(Debug, Deserialize)]
+struct GetExtensionUpdatesParams {
+    ids: String,
+    min_schema_version: i32,
+    max_schema_version: i32,
+    min_wasm_api_version: SemanticVersion,
+    max_wasm_api_version: SemanticVersion,
+}
+
+async fn get_extension_updates(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetExtensionUpdatesParams>,
+) -> Result<Json<GetExtensionsResponse>> {
+    let constraints = ExtensionVersionConstraints {
+        schema_versions: params.min_schema_version..=params.max_schema_version,
+        wasm_api_versions: params.min_wasm_api_version..=params.max_wasm_api_version,
+    };
+
+    let extension_ids = params.ids.split(',').map(|s| s.trim()).collect::<Vec<_>>();
+
+    let extensions = app
+        .db
+        .get_extensions_by_ids(&extension_ids, Some(&constraints))
+        .await?;
 
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
