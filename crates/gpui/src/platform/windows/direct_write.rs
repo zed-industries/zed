@@ -67,7 +67,6 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     gdi: IDWriteGdiInterop,
-    render_target: IDWriteBitmapRenderTarget3,
 }
 
 struct DirectWriteState {
@@ -89,9 +88,6 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let gdi = factory.GetGdiInterop().unwrap();
-            let bitmap_render_target = gdi.CreateBitmapRenderTarget(None, 10, 10).unwrap();
-            let render_target: IDWriteBitmapRenderTarget3 =
-                std::mem::transmute(bitmap_render_target);
 
             DirectWriteComponent {
                 locale,
@@ -99,7 +95,6 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 gdi,
-                render_target,
             }
         }
     }
@@ -779,31 +774,12 @@ impl DirectWriteState {
             dx: 0.0,
             dy: 0.0,
         };
-        let subpixel_shift = params
-            .subpixel_variant
-            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-        println!("Subpixel shift: {:#?}", subpixel_shift);
+
         unsafe {
             if params.is_emoji {
-                // TODO:
-                // let mut bitmap_size = glyph_bounds.size;
-                // if params.subpixel_variant.x > 0 {
-                //     bitmap_size.width += DevicePixels(1);
-                // }
-                // if params.subpixel_variant.y > 0 {
-                //     bitmap_size.height += DevicePixels(1);
-                // }
-                // let bitmap_size = bitmap_size;
                 let bitmap_size = glyph_bounds.size;
                 let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
-                let texture_bounds = RECT {
-                    left: glyph_bounds.left().0,
-                    top: glyph_bounds.top().0,
-                    right: glyph_bounds.right().0,
-                    bottom: glyph_bounds.bottom().0,
-                };
 
-                let mut bitmap = vec![0u8; total_bytes];
                 let enumerator = self
                     .components
                     .factory
@@ -818,34 +794,29 @@ impl DirectWriteState {
                     )
                     .unwrap();
 
-                let bitmap_hdc = self.components.render_target.GetMemoryDC();
-                SetBoundsRect(
-                    bitmap_hdc,
-                    Some(&texture_bounds),
-                    SET_BOUNDS_RECT_FLAGS(DCB_ENABLE.0 | DCB_RESET.0),
-                );
-                // clear the bitmap
-                {
-                    let size = self.components.render_target.GetSize().unwrap();
-                    println!("Bitmap size: {:#?}", size);
-                    SetDCBrushColor(bitmap_hdc, COLORREF(0xFFFFFF));
-                    SelectObject(bitmap_hdc, GetStockObject(NULL_PEN));
-                    SelectObject(bitmap_hdc, GetStockObject(DC_BRUSH));
-                    Rectangle(bitmap_hdc, 0, 0, size.cx + 1, size.cy + 1);
-                }
-
                 let current_transform = DWRITE_MATRIX {
                     m11: 1.0,
                     m12: 0.0,
                     m21: 0.0,
                     m22: 1.0,
-                    dx: -(glyph_bounds.origin.x.0 / 2) as f32,
+                    dx: (-glyph_bounds.origin.x.0 as f32) / 4.0,
                     dy: ((glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) / 2) as f32,
                 };
                 println!("Trans: {:#?}", current_transform);
-                self.components
-                    .render_target
-                    .SetCurrentTransform(Some(&current_transform));
+                let bitmap_render_target = self
+                    .components
+                    .gdi
+                    .CreateBitmapRenderTarget(
+                        None,
+                        bitmap_size.width.0 as u32,
+                        bitmap_size.height.0 as u32,
+                    )
+                    .unwrap();
+                let bitmap_render_target: IDWriteBitmapRenderTarget3 =
+                    std::mem::transmute(bitmap_render_target);
+                bitmap_render_target
+                    .SetCurrentTransform(Some(&current_transform))
+                    .unwrap();
 
                 let render_params = self.components.factory.CreateRenderingParams()?;
                 // bitmap_render_target
@@ -868,8 +839,7 @@ impl DirectWriteState {
                         break;
                     };
                     let emoji = &*run;
-                    self.components
-                        .render_target
+                    bitmap_render_target
                         .DrawGlyphRun(
                             0.0,
                             (glyph_bounds.size.height.0 / 2) as f32,
@@ -883,7 +853,7 @@ impl DirectWriteState {
                 }
 
                 let mut raw_bytes = vec![0u8; total_bytes];
-                let bitmap_data = self.components.render_target.GetBitmapData().unwrap();
+                let bitmap_data = bitmap_render_target.GetBitmapData().unwrap();
                 let raw_u32 = std::slice::from_raw_parts(bitmap_data.pixels, total_bytes / 4);
                 for (bytes, color) in raw_bytes.chunks_exact_mut(4).zip(raw_u32.iter()) {
                     bytes[3] = 0xFF;
@@ -1106,219 +1076,6 @@ impl Drop for DirectWriteState {
                 .factory
                 .UnregisterFontFileLoader(&self.components.in_memory_loader);
         }
-    }
-}
-
-// #[implement(IDWriteTextAnalysisSource, IDWriteTextAnalysisSink)]
-struct Analysis {
-    source: IDWriteTextAnalysisSource,
-    sink: IDWriteTextAnalysisSink,
-    sink_inner: Arc<RwLock<AnalysisSinkInner>>,
-    length: u32,
-}
-
-#[implement(IDWriteTextAnalysisSource)]
-struct AnalysisSource {
-    locale: PCWSTR,
-    text: Vec<u16>,
-    text_length: u32,
-}
-
-#[implement(IDWriteTextAnalysisSink)]
-struct AnalysisSink {
-    inner: Arc<RwLock<AnalysisSinkInner>>,
-}
-
-struct AnalysisSinkInner {
-    results: Vec<AnalysisResult>,
-}
-
-#[derive(Clone, Debug)]
-struct AnalysisResult {
-    text_position: u32,
-    test_length: u32,
-    script_analysis: DWRITE_SCRIPT_ANALYSIS,
-}
-
-impl AnalysisSource {
-    pub fn new(locale: PCWSTR, text: Vec<u16>, text_length: u32) -> Self {
-        AnalysisSource {
-            locale,
-            text,
-            text_length,
-        }
-    }
-}
-
-impl AnalysisSink {
-    pub fn new(inner: Arc<RwLock<AnalysisSinkInner>>) -> Self {
-        AnalysisSink { inner }
-    }
-}
-
-impl AnalysisSinkInner {
-    pub fn new() -> Self {
-        AnalysisSinkInner {
-            results: Vec::new(),
-        }
-    }
-
-    pub fn get_result(&self) -> Vec<AnalysisResult> {
-        self.results.clone()
-    }
-}
-
-impl Analysis {
-    pub fn new(locale: PCWSTR, text: Vec<u16>, text_length: u32) -> Self {
-        let source_struct = AnalysisSource::new(locale, text, text_length);
-        let sink_inner = Arc::new(RwLock::new(AnalysisSinkInner::new()));
-        let sink_struct = AnalysisSink::new(sink_inner.clone());
-        let source: IDWriteTextAnalysisSource = source_struct.into();
-        let sink: IDWriteTextAnalysisSink = sink_struct.into();
-
-        Analysis {
-            source,
-            sink,
-            sink_inner,
-            length: text_length,
-        }
-    }
-
-    // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwritetextanalyzer-getglyphs
-    pub unsafe fn generate_result(&self, analyzer: &IDWriteTextAnalyzer) -> Vec<AnalysisResult> {
-        analyzer
-            .AnalyzeScript(&self.source, 0, self.length, &self.sink)
-            .unwrap();
-        self.sink_inner.read().get_result()
-    }
-}
-
-// https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/multimedia/DirectWrite/CustomLayout/TextAnalysis.cpp
-impl IDWriteTextAnalysisSource_Impl for AnalysisSource {
-    fn GetTextAtPosition(
-        &self,
-        textposition: u32,
-        textstring: *mut *mut u16,
-        textlength: *mut u32,
-    ) -> windows::core::Result<()> {
-        if textposition >= self.text_length {
-            unsafe {
-                *textstring = std::ptr::null_mut() as _;
-                *textlength = 0;
-            }
-        } else {
-            unsafe {
-                // *textstring = self.text.as_wide()[textposition as usize..].as_ptr() as *mut u16;
-                *textstring = self.text.as_ptr().add(textposition as usize) as _;
-                *textlength = self.text_length - textposition;
-            }
-        }
-        Ok(())
-    }
-
-    fn GetTextBeforePosition(
-        &self,
-        textposition: u32,
-        textstring: *mut *mut u16,
-        textlength: *mut u32,
-    ) -> windows::core::Result<()> {
-        if textposition == 0 || textposition >= self.text_length {
-            unsafe {
-                *textstring = 0 as _;
-                *textlength = 0;
-            }
-        } else {
-            unsafe {
-                *textstring = self.text.as_ptr() as *mut u16;
-                *textlength = textposition - 0;
-            }
-        }
-        Ok(())
-    }
-
-    fn GetParagraphReadingDirection(&self) -> DWRITE_READING_DIRECTION {
-        DWRITE_READING_DIRECTION_LEFT_TO_RIGHT
-    }
-
-    fn GetLocaleName(
-        &self,
-        textposition: u32,
-        textlength: *mut u32,
-        localename: *mut *mut u16,
-    ) -> windows::core::Result<()> {
-        unsafe {
-            *localename = self.locale.as_ptr() as *mut u16;
-            *textlength = self.text_length - textposition;
-        }
-        Ok(())
-    }
-
-    fn GetNumberSubstitution(
-        &self,
-        _textposition: u32,
-        _textlength: *mut u32,
-        _numbersubstitution: *mut Option<IDWriteNumberSubstitution>,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::new(
-            HRESULT(-1),
-            "GetNumberSubstitution unimplemented",
-        ))
-    }
-}
-
-impl IDWriteTextAnalysisSink_Impl for AnalysisSink {
-    fn SetScriptAnalysis(
-        &self,
-        textposition: u32,
-        textlength: u32,
-        scriptanalysis: *const DWRITE_SCRIPT_ANALYSIS,
-    ) -> windows::core::Result<()> {
-        let mut inner = self.inner.write();
-        unsafe {
-            inner.results.push(AnalysisResult {
-                text_position: textposition,
-                test_length: textlength,
-                script_analysis: *scriptanalysis,
-            });
-        }
-        Ok(())
-    }
-
-    fn SetLineBreakpoints(
-        &self,
-        _textposition: u32,
-        _textlength: u32,
-        _linebreakpoints: *const DWRITE_LINE_BREAKPOINT,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::new(
-            HRESULT(-1),
-            "SetLineBreakpoints unimplemented",
-        ))
-    }
-
-    fn SetBidiLevel(
-        &self,
-        _textposition: u32,
-        _textlength: u32,
-        _explicitlevel: u8,
-        _resolvedlevel: u8,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::new(
-            HRESULT(-1),
-            "SetBidiLevel unimplemented",
-        ))
-    }
-
-    fn SetNumberSubstitution(
-        &self,
-        _textposition: u32,
-        _textlength: u32,
-        _numbersubstitution: Option<&IDWriteNumberSubstitution>,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::new(
-            HRESULT(-1),
-            "SetNumberSubstitution unimplemented",
-        ))
     }
 }
 
