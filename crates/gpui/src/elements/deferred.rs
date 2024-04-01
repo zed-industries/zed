@@ -15,6 +15,15 @@ pub struct Deferred {
     priority: usize,
 }
 
+impl Deferred {
+    /// The `priority` parameter determines the drawing order relative to other deferred elements,
+    /// with higher values being drawn on top.
+    pub fn with_priority(mut self, priority: usize) -> Self {
+        self.priority = priority;
+        self
+    }
+}
+
 impl Element for Deferred {
     type BeforeLayout = ();
     type AfterLayout = ();
