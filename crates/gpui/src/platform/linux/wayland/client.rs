@@ -796,12 +796,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                             })
                         };
 
-                        if !keysym.is_modifier_key()
-                            && (match state.repeat.current_keysym {
-                                Some(repeat_keysym) => keysym == repeat_keysym,
-                                None => false,
-                            })
-                        {
+                        if !keysym.is_modifier_key() {
                             state.repeat.current_keysym = None;
                         }
 
