@@ -3872,14 +3872,23 @@ impl Render for Workspace {
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
-        let padding = if centered_layout {
+        let render_padding = |size| {
+            (size > 0.0).then(|| {
+                div()
+                    .h_full()
+                    .w(relative(size))
+                    .bg(cx.theme().colors().editor_background)
+                    .border_color(cx.theme().colors().pane_group_border)
+            })
+        };
+        let paddings = if centered_layout {
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                Self::adjust_padding(settings.left_padding),
-                Self::adjust_padding(settings.right_padding),
+                render_padding(Self::adjust_padding(settings.left_padding)),
+                render_padding(Self::adjust_padding(settings.right_padding)),
             )
         } else {
-            (0.0, 0.0)
+            (None, None)
         };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
@@ -3973,13 +3982,12 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .when(centered_layout, |div| {
-                                        div.bg(cx.theme().styles.colors.editor_background)
-                                    })
                                     .child(
                                         h_flex()
                                             .h_full()
-                                            .child(div().w(relative(padding.0)))
+                                            .when_some(paddings.0, |this, p| {
+                                                this.child(p.border_r_1())
+                                            })
                                             .child(self.center.render(
                                                 &self.project,
                                                 &self.follower_states,
@@ -3989,7 +3997,9 @@ impl Render for Workspace {
                                                 &self.app_state,
                                                 cx,
                                             ))
-                                            .child(div().w(relative(padding.1))),
+                                            .when_some(paddings.1, |this, p| {
+                                                this.child(p.border_l_1())
+                                            }),
                                     )
                                     .children(
                                         self.zoomed_position
