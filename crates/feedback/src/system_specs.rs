@@ -30,7 +30,12 @@ impl SystemSpecs {
             .app_metadata()
             .os_version
             .map(|os_version| os_version.to_string());
-        let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
+        let detail = match ReleaseChannel::global(cx) {
+            ReleaseChannel::Dev | ReleaseChannel::Nightly => {
+                AppCommitSha::try_global(cx).map(|sha| sha.0.clone())
+            }
+            _ => None,
+        };
 
         SystemSpecs {
             app_version,
@@ -51,10 +56,12 @@ impl Display for SystemSpecs {
             None => format!("OS: {}", self.os_name),
         };
         let app_version_information = format!(
-            "Zed: v{} ({} {})",
+            "Zed: v{} ({})",
             self.app_version,
-            self.release_channel,
-            self.detail.as_deref().unwrap_or("")
+            match &self.detail {
+                Some(detail) => format!("{} {}", self.release_channel, detail),
+                None => self.release_channel.to_string(),
+            }
         );
         let system_specs = [
             app_version_information,
