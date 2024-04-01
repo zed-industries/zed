@@ -278,6 +278,7 @@ impl ExtensionImports for WasmState {
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
+        #[allow(unused)]
         let path = self
             .host
             .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
