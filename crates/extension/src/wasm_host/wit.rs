@@ -1,5 +1,6 @@
 mod since_v0_0_1;
 mod since_v0_0_4;
+mod since_v0_0_6;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
@@ -11,7 +12,7 @@ use wasmtime::{
     Store,
 };
 
-use since_v0_0_4 as latest;
+use since_v0_0_6 as latest;
 
 pub use latest::{Command, LanguageServerConfig};
 
@@ -34,6 +35,7 @@ pub fn is_supported_wasm_api_version(version: SemanticVersion) -> bool {
 }
 
 pub enum Extension {
+    V006(since_v0_0_6::Extension),
     V004(since_v0_0_4::Extension),
     V001(since_v0_0_1::Extension),
 }
@@ -44,16 +46,16 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<(Self, Instance)> {
-        if version < latest::MIN_VERSION {
-            let (extension, instance) = since_v0_0_1::Extension::instantiate_async(
+        if version >= latest::MIN_VERSION {
+            let (extension, instance) = latest::Extension::instantiate_async(
                 store,
                 &component,
-                since_v0_0_1::linker(),
+                latest::linker(),
             )
             .await
             .context("failed to instantiate wasm extension")?;
-            Ok((Self::V001(extension), instance))
-        } else {
+            Ok((Self::V006(extension), instance))
+        } else if version >= since_v0_0_4::MIN_VERSION {
             let (extension, instance) = since_v0_0_4::Extension::instantiate_async(
                 store,
                 &component,
@@ -62,11 +64,21 @@ impl Extension {
             .await
             .context("failed to instantiate wasm extension")?;
             Ok((Self::V004(extension), instance))
+        } else {
+            let (extension, instance) = since_v0_0_1::Extension::instantiate_async(
+                store,
+                &component,
+                since_v0_0_1::linker(),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
+            Ok((Self::V001(extension), instance))
         }
     }
 
     pub async fn call_init_extension(&self, store: &mut Store<WasmState>) -> Result<()> {
         match self {
+            Extension::V006(ext) => ext.call_init_extension(store).await,
             Extension::V004(ext) => ext.call_init_extension(store).await,
             Extension::V001(ext) => ext.call_init_extension(store).await,
         }
@@ -79,10 +91,14 @@ impl Extension {
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
-            Extension::V004(ext) => {
+            Extension::V006(ext) => {
                 ext.call_language_server_command(store, config, resource)
                     .await
             }
+            Extension::V004(ext) => Ok(ext
+                .call_language_server_command(store, &config.clone().into(), resource)
+                .await?
+                .map(|command| command.into())),
             Extension::V001(ext) => Ok(ext
                 .call_language_server_command(store, &config.clone().into(), resource)
                 .await?
@@ -97,9 +113,17 @@ impl Extension {
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
-            Extension::V004(ext) => {
+            Extension::V006(ext) => {
                 ext.call_language_server_initialization_options(store, config, resource)
                     .await
+            }
+            Extension::V004(ext) => {
+                ext.call_language_server_initialization_options(
+                    store,
+                    &config.clone().into(),
+                    resource,
+                )
+                .await
             }
             Extension::V001(ext) => {
                 ext.call_language_server_initialization_options(
