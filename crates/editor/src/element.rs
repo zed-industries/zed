@@ -462,7 +462,7 @@ impl EditorElement {
             let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
             let multi_cursor_modifier = match multi_cursor_setting {
                 MultiCursorModifier::Alt => modifiers.alt,
-                MultiCursorModifier::Cmd => modifiers.command,
+                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
             };
             editor.select(
                 SelectPhase::Begin {
@@ -515,7 +515,7 @@ impl EditorElement {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let multi_cursor_modifier = match multi_cursor_setting {
             MultiCursorModifier::Alt => event.modifiers.secondary(),
-            MultiCursorModifier::Cmd => event.modifiers.alt,
+            MultiCursorModifier::CmdOrCtrl => event.modifiers.alt,
         };
 
         if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(cx) {

@@ -190,7 +190,7 @@ impl WaylandClient {
                 control: false,
                 alt: false,
                 function: false,
-                command: false,
+                platform: false,
             },
             scroll_direction: -1.0,
             axis_source: AxisSource::Wheel,
@@ -707,7 +707,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state.modifiers.shift = shift;
                 state.modifiers.alt = alt;
                 state.modifiers.control = control;
-                state.modifiers.command = command;
+                state.modifiers.platform = command;
             }
             wl_keyboard::Event::Key {
                 key,
