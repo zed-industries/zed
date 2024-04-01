@@ -1,6 +1,3 @@
-use smallvec::SmallVec;
-const SEARCH_HISTORY_LIMIT: usize = 20;
-
 /// Determines the behavior to use when inserting a new query into the search history.
 #[derive(Default, Debug, Clone, PartialEq)]
 pub enum QueryInsertionBehavior {
@@ -26,17 +23,19 @@ impl SearchHistorySelectionHandle {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SearchHistory {
-    history: SmallVec<[String; SEARCH_HISTORY_LIMIT]>,
+    history: Vec<String>,
+    max_history_len: Option<usize>,
     insertion_behavior: QueryInsertionBehavior,
 }
 
 impl SearchHistory {
-    pub fn new(insertion_behavior: QueryInsertionBehavior) -> Self {
+    pub fn new(max_history_len: Option<usize>, insertion_behavior: QueryInsertionBehavior) -> Self {
         SearchHistory {
+            max_history_len,
             insertion_behavior,
-            ..Default::default()
+            history: Vec::new(),
         }
     }
 
@@ -58,8 +57,10 @@ impl SearchHistory {
         }
 
         self.history.push(search_string);
-        if self.history.len() > SEARCH_HISTORY_LIMIT {
-            self.history.remove(0);
+        if let Some(max_history_len) = self.max_history_len {
+            if self.history.len() > max_history_len {
+                self.history.remove(0);
+            }
         }
 
         handle.selection = Some(self.history.len() - 1);
@@ -114,8 +115,11 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut search_history =
-            SearchHistory::new(QueryInsertionBehavior::ReplacePreviousIfContains);
+        const MAX_HISTORY_LEN: usize = 20;
+        let mut search_history = SearchHistory::new(
+            Some(MAX_HISTORY_LEN),
+            QueryInsertionBehavior::ReplacePreviousIfContains,
+        );
         let mut handle = SearchHistorySelectionHandle::default();
 
         assert_eq!(
@@ -150,15 +154,15 @@ mod tests {
         assert_eq!(search_history.current(&handle), Some("rustlang"));
 
         // push enough items to test SEARCH_HISTORY_LIMIT
-        for i in 0..SEARCH_HISTORY_LIMIT * 2 {
+        for i in 0..MAX_HISTORY_LEN * 2 {
             search_history.add(&mut handle, format!("item{i}"));
         }
-        assert!(search_history.history.len() <= SEARCH_HISTORY_LIMIT);
+        assert!(search_history.history.len() <= MAX_HISTORY_LEN);
     }
 
     #[test]
     fn test_next_and_previous() {
-        let mut search_history = SearchHistory::default();
+        let mut search_history = SearchHistory::new(None, QueryInsertionBehavior::AlwaysInsert);
         let mut handle = SearchHistorySelectionHandle::default();
 
         assert_eq!(
@@ -197,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_reset_selection() {
-        let mut search_history = SearchHistory::default();
+        let mut search_history = SearchHistory::new(None, QueryInsertionBehavior::AlwaysInsert);
         let mut handle = SearchHistorySelectionHandle::default();
 
         search_history.add(&mut handle, "Rust".to_string());
@@ -224,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_multiple_handles() {
-        let mut search_history = SearchHistory::default();
+        let mut search_history = SearchHistory::new(None, QueryInsertionBehavior::AlwaysInsert);
         let mut handle1 = SearchHistorySelectionHandle::default();
         let mut handle2 = SearchHistorySelectionHandle::default();
 

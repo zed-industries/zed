@@ -124,6 +124,8 @@ const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
+const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
 pub trait Item {
     fn try_open(
         project: &Model<Project>,
@@ -670,7 +672,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
-                search_history: Default::default(),
+                search_history: Self::new_search_history(),
             }
         })
     }
@@ -806,7 +808,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
-                search_history: Default::default(),
+                search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -861,6 +863,13 @@ impl Project {
             cx,
         )
         .await
+    }
+
+    fn new_search_history() -> SearchHistory {
+        SearchHistory::new(
+            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
+            search_history::QueryInsertionBehavior::AlwaysInsert,
+        )
     }
 
     fn release(&mut self, cx: &mut AppContext) {

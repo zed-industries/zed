@@ -41,6 +41,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
+const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 20;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -545,6 +546,7 @@ impl BufferSearchBar {
             query_contains_error: false,
             dismissed: true,
             search_history: SearchHistory::new(
+                Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
                 project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
             ),
             search_history_selection_handle: Default::default(),
