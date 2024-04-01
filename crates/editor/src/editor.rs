@@ -82,7 +82,7 @@ use language::{
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
-use lsp::{DiagnosticSeverity, LanguageServerId};
+use lsp::{CompletionItemKind, DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
@@ -121,8 +121,7 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
-    Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, KeyIcon, ListItem, Popover, Tooltip
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
@@ -965,6 +964,9 @@ impl CompletionsMenu {
                                 documentation,
                                 max_completion_len,
                             );
+
+                        let completion_kind_icon = completion_kind_icon(&completion.lsp_completion.kind);
+
                         div()
                             .min_w(px(widest_completion_pixels + padding_width))
                             .max_w(max_completion_len + px(padding_width))
@@ -983,7 +985,7 @@ impl CompletionsMenu {
                                             task.detach_and_log_err(cx)
                                         }
                                     }))
-                                    .child(h_flex().overflow_hidden().child(completion_label))
+                                    .child(h_flex().overflow_hidden().gap_1().child(completion_kind_icon).child(completion_label))
                                     .end_slot(documentation_label),
                             )
                     })
@@ -1396,6 +1398,38 @@ impl CompletionsMenu {
         self.selected_item = 0;
     }
 }
+
+
+fn completion_kind_icon(completion_kind: &Option<CompletionItemKind>) -> Icon {
+    match completion_kind {
+        Some(CompletionItemKind::REFERENCE) => Icon::new(IconName::Reference),
+        Some(CompletionItemKind::METHOD) => Icon::new(IconName::Method),
+        Some(CompletionItemKind::FUNCTION) => Icon::new(IconName::Function),
+        Some(CompletionItemKind::CONSTRUCTOR) => Icon::new(IconName::Constructor),
+        Some(CompletionItemKind::FIELD) => Icon::new(IconName::Field),
+        Some(CompletionItemKind::VARIABLE) => Icon::new(IconName::Variable),
+        Some(CompletionItemKind::CLASS) => Icon::new(IconName::Class),
+        Some(CompletionItemKind::INTERFACE) => Icon::new(IconName::Interface),
+        Some(CompletionItemKind::MODULE) => Icon::new(IconName::Module),
+        Some(CompletionItemKind::PROPERTY) => Icon::new(IconName::Property),
+        Some(CompletionItemKind::UNIT) => Icon::new(IconName::Unit),
+        Some(CompletionItemKind::VALUE) => Icon::new(IconName::Value),
+        Some(CompletionItemKind::ENUM) => Icon::new(IconName::Enum),
+        Some(CompletionItemKind::KEYWORD) => Icon::new(IconName::Keyword),
+        Some(CompletionItemKind::SNIPPET) => Icon::new(IconName::Snippet),
+        Some(CompletionItemKind::COLOR) => Icon::new(IconName::Color),
+        Some(CompletionItemKind::FILE) => Icon::new(IconName::File),
+        Some(CompletionItemKind::FOLDER) => Icon::new(IconName::Folder),
+        Some(CompletionItemKind::ENUM_MEMBER) => Icon::new(IconName::Enum),
+        Some(CompletionItemKind::CONSTANT) => Icon::new(IconName::Constant),
+        Some(CompletionItemKind::STRUCT) => Icon::new(IconName::Struct),
+        Some(CompletionItemKind::EVENT) => Icon::new(IconName::Event),
+        Some(CompletionItemKind::OPERATOR) => Icon::new(IconName::Operator),
+        Some(CompletionItemKind::TYPE_PARAMETER) => Icon::new(IconName::TypeParameter),
+        Some(CompletionItemKind::TEXT) | _ => Icon::new(IconName::Text),
+    }
+}
+
 
 #[derive(Clone)]
 struct CodeActionsMenu {
