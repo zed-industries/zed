@@ -66,6 +66,17 @@ impl KeyBinding {
 impl RenderOnce for KeyBinding {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
+            .debug_selector(|| {
+                format!(
+                    "KEY_BINDING-{}",
+                    self.key_binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.key.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {

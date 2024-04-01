@@ -1038,3 +1038,12 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
         3"})
         .await;
 }
+
+#[gpui::test]
+async fn test_command_palette(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.simulate_keystroke(":");
+    cx.simulate_input("go to definition");
+    assert!(cx.debug_bounds("KEY_BINDING-f12").is_none());
+    assert!(cx.debug_bounds("KEY_BINDING-g d").is_some());
+}
