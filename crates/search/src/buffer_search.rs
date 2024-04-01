@@ -21,7 +21,7 @@ use gpui::{
 };
 use project::{
     search::SearchQuery,
-    search_history::{SearchHistory, SearchHistorySelectionHandle},
+    search_history::{SearchHistory, SearchHistoryCursor},
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -41,7 +41,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
-const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 20;
+const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -78,7 +78,7 @@ pub struct BufferSearchBar {
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
-    search_history_selection_handle: SearchHistorySelectionHandle,
+    search_history_selection_handle: SearchHistoryCursor,
     current_mode: SearchMode,
     replace_enabled: bool,
 }

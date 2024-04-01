@@ -8,15 +8,18 @@ pub enum QueryInsertionBehavior {
     ReplacePreviousIfContains,
 }
 
-/// A handle that maintains the current selection in the search history.
+/// A cursor that stores an index to the currently selected query in the search history.
 /// This can be passed to the search history to update the selection accordingly,
 /// e.g. when using the up and down arrow keys to navigate the search history.
+///
+/// Note: The cursor can point to the wrong query, if the maximum length of the history is exceeded
+/// and the old query is overwritten.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SearchHistorySelectionHandle {
+pub struct SearchHistoryCursor {
     selection: Option<usize>,
 }
 
-impl SearchHistorySelectionHandle {
+impl SearchHistoryCursor {
     /// Resets the selection to `None`.
     pub fn reset(&mut self) {
         self.selection = None;
@@ -39,9 +42,9 @@ impl SearchHistory {
         }
     }
 
-    pub fn add(&mut self, handle: &mut SearchHistorySelectionHandle, search_string: String) {
+    pub fn add(&mut self, handle: &mut SearchHistoryCursor, search_string: String) {
         if let Some(selected_ix) = handle.selection {
-            if search_string == self.history[selected_ix] {
+            if self.history.get(selected_ix) == Some(&search_string) {
                 return;
             }
         }
@@ -66,7 +69,7 @@ impl SearchHistory {
         handle.selection = Some(self.history.len() - 1);
     }
 
-    pub fn next(&mut self, handle: &mut SearchHistorySelectionHandle) -> Option<&str> {
+    pub fn next(&mut self, handle: &mut SearchHistoryCursor) -> Option<&str> {
         let history_size = self.history.len();
         if history_size == 0 {
             return None;
@@ -81,13 +84,13 @@ impl SearchHistory {
         Some(&self.history[next_index])
     }
 
-    pub fn current(&self, handle: &SearchHistorySelectionHandle) -> Option<&str> {
+    pub fn current(&self, handle: &SearchHistoryCursor) -> Option<&str> {
         handle
             .selection
             .and_then(|selected_ix| self.history.get(selected_ix).map(|s| s.as_str()))
     }
 
-    pub fn previous(&mut self, handle: &mut SearchHistorySelectionHandle) -> Option<&str> {
+    pub fn previous(&mut self, handle: &mut SearchHistoryCursor) -> Option<&str> {
         let history_size = self.history.len();
         if history_size == 0 {
             return None;
@@ -120,7 +123,7 @@ mod tests {
             Some(MAX_HISTORY_LEN),
             QueryInsertionBehavior::ReplacePreviousIfContains,
         );
-        let mut handle = SearchHistorySelectionHandle::default();
+        let mut handle = SearchHistoryCursor::default();
 
         assert_eq!(
             search_history.current(&handle),
@@ -163,7 +166,7 @@ mod tests {
     #[test]
     fn test_next_and_previous() {
         let mut search_history = SearchHistory::new(None, QueryInsertionBehavior::AlwaysInsert);
-        let mut handle = SearchHistorySelectionHandle::default();
+        let mut handle = SearchHistoryCursor::default();
 
         assert_eq!(
             search_history.next(&mut handle),
@@ -202,7 +205,7 @@ mod tests {
     #[test]
     fn test_reset_selection() {
         let mut search_history = SearchHistory::new(None, QueryInsertionBehavior::AlwaysInsert);
-        let mut handle = SearchHistorySelectionHandle::default();
+        let mut handle = SearchHistoryCursor::default();
 
         search_history.add(&mut handle, "Rust".to_string());
         search_history.add(&mut handle, "JavaScript".to_string());
@@ -229,8 +232,8 @@ mod tests {
     #[test]
     fn test_multiple_handles() {
         let mut search_history = SearchHistory::new(None, QueryInsertionBehavior::AlwaysInsert);
-        let mut handle1 = SearchHistorySelectionHandle::default();
-        let mut handle2 = SearchHistorySelectionHandle::default();
+        let mut handle1 = SearchHistoryCursor::default();
+        let mut handle2 = SearchHistoryCursor::default();
 
         search_history.add(&mut handle1, "Rust".to_string());
         search_history.add(&mut handle1, "JavaScript".to_string());
