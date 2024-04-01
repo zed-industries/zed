@@ -4,7 +4,7 @@ mod since_v0_0_6;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
-use language::LspAdapterDelegate;
+use language::{LanguageServerName, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -15,7 +15,8 @@ use wasmtime::{
 
 use since_v0_0_6 as latest;
 
-pub use latest::{Command, LanguageServerConfig};
+pub use latest::Command;
+pub use since_v0_0_4::LanguageServerConfig;
 
 pub fn new_linker(
     f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
@@ -54,13 +55,10 @@ impl Extension {
         component: &Component,
     ) -> Result<(Self, Instance)> {
         if version >= latest::MIN_VERSION {
-            let (extension, instance) = latest::Extension::instantiate_async(
-                store,
-                &component,
-                latest::linker(),
-            )
-            .await
-            .context("failed to instantiate wasm extension")?;
+            let (extension, instance) =
+                latest::Extension::instantiate_async(store, &component, latest::linker())
+                    .await
+                    .context("failed to instantiate wasm extension")?;
             Ok((Self::V006(extension), instance))
         } else if version >= since_v0_0_4::MIN_VERSION {
             let (extension, instance) = since_v0_0_4::Extension::instantiate_async(
@@ -94,16 +92,17 @@ impl Extension {
     pub async fn call_language_server_command(
         &self,
         store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
         config: &LanguageServerConfig,
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
             Extension::V006(ext) => {
-                ext.call_language_server_command(store, config, resource)
+                ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
             Extension::V004(ext) => Ok(ext
-                .call_language_server_command(store, &config.clone().into(), resource)
+                .call_language_server_command(store, config, resource)
                 .await?
                 .map(|command| command.into())),
             Extension::V001(ext) => Ok(ext
@@ -116,21 +115,22 @@ impl Extension {
     pub async fn call_language_server_initialization_options(
         &self,
         store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
         config: &LanguageServerConfig,
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V006(ext) => {
-                ext.call_language_server_initialization_options(store, config, resource)
-                    .await
-            }
-            Extension::V004(ext) => {
                 ext.call_language_server_initialization_options(
                     store,
-                    &config.clone().into(),
+                    &language_server_id.0,
                     resource,
                 )
                 .await
+            }
+            Extension::V004(ext) => {
+                ext.call_language_server_initialization_options(store, config, resource)
+                    .await
             }
             Extension::V001(ext) => {
                 ext.call_language_server_initialization_options(

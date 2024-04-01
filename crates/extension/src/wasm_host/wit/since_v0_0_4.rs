@@ -102,15 +102,6 @@ impl From<LanguageServerInstallationStatus> for latest::LanguageServerInstallati
     }
 }
 
-impl From<latest::LanguageServerConfig> for LanguageServerConfig {
-    fn from(value: latest::LanguageServerConfig) -> Self {
-        Self {
-            name: value.name,
-            language_name: value.language_name,
-        }
-    }
-}
-
 impl From<Command> for latest::Command {
     fn from(value: Command) -> Self {
         Self {

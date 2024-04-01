@@ -16,6 +16,7 @@ use wasmtime_wasi::WasiView as _;
 
 pub struct ExtensionLspAdapter {
     pub(crate) extension: WasmExtension,
+    pub(crate) language_server_id: LanguageServerName,
     pub(crate) config: LanguageServerConfig,
     pub(crate) host: Arc<WasmHost>,
 }
@@ -43,7 +44,12 @@ impl LspAdapter for ExtensionLspAdapter {
                         async move {
                             let resource = store.data_mut().table().push(delegate)?;
                             let command = extension
-                                .call_language_server_command(store, &this.config, resource)
+                                .call_language_server_command(
+                                    store,
+                                    &this.language_server_id,
+                                    &this.config,
+                                    resource,
+                                )
                                 .await?
                                 .map_err(|e| anyhow!("{}", e))?;
                             anyhow::Ok(command)
@@ -146,6 +152,7 @@ impl LspAdapter for ExtensionLspAdapter {
                         let options = extension
                             .call_language_server_initialization_options(
                                 store,
+                                &this.language_server_id,
                                 &this.config,
                                 resource,
                             )

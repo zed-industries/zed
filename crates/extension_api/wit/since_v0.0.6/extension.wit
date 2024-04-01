@@ -90,13 +90,8 @@ world extension {
         shell-env: func() -> env-vars;
     }
 
-    record language-server-config {
-        name: string,
-        language-name: string,
-    }
-
-    export language-server-command: func(config: language-server-config, worktree: borrow<worktree>) -> result<command, string>;
-    export language-server-initialization-options: func(config: language-server-config, worktree: borrow<worktree>) -> result<option<string>, string>;
+    export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;
+    export language-server-initialization-options: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
     variant code-label {
         fixed(fixed-code-label),
@@ -119,5 +114,5 @@ world extension {
         end: u32,
     }
 
-    export labels-for-completions: func(completions: list<completion>) -> result<list<code-label>, string>;
+    export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<code-label>, string>;
 }

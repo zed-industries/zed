@@ -80,11 +80,6 @@ pub fn init(
         ("markdown", tree_sitter_markdown::language()),
         ("nix", tree_sitter_nix::language()),
         ("nu", tree_sitter_nu::language()),
-        ("ocaml", tree_sitter_ocaml::language_ocaml()),
-        (
-            "ocaml_interface",
-            tree_sitter_ocaml::language_ocaml_interface(),
-        ),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),

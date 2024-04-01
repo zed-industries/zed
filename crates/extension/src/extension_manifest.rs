@@ -100,6 +100,8 @@ pub struct GrammarManifestEntry {
 pub struct LanguageServerManifestEntry {
     pub language: Arc<str>,
     #[serde(default)]
+    pub languages: Vec<Arc<str>>,
+    #[serde(default)]
     pub language_ids: HashMap<String, String>,
 }
 
