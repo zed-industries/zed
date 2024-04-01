@@ -72,9 +72,6 @@ util.workspace = true
 uuid = { version = "1.1.2", features = ["v4", "v5"] }
 waker-fn = "1.1.0"
 
-[profile.dev.package]
-resvg = { opt-level = 3 }
-
 [dev-dependencies]
 backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
