@@ -213,9 +213,9 @@ impl Modifiers {
         self.control || self.alt || self.shift || self.platform || self.function
     }
 
-    // Whether the semantically 'secondary' modifier key is pressed
-    // On macos, this is the command key
-    // On windows and linux, this is the control key
+    /// Whether the semantically 'secondary' modifier key is pressed
+    /// On macos, this is the command key
+    /// On windows and linux, this is the control key
     pub fn secondary(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
@@ -241,7 +241,7 @@ impl Modifiers {
         }
     }
 
-    // A helper method for Modifiers with just the secondary key pressed
+    /// A helper method for Modifiers with just the secondary key pressed
     pub fn secondary_key() -> Modifiers {
         #[cfg(target_os = "macos")]
         {

@@ -219,7 +219,7 @@
     "context": "BufferSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "cmd-enter": "search::ReplaceAll"
+      "ctrl-enter": "search::ReplaceAll"
     }
   },
   {
@@ -258,7 +258,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
-      "cmd-shift-h": "search::ToggleReplace",
+      "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ActivateRegexMode",
       "alt-ctrl-x": "search::ActivateTextMode"
     }
@@ -356,7 +356,7 @@
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "alt-cmd-r": "editor::RevealInFinder",
+      "alt-ctrl-r": "editor::RevealInFinder",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
@@ -551,7 +551,7 @@
       "delete": "project_panel::Delete",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
-      "alt-cmd-r": "project_panel::RevealInFinder",
+      "alt-ctrl-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
   },
