@@ -1,6 +1,6 @@
 use gpui::AppContext;
 use human_bytes::human_bytes;
-use release_channel::{AppVersion, ReleaseChannel};
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
 use std::{env, fmt::Display};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
@@ -13,6 +13,7 @@ pub struct SystemSpecs {
     os_version: Option<String>,
     memory: u64,
     architecture: &'static str,
+    detail: Option<String>,
 }
 
 impl SystemSpecs {
@@ -29,6 +30,7 @@ impl SystemSpecs {
             .app_metadata()
             .os_version
             .map(|os_version| os_version.to_string());
+        let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
 
         SystemSpecs {
             app_version,
@@ -37,6 +39,7 @@ impl SystemSpecs {
             os_version,
             memory,
             architecture,
+            detail,
         }
     }
 }
@@ -47,8 +50,12 @@ impl Display for SystemSpecs {
             Some(os_version) => format!("OS: {} {}", self.os_name, os_version),
             None => format!("OS: {}", self.os_name),
         };
-        let app_version_information =
-            format!("Zed: v{} ({})", self.app_version, self.release_channel);
+        let app_version_information = format!(
+            "Zed: v{} ({} {})",
+            self.app_version,
+            self.release_channel,
+            self.detail.as_deref().unwrap_or("")
+        );
         let system_specs = [
             app_version_information,
             os_information,
