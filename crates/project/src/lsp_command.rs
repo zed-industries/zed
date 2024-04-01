@@ -1,7 +1,7 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
-    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
-    MarkupContent, Project, ProjectTransaction, ResolveState,
+    CodeAction, Completion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -13,8 +13,7 @@ use language::{
     point_from_lsp, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
-    CodeAction, Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -1663,7 +1662,7 @@ impl LspCommand for GetCompletions {
         proto::GetCompletionsResponse {
             completions: completions
                 .iter()
-                .map(language::proto::serialize_completion)
+                .map(Project::serialize_completion)
                 .collect(),
             version: serialize_version(buffer_version),
         }
@@ -1685,11 +1684,7 @@ impl LspCommand for GetCompletions {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
         let completions = message.completions.into_iter().map(|completion| {
-            language::proto::deserialize_completion(
-                completion,
-                language.clone(),
-                &language_registry,
-            )
+            Project::deserialize_completion(completion, language.clone(), &language_registry)
         });
         future::try_join_all(completions).await
     }
@@ -1814,7 +1809,7 @@ impl LspCommand for GetCodeActions {
         proto::GetCodeActionsResponse {
             actions: code_actions
                 .iter()
-                .map(language::proto::serialize_code_action)
+                .map(Project::serialize_code_action)
                 .collect(),
             version: serialize_version(buffer_version),
         }
@@ -1835,7 +1830,7 @@ impl LspCommand for GetCodeActions {
         message
             .actions
             .into_iter()
-            .map(language::proto::deserialize_code_action)
+            .map(Project::deserialize_code_action)
             .collect()
     }
 

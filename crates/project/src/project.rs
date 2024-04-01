@@ -44,11 +44,11 @@ use language::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_version, split_operations,
     },
-    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
-    LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
+    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -372,6 +372,34 @@ pub struct InlayHint {
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
     pub resolve_state: ResolveState,
+}
+
+/// A completion provided by a language server
+#[derive(Clone, Debug)]
+pub struct Completion {
+    /// The range of the buffer that will be replaced.
+    pub old_range: Range<Anchor>,
+    /// The new text that will be inserted.
+    pub new_text: String,
+    /// A label for this completion that is shown in the menu.
+    pub label: CodeLabel,
+    /// The id of the language server that produced this completion.
+    pub server_id: LanguageServerId,
+    /// The documentation for this completion.
+    pub documentation: Option<Documentation>,
+    /// The raw completion provided by the language server.
+    pub lsp_completion: lsp::CompletionItem,
+}
+
+/// A code action provided by a language server.
+#[derive(Clone, Debug)]
+pub struct CodeAction {
+    /// The id of the language server that produced this code action.
+    pub server_id: LanguageServerId,
+    /// The range of the buffer where this code action is applicable.
+    pub range: Range<Anchor>,
+    /// The raw code action provided by the language server.
+    pub lsp_action: lsp::CodeAction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5596,7 +5624,7 @@ impl Project {
                     .request(proto::ApplyCompletionAdditionalEdits {
                         project_id,
                         buffer_id: buffer_id.into(),
-                        completion: Some(language::proto::serialize_completion(&completion)),
+                        completion: Some(Self::serialize_completion(&completion)),
                     })
                     .await?;
 
@@ -5755,7 +5783,7 @@ impl Project {
             let request = proto::ApplyCodeAction {
                 project_id,
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
-                action: Some(language::proto::serialize_code_action(&action)),
+                action: Some(Self::serialize_code_action(&action)),
             };
             cx.spawn(move |this, mut cx| async move {
                 let response = client
@@ -8390,7 +8418,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             let language = buffer.read(cx).language();
-            let completion = language::proto::deserialize_completion(
+            let completion = Self::deserialize_completion(
                 envelope
                     .payload
                     .completion
@@ -8456,7 +8484,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id()?;
-        let action = language::proto::deserialize_code_action(
+        let action = Self::deserialize_code_action(
             envelope
                 .payload
                 .action
@@ -9160,6 +9188,85 @@ impl Project {
                     .map_err(|_| anyhow!("invalid signature"))?,
             })
         }
+    }
+
+    /// Serializes a [`Completion`] to be sent over RPC.
+    pub fn serialize_completion(completion: &Completion) -> proto::Completion {
+        proto::Completion {
+            old_start: Some(serialize_anchor(&completion.old_range.start)),
+            old_end: Some(serialize_anchor(&completion.old_range.end)),
+            new_text: completion.new_text.clone(),
+            server_id: completion.server_id.0 as u64,
+            lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
+        }
+    }
+
+    /// Deserializes a [`Completion`] from the RPC representation.
+    pub async fn deserialize_completion(
+        completion: proto::Completion,
+        language: Option<Arc<Language>>,
+        language_registry: &Arc<LanguageRegistry>,
+    ) -> Result<Completion> {
+        let old_start = completion
+            .old_start
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid old start"))?;
+        let old_end = completion
+            .old_end
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid old end"))?;
+        let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
+
+        let mut label = None;
+        if let Some(language) = language {
+            if let Some(adapter) = language_registry.lsp_adapters(&language).first() {
+                label = adapter
+                    .label_for_completion(&lsp_completion, &language)
+                    .await;
+            }
+        }
+
+        Ok(Completion {
+            old_range: old_start..old_end,
+            new_text: completion.new_text,
+            label: label.unwrap_or_else(|| {
+                CodeLabel::plain(
+                    lsp_completion.label.clone(),
+                    lsp_completion.filter_text.as_deref(),
+                )
+            }),
+            documentation: None,
+            server_id: LanguageServerId(completion.server_id as usize),
+            lsp_completion,
+        })
+    }
+
+    /// Serializes a [`CodeAction`] to be sent over RPC.
+    pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
+        proto::CodeAction {
+            server_id: action.server_id.0 as u64,
+            start: Some(serialize_anchor(&action.range.start)),
+            end: Some(serialize_anchor(&action.range.end)),
+            lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
+        }
+    }
+
+    /// Deserializes a [`CodeAction`] from the RPC representation.
+    pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
+        let start = action
+            .start
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid start"))?;
+        let end = action
+            .end
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid end"))?;
+        let lsp_action = serde_json::from_slice(&action.lsp_action)?;
+        Ok(CodeAction {
+            server_id: LanguageServerId(action.server_id as usize),
+            range: start..end,
+            lsp_action,
+        })
     }
 
     async fn handle_buffer_saved(
@@ -9931,6 +10038,24 @@ impl Item for Buffer {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
+    }
+}
+
+impl Completion {
+    /// A key that can be used to sort completions when displaying
+    /// them to the user.
+    pub fn sort_key(&self) -> (usize, &str) {
+        let kind_key = match self.lsp_completion.kind {
+            Some(lsp::CompletionItemKind::KEYWORD) => 0,
+            Some(lsp::CompletionItemKind::VARIABLE) => 1,
+            _ => 2,
+        };
+        (kind_key, &self.label.text[self.label.filter_range.clone()])
+    }
+
+    /// Whether this completion is a snippet.
+    pub fn is_snippet(&self) -> bool {
+        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 
