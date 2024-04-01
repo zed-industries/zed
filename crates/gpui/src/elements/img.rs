@@ -7,7 +7,7 @@ use crate::{
     point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
     ElementContext, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled,
-    SvgSize, UriOrPath, WindowContext,
+    UriOrPath, WindowContext,
 };
 use collections::HashMap;
 use futures::{AsyncReadExt, Future};
@@ -200,7 +200,13 @@ impl Element for Img {
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
             if let Some(data) = self.source.data(None, cx) {
-                let image_size = data.size();
+                let image_size = match data {
+                    RasterOrVector::Raster(data) => data.size(),
+                    RasterOrVector::Vector { data, .. } => size(
+                        (data.size().width() as u32).into(),
+                        (data.size().height() as u32).into(),
+                    ),
+                };
                 match (style.size.width, style.size.height) {
                     (Length::Auto, Length::Auto) => {
                         style.size = Size {
@@ -243,7 +249,7 @@ impl Element for Img {
             .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                if let Some(data) = source.data(Some(bounds), cx) {
+                if let Some(RasterOrVector::Raster(data)) = source.data(Some(bounds), cx) {
                     let new_bounds = self.object_fit.get_bounds(bounds, data.size());
                     cx.paint_image(new_bounds, corner_radii, data.clone(), self.grayscale)
                         .log_err();
@@ -288,7 +294,7 @@ impl ImageSource {
         &self,
         bounds: Option<Bounds<Pixels>>,
         cx: &mut ElementContext,
-    ) -> Option<Arc<ImageData>> {
+    ) -> Option<RasterOrVector> {
         match self {
             ImageSource::Uri(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
@@ -299,7 +305,7 @@ impl ImageSource {
 
                 let uri: SharedString = uri_or_path.as_ref().to_string().into();
                 match cx.use_cached_asset::<RasterOrVector>(&uri_or_path)? {
-                    Ok(RasterOrVector::Raster(data)) => Some(data),
+                    Ok(RasterOrVector::Raster(data)) => Some(RasterOrVector::Raster(data)),
                     Ok(RasterOrVector::Vector {
                         data,
                         sizes,
@@ -309,32 +315,32 @@ impl ImageSource {
                             let scaled = bounds.scale(cx.scale_factor());
                             let size = size(scaled.size.width.into(), scaled.size.height.into());
 
-                            let mut sizes = sizes.lock();
+                            let mut lock = sizes.lock();
 
                             let mut id = cx.global_element_id();
 
                             id.push(uri.into());
-                            let mut fallback = fallback.lock();
-                            if let Some(cur) = sizes.get_mut(&id) {
+                            let mut fallback_lock = fallback.lock();
+                            if let Some(cur) = lock.get_mut(&id) {
                                 if !size.eq(cur) {
                                     let old = *cur;
                                     *cur = size;
 
                                     // Remove old cached asset if it's not used anymore
-                                    if !sizes.values().contains(&old) {
-                                        if let Some(f) =
+                                    if !lock.values().contains(&old) {
+                                        if let Some(Some(f)) =
                                             cx.remove_cached_asset::<Vector>(&VectorKey {
                                                 source: uri_or_path.clone(),
                                                 size: old,
                                                 tree: data.clone(),
                                             })
                                         {
-                                            *fallback = Some(f);
+                                            *fallback_lock = Some(f);
                                         };
                                     }
                                 }
                             } else {
-                                sizes.insert(id, size);
+                                lock.insert(id, size);
                             };
 
                             let key = VectorKey {
@@ -343,16 +349,30 @@ impl ImageSource {
                                 tree: data.clone(),
                             };
 
-                            cx.use_cached_asset::<Vector>(&key).or(fallback.clone())
+                            Some(
+                                cx.use_cached_asset::<Vector>(&key)
+                                    .flatten()
+                                    .or(fallback_lock.clone())
+                                    .map(|data| RasterOrVector::Raster(data))
+                                    .unwrap_or(RasterOrVector::Vector {
+                                        data,
+                                        sizes: sizes.clone(),
+                                        fallback: fallback.clone(),
+                                    }),
+                            )
                         } else {
-                            None
+                            Some(RasterOrVector::Vector {
+                                data,
+                                sizes,
+                                fallback,
+                            })
                         }
                     }
                     Err(_) => None,
                 }
             }
 
-            ImageSource::Data(data) => Some(data.to_owned()),
+            ImageSource::Data(data) => Some(RasterOrVector::Raster(data.to_owned())),
             #[cfg(target_os = "macos")]
             ImageSource::Surface(_) => None,
         }
@@ -376,7 +396,7 @@ impl Hash for VectorKey {
 struct Vector {}
 impl Asset for Vector {
     type Source = VectorKey;
-    type Output = Arc<ImageData>;
+    type Output = Option<Arc<ImageData>>;
 
     fn load(
         source: Self::Source,
@@ -384,12 +404,13 @@ impl Asset for Vector {
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let svg_renderer = cx.svg_renderer();
         async move {
-            let pixmap = svg_renderer
-                .render_pixmap(&source.tree, SvgSize::Size(source.size))
-                .unwrap();
+            let Ok(pixmap) = svg_renderer.render_pixmap(&source.tree, source.size) else {
+                return None;
+            };
+
             let buffer =
                 ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
-            Arc::new(ImageData::new(buffer))
+            Some(Arc::new(ImageData::new(buffer)))
         }
     }
 }

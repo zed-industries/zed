@@ -17,10 +17,6 @@ pub(crate) struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
 }
 
-pub enum SvgSize {
-    Size(Size<DevicePixels>),
-}
-
 impl SvgRenderer {
     pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
         Self { asset_source }
@@ -35,7 +31,7 @@ impl SvgRenderer {
         let bytes = self.asset_source.load(&params.path)?;
 
         let tree = self.tree(&bytes)?;
-        let pixmap = self.render_pixmap(&tree, SvgSize::Size(params.size))?;
+        let pixmap = self.render_pixmap(&tree, params.size)?;
 
         // Convert the pixmap's pixels into an alpha mask.
         let alpha_mask = pixmap
@@ -53,12 +49,8 @@ impl SvgRenderer {
     pub fn render_pixmap(
         &self,
         tree: &resvg::usvg::Tree,
-        size: SvgSize,
-    ) -> Result<Pixmap, resvg::usvg::Error> {
-        let size = match size {
-            SvgSize::Size(size) => size,
-        };
-
+        size: Size<DevicePixels>,
+    ) -> Result<Pixmap> {
         let ratio = size.width.0 as f32 / tree.size().width();
 
         // Render the SVG to a pixmap with the specified width and height.
@@ -66,7 +58,7 @@ impl SvgRenderer {
             (tree.size().width() * ratio) as u32,
             (tree.size().height() * ratio) as u32,
         )
-        .unwrap();
+        .ok_or_else(|| anyhow!("zero size pixmap"))?;
 
         resvg::render(
             &tree,
