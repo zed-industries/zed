@@ -818,7 +818,7 @@ impl Render for ExtensionsPage {
                             .justify_between()
                             .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
                             .child(
-                                Button::new("add-dev-extension", "Add Dev Extension")
+                                Button::new("add-dev-extension", "Install Dev Extension")
                                     .style(ButtonStyle::Filled)
                                     .size(ButtonSize::Large)
                                     .on_click(|_event, cx| {
