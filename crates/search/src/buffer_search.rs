@@ -78,7 +78,7 @@ pub struct BufferSearchBar {
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
-    search_history_selection_handle: SearchHistoryCursor,
+    search_history_cursor: SearchHistoryCursor,
     current_mode: SearchMode,
     replace_enabled: bool,
 }
@@ -549,7 +549,7 @@ impl BufferSearchBar {
                 Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
                 project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
             ),
-            search_history_selection_handle: Default::default(),
+            search_history_cursor: Default::default(),
             current_mode: SearchMode::default(),
             active_search: None,
             replace_enabled: false,
@@ -944,7 +944,7 @@ impl BufferSearchBar {
 
                             this.update_match_index(cx);
                             this.search_history
-                                .add(&mut this.search_history_selection_handle, query_text);
+                                .add(&mut this.search_history_cursor, query_text);
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -1008,12 +1008,12 @@ impl BufferSearchBar {
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(new_query) = self
             .search_history
-            .next(&mut self.search_history_selection_handle)
+            .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
             let _ = self.search(&new_query, Some(self.search_options), cx);
         } else {
-            self.search_history_selection_handle.reset();
+            self.search_history_cursor.reset();
             let _ = self.search("", Some(self.search_options), cx);
         }
     }
@@ -1022,7 +1022,7 @@ impl BufferSearchBar {
         if self.query(cx).is_empty() {
             if let Some(new_query) = self
                 .search_history
-                .current(&mut self.search_history_selection_handle)
+                .current(&mut self.search_history_cursor)
                 .map(str::to_string)
             {
                 let _ = self.search(&new_query, Some(self.search_options), cx);
@@ -1032,7 +1032,7 @@ impl BufferSearchBar {
 
         if let Some(new_query) = self
             .search_history
-            .previous(&mut self.search_history_selection_handle)
+            .previous(&mut self.search_history_cursor)
             .map(str::to_string)
         {
             let _ = self.search(&new_query, Some(self.search_options), cx);

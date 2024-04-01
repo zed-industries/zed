@@ -19,7 +19,7 @@ use gpui::{
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
-use project::{search::SearchQuery, search_history::SearchHistorySelectionHandle, Project};
+use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -128,7 +128,7 @@ struct ProjectSearch {
     search_id: usize,
     no_results: Option<bool>,
     limit_reached: bool,
-    search_history_selection_handle: SearchHistorySelectionHandle,
+    search_history_cursor: SearchHistoryCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -184,7 +184,7 @@ impl ProjectSearch {
             search_id: 0,
             no_results: None,
             limit_reached: false,
-            search_history_selection_handle: Default::default(),
+            search_history_cursor: Default::default(),
         }
     }
 
@@ -201,16 +201,15 @@ impl ProjectSearch {
             search_id: self.search_id,
             no_results: self.no_results,
             limit_reached: self.limit_reached,
-            search_history_selection_handle: self.search_history_selection_handle.clone(),
+            search_history_cursor: self.search_history_cursor.clone(),
         })
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
         let search = self.project.update(cx, |project, cx| {
-            project.search_history_mut().add(
-                &mut self.search_history_selection_handle,
-                query.as_str().to_string(),
-            );
+            project
+                .search_history_mut()
+                .add(&mut self.search_history_cursor, query.as_str().to_string());
             project.search(query.clone(), cx)
         });
         self.last_search_query_text = Some(query.as_str().to_string());
@@ -1279,12 +1278,12 @@ impl ProjectSearchBar {
                     if let Some(new_query) = model.project.update(cx, |project, _| {
                         project
                             .search_history_mut()
-                            .next(&mut model.search_history_selection_handle)
+                            .next(&mut model.search_history_cursor)
                             .map(str::to_string)
                     }) {
                         new_query
                     } else {
-                        model.search_history_selection_handle.reset();
+                        model.search_history_cursor.reset();
                         String::new()
                     }
                 });
@@ -1303,7 +1302,7 @@ impl ProjectSearchBar {
                         .project
                         .read(cx)
                         .search_history()
-                        .current(&search_view.model.read(cx).search_history_selection_handle)
+                        .current(&search_view.model.read(cx).search_history_cursor)
                         .map(str::to_string)
                     {
                         search_view.set_query(&new_query, cx);
@@ -1315,7 +1314,7 @@ impl ProjectSearchBar {
                     model.project.update(cx, |project, _| {
                         project
                             .search_history_mut()
-                            .previous(&mut model.search_history_selection_handle)
+                            .previous(&mut model.search_history_cursor)
                             .map(str::to_string)
                     })
                 }) {
