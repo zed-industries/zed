@@ -856,13 +856,13 @@ impl DirectWriteState {
                 let bitmap_data = bitmap_render_target.GetBitmapData().unwrap();
                 let raw_u32 = std::slice::from_raw_parts(bitmap_data.pixels, total_bytes / 4);
                 for (bytes, color) in raw_bytes.chunks_exact_mut(4).zip(raw_u32.iter()) {
-                    bytes[3] = 0xFF;
                     if *color == 0 {
                         continue;
                     }
                     bytes[0] = (color >> 16 & 0xFF) as u8;
                     bytes[1] = (color >> 8 & 0xFF) as u8;
                     bytes[2] = (color & 0xFF) as u8;
+                    bytes[3] = 0xFF;
                 }
                 Ok((bitmap_size, raw_bytes))
             } else {
@@ -889,40 +889,6 @@ impl DirectWriteState {
                     *num = (sum / 3) as u8;
                 }
                 Ok((bitmap_size, bitmap_rawdata))
-
-                // let bitmap_size = glyph_bounds.size;
-                // let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
-                // let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
-                // let texture_bounds = RECT {
-                //     left: glyph_bounds.left().0,
-                //     top: glyph_bounds.top().0,
-                //     right: glyph_bounds.left().0 + bitmap_size.width.0,
-                //     bottom: glyph_bounds.top().0 + bitmap_size.height.0,
-                // };
-
-                // let gdi = self.components.factory.GetGdiInterop()?;
-                // let bitmap_render_target = gdi.CreateBitmapRenderTarget(
-                //     None,
-                //     bitmap_size.width.0 as _,
-                //     bitmap_size.height.0 as _,
-                // )?;
-                // bitmap_render_target.SetCurrentTransform(Some(&transform));
-                // let bitmap_render_target: IDWriteBitmapRenderTarget3 =
-                //     std::mem::transmute(bitmap_render_target);
-                // bitmap_render_target.DrawGlyphRun(0.0, 0.0, measuringmode, glyphrun, renderingparams, textcolor, blackboxrect).unwrap();
-                // let raw_bytes =
-                //     Vec::from_raw_parts(bitmap_rawdata.pixels as *mut u8, total_bytes, total_bytes);
-                // let raw_bytes = Vec::from_raw_parts(bitmap_rawdata.bits, total_bytes, total_bytes);
-
-                // let mut res = vec![0u8; total_bytes / 4];
-                // for (chunk, num) in raw_bytes.chunks_exact(4).zip(res.iter_mut()) {
-                //     let sum: u32 = chunk.iter().map(|&x| x as u32).sum();
-                //     *num = (sum / 3) as u8;
-                // }
-                // Ok((bitmap_size, res))
-
-                // bitmap.Unmap().unwrap();
-                // Ok((bitmap_size, raw_bytes))
             }
         }
     }
@@ -1167,13 +1133,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
-        glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
+        _glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
         _clientdrawingeffect: Option<&windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         unsafe {
             let glyphrun = &*glyphrun;
-            let desc = &*glyphrundescription;
-
             if glyphrun.fontFace.is_none() {
                 return Ok(());
             }
