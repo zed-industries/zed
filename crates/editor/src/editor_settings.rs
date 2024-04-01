@@ -92,8 +92,7 @@ pub enum ShowScrollbar {
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
-    #[serde(alias = "Cmd")]
-    #[serde(alias = "Ctrl")]
+    #[serde(alias = "cmd", alias = "ctrl")]
     CmdOrCtrl,
 }
 
