@@ -1,5 +1,8 @@
+use std::str::FromStr;
+
 use chrono::Utc;
 use sea_orm::sea_query::IntoCondition;
+use util::ResultExt;
 
 use super::*;
 
@@ -88,22 +91,62 @@ impl Database {
             .collect())
     }
 
-    pub async fn get_extension(&self, extension_id: &str) -> Result<Option<ExtensionMetadata>> {
+    pub async fn get_extension(
+        &self,
+        extension_id: &str,
+        constraints: Option<&ExtensionVersionConstraints>,
+    ) -> Result<Option<ExtensionMetadata>> {
         self.transaction(|tx| async move {
             let extension = extension::Entity::find()
                 .filter(extension::Column::ExternalId.eq(extension_id))
-                .filter(
-                    extension::Column::LatestVersion
-                        .into_expr()
-                        .eq(extension_version::Column::Version.into_expr()),
-                )
-                .inner_join(extension_version::Entity)
-                .select_also(extension_version::Entity)
                 .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such extension: {extension_id}"))?;
+
+            let mut versions = extension_version::Entity::find()
+                .filter(extension_version::Column::ExtensionId.eq(extension.id))
+                .stream(&*tx)
                 .await?;
 
-            Ok(extension.and_then(|(extension, version)| {
-                Some(metadata_from_extension_and_version(extension, version?))
+            let mut max_version: Option<(extension_version::Model, SemanticVersion)> = None;
+            while let Some(version) = versions.next().await {
+                let version = version?;
+                let Some(extension_version) = SemanticVersion::from_str(&version.version).log_err()
+                else {
+                    continue;
+                };
+
+                if let Some((_, max_extension_version)) = &max_version {
+                    if max_extension_version > &extension_version {
+                        continue;
+                    }
+                }
+
+                if let Some(constraints) = constraints {
+                    if !constraints
+                        .schema_versions
+                        .contains(&version.schema_version)
+                    {
+                        continue;
+                    }
+
+                    if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
+                        if let Some(version) = SemanticVersion::from_str(wasm_api_version).log_err()
+                        {
+                            if !constraints.wasm_api_versions.contains(&version) {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                }
+
+                max_version = Some((version, extension_version));
+            }
+
+            Ok(max_version.map(|(max_version, _)| {
+                metadata_from_extension_and_version(extension, max_version)
             }))
         })
         .await

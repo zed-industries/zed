@@ -36,6 +36,7 @@ use node_runtime::NodeRuntime;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -51,7 +52,10 @@ use util::{
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
-use wasm_host::{wit::is_supported_wasm_api_version, WasmExtension, WasmHost};
+use wasm_host::{
+    wit::{is_supported_wasm_api_version, wasm_api_version_range},
+    WasmExtension, WasmHost,
+};
 
 pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
@@ -63,6 +67,11 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+
+/// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
+pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
+    SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
+}
 
 /// Returns whether the given extension version is compatible with this version of Zed.
 pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
@@ -614,9 +623,23 @@ impl ExtensionStore {
     ) {
         log::info!("installing extension {extension_id} latest version");
 
+        let schema_versions = schema_version_range();
+        let wasm_api_versions = wasm_api_version_range();
+
         let Some(url) = self
             .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/download"), &[])
+            .build_zed_api_url(
+                &format!("/extensions/{extension_id}/download"),
+                &[
+                    ("min_schema_version", &schema_versions.start().to_string()),
+                    ("max_schema_version", &schema_versions.end().to_string()),
+                    (
+                        "min_wasm_api_version",
+                        &wasm_api_versions.start().to_string(),
+                    ),
+                    ("max_wasm_api_version", &wasm_api_versions.end().to_string()),
+                ],
+            )
             .log_err()
         else {
             return;

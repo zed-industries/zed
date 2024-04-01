@@ -1,3 +1,4 @@
+use crate::db::ExtensionVersionConstraints;
 use crate::{db::NewExtensionVersion, AppState, Error, Result};
 use anyhow::{anyhow, Context as _};
 use aws_sdk_s3::presigning::PresigningConfig;
@@ -10,10 +11,11 @@ use axum::{
 };
 use collections::HashMap;
 use rpc::{ExtensionApiManifest, GetExtensionsResponse};
+use semantic_version::SemanticVersion;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
-use util::ResultExt;
+use util::{maybe, ResultExt};
 
 pub fn router() -> Router {
     Router::new()
@@ -79,15 +81,31 @@ async fn get_extension_versions(
 #[derive(Debug, Deserialize)]
 struct DownloadLatestExtensionParams {
     extension_id: String,
+    min_schema_version: Option<i32>,
+    max_schema_version: Option<i32>,
+    min_wasm_api_version: Option<SemanticVersion>,
+    max_wasm_api_version: Option<SemanticVersion>,
 }
 
 async fn download_latest_extension(
     Extension(app): Extension<Arc<AppState>>,
     Path(params): Path<DownloadLatestExtensionParams>,
 ) -> Result<Redirect> {
+    let constraints = maybe!({
+        let min_schema_version = params.min_schema_version?;
+        let max_schema_version = params.max_schema_version?;
+        let min_wasm_api_version = params.min_wasm_api_version?;
+        let max_wasm_api_version = params.max_wasm_api_version?;
+
+        Some(ExtensionVersionConstraints {
+            schema_versions: min_schema_version..=max_schema_version,
+            wasm_api_versions: min_wasm_api_version..=max_wasm_api_version,
+        })
+    });
+
     let extension = app
         .db
-        .get_extension(&params.extension_id)
+        .get_extension(&params.extension_id, constraints.as_ref())
         .await?
         .ok_or_else(|| anyhow!("unknown extension"))?;
     download_extension(
