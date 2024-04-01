@@ -615,6 +615,8 @@ impl ChatPanel {
                             .child(
                                 IconButton::new(("reply", message_id), IconName::ReplyArrowRight)
                                     .on_click(cx.listener(move |this, _, cx| {
+                                        this.cancel_edit_message(cx);
+
                                         this.message_editor.update(cx, |editor, cx| {
                                             editor.set_reply_to_message_id(message_id);
                                             editor.focus_handle(cx).focus(cx);
@@ -636,6 +638,8 @@ impl ChatPanel {
                                     IconButton::new(("edit", message_id), IconName::Pencil)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.message_editor.update(cx, |editor, cx| {
+                                                editor.clear_reply_to_message_id();
+
                                                 let message = this
                                                     .active_chat()
                                                     .and_then(|active_chat| {
