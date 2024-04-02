@@ -3414,7 +3414,8 @@ impl Element for EditorElement {
                 let max_row = snapshot.max_point().row();
 
                 // Add 1 to ensure selections bleed off screen
-                let end_row = 1 + cmp::min(start_row + height_in_lines.ceil() as u32, max_row);
+                let end_row =
+                    1 + cmp::min((start_row as f32 + height_in_lines).ceil() as u32, max_row);
 
                 let buffer_rows = snapshot
                     .buffer_rows(start_row)
@@ -3535,10 +3536,15 @@ impl Element for EditorElement {
                     }
                 });
 
+                let y_offset = if scroll_position.anchor != Anchor::min() {
+                    scroll_position.offset.y * line_height
+                } else {
+                    px(0.)
+                };
                 let scroll_position = ScrollPosition {
                     x: scroll_position.offset.x * em_width,
                     row: start_row,
-                    y_offset: scroll_position.offset.y * line_height,
+                    y_offset,
                 };
                 cx.with_element_id(Some("blocks"), |cx| {
                     self.layout_blocks(&mut blocks, &hitbox, line_height, &scroll_position, cx);

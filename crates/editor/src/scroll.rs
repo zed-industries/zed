@@ -46,14 +46,7 @@ impl ScrollAnchor {
     pub(crate) fn top_row_display(&self, snapshot: &DisplaySnapshot) -> u32 {
         if self.anchor != Anchor::min() {
             let row: i64 = self.anchor.to_display_point(snapshot).row() as _;
-            let offset_integral = if self.offset.y < 0. {
-                self.offset.y.floor() as i64
-            } else {
-                self.offset.y.ceil() as i64
-            };
-            if row == 2 {
-                dbg!(row, offset_integral, self.offset.y);
-            }
+            let offset_integral = self.offset.y.floor() as i64;
             (row + offset_integral) as u32
         } else {
             0
