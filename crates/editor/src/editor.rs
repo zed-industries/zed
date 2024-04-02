@@ -125,7 +125,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -7853,9 +7853,10 @@ impl Editor {
                 Bias::Left
             },
         );
+
         match self
             .find_all_references_task_sources
-            .binary_search_by(|task_anchor| task_anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+            .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
         {
             Ok(_) => {
                 log::info!(
@@ -7873,10 +7874,27 @@ impl Editor {
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        let open_task = cx.spawn(|editor, mut cx| async move {
-            let mut locations = references.await?;
+        Some(cx.spawn(|editor, mut cx| async move {
+            let _cleanup = defer({
+                let mut cx = cx.clone();
+                move || {
+                    let _ = editor.update(&mut cx, |editor, _| {
+                        if let Ok(i) =
+                            editor
+                                .find_all_references_task_sources
+                                .binary_search_by(|anchor| {
+                                    anchor.cmp(&head_anchor, &multi_buffer_snapshot)
+                                })
+                        {
+                            editor.find_all_references_task_sources.remove(i);
+                        }
+                    });
+                }
+            });
+
+            let locations = references.await?;
             if locations.is_empty() {
-                return Ok(());
+                return anyhow::Ok(());
             }
 
             workspace.update(&mut cx, |workspace, cx| {
@@ -7896,24 +7914,7 @@ impl Editor {
                 Self::open_locations_in_multibuffer(
                     workspace, locations, replica_id, title, false, cx,
                 );
-            })?;
-
-            Ok(())
-        });
-        Some(cx.spawn(|editor, mut cx| async move {
-            open_task.await?;
-            editor.update(&mut cx, |editor, _| {
-                if let Ok(i) =
-                    editor
-                        .find_all_references_task_sources
-                        .binary_search_by(|task_anchor| {
-                            task_anchor.cmp(&head_anchor, &multi_buffer_snapshot)
-                        })
-                {
-                    editor.find_all_references_task_sources.remove(i);
-                }
-            })?;
-            anyhow::Ok(())
+            })
         }))
     }
 
