@@ -246,6 +246,7 @@ impl SerializedPane {
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
         let mut active_item_index = None;
+        let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
             item_tasks.push(pane.update(cx, |_, cx| {
@@ -260,6 +261,9 @@ impl SerializedPane {
             })?);
             if item.active {
                 active_item_index = Some(index);
+            }
+            if item.preview {
+                preview_item_index = Some(index);
             }
         }
 
@@ -281,6 +285,14 @@ impl SerializedPane {
             })?;
         }
 
+        if let Some(preview_item_index) = preview_item_index {
+            pane.update(cx, |pane, cx| {
+                if let Some(item) = pane.item_for_index(preview_item_index) {
+                    pane.set_preview_item_id(Some(item.item_id()), cx);
+                }
+            })?;
+        }
+
         anyhow::Ok(items)
     }
 }
@@ -294,14 +306,16 @@ pub struct SerializedItem {
     pub kind: Arc<str>,
     pub item_id: ItemId,
     pub active: bool,
+    pub preview: bool,
 }
 
 impl SerializedItem {
-    pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool) -> Self {
+    pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool, preview: bool) -> Self {
         Self {
             kind: Arc::from(kind.as_ref()),
             item_id,
             active,
+            preview,
         }
     }
 }
@@ -313,20 +327,22 @@ impl Default for SerializedItem {
             kind: Arc::from("Terminal"),
             item_id: 100000,
             active: false,
+            preview: false,
         }
     }
 }
 
 impl StaticColumnCount for SerializedItem {
     fn column_count() -> usize {
-        3
+        4
     }
 }
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.kind, start_index)?;
         let next_index = statement.bind(&self.item_id, next_index)?;
-        statement.bind(&self.active, next_index)
+        let next_index = statement.bind(&self.active, next_index)?;
+        statement.bind(&self.preview, next_index)
     }
 }
 
@@ -335,11 +351,13 @@ impl Column for SerializedItem {
         let (kind, next_index) = Arc::<str>::column(statement, start_index)?;
         let (item_id, next_index) = ItemId::column(statement, next_index)?;
         let (active, next_index) = bool::column(statement, next_index)?;
+        let (preview, next_index) = bool::column(statement, next_index)?;
         Ok((
             SerializedItem {
                 kind,
                 item_id,
                 active,
+                preview,
             },
             next_index,
         ))

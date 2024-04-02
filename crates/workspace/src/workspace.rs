@@ -3391,6 +3391,7 @@ impl Workspace {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),
                                 item_id: item_handle.item_id().as_u64(),
                                 active: Some(item_handle.item_id()) == active_item_id,
+                                preview: pane.is_active_preview_item(item_handle.item_id()),
                             })
                         })
                         .collect::<Vec<_>>(),
