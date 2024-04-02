@@ -123,7 +123,7 @@ impl Platform for TestPlatform {
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
         #[cfg(not(target_os = "macos"))]
-        return Arc::new(crate::platform::common::CommonTextSystem::new());
+        return Arc::new(crate::platform::common::CosmicTextSystem::new());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

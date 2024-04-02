@@ -23,7 +23,7 @@ use wayland_client::Connection;
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CommonTextSystem, CursorStyle,
+    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, Menu, PathPromptOptions, Pixels,
     Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
     SemanticVersion, Task, WindowOptions, WindowParams,
@@ -57,7 +57,7 @@ pub(crate) struct LinuxPlatformInner {
     pub(crate) loop_signal: LoopSignal,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) text_system: Arc<CommonTextSystem>,
+    pub(crate) text_system: Arc<CosmicTextSystem>,
     pub(crate) callbacks: RefCell<Callbacks>,
 }
 
@@ -78,7 +78,7 @@ impl LinuxPlatform {
         let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
 
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
-        let text_system = Arc::new(CommonTextSystem::new());
+        let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = RefCell::new(Callbacks::default());
 
         let event_loop = EventLoop::try_new().unwrap();

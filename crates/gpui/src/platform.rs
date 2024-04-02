@@ -7,7 +7,7 @@ mod app_menu;
 mod keystroke;
 
 #[cfg(not(target_os = "macos"))]
-mod common;
+mod cosmic_text;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -54,7 +54,7 @@ pub use app_menu::*;
 pub use keystroke::*;
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) use common::*;
+pub(crate) use cosmic_text::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
