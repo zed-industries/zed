@@ -279,7 +279,7 @@ impl MacPlatform {
                         let mut mask = NSEventModifierFlags::empty();
                         for (modifier, flag) in &[
                             (
-                                keystroke.modifiers.command,
+                                keystroke.modifiers.platform,
                                 NSEventModifierFlags::NSCommandKeyMask,
                             ),
                             (

@@ -8471,7 +8471,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smallvec",
  "smol",
  "theme",
  "ui",

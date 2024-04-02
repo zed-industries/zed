@@ -9,6 +9,7 @@ pub mod terminals;
 
 #[cfg(test)]
 mod project_tests;
+pub mod search_history;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
@@ -63,6 +64,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use search_history::SearchHistory;
 use worktree::LocalSnapshot;
 
 use rpc::{ErrorCode, ErrorExt as _};
@@ -122,6 +124,8 @@ const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+
+const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 
 pub trait Item {
     fn try_open(
@@ -205,6 +209,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
+    search_history: SearchHistory,
 }
 
 pub enum LanguageServerToQuery {
@@ -670,6 +675,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                search_history: Self::new_search_history(),
             }
         })
     }
@@ -805,6 +811,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -859,6 +866,13 @@ impl Project {
             cx,
         )
         .await
+    }
+
+    fn new_search_history() -> SearchHistory {
+        SearchHistory::new(
+            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
+            search_history::QueryInsertionBehavior::AlwaysInsert,
+        )
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -1125,6 +1139,14 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
+    }
+
+    pub fn search_history(&self) -> &SearchHistory {
+        &self.search_history
+    }
+
+    pub fn search_history_mut(&mut self) -> &mut SearchHistory {
+        &mut self.search_history
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {

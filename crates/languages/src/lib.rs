@@ -312,7 +312,10 @@ pub fn init(
     language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language!(
         "vue",
-        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]
+        vec![
+            Arc::new(vue::VueLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ]
     );
     language!("proto");
     language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
