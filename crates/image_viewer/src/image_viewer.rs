@@ -1,11 +1,11 @@
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
-    EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Length, Model,
+    EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Model,
     ObjectFit, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
 use persistence::IMAGE_VIEWER;
-use ui::{h_flex, prelude::*};
+use ui::prelude::*;
 
 use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
