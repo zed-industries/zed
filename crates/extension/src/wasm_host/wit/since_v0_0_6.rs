@@ -69,7 +69,7 @@ impl HostWorktree for WasmState {
     }
 
     fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
-        // we only ever hand out borrows of worktrees
+        // We only ever hand out borrows of worktrees.
         Ok(())
     }
 }

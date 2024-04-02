@@ -1,12 +1,10 @@
 use super::latest;
-use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
 use language::LspAdapterDelegate;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
-use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
@@ -120,19 +118,14 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .read_text_file(path.into())
-            .await
-            .map_err(|error| error.to_string()))
+        latest::HostWorktree::read_text_file(self, delegate, path).await
     }
 
     async fn shell_env(
         &mut self,
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.shell_env().await.into_iter().collect())
+        latest::HostWorktree::shell_env(self, delegate).await
     }
 
     async fn which(
@@ -140,15 +133,11 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().to_string()))
+        latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
     fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
-        // we only ever hand out borrows of worktrees
+        // We only ever hand out borrows of worktrees.
         Ok(())
     }
 }
@@ -156,34 +145,21 @@ impl HostWorktree for WasmState {
 #[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .binary_path()
-            .await
-            .map(|path| path.to_string_lossy().to_string())
-            .to_wasmtime_result()
+        latest::ExtensionImports::node_binary_path(self).await
     }
 
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .to_wasmtime_result()
+        latest::ExtensionImports::npm_package_latest_version(self, package_name).await
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
-            .npm_package_installed_version(&self.work_dir(), &package_name)
-            .await
-            .to_wasmtime_result()
+        latest::ExtensionImports::npm_package_installed_version(self, package_name).await
     }
 
     async fn npm_install_package(
@@ -191,11 +167,7 @@ impl ExtensionImports for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
+        latest::ExtensionImports::npm_install_package(self, package_name, version).await
     }
 
     async fn latest_github_release(
@@ -203,28 +175,11 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        maybe!(async {
-            let release = util::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
-            })
-        })
-        .await
-        .to_wasmtime_result()
+        Ok(
+            latest::ExtensionImports::latest_github_release(self, repo, options.into())
+                .await?
+                .map(|github| github.into()),
+        )
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
