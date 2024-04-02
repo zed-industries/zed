@@ -482,6 +482,17 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
+#[derive(Clone, Debug)]
+struct CoreSymbol {
+    pub language_server_name: LanguageServerName,
+    pub source_worktree_id: WorktreeId,
+    pub path: ProjectPath,
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub range: Range<Unclipped<PointUtf16>>,
+    pub signature: [u8; 32],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoverBlock {
     pub text: String,
@@ -4995,6 +5006,8 @@ impl Project {
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
+        let language_registry = self.languages.clone();
+
         if self.is_local() {
             let mut requests = Vec::new();
             for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
@@ -5069,18 +5082,14 @@ impl Project {
                     None => return Ok(Vec::new()),
                 };
 
-                let symbols = this.update(&mut cx, |this, cx| {
-                    let mut symbols = Vec::new();
-                    for (
-                        adapter,
-                        adapter_language,
-                        source_worktree,
-                        worktree_abs_path,
-                        lsp_symbols,
-                    ) in responses
-                    {
-                        symbols.extend(lsp_symbols.into_iter().filter_map(
-                            |(symbol_name, symbol_kind, symbol_location)| {
+                let mut symbols = Vec::new();
+                for (adapter, adapter_language, source_worktree, worktree_abs_path, lsp_symbols) in
+                    responses
+                {
+                    let core_symbols = this.update(&mut cx, |this, cx| {
+                        lsp_symbols
+                            .into_iter()
+                            .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
                                 let abs_path = symbol_location.uri.to_file_path().ok()?;
                                 let source_worktree = source_worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
@@ -5103,62 +5112,52 @@ impl Project {
                                     path: path.into(),
                                 };
                                 let signature = this.symbol_signature(&project_path);
-                                let adapter_language = adapter_language.clone();
-                                let language = this
-                                    .languages
-                                    .language_for_file_path(&project_path.path)
-                                    .unwrap_or_else(move |_| adapter_language);
-                                let adapter = adapter.clone();
-                                Some(async move {
-                                    let language = language.await;
-                                    let label = adapter
-                                        .label_for_symbol(&symbol_name, symbol_kind, &language)
-                                        .await;
-
-                                    Symbol {
-                                        language_server_name: adapter.name.clone(),
-                                        source_worktree_id,
-                                        path: project_path,
-                                        label: label.unwrap_or_else(|| {
-                                            CodeLabel::plain(symbol_name.clone(), None)
-                                        }),
-                                        kind: symbol_kind,
-                                        name: symbol_name,
-                                        range: range_from_lsp(symbol_location.range),
-                                        signature,
-                                    }
+                                Some(CoreSymbol {
+                                    language_server_name: adapter.name.clone(),
+                                    source_worktree_id,
+                                    path: project_path,
+                                    kind: symbol_kind,
+                                    name: symbol_name,
+                                    range: range_from_lsp(symbol_location.range),
+                                    signature,
                                 })
-                            },
-                        ));
-                    }
+                            })
+                            .collect()
+                    })?;
 
-                    symbols
-                })?;
+                    populate_labels_for_symbols(
+                        core_symbols,
+                        &language_registry,
+                        Some(adapter_language),
+                        Some(adapter),
+                        &mut symbols,
+                    )
+                    .await;
+                }
 
-                Ok(futures::future::join_all(symbols).await)
+                Ok(symbols)
             })
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::GetProjectSymbols {
                 project_id,
                 query: query.to_string(),
             });
-            cx.spawn(move |this, mut cx| async move {
+            cx.foreground_executor().spawn(async move {
                 let response = request.await?;
                 let mut symbols = Vec::new();
-                if let Some(this) = this.upgrade() {
-                    let new_symbols = this.update(&mut cx, |this, _| {
-                        response
-                            .symbols
-                            .into_iter()
-                            .map(|symbol| this.deserialize_symbol(symbol))
-                            .collect::<Vec<_>>()
-                    })?;
-                    symbols = futures::future::join_all(new_symbols)
-                        .await
-                        .into_iter()
-                        .filter_map(|symbol| symbol.log_err())
-                        .collect::<Vec<_>>();
-                }
+                let core_symbols = response
+                    .symbols
+                    .into_iter()
+                    .filter_map(|symbol| Self::deserialize_symbol(symbol).log_err())
+                    .collect::<Vec<_>>();
+                populate_labels_for_symbols(
+                    core_symbols,
+                    &language_registry,
+                    None,
+                    None,
+                    &mut symbols,
+                )
+                .await;
                 Ok(symbols)
             })
         } else {
@@ -5384,9 +5383,14 @@ impl Project {
                 cx,
             );
             let language = buffer.read(cx).language().cloned();
+
+            // In the future, we should provide project guests with the names of LSP adapters,
+            // so that they can use the correct LSP adapter when computing labels. For now,
+            // guests just use the first LSP adapter associated with the buffer's language.
             let lsp_adapter = language
                 .as_ref()
                 .and_then(|language| language_registry.lsp_adapters(language).first().cloned());
+
             cx.foreground_executor().spawn(async move {
                 let completions = task.await?;
                 let mut result = Vec::new();
@@ -8830,9 +8834,7 @@ impl Project {
             .payload
             .symbol
             .ok_or_else(|| anyhow!("invalid symbol"))?;
-        let symbol = this
-            .update(&mut cx, |this, _cx| this.deserialize_symbol(symbol))?
-            .await?;
+        let symbol = Self::deserialize_symbol(symbol)?;
         let symbol = this.update(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
             if signature == symbol.signature {
@@ -8842,7 +8844,25 @@ impl Project {
             }
         })??;
         let buffer = this
-            .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))?
+            .update(&mut cx, |this, cx| {
+                this.open_buffer_for_symbol(
+                    &Symbol {
+                        language_server_name: symbol.language_server_name,
+                        source_worktree_id: symbol.source_worktree_id,
+                        path: symbol.path,
+                        name: symbol.name,
+                        kind: symbol.kind,
+                        range: symbol.range,
+                        signature: symbol.signature,
+                        label: CodeLabel {
+                            text: Default::default(),
+                            runs: Default::default(),
+                            filter_range: Default::default(),
+                        },
+                    },
+                    cx,
+                )
+            })?
             .await?;
 
         this.update(&mut cx, |this, cx| {
@@ -9196,11 +9216,7 @@ impl Project {
         Ok(())
     }
 
-    fn deserialize_symbol(
-        &self,
-        serialized_symbol: proto::Symbol,
-    ) -> impl Future<Output = Result<Symbol>> {
-        let languages = self.languages.clone();
+    fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
         let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
         let kind = unsafe { mem::transmute(serialized_symbol.kind) };
@@ -9208,47 +9224,26 @@ impl Project {
             worktree_id,
             path: PathBuf::from(serialized_symbol.path).into(),
         };
-        let language = languages.language_for_file_path(&path.path);
 
-        async move {
-            let language = language.await.log_err();
-            let adapter = language
-                .as_ref()
-                .and_then(|language| languages.lsp_adapters(language).first().cloned());
-            let start = serialized_symbol
-                .start
-                .ok_or_else(|| anyhow!("invalid start"))?;
-            let end = serialized_symbol
-                .end
-                .ok_or_else(|| anyhow!("invalid end"))?;
-            Ok(Symbol {
-                language_server_name: LanguageServerName(
-                    serialized_symbol.language_server_name.into(),
-                ),
-                source_worktree_id,
-                path,
-                label: {
-                    match language.as_ref().zip(adapter.as_ref()) {
-                        Some((language, adapter)) => {
-                            adapter
-                                .label_for_symbol(&serialized_symbol.name, kind, language)
-                                .await
-                        }
-                        None => None,
-                    }
-                    .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None))
-                },
-
-                name: serialized_symbol.name,
-                range: Unclipped(PointUtf16::new(start.row, start.column))
-                    ..Unclipped(PointUtf16::new(end.row, end.column)),
-                kind,
-                signature: serialized_symbol
-                    .signature
-                    .try_into()
-                    .map_err(|_| anyhow!("invalid signature"))?,
-            })
-        }
+        let start = serialized_symbol
+            .start
+            .ok_or_else(|| anyhow!("invalid start"))?;
+        let end = serialized_symbol
+            .end
+            .ok_or_else(|| anyhow!("invalid end"))?;
+        Ok(CoreSymbol {
+            language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
+            source_worktree_id,
+            path,
+            name: serialized_symbol.name,
+            range: Unclipped(PointUtf16::new(start.row, start.column))
+                ..Unclipped(PointUtf16::new(end.row, end.column)),
+            kind,
+            signature: serialized_symbol
+                .signature
+                .try_into()
+                .map_err(|_| anyhow!("invalid signature"))?,
+        })
     }
 
     fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
@@ -9594,6 +9589,64 @@ impl Project {
                 .collect()
         } else {
             Vec::new()
+        }
+    }
+}
+
+async fn populate_labels_for_symbols(
+    symbols: Vec<CoreSymbol>,
+    language_registry: &Arc<LanguageRegistry>,
+    default_language: Option<Arc<Language>>,
+    lsp_adapter: Option<Arc<CachedLspAdapter>>,
+    output: &mut Vec<Symbol>,
+) {
+    let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
+
+    for symbol in symbols {
+        let language = language_registry
+            .language_for_file_path(&symbol.path.path)
+            .await
+            .log_err()
+            .or_else(|| default_language.clone());
+        symbols_by_language
+            .entry(language)
+            .or_default()
+            .push(symbol);
+    }
+
+    let mut label_params = Vec::new();
+    for (language, mut symbols) in symbols_by_language {
+        if let Some(language) = language {
+            let lsp_adapter = lsp_adapter
+                .clone()
+                .or_else(|| language_registry.lsp_adapters(&language).first().cloned());
+            if let Some(lsp_adapter) = lsp_adapter {
+                label_params.clear();
+                label_params.extend(
+                    symbols
+                        .iter_mut()
+                        .map(|symbol| (mem::take(&mut symbol.name), symbol.kind)),
+                );
+                let labels = lsp_adapter
+                    .labels_for_symbols(&label_params, &language)
+                    .await;
+                for ((symbol, (name, _)), label) in symbols
+                    .into_iter()
+                    .zip(label_params.drain(..))
+                    .zip(labels.into_iter().chain(iter::repeat(None)))
+                {
+                    output.push(Symbol {
+                        language_server_name: symbol.language_server_name,
+                        source_worktree_id: symbol.source_worktree_id,
+                        path: symbol.path,
+                        label: label.unwrap_or_else(|| CodeLabel::plain(name.clone(), None)),
+                        name,
+                        kind: symbol.kind,
+                        range: symbol.range,
+                        signature: symbol.signature,
+                    });
+                }
+            }
         }
     }
 }
