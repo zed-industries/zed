@@ -118,7 +118,7 @@ impl StyledText {
         }
     }
 
-    /// Lets you modify the text
+    /// Sets the text for this [`StyledText`].
     pub fn with_text(mut self, text: impl Into<SharedString>) -> Self {
         self.text = text.into();
         self
@@ -152,7 +152,7 @@ impl StyledText {
         self
     }
 
-    /// line_layout returns metadata about how the line will be rendered
+    /// Lays out this line of [`StyledText`] at the specified font size.
     pub fn layout_line(
         &self,
         font_size: Pixels,

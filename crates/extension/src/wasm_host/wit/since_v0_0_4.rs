@@ -1,4 +1,5 @@
 use super::latest;
+use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -155,37 +156,34 @@ impl HostWorktree for WasmState {
 #[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .binary_path()
-                .await
-                .map(|path| path.to_string_lossy().to_string()),
-        )
+        self.host
+            .node_runtime
+            .binary_path()
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+            .to_wasmtime_result()
     }
 
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .npm_package_latest_version(&package_name)
-                .await,
-        )
+        self.host
+            .node_runtime
+            .npm_package_latest_version(&package_name)
+            .await
+            .to_wasmtime_result()
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .npm_package_installed_version(&self.work_dir(), &package_name)
-                .await,
-        )
+        self.host
+            .node_runtime
+            .npm_package_installed_version(&self.work_dir(), &package_name)
+            .await
+            .to_wasmtime_result()
     }
 
     async fn npm_install_package(
@@ -193,12 +191,11 @@ impl ExtensionImports for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-                .await,
-        )
+        self.host
+            .node_runtime
+            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
+            .await
+            .to_wasmtime_result()
     }
 
     async fn latest_github_release(
@@ -206,29 +203,28 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        convert_result(
-            maybe!(async {
-                let release = util::github::latest_github_release(
-                    &repo,
-                    options.require_assets,
-                    options.pre_release,
-                    self.host.http_client.clone(),
-                )
-                .await?;
-                Ok(GithubRelease {
-                    version: release.tag_name,
-                    assets: release
-                        .assets
-                        .into_iter()
-                        .map(|asset| GithubReleaseAsset {
-                            name: asset.name,
-                            download_url: asset.browser_download_url,
-                        })
-                        .collect(),
-                })
+        maybe!(async {
+            let release = util::github::latest_github_release(
+                &repo,
+                options.require_assets,
+                options.pre_release,
+                self.host.http_client.clone(),
+            )
+            .await?;
+            Ok(GithubRelease {
+                version: release.tag_name,
+                assets: release
+                    .assets
+                    .into_iter()
+                    .map(|asset| GithubReleaseAsset {
+                        name: asset.name,
+                        download_url: asset.browser_download_url,
+                    })
+                    .collect(),
             })
-            .await,
-        )
+        })
+        .await
+        .to_wasmtime_result()
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
@@ -262,8 +258,4 @@ impl ExtensionImports for WasmState {
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
         latest::ExtensionImports::make_file_executable(self, path).await
     }
-}
-
-fn convert_result<T>(result: Result<T>) -> wasmtime::Result<Result<T, String>> {
-    Ok(result.map_err(|error| error.to_string()))
 }

@@ -853,7 +853,7 @@ impl PlatformWindow for MacWindow {
                 control,
                 alt,
                 shift,
-                command,
+                platform: command,
                 function,
             }
         }

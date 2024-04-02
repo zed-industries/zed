@@ -1085,7 +1085,7 @@ impl CompletionsMenu {
                                 };
 
                             if width_of_variable_name < max_width_of_variable_name {
-                                // truncate second part only
+                                // Only truncate the second part.
                                 if let Some(documentation_truncation_index) =
                                     documentation_layout_line.index_for_x(
                                         (max_completion_len * 0.65).min(
@@ -1103,7 +1103,7 @@ impl CompletionsMenu {
                                         + "…";
                                 }
                             } else {
-                                // truncate first part (and optionally second part too)
+                                // Truncate the first part (and optionally the second part).
                                 if let Some(variable_name_truncation_index) = completion_layout_line
                                     .index_for_x(max_width_of_variable_name - ellipsis_width.width)
                                 {
@@ -1167,13 +1167,12 @@ impl CompletionsMenu {
                                 };
 
                             if width_of_variable_name < max_width_of_variable_name {
-                                // truncate second part only
+                                // Only truncate the second part.
 
                                 if let Some(type_annotation_truncation_index) =
                                     completion_layout_line
                                         .index_for_x(max_completion_len - ellipsis_width.width)
                                 {
-                                    // variable_name_end = type_annotation_truncation_index + 2;
                                     completion_label_text = completion
                                         .label
                                         .text
@@ -1183,7 +1182,7 @@ impl CompletionsMenu {
                                         + "…";
                                 }
                             } else {
-                                // truncate first part (and optionally second part too)
+                                // Truncate the first part (and optionally the second part).
                                 if let Some(variable_name_truncation_index) = completion_layout_line
                                     .index_for_x(max_width_of_variable_name - ellipsis_width.width)
                                 {
@@ -1237,7 +1236,7 @@ impl CompletionsMenu {
             }
         };
 
-        //recompute syntax highlighting
+        // Recompute syntax highlighting.
         completion.label.text = completion_label_text.clone();
         if inline_documentation_exists {
             completion.label.filter_range.end = completion_label_text.len();
@@ -4846,6 +4845,7 @@ impl Editor {
         }
 
         let mut delta_for_end_row = 0;
+        let has_multiple_rows = start_row + 1 != end_row;
         for row in start_row..end_row {
             let current_indent = snapshot.indent_size_for_line(row);
             let indent_delta = match (current_indent.kind, indent_kind) {
@@ -4857,7 +4857,12 @@ impl Editor {
                 (_, IndentKind::Tab) => IndentSize::tab(),
             };
 
-            let row_start = Point::new(row, 0);
+            let start = if has_multiple_rows || current_indent.len < selection.start.column {
+                0
+            } else {
+                selection.start.column
+            };
+            let row_start = Point::new(row, start);
             edits.push((
                 row_start..row_start,
                 indent_delta.chars().collect::<String>(),
@@ -4903,7 +4908,7 @@ impl Editor {
                         rows.start += 1;
                     }
                 }
-
+                let has_multiple_rows = rows.len() > 1;
                 for row in rows {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
@@ -4918,7 +4923,16 @@ impl Editor {
                             }
                             IndentKind::Tab => 1,
                         };
-                        deletion_ranges.push(Point::new(row, 0)..Point::new(row, deletion_len));
+                        let start = if has_multiple_rows
+                            || deletion_len > selection.start.column
+                            || indent_size.len < selection.start.column
+                        {
+                            0
+                        } else {
+                            selection.start.column - deletion_len
+                        };
+                        deletion_ranges
+                            .push(Point::new(row, start)..Point::new(row, start + deletion_len));
                         last_outdent = Some(row);
                     }
                 }

@@ -1,7 +1,6 @@
 mod registrar;
 
 use crate::{
-    history::SearchHistory,
     mode::{next_mode, SearchMode},
     search_bar::render_nav_button,
     ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
@@ -20,7 +19,10 @@ use gpui::{
     ParentElement as _, Render, Styled, Subscription, Task, TextStyle, View, ViewContext,
     VisualContext as _, WhiteSpace, WindowContext,
 };
-use project::search::SearchQuery;
+use project::{
+    search::SearchQuery,
+    search_history::{SearchHistory, SearchHistoryCursor},
+};
 use serde::Deserialize;
 use settings::Settings;
 use std::{any::Any, sync::Arc};
@@ -39,6 +41,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
+const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -75,6 +78,7 @@ pub struct BufferSearchBar {
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
+    search_history_cursor: SearchHistoryCursor,
     current_mode: SearchMode,
     replace_enabled: bool,
 }
@@ -526,6 +530,7 @@ impl BufferSearchBar {
         let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
+
         Self {
             query_editor,
             query_editor_focused: false,
@@ -540,7 +545,11 @@ impl BufferSearchBar {
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
-            search_history: SearchHistory::default(),
+            search_history: SearchHistory::new(
+                Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
+                project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
+            ),
+            search_history_cursor: Default::default(),
             current_mode: SearchMode::default(),
             active_search: None,
             replace_enabled: false,
@@ -934,7 +943,8 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(cx);
-                            this.search_history.add(query_text);
+                            this.search_history
+                                .add(&mut this.search_history_cursor, query_text);
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -996,23 +1006,35 @@ impl BufferSearchBar {
     }
 
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.search_history.next().map(str::to_string) {
+        if let Some(new_query) = self
+            .search_history
+            .next(&mut self.search_history_cursor)
+            .map(str::to_string)
+        {
             let _ = self.search(&new_query, Some(self.search_options), cx);
         } else {
-            self.search_history.reset_selection();
+            self.search_history_cursor.reset();
             let _ = self.search("", Some(self.search_options), cx);
         }
     }
 
     fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
         if self.query(cx).is_empty() {
-            if let Some(new_query) = self.search_history.current().map(str::to_string) {
+            if let Some(new_query) = self
+                .search_history
+                .current(&mut self.search_history_cursor)
+                .map(str::to_string)
+            {
                 let _ = self.search(&new_query, Some(self.search_options), cx);
                 return;
             }
         }
 
-        if let Some(new_query) = self.search_history.previous().map(str::to_string) {
+        if let Some(new_query) = self
+            .search_history
+            .previous(&mut self.search_history_cursor)
+            .map(str::to_string)
+        {
             let _ = self.search(&new_query, Some(self.search_options), cx);
         }
     }

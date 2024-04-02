@@ -432,7 +432,7 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            cmd_pressed: false,
+            secondary_pressed: false,
             hovered_word: false,
             url_regex,
             word_regex,
@@ -585,7 +585,7 @@ pub struct Terminal {
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
-    cmd_pressed: bool,
+    secondary_pressed: bool,
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
@@ -1029,11 +1029,11 @@ impl Terminal {
     }
 
     pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
-        let changed = self.cmd_pressed != modifiers.command;
-        if !self.cmd_pressed && modifiers.command {
+        let changed = self.secondary_pressed != modifiers.secondary();
+        if !self.secondary_pressed && modifiers.secondary() {
             self.refresh_hovered_word();
         }
-        self.cmd_pressed = modifiers.command;
+        self.secondary_pressed = modifiers.secondary();
         changed
     }
 
@@ -1136,7 +1136,7 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else if self.cmd_pressed {
+        } else if self.secondary_pressed {
             self.word_from_position(Some(position));
         }
     }
@@ -1266,7 +1266,7 @@ impl Terminal {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.open_url(link.uri());
-                } else if self.cmd_pressed {
+                } else if self.secondary_pressed {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }
@@ -1402,7 +1402,7 @@ impl Terminal {
     }
 
     pub fn can_navigate_to_selected_word(&self) -> bool {
-        self.cmd_pressed && self.hovered_word
+        self.secondary_pressed && self.hovered_word
     }
 
     pub fn task(&self) -> Option<&TaskState> {

@@ -52,5 +52,5 @@ zed::register_extension!(MyExtension);
 To run your extension in Zed as you're developing it:
 
 - Open the extensions view using the `zed: extensions` action in the command palette.
-- Click the `Add Dev Extension` button in the top right
+- Click the `Install Dev Extension` button in the top right
 - Choose the path to your extension directory.

@@ -239,7 +239,7 @@ impl WindowsWindowInner {
             control: self.is_virtual_key_pressed(VK_CONTROL),
             alt: self.is_virtual_key_pressed(VK_MENU),
             shift: self.is_virtual_key_pressed(VK_SHIFT),
-            command: self.is_virtual_key_pressed(VK_LWIN) || self.is_virtual_key_pressed(VK_RWIN),
+            platform: self.is_virtual_key_pressed(VK_LWIN) || self.is_virtual_key_pressed(VK_RWIN),
             function: false,
         }
     }

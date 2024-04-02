@@ -48,7 +48,8 @@
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
   // The key to use for adding multiple cursors
-  // Currently "alt" or "cmd" are supported.
+  // Currently "alt" or "cmd_or_ctrl"  (also aliased as
+  // "cmd" and "ctrl") are supported.
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings
   "vim_mode": false,
