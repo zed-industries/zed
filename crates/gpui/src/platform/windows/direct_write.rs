@@ -35,6 +35,8 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     gdi: IDWriteGdiInterop,
+    text_renderer_inner: Arc<RwLock<TextRendererInner>>,
+    text_renderer: IDWriteTextRenderer,
 }
 
 struct DirectWriteState {
@@ -56,6 +58,9 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let gdi = factory.GetGdiInterop().unwrap();
+            let text_renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
+            let text_renderer: IDWriteTextRenderer =
+                TextRenderer::new(renderer_inner.clone(), locale_name).into();
 
             DirectWriteComponent {
                 locale,
@@ -63,6 +68,8 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 gdi,
+                text_renderer_inner,
+                text_renderer,
             }
         }
     }
@@ -267,6 +274,7 @@ impl DirectWriteState {
             return LineLayout::default();
         }
         unsafe {
+            self.components.text_renderer_inner.write().reset();
             let locale_wide = self
                 .components
                 .locale
@@ -360,15 +368,14 @@ impl DirectWriteState {
                     .unwrap();
             }
 
-            let renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
-            let renderer: IDWriteTextRenderer =
-                TextRenderer::new(renderer_inner.clone(), locale_name).into();
-            text_layout.Draw(None, &renderer, 0.0, 0.0).unwrap();
+            text_layout
+                .Draw(None, &self.components.text_renderer, 0.0, 0.0)
+                .unwrap();
 
             let mut ix_converter = StringIndexConverter::new(text);
             let runs = {
                 let mut vec = Vec::new();
-                for result in renderer_inner.read().runs.iter() {
+                for result in self.components.text_renderer_inner.read().runs.iter() {
                     let font_id;
                     if let Some(id) = self.font_id_by_postscript_name.get(&result.postscript) {
                         font_id = *id;
@@ -395,7 +402,7 @@ impl DirectWriteState {
             text_layout
                 .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
                 .unwrap();
-            let width = renderer_inner.read().width;
+            let width = self.components.text_renderer_inner.read().width;
             let ascent = px(metrics[0].baseline);
             let descent = px(metrics[0].height - metrics[0].baseline);
 
@@ -576,7 +583,7 @@ impl DirectWriteState {
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
 
             if params.is_emoji {
-                // NOTE: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
+                // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun2(
                     D2D_POINT_2F {
                         x: (subpixel_shift.x / params.scale_factor) as f32,
@@ -850,6 +857,12 @@ impl TextRendererInner {
             width: 0.0,
             runs: Vec::new(),
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.index = 0;
+        self.width = 0.0;
+        self.runs.clear();
     }
 }
 
