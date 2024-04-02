@@ -345,7 +345,7 @@ impl AssistantPanel {
                     style: BlockStyle::Flex,
                     position: snapshot.anchor_before(point_selection.head()),
                     height: 2,
-                    render: Arc::new({
+                    render: Box::new({
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
                             *measurements.lock() = BlockMeasurements {
@@ -2266,7 +2266,7 @@ impl ConversationEditor {
                         .unwrap(),
                     height: 2,
                     style: BlockStyle::Sticky,
-                    render: Arc::new({
+                    render: Box::new({
                         let conversation = self.conversation.clone();
                         move |_cx| {
                             let message_id = message.id;

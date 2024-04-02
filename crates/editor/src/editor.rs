@@ -64,9 +64,9 @@ use gpui::{
     AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
     FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-    MouseButton, ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription,
-    Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
-    VisualContext, WeakView, WhiteSpace, WindowContext,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
@@ -394,6 +394,9 @@ pub struct Editor {
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
+    scrollbar_markers_dirty: bool,
+    scrollbar_markers: Vec<PaintQuad>,
+    pending_scrollbar_markers_refresh: Option<Task<Result<()>>>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -443,6 +446,7 @@ pub struct Editor {
     >,
 }
 
+#[derive(Clone)]
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
@@ -1716,6 +1720,9 @@ impl Editor {
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
+            scrollbar_markers_dirty: false,
+            scrollbar_markers: Vec::default(),
+            pending_scrollbar_markers_refresh: None,
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -8415,7 +8422,7 @@ impl Editor {
                             style: BlockStyle::Flex,
                             position: range.start,
                             height: 1,
-                            render: Arc::new({
+                            render: Box::new({
                                 let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
                                     let mut text_style = cx.editor_style.text.clone();
@@ -9364,6 +9371,7 @@ impl Editor {
 
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, ranges));
+        self.scrollbar_markers_dirty = true;
         cx.notify();
     }
 
@@ -9372,6 +9380,8 @@ impl Editor {
         _cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
+        // todo!(should we notify here?)
+        self.scrollbar_markers_dirty = true;
         text_highlights
     }
 
@@ -9626,6 +9636,7 @@ impl Editor {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
             } => {
+                self.scrollbar_markers_dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion(cx) {
@@ -9695,10 +9706,16 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
                 cx.emit(EditorEvent::TitleChanged)
             }
-            multi_buffer::Event::DiffBaseChanged => cx.emit(EditorEvent::DiffBaseChanged),
+            multi_buffer::Event::DiffBaseChanged => {
+                self.scrollbar_markers_dirty = true;
+                cx.emit(EditorEvent::DiffBaseChanged);
+                cx.notify();
+            }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
+                self.scrollbar_markers_dirty = true;
+                cx.notify();
             }
             _ => {}
         };
@@ -10859,7 +10876,7 @@ impl InvalidationRegion for SnippetState {
 pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> RenderBlock {
     let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
-    Arc::new(move |cx: &mut BlockContext| {
+    Box::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();

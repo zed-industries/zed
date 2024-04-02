@@ -354,6 +354,8 @@ pub struct HighlightedChunk<'a> {
     pub is_tab: bool,
 }
 
+// todo!("ensure all fields are cheaply cloneable")
+#[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: fold_map::FoldSnapshot,
@@ -1143,7 +1145,7 @@ pub mod tests {
                                         position,
                                         height,
                                         disposition,
-                                        render: Arc::new(|_| div().into_any()),
+                                        render: Box::new(|_| div().into_any()),
                                     }
                                 })
                                 .collect::<Vec<_>>();
