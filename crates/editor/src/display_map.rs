@@ -922,7 +922,7 @@ impl DisplaySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
         &self,
-    ) -> Option<&HashMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+    ) -> Option<&TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();
         self.inlay_highlights.get(&type_id)
     }

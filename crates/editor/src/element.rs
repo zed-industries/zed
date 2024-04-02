@@ -2517,7 +2517,6 @@ impl EditorElement {
                                 let marker_row_ranges = snapshot
                                     .buffer_snapshot
                                     .git_diff_hunks_in_range(0..max_row)
-                                    .into_iter()
                                     .map(|hunk| {
                                         let start_display_row =
                                             Point::new(hunk.associated_range.start, 0)
