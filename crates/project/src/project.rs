@@ -9,6 +9,7 @@ pub mod terminals;
 
 #[cfg(test)]
 mod project_tests;
+pub mod search_history;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
@@ -30,6 +31,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
+use git::blame::Blame;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
@@ -62,6 +64,7 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
+use search_history::SearchHistory;
 use worktree::LocalSnapshot;
 
 use rpc::{ErrorCode, ErrorExt as _};
@@ -83,7 +86,7 @@ use std::{
     ops::Range,
     path::{self, Component, Path, PathBuf},
     process::Stdio,
-    str,
+    str::{self, FromStr},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -95,7 +98,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, RopeFingerprint};
 use util::{
     debug_panic, defer,
-    http::HttpClient,
+    http::{HttpClient, Url},
     maybe, merge_json_value_into,
     paths::{
         LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
@@ -121,6 +124,8 @@ const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+
+const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 
 pub trait Item {
     fn try_open(
@@ -204,6 +209,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
+    search_history: SearchHistory,
 }
 
 pub enum LanguageServerToQuery {
@@ -304,6 +310,7 @@ pub enum Event {
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
+    WorktreeUpdatedGitRepositories,
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -593,6 +600,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
+        client.add_model_request_handler(Self::handle_blame_buffer);
     }
 
     pub fn local(
@@ -667,6 +675,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                search_history: Self::new_search_history(),
             }
         })
     }
@@ -802,6 +811,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -856,6 +866,13 @@ impl Project {
             cx,
         )
         .await
+    }
+
+    fn new_search_history() -> SearchHistory {
+        SearchHistory::new(
+            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
+            search_history::QueryInsertionBehavior::AlwaysInsert,
+        )
     }
 
     fn release(&mut self, cx: &mut AppContext) {
@@ -1122,6 +1139,14 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
+    }
+
+    pub fn search_history(&self) -> &SearchHistory {
+        &self.search_history
+    }
+
+    pub fn search_history_mut(&mut self) -> &mut SearchHistory {
+        &mut self.search_history
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
@@ -5189,14 +5214,80 @@ impl Project {
         buffer: &Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Hover>>> {
-        let request_task = self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            GetHover { position },
-            cx,
-        );
-        cx.spawn(|_, _| async move { request_task.await.map(|hover| hover.into_iter().collect()) })
+    ) -> Task<Vec<Hover>> {
+        fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
+            hover
+                .contents
+                .retain(|hover_block| !hover_block.text.trim().is_empty());
+            if hover.contents.is_empty() {
+                None
+            } else {
+                Some(hover)
+            }
+        }
+
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let mut hover_responses = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| match server.capabilities().hover_provider {
+                    Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+                    Some(lsp::HoverProviderCapability::Options(_)) => true,
+                    None => false,
+                })
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .map(|server_id| {
+                    self.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetHover { position },
+                        cx,
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+
+            cx.spawn(|_, _| async move {
+                let mut hovers = Vec::with_capacity(hover_responses.len());
+                while let Some(hover_response) = hover_responses.next().await {
+                    if let Some(hover) = hover_response
+                        .log_err()
+                        .flatten()
+                        .and_then(remove_empty_hover_blocks)
+                    {
+                        hovers.push(hover);
+                    }
+                }
+                hovers
+            })
+        } else if self.is_remote() {
+            let request_task = self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::Primary,
+                GetHover { position },
+                cx,
+            );
+            cx.spawn(|_, _| async move {
+                request_task
+                    .await
+                    .log_err()
+                    .flatten()
+                    .and_then(remove_empty_hover_blocks)
+                    .map(|hover| vec![hover])
+                    .unwrap_or_default()
+            })
+        } else {
+            log::error!("cannot show hovers: project does not have a remote id");
+            Task::ready(Vec::new())
+        }
     }
 
     pub fn hover<T: ToPointUtf16>(
@@ -5204,7 +5295,7 @@ impl Project {
         buffer: &Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Hover>>> {
+    ) -> Task<Vec<Hover>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.hover_impl(buffer, position, cx)
     }
@@ -5558,13 +5649,54 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
-        self.request_lsp(
-            buffer_handle.clone(),
-            LanguageServerToQuery::Primary,
-            GetCodeActions { range, kinds: None },
-            cx,
-        )
+    ) -> Task<Vec<CodeAction>> {
+        if self.is_local() {
+            let snapshot = buffer_handle.read(cx).snapshot();
+            let offset = range.start.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let mut hover_responses = self
+                .language_servers_for_buffer(buffer_handle.read(cx), cx)
+                .filter(|(_, server)| GetCodeActions::supports_code_actions(server.capabilities()))
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .map(|server_id| {
+                    self.request_lsp(
+                        buffer_handle.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetCodeActions {
+                            range: range.clone(),
+                            kinds: None,
+                        },
+                        cx,
+                    )
+                })
+                .collect::<FuturesUnordered<_>>();
+
+            cx.spawn(|_, _| async move {
+                let mut hovers = Vec::with_capacity(hover_responses.len());
+                while let Some(hover_response) = hover_responses.next().await {
+                    hovers.extend(hover_response.log_err().unwrap_or_default());
+                }
+                hovers
+            })
+        } else if self.is_remote() {
+            let request_task = self.request_lsp(
+                buffer_handle.clone(),
+                LanguageServerToQuery::Primary,
+                GetCodeActions { range, kinds: None },
+                cx,
+            );
+            cx.spawn(|_, _| async move { request_task.await.log_err().unwrap_or_default() })
+        } else {
+            log::error!("cannot fetch actions: project does not have a remote id");
+            Task::ready(Vec::new())
+        }
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
@@ -5572,7 +5704,7 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> Task<Vec<CodeAction>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.code_actions_impl(buffer_handle, range, cx)
@@ -6639,6 +6771,12 @@ impl Project {
                         let worktree = worktree?;
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
+
+                        cx.update(|cx| {
+                            cx.add_recent_document(&path);
+                        })
+                        .log_err();
+
                         Ok(worktree)
                     }
                     .map_err(Arc::new)
@@ -6746,8 +6884,13 @@ impl Project {
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
-                        this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                        this.update_local_worktree_buffers_git_repos(
+                            worktree.clone(),
+                            updated_repos,
+                            cx,
+                        )
                     }
+                    cx.emit(Event::WorktreeUpdatedGitRepositories);
                 }
             }
         })
@@ -6986,11 +7129,12 @@ impl Project {
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 let receiver = receiver.clone();
                 let path = path.clone();
+                let abs_path = worktree_handle.read(cx).absolutize(&path).ok()?;
                 Some(async move {
                     wait_for_loading_buffer(receiver)
                         .await
                         .ok()
-                        .map(|buffer| (buffer, path))
+                        .map(|buffer| (buffer, path, abs_path))
                 })
             })
             .collect::<FuturesUnordered<_>>();
@@ -7009,7 +7153,7 @@ impl Project {
                 changed_repos
                     .iter()
                     .find(|(work_dir, _)| path.starts_with(work_dir))?;
-                Some((buffer, path.clone()))
+                Some((buffer, path.clone(), file.abs_path(cx)))
             })
             .collect::<Vec<_>>();
 
@@ -7019,6 +7163,7 @@ impl Project {
 
         let remote_id = self.remote_id();
         let client = self.client.clone();
+        let fs = self.fs.clone();
         cx.spawn(move |_, mut cx| async move {
             // Wait for all of the buffers to load.
             let future_buffers = future_buffers.collect::<Vec<_>>().await;
@@ -7029,19 +7174,47 @@ impl Project {
             let diff_bases_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
-                    future_buffers
+                    let mut diff_base_tasks = future_buffers
                         .into_iter()
                         .flatten()
                         .chain(current_buffers)
-                        .filter_map(|(buffer, path)| {
+                        .filter_map(|(buffer, path, abs_path)| {
                             let (work_directory, repo) =
                                 snapshot.repository_and_work_directory_for_path(&path)?;
-                            let repo = snapshot.get_local_repo(&repo)?;
-                            let relative_path = path.strip_prefix(&work_directory).ok()?;
-                            let base_text = repo.load_index_text(relative_path);
-                            Some((buffer, base_text))
+                            let repo_entry = snapshot.get_local_repo(&repo)?;
+                            Some((buffer, path, abs_path, work_directory, repo_entry))
                         })
-                        .collect::<Vec<_>>()
+                        .map(|(buffer, path, abs_path, work_directory, repo_entry)| {
+                            let fs = fs.clone();
+                            async move {
+                                let abs_path_metadata = fs
+                                    .metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("loading file and FS metadata for {path:?}")
+                                    })
+                                    .log_err()
+                                    .flatten()?;
+                                let base_text = if abs_path_metadata.is_dir
+                                    || abs_path_metadata.is_symlink
+                                {
+                                    None
+                                } else {
+                                    let relative_path = path.strip_prefix(&work_directory).ok()?;
+                                    repo_entry.repo().lock().load_index_text(relative_path)
+                                };
+                                Some((buffer, base_text))
+                            }
+                        })
+                        .collect::<FuturesUnordered<_>>();
+
+                    let mut diff_bases = Vec::with_capacity(diff_base_tasks.len());
+                    while let Some(diff_base) = diff_base_tasks.next().await {
+                        if let Some(diff_base) = diff_base {
+                            diff_bases.push(diff_base);
+                        }
+                    }
+                    diff_bases
                 })
                 .await;
 
@@ -7315,6 +7488,19 @@ impl Project {
         })
     }
 
+    pub fn get_workspace_root(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<PathBuf> {
+        Some(
+            self.worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .abs_path()
+                .to_path_buf(),
+        )
+    }
+
     pub fn get_repo(
         &self,
         project_path: &ProjectPath,
@@ -7327,7 +7513,106 @@ impl Project {
             .local_git_repo(&project_path.path)
     }
 
+    pub fn blame_buffer(
+        &self,
+        buffer: &Model<Buffer>,
+        version: Option<clock::Global>,
+        cx: &AppContext,
+    ) -> Task<Result<Blame>> {
+        if self.is_local() {
+            let blame_params = maybe!({
+                let buffer = buffer.read(cx);
+                let buffer_project_path = buffer
+                    .project_path(cx)
+                    .context("failed to get buffer project path")?;
+
+                let worktree = self
+                    .worktree_for_id(buffer_project_path.worktree_id, cx)
+                    .context("failed to get worktree")?
+                    .read(cx)
+                    .as_local()
+                    .context("worktree was not local")?
+                    .snapshot();
+                let (work_directory, repo) = worktree
+                    .repository_and_work_directory_for_path(&buffer_project_path.path)
+                    .context("failed to get repo for blamed buffer")?;
+
+                let repo_entry = worktree
+                    .get_local_repo(&repo)
+                    .context("failed to get repo for blamed buffer")?;
+
+                let relative_path = buffer_project_path
+                    .path
+                    .strip_prefix(&work_directory)?
+                    .to_path_buf();
+
+                let content = match version {
+                    Some(version) => buffer.rope_for_version(&version).clone(),
+                    None => buffer.as_rope().clone(),
+                };
+                let repo = repo_entry.repo().clone();
+
+                anyhow::Ok((repo, relative_path, content))
+            });
+
+            cx.background_executor().spawn(async move {
+                let (repo, relative_path, content) = blame_params?;
+                let lock = repo.lock();
+                lock.blame(&relative_path, content)
+            })
+        } else {
+            let project_id = self.remote_id();
+            let buffer_id = buffer.read(cx).remote_id();
+            let client = self.client.clone();
+            let version = buffer.read(cx).version();
+
+            cx.spawn(|_| async move {
+                let project_id = project_id.context("unable to get project id for buffer")?;
+                let response = client
+                    .request(proto::BlameBuffer {
+                        project_id,
+                        buffer_id: buffer_id.into(),
+                        version: serialize_version(&version),
+                    })
+                    .await?;
+
+                Ok(deserialize_blame_buffer_response(response))
+            })
+        }
+    }
+
     // RPC message handlers
+
+    async fn handle_blame_buffer(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::BlameBuffer>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::BlameBufferResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+
+        let buffer = this.update(&mut cx, |this, _cx| {
+            this.opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
+        })??;
+
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+
+        let blame = this
+            .update(&mut cx, |this, cx| {
+                this.blame_buffer(&buffer, Some(version), cx)
+            })?
+            .await?;
+
+        Ok(serialize_blame_buffer_response(blame))
+    }
 
     async fn handle_unshare_project(
         this: Model<Self>,
@@ -9767,4 +10052,100 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         }
     }
     Ok(parsed_env)
+}
+
+fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBufferResponse {
+    let entries = blame
+        .entries
+        .into_iter()
+        .map(|entry| proto::BlameEntry {
+            sha: entry.sha.as_bytes().into(),
+            start_line: entry.range.start,
+            end_line: entry.range.end,
+            original_line_number: entry.original_line_number,
+            author: entry.author.clone(),
+            author_mail: entry.author_mail.clone(),
+            author_time: entry.author_time,
+            author_tz: entry.author_tz.clone(),
+            committer: entry.committer.clone(),
+            committer_mail: entry.committer_mail.clone(),
+            committer_time: entry.committer_time,
+            committer_tz: entry.committer_tz.clone(),
+            summary: entry.summary.clone(),
+            previous: entry.previous.clone(),
+            filename: entry.filename.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let messages = blame
+        .messages
+        .into_iter()
+        .map(|(oid, message)| proto::CommitMessage {
+            oid: oid.as_bytes().into(),
+            message,
+        })
+        .collect::<Vec<_>>();
+
+    let permalinks = blame
+        .permalinks
+        .into_iter()
+        .map(|(oid, url)| proto::CommitPermalink {
+            oid: oid.as_bytes().into(),
+            permalink: url.to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    proto::BlameBufferResponse {
+        entries,
+        messages,
+        permalinks,
+    }
+}
+
+fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> git::blame::Blame {
+    let entries = response
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            Some(git::blame::BlameEntry {
+                sha: git::Oid::from_bytes(&entry.sha).ok()?,
+                range: entry.start_line..entry.end_line,
+                original_line_number: entry.original_line_number,
+                committer: entry.committer,
+                committer_time: entry.committer_time,
+                committer_tz: entry.committer_tz,
+                committer_mail: entry.committer_mail,
+                author: entry.author,
+                author_mail: entry.author_mail,
+                author_time: entry.author_time,
+                author_tz: entry.author_tz,
+                summary: entry.summary,
+                previous: entry.previous,
+                filename: entry.filename,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let messages = response
+        .messages
+        .into_iter()
+        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
+        .collect::<HashMap<_, _>>();
+
+    let permalinks = response
+        .permalinks
+        .into_iter()
+        .filter_map(|permalink| {
+            Some((
+                git::Oid::from_bytes(&permalink.oid).ok()?,
+                Url::from_str(&permalink.permalink).ok()?,
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+
+    Blame {
+        entries,
+        permalinks,
+        messages,
+    }
 }

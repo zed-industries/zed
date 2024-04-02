@@ -1,17 +1,18 @@
-mod v0_0_1;
-mod v0_0_4;
+mod since_v0_0_1;
+mod since_v0_0_4;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
 use language::LspAdapterDelegate;
+use semantic_version::SemanticVersion;
+use std::ops::RangeInclusive;
 use std::sync::Arc;
-use util::SemanticVersion;
 use wasmtime::{
     component::{Component, Instance, Linker, Resource},
     Store,
 };
 
-use v0_0_4 as latest;
+use since_v0_0_4 as latest;
 
 pub use latest::{Command, LanguageServerConfig};
 
@@ -28,9 +29,20 @@ fn wasi_view(state: &mut WasmState) -> &mut WasmState {
     state
 }
 
+/// Returns whether the given Wasm API version is supported by the Wasm host.
+pub fn is_supported_wasm_api_version(version: SemanticVersion) -> bool {
+    wasm_api_version_range().contains(&version)
+}
+
+/// Returns the Wasm API version range that is supported by the Wasm host.
+#[inline(always)]
+pub fn wasm_api_version_range() -> RangeInclusive<SemanticVersion> {
+    since_v0_0_1::MIN_VERSION..=latest::MAX_VERSION
+}
+
 pub enum Extension {
-    V004(v0_0_4::Extension),
-    V001(v0_0_1::Extension),
+    V004(since_v0_0_4::Extension),
+    V001(since_v0_0_1::Extension),
 }
 
 impl Extension {
@@ -39,17 +51,23 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<(Self, Instance)> {
-        if version < latest::VERSION {
-            let (extension, instance) =
-                v0_0_1::Extension::instantiate_async(store, &component, v0_0_1::linker())
-                    .await
-                    .context("failed to instantiate wasm extension")?;
+        if version < latest::MIN_VERSION {
+            let (extension, instance) = since_v0_0_1::Extension::instantiate_async(
+                store,
+                &component,
+                since_v0_0_1::linker(),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
             Ok((Self::V001(extension), instance))
         } else {
-            let (extension, instance) =
-                v0_0_4::Extension::instantiate_async(store, &component, v0_0_4::linker())
-                    .await
-                    .context("failed to instantiate wasm extension")?;
+            let (extension, instance) = since_v0_0_4::Extension::instantiate_async(
+                store,
+                &component,
+                since_v0_0_4::linker(),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
             Ok((Self::V004(extension), instance))
         }
     }

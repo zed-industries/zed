@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/activity_indicator",
+    "crates/anthropic",
     "crates/assets",
     "crates/assistant",
     "crates/audio",
@@ -28,6 +29,7 @@ members = [
     "crates/feature_flags",
     "crates/feedback",
     "crates/file_finder",
+    "crates/file_icons",
     "crates/fs",
     "crates/fsevent",
     "crates/fuzzy",
@@ -70,6 +72,7 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
+    "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
     "crates/sqlez",
@@ -97,11 +100,15 @@ members = [
     "crates/zed_actions",
 
     "extensions/astro",
+    "extensions/csharp",
+    "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
+    "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
     "extensions/svelte",
+    "extensions/toml",
     "extensions/uiua",
     "extensions/zig",
 
@@ -113,6 +120,7 @@ resolver = "2"
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
+anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 audio = { path = "crates/audio" }
@@ -140,6 +148,7 @@ extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
+file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
@@ -183,6 +192,7 @@ rpc = { path = "crates/rpc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
+semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
@@ -280,6 +290,8 @@ tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.5.7"
 time = { version = "0.3", features = [
+    "macros",
+    "parsing",
     "serde",
     "serde-well-known",
     "formatting",
@@ -291,14 +303,12 @@ tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
 tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts" }
-tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", rev = "dd5e59721a5f8dae34604060833902b882023aaf" }
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-dart = { git = "https://github.com/agent3bood/tree-sitter-dart", rev = "48934e3bf757a9b78f17bdfaa3e2b4284656fdc7" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-erlang = "0.4.0"
 tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
@@ -314,7 +324,6 @@ tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown",
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "7dd29f9616822e5fc259f5b4ae6c4ded9a71a132" }
 tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", rev = "4abfdc1c7af2c6c77a370aee974627be1c285b3b" }
-tree-sitter-php = "0.21.1"
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-python = "0.20.2"
 tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
@@ -322,7 +331,6 @@ tree-sitter-regex = "0.20.0"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
 tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
-tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
 tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
@@ -386,6 +394,7 @@ debug = "limited"
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }

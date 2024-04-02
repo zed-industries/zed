@@ -262,7 +262,8 @@ struct ExcerptChunks<'a> {
 
 struct ExcerptBytes<'a> {
     content_bytes: text::Bytes<'a>,
-    footer_height: usize,
+    padding_height: usize,
+    reversed: bool,
 }
 
 impl MultiBuffer {
@@ -2165,7 +2166,7 @@ impl MultiBufferSnapshot {
         let mut chunk = &[][..];
         let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
             let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
-                range.start - excerpts.start()..range.end - excerpts.start(),
+                range.start.saturating_sub(*excerpts.start())..range.end - *excerpts.start(),
             );
             chunk = excerpt_bytes.next().unwrap_or(&[][..]);
             Some(excerpt_bytes)
@@ -3724,7 +3725,8 @@ impl Excerpt {
 
         ExcerptBytes {
             content_bytes,
-            footer_height,
+            padding_height: footer_height,
+            reversed: false,
         }
     }
 
@@ -3744,7 +3746,8 @@ impl Excerpt {
 
         ExcerptBytes {
             content_bytes,
-            footer_height,
+            padding_height: footer_height,
+            reversed: true,
         }
     }
 
@@ -4130,14 +4133,16 @@ impl<'a> ReversedMultiBufferBytes<'a> {
             if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
                 self.chunk = chunk;
             } else {
-                self.excerpts.next(&());
+                self.excerpts.prev(&());
                 if let Some(excerpt) = self.excerpts.item() {
-                    let mut excerpt_bytes =
-                        excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
+                    let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
+                        self.range.start.saturating_sub(*self.excerpts.start())..usize::MAX,
+                    );
                     self.chunk = excerpt_bytes.next().unwrap();
                     self.excerpt_bytes = Some(excerpt_bytes);
                 }
             }
+        } else {
         }
     }
 }
@@ -4157,15 +4162,21 @@ impl<'a> Iterator for ExcerptBytes<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.reversed && self.padding_height > 0 {
+            let result = &NEWLINES[..self.padding_height];
+            self.padding_height = 0;
+            return Some(result);
+        }
+
         if let Some(chunk) = self.content_bytes.next() {
             if !chunk.is_empty() {
                 return Some(chunk);
             }
         }
 
-        if self.footer_height > 0 {
-            let result = &NEWLINES[..self.footer_height];
-            self.footer_height = 0;
+        if self.padding_height > 0 {
+            let result = &NEWLINES[..self.padding_height];
+            self.padding_height = 0;
             return Some(result);
         }
 

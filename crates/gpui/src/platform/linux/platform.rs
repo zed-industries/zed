@@ -353,19 +353,11 @@ impl Platform for LinuxPlatform {
     }
 
     fn os_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        })
+        Ok(SemanticVersion::new(1, 0, 0))
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        })
+        Ok(SemanticVersion::new(1, 0, 0))
     }
 
     fn app_path(&self) -> Result<PathBuf> {

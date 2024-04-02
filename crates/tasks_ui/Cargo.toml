@@ -22,6 +22,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 language.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

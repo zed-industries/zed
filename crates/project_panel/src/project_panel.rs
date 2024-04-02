@@ -1,20 +1,19 @@
-pub mod file_associations;
 mod project_panel_settings;
 use client::{ErrorCode, ErrorExt};
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions::Cancel, items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
-use file_associations::FileAssociations;
+use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use gpui::{
-    actions, div, impl_actions, overlay, px, uniform_list, Action, AppContext, AssetSource,
-    AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
-    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -142,7 +141,7 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
-    file_associations::init(assets, cx);
+    file_icons::init(assets, cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -229,7 +228,7 @@ impl ProjectPanel {
             })
             .detach();
 
-            cx.observe_global::<FileAssociations>(|_, cx| {
+            cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
             })
             .detach();
@@ -1329,16 +1328,16 @@ impl ProjectPanel {
                     let icon = match entry.kind {
                         EntryKind::File(_) => {
                             if show_file_icons {
-                                FileAssociations::get_icon(&entry.path, cx)
+                                FileIcons::get_icon(&entry.path, cx)
                             } else {
                                 None
                             }
                         }
                         _ => {
                             if show_folder_icons {
-                                FileAssociations::get_folder_icon(is_expanded, cx)
+                                FileIcons::get_folder_icon(is_expanded, cx)
                             } else {
-                                FileAssociations::get_chevron_icon(is_expanded, cx)
+                                FileIcons::get_chevron_icon(is_expanded, cx)
                             }
                         }
                     };
@@ -1435,15 +1434,15 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
-                        div().size(IconSize::default().rems()).invisible()
+                        h_flex().size(IconSize::default().rems()).invisible()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            div()
+                            h_flex()
                                 .h_6()
                                 .child(Label::new(file_name).color(filename_text_color))
                         }
@@ -1457,7 +1456,7 @@ impl ProjectPanel {
                             if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
-                                if event.down.modifiers.command {
+                                if event.down.modifiers.secondary() {
                                     this.split_entry(entry_id, cx);
                                 } else {
                                     this.open_entry(entry_id, event.up.click_count > 1, cx);
@@ -1585,10 +1584,13 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    overlay()
-                        .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
-                        .child(menu.clone())
+                    deferred(
+                        anchored()
+                            .position(*position)
+                            .anchor(gpui::AnchorCorner::TopLeft)
+                            .child(menu.clone()),
+                    )
+                    .with_priority(1)
                 }))
         } else {
             v_flex()

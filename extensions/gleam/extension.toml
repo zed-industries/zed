@@ -1,6 +1,6 @@
 id = "gleam"
 name = "Gleam"
-description = "Gleam support for Zed"
+description = "Gleam support."
 version = "0.0.2"
 schema_version = 1
 authors = ["Marshall Bowers <elliott.codes@gmail.com>"]

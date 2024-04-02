@@ -36,7 +36,7 @@ pub mod core_video {
 
     use super::*;
     pub use crate::bindings::{
-        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
     };
     use crate::bindings::{kCVReturnSuccess, CVReturn, OSType};

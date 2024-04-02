@@ -8,7 +8,6 @@ use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
 
 pub mod buffer_search;
-mod history;
 mod mode;
 pub mod project_search;
 pub(crate) mod search_bar;

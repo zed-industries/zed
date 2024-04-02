@@ -1194,7 +1194,7 @@ pub fn entry_git_aware_label_color(
     selected: bool,
 ) -> Color {
     if ignored {
-        Color::Disabled
+        Color::Ignored
     } else {
         match git_status {
             Some(GitFileStatus::Added) => Color::Created,

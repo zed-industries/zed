@@ -1,14 +1,15 @@
 use anyhow::{anyhow, Context, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageServerName;
+use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::SemanticVersion;
 
 /// This is the old version of the extension manifest, from when it was `extension.json`.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -31,8 +32,15 @@ pub struct OldExtensionManifest {
     pub grammars: BTreeMap<Arc<str>, PathBuf>,
 }
 
+/// The schema version of the [`ExtensionManifest`].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct SchemaVersion(pub i32);
+
+impl fmt::Display for SchemaVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl SchemaVersion {
     pub const ZERO: Self = Self(0);
@@ -84,11 +92,15 @@ pub struct GrammarManifestEntry {
     pub repository: String,
     #[serde(alias = "commit")]
     pub rev: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     pub language: Arc<str>,
+    #[serde(default)]
+    pub language_ids: HashMap<String, String>,
 }
 
 impl ExtensionManifest {

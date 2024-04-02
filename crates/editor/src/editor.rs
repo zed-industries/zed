@@ -38,6 +38,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
+use ::git::permalink::{build_permalink, BuildPermalinkParams};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -56,17 +57,19 @@ pub use element::{
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
     AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
     FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-    MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled,
-    StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View,
-    ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    MouseButton, ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription,
+    Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
+    VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
+use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use hover_popover::{hide_hover, HoverState};
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
@@ -79,8 +82,6 @@ use language::{
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
-
-use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -92,8 +93,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use project::Item;
-use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
@@ -432,6 +432,9 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
+    show_git_blame: bool,
+    blame: Option<Model<GitBlame>>,
+    blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -443,6 +446,7 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    show_git_blame: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -450,11 +454,14 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
+
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
+    pub git_blame_entries_width: Option<Pixels>,
 }
 
 impl Default for GutterDimensions {
@@ -464,6 +471,7 @@ impl Default for GutterDimensions {
             right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
+            git_blame_entries_width: None,
         }
     }
 }
@@ -852,25 +860,41 @@ impl CompletionsMenu {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
 
-        let widest_completion_ix = self
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let padding_width = cx.rem_size().0 / 16. * 36.;
+
+        let max_completion_len = px(510.);
+        let widest_completion_pixels = self
             .matches
             .iter()
-            .enumerate()
-            .max_by_key(|(_, mat)| {
+            .map(|mat| {
                 let completions = self.completions.read();
                 let completion = &completions[mat.candidate_id];
                 let documentation = &completion.documentation;
 
-                let mut len = completion.label.text.chars().count();
-                if let Some(Documentation::SingleLine(text)) = documentation {
-                    if show_completion_documentation {
-                        len += text.chars().count();
-                    }
+                let mut len = completion.label.text.chars().count() as f32;
+                if let Ok(text_width) = cx.text_system().layout_line(
+                    completion.label.text.as_str(),
+                    font_size,
+                    &[style.text.to_run(completion.label.text.as_str().len())],
+                ) {
+                    len = text_width.width.0;
                 }
 
-                len
+                if let Some(Documentation::SingleLine(documentation_text)) = documentation {
+                    if show_completion_documentation {
+                        if let Ok(documentation_width) = cx.text_system().layout_line(
+                            documentation_text.as_str(),
+                            font_size,
+                            &[style.text.to_run(documentation_text.as_str().len())],
+                        ) {
+                            len = documentation_width.width.0 + padding_width;
+                        }
+                    }
+                }
+                (len + padding_width).min(max_completion_len.0 as f32)
             })
-            .map(|(ix, _)| ix);
+            .fold(190_f32, |a, b| a.max(b));
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -924,7 +948,7 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let candidate_id = mat.candidate_id;
-                        let completion = &completions_guard[candidate_id];
+                        let completion = completions_guard[candidate_id].clone();
 
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -932,63 +956,36 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let highlights = gpui::combine_highlights(
-                            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
-                            styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                                |(range, mut highlight)| {
-                                    // Ignore font weight for syntax highlighting, as we'll use it
-                                    // for fuzzy matches.
-                                    highlight.font_weight = None;
-
-                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
-                                        highlight.strikethrough = Some(StrikethroughStyle {
-                                            thickness: 1.0.into(),
-                                            ..Default::default()
-                                        });
-                                        highlight.color = Some(cx.theme().colors().text_muted);
-                                    }
-
-                                    (range, highlight)
-                                },
-                            ),
-                        );
-                        let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_highlights(&style.text, highlights);
-                        let documentation_label =
-                            if let Some(Documentation::SingleLine(text)) = documentation {
-                                if text.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(
-                                        h_flex().ml_4().child(
-                                            Label::new(text.clone())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                }
-                            } else {
-                                None
-                            };
-
-                        div().min_w(px(220.)).max_w(px(540.)).child(
-                            ListItem::new(mat.candidate_id)
-                                .inset(true)
-                                .selected(item_ix == selected_item)
-                                .on_click(cx.listener(move |editor, _event, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_completion(
-                                        &ConfirmCompletion {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                }))
-                                .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Div>(documentation_label),
-                        )
+                        let (_completion_width, completion_label, documentation_label) =
+                            Self::truncate_completion(
+                                &style,
+                                cx,
+                                mat,
+                                &mut completion.clone(),
+                                documentation,
+                                max_completion_len,
+                            );
+                        div()
+                            .min_w(px(widest_completion_pixels + padding_width))
+                            .max_w(max_completion_len + px(padding_width))
+                            .child(
+                                ListItem::new(mat.candidate_id)
+                                    .inset(true)
+                                    .selected(item_ix == selected_item)
+                                    .on_click(cx.listener(move |editor, _event, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(task) = editor.confirm_completion(
+                                            &ConfirmCompletion {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx)
+                                        }
+                                    }))
+                                    .child(h_flex().overflow_hidden().child(completion_label))
+                                    .end_slot(documentation_label),
+                            )
                     })
                     .collect()
             },
@@ -996,7 +993,7 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix);
+        .min_w(px(widest_completion_pixels + padding_width));
 
         Popover::new()
             .child(list)
@@ -1004,6 +1001,294 @@ impl CompletionsMenu {
                 popover.aside(multiline_docs)
             })
             .into_any_element()
+    }
+
+    fn truncate_completion(
+        style: &EditorStyle,
+        cx: &mut ViewContext<Editor>,
+        mat: &StringMatch,
+        completion: &mut Completion,
+        documentation: &Option<Documentation>,
+        max_completion_len: Pixels,
+    ) -> (Pixels, StyledText, StyledText) {
+        let highlights = gpui::combine_highlights(
+            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+            styled_runs_for_code_label(&completion.label, &style.syntax).map(
+                |(range, mut highlight)| {
+                    // Ignore font weight for syntax highlighting, as we'll use it
+                    // for fuzzy matches.
+                    highlight.font_weight = None;
+                    (range, highlight)
+                },
+            ),
+        );
+
+        let mut inline_documentation_exists = false;
+
+        let mut documentation_text = if let Some(Documentation::SingleLine(text)) = documentation {
+            inline_documentation_exists = true;
+            text
+        } else {
+            ""
+        }
+        .to_owned();
+        let documentation_style = style.clone().text;
+
+        let documentation_highlight_style = HighlightStyle {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        };
+
+        let documentation_highlights = vec![(
+            Range {
+                start: 0,
+                end: documentation_text.len(),
+            },
+            documentation_highlight_style,
+        )];
+        let documentation_label = StyledText::new(documentation_text.clone())
+            .with_highlights(&documentation_style, documentation_highlights);
+
+        let mut completion_label =
+            StyledText::new(completion.label.text.clone()).with_highlights(&style.text, highlights);
+
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+
+        let mut variable_name_end = completion.label.filter_range.end;
+        let mut completion_label_text = completion.label.text.clone();
+        let mut variable_name_length_truncated: i32 = 0;
+
+        let mut actual_width: Pixels = px(0.);
+        if let Ok(ellipsis_width) =
+            cx.text_system()
+                .layout_line("…", font_size, &[style.text.to_run("…".len())])
+        {
+            if let Ok(completion_layout_line) = completion_label.layout_line(font_size, cx) {
+                if let Ok(documentation_layout_line) =
+                    documentation_label.layout_line(font_size, cx)
+                {
+                    if inline_documentation_exists {
+                        if completion_layout_line.width + documentation_layout_line.width
+                            > max_completion_len
+                        {
+                            actual_width = max_completion_len;
+                            let width_of_variable_name = completion_layout_line
+                                .x_for_index(completion.label.filter_range.end);
+                            let width_of_documentation =
+                                documentation_layout_line.x_for_index(documentation_text.len());
+
+                            let max_width_of_variable_name =
+                                if width_of_documentation < max_completion_len * 0.2 {
+                                    max_completion_len - width_of_documentation
+                                } else {
+                                    max_completion_len * 0.8
+                                };
+
+                            if width_of_variable_name < max_width_of_variable_name {
+                                // Only truncate the second part.
+                                if let Some(documentation_truncation_index) =
+                                    documentation_layout_line.index_for_x(
+                                        (max_completion_len * 0.65).min(
+                                            max_completion_len
+                                                - ellipsis_width.width
+                                                - width_of_variable_name,
+                                        ),
+                                    )
+                                {
+                                    variable_name_end = documentation_truncation_index + 2;
+                                    documentation_text = documentation_text
+                                        .chars()
+                                        .take(documentation_truncation_index)
+                                        .collect::<String>()
+                                        + "…";
+                                }
+                            } else {
+                                // Truncate the first part (and optionally the second part).
+                                if let Some(variable_name_truncation_index) = completion_layout_line
+                                    .index_for_x(max_width_of_variable_name - ellipsis_width.width)
+                                {
+                                    variable_name_end = variable_name_truncation_index + 2;
+                                    variable_name_length_truncated =
+                                        completion.label.filter_range.end as i32
+                                            - variable_name_end as i32
+                                            - 1;
+                                    completion_label_text = completion
+                                        .label
+                                        .text
+                                        .chars()
+                                        .take(variable_name_truncation_index)
+                                        .collect::<String>()
+                                        + "…";
+                                    completion_label =
+                                        completion_label.with_text(completion_label_text.clone());
+                                    if let Ok(new_completion_layout_line) =
+                                        completion_label.layout_line(font_size, cx)
+                                    {
+                                        let combined_width = new_completion_layout_line
+                                            .x_for_index(completion_label_text.len())
+                                            + width_of_documentation;
+                                        if combined_width > max_completion_len {
+                                            if let Some(documentation_truncation_index) =
+                                                documentation_layout_line.index_for_x(
+                                                    (max_completion_len * 0.65).min(
+                                                        max_completion_len
+                                                            - ellipsis_width.width
+                                                            - max_width_of_variable_name,
+                                                    ),
+                                                )
+                                            {
+                                                documentation_text = documentation_text
+                                                    .chars()
+                                                    .take(documentation_truncation_index)
+                                                    .collect::<String>()
+                                                    + "…";
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            actual_width =
+                                completion_layout_line.width + documentation_layout_line.width;
+                        }
+                    } else {
+                        if completion_layout_line.width > max_completion_len {
+                            actual_width = max_completion_len;
+                            let width_of_variable_name = completion_layout_line
+                                .x_for_index(completion.label.filter_range.end);
+                            let width_of_type_annotation =
+                                completion_layout_line.width - width_of_variable_name;
+
+                            let max_width_of_variable_name =
+                                if width_of_type_annotation < max_completion_len * 0.2 {
+                                    max_completion_len - width_of_type_annotation
+                                } else {
+                                    max_completion_len * 0.8
+                                };
+
+                            if width_of_variable_name < max_width_of_variable_name {
+                                // Only truncate the second part.
+
+                                if let Some(type_annotation_truncation_index) =
+                                    completion_layout_line
+                                        .index_for_x(max_completion_len - ellipsis_width.width)
+                                {
+                                    completion_label_text = completion
+                                        .label
+                                        .text
+                                        .chars()
+                                        .take(type_annotation_truncation_index)
+                                        .collect::<String>()
+                                        + "…";
+                                }
+                            } else {
+                                // Truncate the first part (and optionally the second part).
+                                if let Some(variable_name_truncation_index) = completion_layout_line
+                                    .index_for_x(max_width_of_variable_name - ellipsis_width.width)
+                                {
+                                    variable_name_end = variable_name_truncation_index + 2;
+
+                                    variable_name_length_truncated =
+                                        completion.label.filter_range.end as i32
+                                            - variable_name_end as i32
+                                            - 1;
+
+                                    let second_part_text = &completion.label.text.as_str()
+                                        [completion.label.filter_range.end..];
+
+                                    completion_label_text = completion
+                                        .label
+                                        .text
+                                        .chars()
+                                        .take(variable_name_truncation_index)
+                                        .collect::<String>()
+                                        + "…"
+                                        + second_part_text;
+                                    completion_label =
+                                        completion_label.with_text(completion_label_text.clone());
+
+                                    if let Ok(layout_line) =
+                                        completion_label.layout_line(font_size, cx)
+                                    {
+                                        let combined_width =
+                                            layout_line.x_for_index(completion_label_text.len());
+                                        if combined_width > max_completion_len {
+                                            if let Some(type_annotation_truncation_index) =
+                                                layout_line.index_for_x(
+                                                    max_completion_len - ellipsis_width.width,
+                                                )
+                                            {
+                                                completion_label_text = completion_label_text
+                                                    .chars()
+                                                    .take(type_annotation_truncation_index - 2)
+                                                    .collect::<String>()
+                                                    + "…";
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            actual_width = completion_layout_line.width;
+                        }
+                    }
+                }
+            }
+        };
+
+        // Recompute syntax highlighting.
+        completion.label.text = completion_label_text.clone();
+        if inline_documentation_exists {
+            completion.label.filter_range.end = completion_label_text.len();
+            for run in completion.label.runs.iter_mut() {
+                if run.0.start == 0 {
+                    run.0.start = 0;
+                    run.0.end = completion_label_text.len();
+                }
+            }
+        } else {
+            completion.label.filter_range.end = variable_name_end;
+            for run in completion.label.runs.iter_mut() {
+                if run.0.start == 0 {
+                    run.0.start = 0;
+                    run.0.end = variable_name_end;
+                } else {
+                    run.0.start = (run.0.start as i32 - variable_name_length_truncated) as usize;
+                    run.0.end = (run.0.end as i32 - variable_name_length_truncated) as usize;
+                }
+            }
+        }
+        let highlights = gpui::combine_highlights(
+            mat.ranges().map(|range| (range, FontWeight::NORMAL.into())),
+            styled_runs_for_code_label(&completion.label, &style.syntax).map(
+                |(range, mut highlight)| {
+                    // Ignore font weight for syntax highlighting, as we'll use it
+                    // for fuzzy matches.
+                    highlight.font_weight = None;
+                    (range, highlight)
+                },
+            ),
+        );
+
+        let completion_label =
+            StyledText::new(completion_label_text).with_highlights(&style.text, highlights);
+
+        let documentation_style = style.clone().text;
+        let documentation_highlight_style = HighlightStyle {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        };
+        let documentation_highlights = vec![(
+            Range {
+                start: 0,
+                end: documentation_text.len(),
+            },
+            documentation_highlight_style,
+        )];
+
+        let documentation_label = StyledText::new(documentation_text)
+            .with_highlights(&documentation_style, documentation_highlights);
+        (actual_width, completion_label, documentation_label)
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
@@ -1471,6 +1756,9 @@ impl Editor {
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
+            show_git_blame: false,
+            blame: None,
+            blame_subscription: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1616,6 +1904,10 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
+            show_git_blame: self
+                .blame
+                .as_ref()
+                .map_or(false, |blame| blame.read(cx).has_generated_entries()),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -3286,7 +3578,7 @@ impl Editor {
             .text_anchor_for_position(position, cx)?;
 
         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
-        // hence we do LSP request & edit on host side only — add formats to host's history.
+        // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
         let push_to_client_history = project.read(cx).is_remote();
@@ -3742,19 +4034,17 @@ impl Editor {
             let actions = if let Ok(code_actions) = project.update(&mut cx, |project, cx| {
                 project.code_actions(&start_buffer, start..end, cx)
             }) {
-                code_actions.await.log_err()
+                code_actions.await
             } else {
-                None
+                Vec::new()
             };
 
             this.update(&mut cx, |this, cx| {
-                this.available_code_actions = actions.and_then(|actions| {
-                    if actions.is_empty() {
-                        None
-                    } else {
-                        Some((start_buffer, actions.into()))
-                    }
-                });
+                this.available_code_actions = if actions.is_empty() {
+                    None
+                } else {
+                    Some((start_buffer, actions.into()))
+                };
                 cx.notify();
             })
             .log_err();
@@ -7654,7 +7944,7 @@ impl Editor {
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
                                 s.select_ranges([range]);
                             });
                         } else {
@@ -7674,7 +7964,7 @@ impl Editor {
                                     // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
                                     target_editor.change_selections(
-                                        Some(Autoscroll::fit()),
+                                        Some(Autoscroll::focused()),
                                         cx,
                                         |s| {
                                             s.select_ranges([range]);
@@ -8832,9 +9122,42 @@ impl Editor {
         }
     }
 
-    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        use git::permalink::{build_permalink, BuildPermalinkParams};
+    pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
+        if !self.show_git_blame {
+            if let Err(error) = self.show_git_blame_internal(cx) {
+                log::error!("failed to toggle on 'git blame': {}", error);
+                return;
+            }
+            self.show_git_blame = true
+        } else {
+            self.blame_subscription.take();
+            self.blame.take();
+            self.show_git_blame = false
+        }
 
+        cx.notify();
+    }
+
+    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
+        if let Some(project) = self.project.as_ref() {
+            let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+                anyhow::bail!("git blame not available in multi buffers")
+            };
+
+            let project = project.clone();
+            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+            self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
+            self.blame = Some(blame);
+        }
+
+        Ok(())
+    }
+
+    pub fn blame(&self) -> Option<&Model<GitBlame>> {
+        self.blame.as_ref()
+    }
+
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         let (path, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
             let project = project_handle.read(cx);
@@ -8867,7 +9190,12 @@ impl Editor {
             remote_url: &origin_url,
             sha: &sha,
             path: &path,
-            selection: selection.map(|selection| selection.range()),
+            selection: selection.map(|selection| {
+                let range = selection.range();
+                let start = range.start.row;
+                let end = range.end.row;
+                start..end
+            }),
         })
     }
 
@@ -9320,7 +9648,9 @@ impl Editor {
                     }
                 }
 
-                let Some(project) = &self.project else { return };
+                let Some(project) = &self.project else {
+                    return;
+                };
                 let telemetry = project.read(cx).client().telemetry().clone();
                 telemetry.log_edit_event("editor");
             }
@@ -9450,6 +9780,7 @@ impl Editor {
         path: ProjectPath,
         position: Point,
         anchor: language::Anchor,
+        offset_from_top: u32,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace();
@@ -9477,9 +9808,13 @@ impl Editor {
                 };
 
                 let nav_history = editor.nav_history.take();
-                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                    s.select_ranges([cursor..cursor]);
-                });
+                editor.change_selections(
+                    Some(Autoscroll::top_relative(offset_from_top as usize)),
+                    cx,
+                    |s| {
+                        s.select_ranges([cursor..cursor]);
+                    },
+                );
                 editor.nav_history = nav_history;
 
                 anyhow::Ok(())
@@ -9982,7 +10317,12 @@ impl EditorSnapshot {
             0.0.into()
         };
 
-        let left_padding = if gutter_settings.code_actions {
+        let git_blame_entries_width = self
+            .show_git_blame
+            .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
+
+        let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
+        left_padding += if gutter_settings.code_actions {
             em_width * 3.0
         } else if show_git_gutter && gutter_settings.line_numbers {
             em_width * 2.0
@@ -10007,6 +10347,7 @@ impl EditorSnapshot {
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
+            git_blame_entries_width,
         }
     }
 }

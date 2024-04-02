@@ -1,4 +1,5 @@
 name = "Vue.js"
+code_fence_block_name = "vue"
 grammar = "vue"
 path_suffixes = ["vue"]
 block_comment = ["<!-- ", " -->"]

@@ -34,6 +34,7 @@ use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
+use theme::ActiveTheme;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -104,6 +105,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         is_movable: true,
         display_id: display.map(|display| display.id()),
         fullscreen: false,
+        window_background: cx.theme().window_background_appearance(),
     }
 }
 
