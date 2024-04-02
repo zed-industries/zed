@@ -13,9 +13,9 @@ use picker::{
 use project::{Inventory, ProjectPath, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{
-    div, v_flex, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _,
-    IconButton, IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce,
-    Selectable, Tooltip, WindowContext,
+    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, IconButton,
+    IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
+    Tooltip, WindowContext,
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
@@ -102,7 +102,7 @@ impl TasksModalDelegate {
             let oneshot_source = inventory.source::<OneshotSource>()?;
             let task_id = task.id();
 
-            oneshot_source.update(cx, |this, cx| {
+            oneshot_source.update(cx, |this, _| {
                 let oneshot_source = this.as_any().downcast_mut::<OneshotSource>()?;
                 oneshot_source.remove(task_id);
                 Some(())
@@ -304,7 +304,7 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, task) = &candidates[hit.candidate_id];
+        let (source_kind, _) = &candidates[hit.candidate_id];
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
             TaskSourceKind::Buffer => "language extension".to_string(),
