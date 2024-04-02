@@ -557,6 +557,7 @@ impl DirectWriteState {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             return Err(anyhow!("glyph bounds are empty"));
         }
+
         let font_info = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [glyph_bounds.size.width.0 as f32];
@@ -566,7 +567,7 @@ impl DirectWriteState {
         }];
         let glyph_run = DWRITE_GLYPH_RUN {
             fontFace: ManuallyDrop::new(Some(
-                // TODO: remove this clone😀
+                // TODO: remove this clone
                 <IDWriteFontFace3 as Clone>::clone(&font_info.font_face).into(),
             )),
             fontEmSize: params.font_size.0,
@@ -578,138 +579,119 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
+        // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
+        let mut bitmap_size = glyph_bounds.size;
+        if params.subpixel_variant.x > 0 {
+            bitmap_size.width += DevicePixels(1);
+        }
+        if params.subpixel_variant.y > 0 {
+            bitmap_size.height += DevicePixels(1);
+        }
+        let bitmap_size = bitmap_size;
+        let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
+        let transform = DWRITE_MATRIX {
+            m11: params.scale_factor,
+            m12: 0.0,
+            m21: 0.0,
+            m22: params.scale_factor,
+            dx: 0.0,
+            dy: 0.0,
+        };
+
         unsafe {
+            let bitmap_render_target = self.components.gdi.CreateBitmapRenderTarget(
+                None,
+                bitmap_size.width.0 as u32,
+                bitmap_size.height.0 as u32,
+            )?;
+            let bitmap_render_target: IDWriteBitmapRenderTarget3 =
+                std::mem::transmute(bitmap_render_target);
+            let render_params = self.components.factory.CreateRenderingParams()?;
+            let subpixel_shift = params
+                .subpixel_variant
+                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+
             if params.is_emoji {
-                let bitmap_size = glyph_bounds.size;
-                let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
+                // NOTE: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
+                let enumerator = self.components.factory.TranslateColorGlyphRun2(
+                    D2D_POINT_2F {
+                        x: (subpixel_shift.x / params.scale_factor) as f32,
+                        y: (subpixel_shift.y / params.scale_factor) as f32,
+                    },
+                    &glyph_run as _,
+                    None,
+                    DWRITE_GLYPH_IMAGE_FORMATS_COLR
+                        | DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                    Some(&transform as _),
+                    0,
+                )?;
 
-                let transform = DWRITE_MATRIX {
-                    m11: params.scale_factor,
-                    m12: 0.0,
-                    m21: 0.0,
-                    m22: params.scale_factor,
-                    dx: 0.0,
-                    dy: 0.0,
-                };
-                println!("Rastering: {:?}", glyph_bounds);
-
-                let enumerator = self
-                    .components
-                    .factory
-                    .TranslateColorGlyphRun2(
-                        D2D_POINT_2F { x: 0.0, y: 0.0 },
-                        &glyph_run as _,
-                        None,
-                        DWRITE_GLYPH_IMAGE_FORMATS_COLR,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                        Some(&transform as _),
-                        0,
-                    )
-                    .unwrap();
-
-                // let current_transform = DWRITE_MATRIX {
-                //     m11: 1.0,
-                //     m12: 0.0,
-                //     m21: 0.0,
-                //     m22: 1.0,
-                //     dx: (-glyph_bounds.origin.x.0 as f32) / params.scale_factor,
-                //     // dy: ((glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) / 2) as f32,
-                //     dy: glyph_bounds.origin.y.0 as f32 / params.scale_factor
-                //         + glyph_bounds.size.height.0 as f32,
-                // };
-                let bitmap_render_target = self
-                    .components
-                    .gdi
-                    .CreateBitmapRenderTarget(
-                        None,
-                        bitmap_size.width.0 as u32,
-                        bitmap_size.height.0 as u32,
-                    )
-                    .unwrap();
-                let bitmap_render_target: IDWriteBitmapRenderTarget3 =
-                    std::mem::transmute(bitmap_render_target);
-                // bitmap_render_target
-                //     .SetCurrentTransform(Some(&current_transform))
-                //     .unwrap();
-
-                let render_params = self.components.factory.CreateRenderingParams()?;
-                // bitmap_render_target
-                //     .DrawGlyphRunWithColorSupport(
-                //         0.0,
-                //         0.0,
-                //         DWRITE_MEASURING_MODE_NATURAL,
-                //         &glyph_run,
-                //         &render_params,
-                //         COLORREF(0x77777777),
-                //         0,
-                //         None,
-                //     )
-                //     .inspect_err(|e| {
-                //         println!("Error: {}, msg: {}", e, std::io::Error::last_os_error())
-                //     });
-
-                let mut printed = true;
                 while enumerator.MoveNext().is_ok() {
                     let Ok(run) = enumerator.GetCurrentRun2() else {
                         break;
                     };
                     let emoji = &*run;
-                    if printed {
-                        printed = false;
-                        println!("Glyph advance: {:?}", *emoji.Base.glyphRun.glyphAdvances);
-                        println!("Glyph offset: {:?}", *emoji.Base.glyphRun.glyphOffsets);
-                    }
-                    bitmap_render_target
-                        .DrawGlyphRun(
-                            0.0,
-                            // glyph_bounds.size.height.0 as f32 / 2.0,
-                            0.0,
+                    match emoji.glyphImageFormat {
+                        DWRITE_GLYPH_IMAGE_FORMATS_COLR => bitmap_render_target.DrawGlyphRun(
+                            (subpixel_shift.x / params.scale_factor) as f32,
+                            (subpixel_shift.y / params.scale_factor) as f32,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
                             translate_color(&emoji.Base.runColor),
                             None,
-                        )
-                        .unwrap();
+                        ),
+                        _ => bitmap_render_target.DrawGlyphRunWithColorSupport(
+                            (subpixel_shift.x / params.scale_factor) as f32,
+                            (subpixel_shift.y / params.scale_factor) as f32,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                            &emoji.Base.glyphRun,
+                            &render_params,
+                            translate_color(&emoji.Base.runColor),
+                            emoji.Base.paletteIndex as _,
+                            None,
+                        ),
+                    }?;
                 }
 
                 let mut raw_bytes = vec![0u8; total_bytes];
-                let bitmap_data = bitmap_render_target.GetBitmapData().unwrap();
+                let bitmap_data = bitmap_render_target.GetBitmapData()?;
                 let raw_u32 = std::slice::from_raw_parts(bitmap_data.pixels, total_bytes / 4);
                 for (bytes, color) in raw_bytes.chunks_exact_mut(4).zip(raw_u32.iter()) {
-                    bytes[3] = 0xFF;
                     if *color == 0 {
                         continue;
                     }
                     bytes[0] = (color >> 16 & 0xFF) as u8;
                     bytes[1] = (color >> 8 & 0xFF) as u8;
                     bytes[2] = (color & 0xFF) as u8;
+                    bytes[3] = 0xFF;
                 }
                 Ok((bitmap_size, raw_bytes))
             } else {
-                let bitmap_size = glyph_bounds.size;
-
-                let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
-                let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 3;
-                let texture_bounds = RECT {
-                    left: glyph_bounds.left().0,
-                    top: glyph_bounds.top().0,
-                    right: glyph_bounds.right().0,
-                    bottom: glyph_bounds.bottom().0,
-                };
-                let mut result = vec![0u8; total_bytes];
-                glyph_run_analysis.CreateAlphaTexture(
-                    DWRITE_TEXTURE_CLEARTYPE_3x1,
-                    &texture_bounds as _,
-                    &mut result,
+                bitmap_render_target.DrawGlyphRun(
+                    (subpixel_shift.x / params.scale_factor) as f32,
+                    (subpixel_shift.y / params.scale_factor) as f32,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                    &glyph_run,
+                    &render_params,
+                    COLORREF(0xFFFFFFFF),
+                    None,
                 )?;
-                let mut bitmap_rawdata =
-                    vec![0u8; bitmap_size.height.0 as usize * bitmap_size.width.0 as usize];
-                for (chunk, num) in result.chunks_exact(3).zip(bitmap_rawdata.iter_mut()) {
-                    let sum: u32 = chunk.iter().map(|&x| x as u32).sum();
-                    *num = (sum / 3) as u8;
+                let mut raw_bytes = vec![0u8; total_bytes / 4];
+                let bitmap_data = bitmap_render_target.GetBitmapData()?;
+                let raw_u32 = std::slice::from_raw_parts(bitmap_data.pixels, total_bytes / 4);
+                for (byte, color) in raw_bytes.iter_mut().zip(raw_u32.iter()) {
+                    if *color == 0 {
+                        continue;
+                    }
+                    *byte =
+                        (((color & 0xFF) + (color >> 8 & 0xFF) + (color >> 16 & 0xFF)) / 3) as u8;
                 }
-                Ok((bitmap_size, bitmap_rawdata))
+
+                Ok((bitmap_size, raw_bytes))
             }
         }
     }
