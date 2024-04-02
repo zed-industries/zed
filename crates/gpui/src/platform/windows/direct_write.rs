@@ -51,6 +51,7 @@ use crate::{
     ShapedGlyph, ShapedRun, Size, SUBPIXEL_VARIANTS,
 };
 
+#[derive(Debug)]
 struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
@@ -178,6 +179,12 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        println!("===========================================================");
+        println!("fonts: {:?}", self.0.read().font_selections);
+        println!("fonts: {:?}", self.0.read().fonts);
+        println!("fonts: {:?}", self.0.read().font_id_by_postscript_name);
+        println!("fonts: {:?}", self.0.read().font_sets);
+        println!("===========================================================");
         self.0.write().layout_line(text, font_size, runs)
     }
 
@@ -229,168 +236,70 @@ impl DirectWriteState {
         Ok(())
     }
 
+    unsafe fn match_font_from_font_sets(
+        &mut self,
+        family_name: String,
+        font_weight: FontWeight,
+        font_style: FontStyle,
+        features: &FontFeatures,
+    ) -> Option<FontId> {
+        for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
+            let font = fontset
+                .GetMatchingFonts(
+                    &HSTRING::from(&family_name),
+                    DWRITE_FONT_WEIGHT(font_weight.0 as i32),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL,
+                )
+                .unwrap();
+            let total_number = font.GetFontCount();
+            for _ in 0..total_number {
+                let font_face_ref = font.GetFontFaceReference(0).unwrap();
+                let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
+                    continue;
+                };
+                let Some(postscript_name) = get_postscript_name(&font_face) else {
+                    continue;
+                };
+                let is_emoji = font_face.IsColorFont().as_bool();
+                let font_info = FontInfo {
+                    font_family: family_name,
+                    font_face,
+                    font_set_index: fontset_index,
+                    features: direct_write_features(features),
+                    is_emoji,
+                };
+                let font_id = FontId(self.fonts.len());
+                self.fonts.push(font_info);
+                self.font_id_by_postscript_name
+                    .insert(postscript_name, font_id);
+                return Some(font_id);
+            }
+        }
+        None
+    }
+
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
-            for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
-                let font = fontset
-                    .GetMatchingFonts(
-                        &HSTRING::from(target_font.family.to_string()),
-                        // DWRITE_FONT_WEIGHT(target_font.weight.0 as _),
-                        DWRITE_FONT_WEIGHT_NORMAL,
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        DWRITE_FONT_STYLE_NORMAL,
-                    )
-                    .unwrap();
-                let total_number = font.GetFontCount();
-                for _ in 0..total_number {
-                    let font_face_ref = font.GetFontFaceReference(0).unwrap();
-                    let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
-                        continue;
-                    };
-                    let Some(postscript_name) = get_postscript_name(&font_face) else {
-                        continue;
-                    };
-                    let font_family = target_font.family.to_string();
-                    let is_emoji = font_face.IsColorFont().as_bool();
-                    println!("post: {}, emoji: {}", postscript_name, is_emoji);
-                    let font_info = FontInfo {
-                        font_family,
-                        font_face,
-                        font_set_index: fontset_index,
-                        features: direct_write_features(&target_font.features),
-                        is_emoji,
-                    };
-                    let font_id = FontId(self.fonts.len());
-                    self.fonts.push(font_info);
-                    return Some(font_id);
-                }
-            }
-            None
+            self.match_font_from_font_sets(
+                target_font.family.to_string(),
+                target_font.weight,
+                target_font.style,
+                &target_font.features,
+            )
         }
     }
 
     fn select_font_by_family(&mut self, family: String) -> Option<FontId> {
         unsafe {
-            for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
-                let font = fontset
-                    .GetMatchingFonts(
-                        &HSTRING::from(&family),
-                        DWRITE_FONT_WEIGHT_NORMAL,
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        DWRITE_FONT_STYLE_NORMAL,
-                    )
-                    .unwrap();
-                let total_number = font.GetFontCount();
-                for _ in 0..total_number {
-                    let font_face_ref = font.GetFontFaceReference(0).unwrap();
-                    let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
-                        continue;
-                    };
-                    let Some(postscript_name) = get_postscript_name(&font_face) else {
-                        continue;
-                    };
-                    let is_emoji = font_face.IsColorFont().as_bool();
-                    println!("post: {}, emoji: {}", postscript_name, is_emoji);
-                    let font_info = FontInfo {
-                        font_family: family,
-                        font_face,
-                        font_set_index: fontset_index,
-                        features: Vec::new(),
-                        is_emoji,
-                    };
-                    let font_id = FontId(self.fonts.len());
-                    self.fonts.push(font_info);
-                    return Some(font_id);
-                }
-            }
-            None
+            self.match_font_from_font_sets(
+                family,
+                FontWeight::NORMAL,
+                FontStyle::Normal,
+                &FontFeatures::default(),
+            )
         }
     }
-
-    // unsafe fn calculate_line_metrics(
-    //     &mut self,
-    //     index_start: &mut usize,
-    //     ascent: &mut f32,
-    //     descent: &mut f32,
-    //     font_set_index: usize,
-    //     font_family_name: String,
-    //     font_size: f32,
-    //     locale_name: PCWSTR,
-    //     text_wide: &[u16],
-    //     font_weight: DWRITE_FONT_WEIGHT,
-    //     font_style: DWRITE_FONT_STYLE,
-    // ) -> (f32, Vec<ShapedRun>) {
-    //     let collection = {
-    //         let font_set = &self.font_sets[font_set_index];
-    //         self.components
-    //             .factory
-    //             .CreateFontCollectionFromFontSet(font_set)
-    //             .unwrap()
-    //     };
-    //     let format = self
-    //         .components
-    //         .factory
-    //         .CreateTextFormat(
-    //             &HSTRING::from(&font_family_name),
-    //             &collection,
-    //             font_weight,
-    //             font_style,
-    //             DWRITE_FONT_STRETCH_NORMAL,
-    //             font_size,
-    //             locale_name,
-    //         )
-    //         .unwrap();
-    //     let layout = self
-    //         .components
-    //         .factory
-    //         .CreateTextLayout(text_wide, &format, f32::INFINITY, f32::INFINITY)
-    //         .unwrap();
-
-    //     let renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
-    //     let renderer: IDWriteTextRenderer =
-    //         TextRenderer::new(renderer_inner.clone(), locale_name).into();
-    //     layout.Draw(None, &renderer, 0.0, 0.0).unwrap();
-
-    //     let mut position = 0.0f32;
-    //     let mut shaped_run = Vec::new();
-    //     for (postscript_name, family_name, result) in renderer_inner.read().results.iter() {
-    //         let font_info;
-    //         let font_id;
-    //         if let Some(id) = self.font_id_by_postscript_name.get(postscript_name) {
-    //             font_id = *id;
-    //         } else {
-    //             font_id = self.select_font_by_family(family_name.clone()).unwrap();
-    //         }
-    //         font_info = &self.fonts[font_id.0];
-    //         let mut glyph_runs = SmallVec::new();
-    //         for glyph in result {
-    //             glyph_runs.push(ShapedGlyph {
-    //                 id: glyph.id,
-    //                 position: point(px(position), px(0.0)),
-    //                 index: *index_start,
-    //                 is_emoji: font_info.is_emoji,
-    //             });
-    //             *index_start += 1;
-    //             position += glyph.advance;
-    //         }
-    //         shaped_run.push(ShapedRun {
-    //             font_id,
-    //             glyphs: glyph_runs,
-    //         });
-    //     }
-
-    //     let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
-    //     let mut line_count = 0u32;
-    //     layout
-    //         .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
-    //         .unwrap();
-    //     *ascent = metrics[0].baseline;
-    //     *descent = metrics[0].height - metrics[0].baseline;
-
-    //     (position, shaped_run)
-    // }
-
-    // unsafe fn set_layout(&self, font_run: &FontRun, font_info: &FontInfo, offset: &mut usize, wstring_offset: &mut u32) {}
 
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         if font_runs.is_empty() {
@@ -458,13 +367,7 @@ impl DirectWriteState {
 
             let mut first_run = true;
             for run in font_runs {
-                // if run.len == 0 {
-                //     continue;
-                // }
                 if first_run {
-                    //     let first_str = &text[offset..(offset + run.len)];
-                    //     let first_wstring = first_str.encode_utf16().collect_vec();
-                    //     wstring_offset += first_wstring.len() as u32;
                     first_run = false;
                     continue;
                 }
@@ -497,21 +400,6 @@ impl DirectWriteState {
                     features.AddFontFeature(*x).unwrap();
                 }
                 text_layout.SetTypography(&features, text_range).unwrap();
-
-                // let (position, result) = self.calculate_line_metrics(
-                //     &mut index,
-                //     &mut ascent,
-                //     &mut descent,
-                //     font_set_index,
-                //     font_family_name.clone(),
-                //     font_size.0,
-                //     locale_name,
-                //     &text_wide,
-                //     font_weight,
-                //     font_style,
-                // );
-                // glyph_position += position;
-                // shaped_runs_vec.extend(result);
             }
 
             let renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
@@ -638,77 +526,6 @@ impl DirectWriteState {
         )
     }
 
-    // unsafe fn get_glyphrun_analysis(
-    //     &self,
-    //     params: &RenderGlyphParams,
-    // ) -> windows::core::Result<Vec<u8>> {
-    //     let font = &self.fonts[params.font_id.0];
-    //     let glyph_id = [params.glyph_id.0 as u16];
-    //     let advance = [0.0f32];
-    //     let offset = [DWRITE_GLYPH_OFFSET::default()];
-    //     let glyph_run = DWRITE_GLYPH_RUN {
-    //         fontFace: ManuallyDrop::new(Some(
-    //             // TODO: remove this clone😀
-    //             <IDWriteFontFace3 as Clone>::clone(&font.font_face).into(),
-    //         )),
-    //         fontEmSize: params.font_size.0,
-    //         glyphCount: 1,
-    //         glyphIndices: glyph_id.as_ptr(),
-    //         glyphAdvances: advance.as_ptr(),
-    //         glyphOffsets: offset.as_ptr(),
-    //         isSideways: BOOL(0),
-    //         bidiLevel: 0,
-    //     };
-    //     let transform = DWRITE_MATRIX {
-    //         m11: params.scale_factor,
-    //         m12: 0.0,
-    //         m21: 0.0,
-    //         m22: params.scale_factor,
-    //         dx: 0.0,
-    //         dy: 0.0,
-    //     };
-    //     if params.is_emoji {
-    //         let enumerator = self.components.factory.TranslateColorGlyphRun(
-    //             0.0,
-    //             0.0,
-    //             &glyph_run as _,
-    //             None,
-    //             DWRITE_MEASURING_MODE_NATURAL,
-    //             Some(&transform as _),
-    //             0,
-    //         )?;
-    //         enumerator.MoveNext().unwrap();
-    //         let run = enumerator.GetCurrentRun()?;
-    //         let emoji = &*run;
-    //         let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
-    //             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-    //             pixelFormat: D2D1_PIXEL_FORMAT {
-    //                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
-    //                 alphaMode: D2D1_ALPHA_MODE_STRAIGHT,
-    //             },
-    //             dpiX: 96.0,
-    //             dpiY: 96.0,
-    //             usage: D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
-    //             minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-    //         };
-    //         Ok(self
-    //             .components
-    //             .d2d1_factory
-    //             .CreateDCRenderTarget(&render_target_properties)?)
-    //     } else {
-    //         self.components.factory.CreateGlyphRunAnalysis(
-    //             &glyph_run as _,
-    //             1.0,
-    //             Some(&transform as _),
-    //             // None,
-    //             DWRITE_RENDERING_MODE_NATURAL,
-    //             DWRITE_MEASURING_MODE_NATURAL,
-    //             0.0,
-    //             0.0,
-    //         );
-    //     }
-    // }
-
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         unsafe {
             let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
@@ -731,14 +548,13 @@ impl DirectWriteState {
         let font_info = &self.fonts[font_id.0];
         let codepoints = [ch as u32];
         let mut glyph_indices = vec![0u16; 1];
-        let ret = unsafe {
+        unsafe {
             font_info
                 .font_face
                 .GetGlyphIndices(codepoints.as_ptr(), 1, glyph_indices.as_mut_ptr())
                 .log_err()
         }
-        .map(|_| GlyphId(glyph_indices[0] as u32));
-        ret
+        .map(|_| GlyphId(glyph_indices[0] as u32))
     }
 
     fn rasterize_glyph(
