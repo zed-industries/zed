@@ -75,6 +75,13 @@ impl OneshotSource {
             new_oneshot
         }
     }
+    /// Removes a task with a given ID from this source.
+    pub fn remove(&mut self, id: &TaskId) {
+        let position = self.tasks.iter().position(|task| task.id() == id);
+        if let Some(position) = position {
+            self.tasks.remove(position);
+        }
+    }
 }
 
 impl TaskSource for OneshotSource {

@@ -12,7 +12,11 @@ use picker::{
 };
 use project::{Inventory, ProjectPath, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
-use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
+use ui::{
+    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, IconButton,
+    IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
+    Tooltip, WindowContext,
+};
 use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
 
@@ -83,6 +87,29 @@ impl TasksModalDelegate {
             })
     }
 
+    fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
+        let Some(candidates) = self.candidates.as_mut() else {
+            return;
+        };
+        let Some(task) = candidates.get(ix).map(|(_, task)| task.clone()) else {
+            return;
+        };
+        // We remove this candidate manually instead of .taking() the candidates, as we already know the index;
+        // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
+        // the original list without a removed entry.
+        candidates.remove(ix);
+        self.inventory.update(cx, |inventory, cx| {
+            let oneshot_source = inventory.source::<OneshotSource>()?;
+            let task_id = task.id();
+
+            oneshot_source.update(cx, |this, _| {
+                let oneshot_source = this.as_any().downcast_mut::<OneshotSource>()?;
+                oneshot_source.remove(task_id);
+                Some(())
+            });
+            Some(())
+        });
+    }
     fn active_item_path(
         workspace: &WeakView<Workspace>,
         cx: &mut ViewContext<'_, Picker<Self>>,
@@ -302,6 +329,29 @@ impl PickerDelegate for TasksModalDelegate {
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
+                .map(|this| {
+                    if matches!(source_kind, TaskSourceKind::UserInput) {
+                        let task_index = hit.candidate_id;
+                        let delete_button = div().child(
+                            IconButton::new("delete", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .size(ButtonSize::None)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(move |this, _event, cx| {
+                                    cx.stop_propagation();
+                                    cx.prevent_default();
+
+                                    this.delegate.delete_oneshot(task_index, cx);
+                                    this.refresh(cx);
+                                }))
+                                .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
+                        );
+                        this.end_hover_slot(delete_button)
+                    } else {
+                        this
+                    }
+                })
                 .selected(selected)
                 .child(highlighted_location.render(cx)),
         )
