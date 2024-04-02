@@ -1,5 +1,5 @@
 use crate::{
-    CodeAction, Completion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
 };
@@ -10,7 +10,7 @@ use futures::future;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind},
-    point_from_lsp, point_to_lsp, prepare_completion_documentation,
+    point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -1426,7 +1426,7 @@ impl LspCommand for GetHover {
 
 #[async_trait(?Send)]
 impl LspCommand for GetCompletions {
-    type Response = Vec<Completion>;
+    type Response = Vec<CoreCompletion>;
     type LspRequest = lsp::request::Completion;
     type ProtoRequest = proto::GetCompletions;
 
@@ -1455,7 +1455,7 @@ impl LspCommand for GetCompletions {
         buffer: Model<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<Completion>> {
+    ) -> Result<Self::Response> {
         let mut response_list = None;
         let mut completions = if let Some(completions) = completions {
             match completions {
@@ -1574,57 +1574,23 @@ impl LspCommand for GetCompletions {
             });
         })?;
 
-        let language = buffer.read_with(&cx, |buffer, _| buffer.language().cloned())?;
-        let language_registry = project.read_with(&cx, |project, _| project.languages().clone())?;
+        language_server_adapter
+            .process_completions(&mut completions)
+            .await;
 
-        let labels = if let Some(language) = &language {
-            language_server_adapter
-                .process_completions(&mut completions)
-                .await;
-            language_server_adapter
-                .labels_for_completions(&completions, language)
-                .await
-        } else {
-            Vec::new()
-        };
-
-        let mut result = Vec::new();
-        for ((lsp_completion, (old_range, mut new_text)), label) in completions
+        Ok(completions
             .into_iter()
             .zip(completion_edits)
-            .zip(labels.into_iter().chain(std::iter::repeat(None)))
-        {
-            LineEnding::normalize(&mut new_text);
-
-            let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
-                Some(
-                    prepare_completion_documentation(
-                        lsp_docs,
-                        &language_registry,
-                        language.clone(),
-                    )
-                    .await,
-                )
-            } else {
-                None
-            };
-
-            result.push(Completion {
-                old_range,
-                new_text,
-                label: label.unwrap_or_else(|| {
-                    language::CodeLabel::plain(
-                        lsp_completion.label.clone(),
-                        lsp_completion.filter_text.as_deref(),
-                    )
-                }),
-                documentation,
-                server_id,
-                lsp_completion,
+            .map(|(lsp_completion, (old_range, mut new_text))| {
+                LineEnding::normalize(&mut new_text);
+                CoreCompletion {
+                    old_range,
+                    new_text,
+                    server_id,
+                    lsp_completion,
+                }
             })
-        }
-
-        Ok(result)
+            .collect())
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCompletions {
@@ -1660,7 +1626,7 @@ impl LspCommand for GetCompletions {
     }
 
     fn response_to_proto(
-        completions: Vec<Completion>,
+        completions: Vec<CoreCompletion>,
         _: &mut Project,
         _: PeerId,
         buffer_version: &clock::Global,
@@ -1678,22 +1644,21 @@ impl LspCommand for GetCompletions {
     async fn response_from_proto(
         self,
         message: proto::GetCompletionsResponse,
-        project: Model<Project>,
+        _project: Model<Project>,
         buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<Completion>> {
+    ) -> Result<Self::Response> {
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
 
-        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
-        let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
-        let completions = message.completions.into_iter().map(|completion| {
-            Project::deserialize_completion(completion, language.clone(), &language_registry)
-        });
-        future::try_join_all(completions).await
+        message
+            .completions
+            .into_iter()
+            .map(Project::deserialize_completion)
+            .collect()
     }
 
     fn buffer_id_from_proto(message: &proto::GetCompletions) -> Result<BufferId> {

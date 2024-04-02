@@ -39,7 +39,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
-    markdown, point_to_lsp,
+    markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_version, split_operations,
@@ -79,7 +79,7 @@ use std::{
     env,
     ffi::OsStr,
     hash::Hash,
-    io, mem,
+    io, iter, mem,
     num::NonZeroU32,
     ops::Range,
     path::{self, Component, Path, PathBuf},
@@ -389,6 +389,15 @@ pub struct Completion {
     pub documentation: Option<Documentation>,
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
+}
+
+/// A completion provided by a language server
+#[derive(Clone, Debug)]
+struct CoreCompletion {
+    old_range: Range<Anchor>,
+    new_text: String,
+    server_id: LanguageServerId,
+    lsp_completion: lsp::CompletionItem,
 }
 
 /// A code action provided by a language server.
@@ -5313,10 +5322,13 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
+        let language_registry = self.languages.clone();
+
         if self.is_local() {
             let snapshot = buffer.read(cx).snapshot();
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
+            let language = snapshot.language().cloned();
 
             let server_ids: Vec<_> = self
                 .language_servers_for_buffer(buffer.read(cx), cx)
@@ -5335,30 +5347,64 @@ impl Project {
                 let mut tasks = Vec::with_capacity(server_ids.len());
                 this.update(&mut cx, |this, cx| {
                     for server_id in server_ids {
-                        tasks.push(this.request_lsp(
-                            buffer.clone(),
-                            LanguageServerToQuery::Other(server_id),
-                            GetCompletions { position },
-                            cx,
+                        let lsp_adapter = this.language_server_adapter_for_id(server_id);
+                        tasks.push((
+                            lsp_adapter,
+                            this.request_lsp(
+                                buffer.clone(),
+                                LanguageServerToQuery::Other(server_id),
+                                GetCompletions { position },
+                                cx,
+                            ),
                         ));
                     }
                 })?;
 
                 let mut completions = Vec::new();
-                for task in tasks {
+                for (lsp_adapter, task) in tasks {
                     if let Ok(new_completions) = task.await {
-                        completions.extend_from_slice(&new_completions);
+                        populate_labels_for_completions(
+                            new_completions,
+                            &language_registry,
+                            language.clone(),
+                            lsp_adapter,
+                            &mut completions,
+                        )
+                        .await;
                     }
                 }
 
                 Ok(completions)
             })
         } else if let Some(project_id) = self.remote_id() {
-            self.send_lsp_proto_request(buffer.clone(), project_id, GetCompletions { position }, cx)
+            let task = self.send_lsp_proto_request(
+                buffer.clone(),
+                project_id,
+                GetCompletions { position },
+                cx,
+            );
+            let language = buffer.read(cx).language().cloned();
+            let lsp_adapter = language
+                .as_ref()
+                .and_then(|language| language_registry.lsp_adapters(language).first().cloned());
+            cx.foreground_executor().spawn(async move {
+                let completions = task.await?;
+                let mut result = Vec::new();
+                populate_labels_for_completions(
+                    completions,
+                    &language_registry,
+                    language,
+                    lsp_adapter,
+                    &mut result,
+                )
+                .await;
+                Ok(result)
+            })
         } else {
             Task::ready(Ok(Default::default()))
         }
     }
+
     pub fn completions<T: ToOffset + ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,
@@ -5624,7 +5670,12 @@ impl Project {
                     .request(proto::ApplyCompletionAdditionalEdits {
                         project_id,
                         buffer_id: buffer_id.into(),
-                        completion: Some(Self::serialize_completion(&completion)),
+                        completion: Some(Self::serialize_completion(&CoreCompletion {
+                            old_range: completion.old_range,
+                            new_text: completion.new_text,
+                            server_id: completion.server_id,
+                            lsp_completion: completion.lsp_completion,
+                        })),
                     })
                     .await?;
 
@@ -8409,30 +8460,40 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let languages = this.update(&mut cx, |this, _| this.languages.clone())?;
-        let (buffer, completion) = this.update(&mut cx, |this, cx| {
+        let (buffer, completion) = this.update(&mut cx, |this, _| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
-            let language = buffer.read(cx).language();
             let completion = Self::deserialize_completion(
                 envelope
                     .payload
                     .completion
                     .ok_or_else(|| anyhow!("invalid completion"))?,
-                language.cloned(),
-                &languages,
-            );
-            Ok::<_, anyhow::Error>((buffer, completion))
+            )?;
+            anyhow::Ok((buffer, completion))
         })??;
 
-        let completion = completion.await?;
-
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
-            this.apply_additional_edits_for_completion(buffer, completion, false, cx)
+            this.apply_additional_edits_for_completion(
+                buffer,
+                Completion {
+                    old_range: completion.old_range,
+                    new_text: completion.new_text,
+                    lsp_completion: completion.lsp_completion,
+                    server_id: completion.server_id,
+                    documentation: None,
+                    label: CodeLabel {
+                        text: Default::default(),
+                        runs: Default::default(),
+                        filter_range: Default::default(),
+                    },
+                },
+                false,
+                cx,
+            )
         })?;
 
         Ok(proto::ApplyCompletionAdditionalEditsResponse {
@@ -9190,8 +9251,7 @@ impl Project {
         }
     }
 
-    /// Serializes a [`Completion`] to be sent over RPC.
-    pub fn serialize_completion(completion: &Completion) -> proto::Completion {
+    fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
         proto::Completion {
             old_start: Some(serialize_anchor(&completion.old_range.start)),
             old_end: Some(serialize_anchor(&completion.old_range.end)),
@@ -9201,12 +9261,7 @@ impl Project {
         }
     }
 
-    /// Deserializes a [`Completion`] from the RPC representation.
-    pub async fn deserialize_completion(
-        completion: proto::Completion,
-        language: Option<Arc<Language>>,
-        language_registry: &Arc<LanguageRegistry>,
-    ) -> Result<Completion> {
+    fn deserialize_completion(completion: proto::Completion) -> Result<CoreCompletion> {
         let old_start = completion
             .old_start
             .and_then(deserialize_anchor)
@@ -9217,32 +9272,15 @@ impl Project {
             .ok_or_else(|| anyhow!("invalid old end"))?;
         let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
 
-        let mut label = None;
-        if let Some(language) = language {
-            if let Some(adapter) = language_registry.lsp_adapters(&language).first() {
-                label = adapter
-                    .label_for_completion(&lsp_completion, &language)
-                    .await;
-            }
-        }
-
-        Ok(Completion {
+        Ok(CoreCompletion {
             old_range: old_start..old_end,
             new_text: completion.new_text,
-            label: label.unwrap_or_else(|| {
-                CodeLabel::plain(
-                    lsp_completion.label.clone(),
-                    lsp_completion.filter_text.as_deref(),
-                )
-            }),
-            documentation: None,
             server_id: LanguageServerId(completion.server_id as usize),
             lsp_completion,
         })
     }
 
-    /// Serializes a [`CodeAction`] to be sent over RPC.
-    pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
+    fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
         proto::CodeAction {
             server_id: action.server_id.0 as u64,
             start: Some(serialize_anchor(&action.range.start)),
@@ -9251,8 +9289,7 @@ impl Project {
         }
     }
 
-    /// Deserializes a [`CodeAction`] from the RPC representation.
-    pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
+    fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
         let start = action
             .start
             .and_then(deserialize_anchor)
@@ -9558,6 +9595,53 @@ impl Project {
         } else {
             Vec::new()
         }
+    }
+}
+
+async fn populate_labels_for_completions(
+    mut new_completions: Vec<CoreCompletion>,
+    language_registry: &Arc<LanguageRegistry>,
+    language: Option<Arc<Language>>,
+    lsp_adapter: Option<Arc<CachedLspAdapter>>,
+    completions: &mut Vec<Completion>,
+) {
+    let lsp_completions = new_completions
+        .iter_mut()
+        .map(|completion| mem::take(&mut completion.lsp_completion))
+        .collect::<Vec<_>>();
+
+    let labels = if let Some((language, lsp_adapter)) = language.as_ref().zip(lsp_adapter) {
+        lsp_adapter
+            .labels_for_completions(&lsp_completions, language)
+            .await
+    } else {
+        Vec::new()
+    };
+
+    for ((completion, lsp_completion), label) in new_completions
+        .into_iter()
+        .zip(lsp_completions)
+        .zip(labels.into_iter().chain(iter::repeat(None)))
+    {
+        let documentation = if let Some(docs) = &lsp_completion.documentation {
+            Some(prepare_completion_documentation(docs, &language_registry, language.clone()).await)
+        } else {
+            None
+        };
+
+        completions.push(Completion {
+            old_range: completion.old_range,
+            new_text: completion.new_text,
+            label: label.unwrap_or_else(|| {
+                CodeLabel::plain(
+                    lsp_completion.label.clone(),
+                    lsp_completion.filter_text.as_deref(),
+                )
+            }),
+            server_id: completion.server_id,
+            documentation,
+            lsp_completion,
+        })
     }
 }
 

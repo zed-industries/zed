@@ -219,16 +219,6 @@ impl CachedLspAdapter {
             .await
     }
 
-    pub async fn label_for_completion(
-        &self,
-        completion_item: &lsp::CompletionItem,
-        language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        self.adapter
-            .label_for_completion(completion_item, language)
-            .await
-    }
-
     pub async fn label_for_symbol(
         &self,
         name: &str,

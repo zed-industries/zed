@@ -10194,7 +10194,12 @@ impl CompletionProvider for Model<Project> {
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
-            project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
+            project.apply_additional_edits_for_completion(
+                buffer,
+                completion.into(),
+                push_to_history,
+                cx,
+            )
         })
     }
 }

@@ -2498,6 +2498,11 @@ impl BufferSnapshot {
             .last()
     }
 
+    /// Returns the main [Language]
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language.as_ref()
+    }
+
     /// Returns the [Language] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
         self.syntax_layer_at(position)
