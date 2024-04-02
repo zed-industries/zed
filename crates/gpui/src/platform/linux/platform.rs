@@ -23,10 +23,10 @@ use wayland_client::Connection;
 use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion,
-    Task, WindowOptions, WindowParams,
+    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CommonTextSystem, CursorStyle,
+    DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, Menu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, Task, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
