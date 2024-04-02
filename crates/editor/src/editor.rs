@@ -1085,7 +1085,7 @@ impl CompletionsMenu {
                                 };
 
                             if width_of_variable_name < max_width_of_variable_name {
-                                // Only truncate the second part.
+                                // truncate second part only
                                 if let Some(documentation_truncation_index) =
                                     documentation_layout_line.index_for_x(
                                         (max_completion_len * 0.65).min(
@@ -1103,7 +1103,7 @@ impl CompletionsMenu {
                                         + "…";
                                 }
                             } else {
-                                // Truncate the first part (and optionally the second part).
+                                // truncate first part (and optionally second part too)
                                 if let Some(variable_name_truncation_index) = completion_layout_line
                                     .index_for_x(max_width_of_variable_name - ellipsis_width.width)
                                 {
@@ -1167,12 +1167,13 @@ impl CompletionsMenu {
                                 };
 
                             if width_of_variable_name < max_width_of_variable_name {
-                                // Only truncate the second part.
+                                // truncate second part only
 
                                 if let Some(type_annotation_truncation_index) =
                                     completion_layout_line
                                         .index_for_x(max_completion_len - ellipsis_width.width)
                                 {
+                                    // variable_name_end = type_annotation_truncation_index + 2;
                                     completion_label_text = completion
                                         .label
                                         .text
@@ -1182,7 +1183,7 @@ impl CompletionsMenu {
                                         + "…";
                                 }
                             } else {
-                                // Truncate the first part (and optionally the second part).
+                                // truncate first part (and optionally second part too)
                                 if let Some(variable_name_truncation_index) = completion_layout_line
                                     .index_for_x(max_width_of_variable_name - ellipsis_width.width)
                                 {
@@ -1236,7 +1237,7 @@ impl CompletionsMenu {
             }
         };
 
-        // Recompute syntax highlighting.
+        //recompute syntax highlighting
         completion.label.text = completion_label_text.clone();
         if inline_documentation_exists {
             completion.label.filter_range.end = completion_label_text.len();
