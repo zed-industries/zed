@@ -529,7 +529,6 @@ impl DirectWriteState {
                     } else {
                         font_id = self.select_font_by_family(result.family.clone()).unwrap();
                     }
-                    let font_info = &self.fonts[font_id.0];
                     let mut glyphs = SmallVec::new();
                     for glyph in result.glyphs.iter() {
                         ix_converter.advance_to_utf16_ix(glyph.index);
@@ -537,7 +536,7 @@ impl DirectWriteState {
                             id: glyph.id,
                             position: glyph.position,
                             index: ix_converter.utf8_ix,
-                            is_emoji: font_info.is_emoji,
+                            is_emoji: result.is_emoji,
                         });
                     }
                     vec.push(ShapedRun { font_id, glyphs });
@@ -1070,6 +1069,7 @@ struct RendererShapedGlyph {
 struct RendererShapedRun {
     postscript: String,
     family: String,
+    is_emoji: bool,
     glyphs: SmallVec<[RendererShapedGlyph; 8]>,
 }
 
@@ -1146,7 +1146,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
                 return Ok(());
             }
             let font = glyphrun.fontFace.as_ref().unwrap();
-            let Some((postscript_name, family_name)) =
+            let Some((postscript_name, family_name, is_emoji)) =
                 get_postscript_and_family_name(font, self.locale)
             else {
                 log::error!("none postscript name found");
@@ -1164,13 +1164,18 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
                     index: global_index,
                 });
                 position += *glyphrun.glyphAdvances.add(index as _);
-                global_index += 1;
+                if is_emoji {
+                    global_index += 2;
+                } else {
+                    global_index += 1;
+                }
             }
             self.inner.write().index = global_index;
             self.inner.write().width = position;
             self.inner.write().runs.push(RendererShapedRun {
                 postscript: postscript_name,
                 family: family_name,
+                is_emoji,
                 glyphs,
             });
         }
@@ -1263,7 +1268,7 @@ impl<'a> StringIndexConverter<'a> {
 unsafe fn get_postscript_and_family_name(
     font_face: &IDWriteFontFace,
     locale: PCWSTR,
-) -> Option<(String, String)> {
+) -> Option<(String, String, bool)> {
     let font_face_pointer = font_face as *const IDWriteFontFace;
     let font_face_3_pointer: *const IDWriteFontFace3 = std::mem::transmute(font_face_pointer);
     let font_face_3 = &*font_face_3_pointer;
@@ -1276,6 +1281,7 @@ unsafe fn get_postscript_and_family_name(
     Some((
         postscript_name,
         get_name(localized_family_name, locale).unwrap(),
+        font_face_3.IsColorFont().as_bool(),
     ))
 }
 
