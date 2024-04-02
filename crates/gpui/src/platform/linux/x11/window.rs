@@ -17,7 +17,13 @@ use x11rb::{
 };
 
 use std::{
-    borrow::Borrow, cell::RefCell, ffi::c_void, mem, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::{self, Arc}
+    cell::RefCell,
+    ffi::c_void,
+    mem,
+    num::NonZeroU32,
+    ptr::NonNull,
+    rc::Rc,
+    sync::{self, Arc},
 };
 
 use super::X11Display;
