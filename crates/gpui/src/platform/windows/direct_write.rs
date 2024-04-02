@@ -1,55 +1,22 @@
-use std::{
-    borrow::{Borrow, Cow},
-    mem::ManuallyDrop,
-    sync::Arc,
-};
+use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
 
+use ::util::ResultExt;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
-use util::ResultExt;
 use windows::{
     core::{implement, HRESULT, HSTRING, PCWSTR},
-    Foundation::Numerics::Matrix3x2,
     Win32::{
-        Foundation::{BOOL, COLORREF, DWRITE_E_NOCOLOR, RECT},
+        Foundation::{BOOL, COLORREF},
         Globalization::GetUserDefaultLocaleName,
-        Graphics::{
-            Direct2D::{
-                Common::{
-                    D2D1_ALPHA_MODE_IGNORE, D2D1_ALPHA_MODE_PREMULTIPLIED,
-                    D2D1_ALPHA_MODE_STRAIGHT, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_POINT_2F,
-                    D2D_SIZE_F, D2D_SIZE_U,
-                },
-                D2D1CreateFactory, ID2D1Bitmap1, ID2D1Factory, D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                D2D1_BITMAP_OPTIONS_CPU_READ, D2D1_BITMAP_PROPERTIES, D2D1_BITMAP_PROPERTIES1,
-                D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS,
-                D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_GDI_COMPATIBLE,
-                D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
-                D2D1_MAP_OPTIONS_READ, D2D1_RENDER_TARGET_PROPERTIES,
-                D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-                D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
-            },
-            DirectWrite::*,
-            Dxgi::Common::{DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM},
-            Gdi::{
-                CreateBitmap, CreateCompatibleBitmap, CreateCompatibleDC, DeleteObject,
-                GetCurrentObject, GetDIBits, GetObjectW, GetStockObject, Rectangle, ReleaseDC,
-                SelectObject, SetBoundsRect, SetDCBrushColor, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-                DCB_ENABLE, DCB_RESET, DC_BRUSH, DIBSECTION, DIB_RGB_COLORS, HDC, NULL_PEN,
-                OBJ_BITMAP, SET_BOUNDS_RECT_FLAGS,
-            },
-        },
+        Graphics::{Direct2D::Common::D2D_POINT_2F, DirectWrite::*},
+        System::SystemServices::LOCALE_NAME_MAX_LENGTH,
     },
 };
 
-use crate::{
-    point, px, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
-    FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
-    ShapedGlyph, ShapedRun, Size, SUBPIXEL_VARIANTS,
-};
+use crate::*;
 
 #[derive(Debug)]
 struct FontInfo {
@@ -85,7 +52,7 @@ impl DirectWriteComponent {
             let in_memory_loader = factory.CreateInMemoryFontFileLoader().unwrap();
             factory.RegisterFontFileLoader(&in_memory_loader).unwrap();
             let builder = factory.CreateFontSetBuilder2().unwrap();
-            let mut locale_vec = vec![0u16; 512];
+            let mut locale_vec = vec![0u16; LOCALE_NAME_MAX_LENGTH as usize];
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let gdi = factory.GetGdiInterop().unwrap();
@@ -519,9 +486,6 @@ impl DirectWriteState {
         unsafe {
             let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
             let bounds = glyph_run_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)?;
-            if params.is_emoji {
-                println!("Glyph bounds: {:?}\n => {:?}", params, bounds);
-            }
 
             Ok(Bounds {
                 origin: Point {
