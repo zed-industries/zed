@@ -287,7 +287,7 @@ impl DirectWriteState {
 
             let mut offset = 0usize;
             let mut wstring_offset = 0u32;
-            let (text_format, text_layout) = {
+            let text_layout = {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
                 let collection = {
@@ -331,7 +331,8 @@ impl DirectWriteState {
                     .SetTypography(&font_info.features, text_range)
                     .unwrap();
                 wstring_offset += local_length;
-                (format, layout)
+
+                layout
             };
 
             let mut first_run = true;
