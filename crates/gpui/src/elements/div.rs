@@ -1814,53 +1814,63 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
-                let hitbox = hitbox.clone();
 
-                cx.on_mouse_event(move |_: &MouseMoveEvent, phase, cx| {
-                    let is_hovered = pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
-                    if !is_hovered {
+                cx.on_mouse_event({
+                    let active_tooltip = active_tooltip.clone();
+                    let hitbox = hitbox.clone();
+                    move |_: &MouseMoveEvent, phase, cx| {
+                        let is_hovered =
+                            pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
+                        if !is_hovered {
+                            active_tooltip.borrow_mut().take();
+                            return;
+                        }
+
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
+
+                        if active_tooltip.borrow().is_none() {
+                            let task = cx.spawn({
+                                let active_tooltip = active_tooltip.clone();
+                                let tooltip_builder = tooltip_builder.clone();
+
+                                move |mut cx| async move {
+                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
+                                    cx.update(|cx| {
+                                        active_tooltip.borrow_mut().replace(ActiveTooltip {
+                                            tooltip: Some(AnyTooltip {
+                                                view: tooltip_builder(cx),
+                                                cursor_offset: cx.mouse_position(),
+                                            }),
+                                            _task: None,
+                                        });
+                                        cx.refresh();
+                                    })
+                                    .ok();
+                                }
+                            });
+                            active_tooltip.borrow_mut().replace(ActiveTooltip {
+                                tooltip: None,
+                                _task: Some(task),
+                            });
+                        }
+                    }
+                });
+
+                cx.on_mouse_event({
+                    let active_tooltip = active_tooltip.clone();
+                    move |_: &MouseDownEvent, _, _| {
                         active_tooltip.borrow_mut().take();
-                        return;
-                    }
-
-                    if phase != DispatchPhase::Bubble {
-                        return;
-                    }
-
-                    if active_tooltip.borrow().is_none() {
-                        let task = cx.spawn({
-                            let active_tooltip = active_tooltip.clone();
-                            let tooltip_builder = tooltip_builder.clone();
-
-                            move |mut cx| async move {
-                                cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                cx.update(|cx| {
-                                    active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                        tooltip: Some(AnyTooltip {
-                                            view: tooltip_builder(cx),
-                                            cursor_offset: cx.mouse_position(),
-                                        }),
-                                        _task: None,
-                                    });
-                                    cx.refresh();
-                                })
-                                .ok();
-                            }
-                        });
-                        active_tooltip.borrow_mut().replace(ActiveTooltip {
-                            tooltip: None,
-                            _task: Some(task),
-                        });
                     }
                 });
 
-                let active_tooltip = element_state
-                    .active_tooltip
-                    .get_or_insert_with(Default::default)
-                    .clone();
-                cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
-                    active_tooltip.borrow_mut().take();
-                });
+                cx.on_mouse_event({
+                    let active_tooltip = active_tooltip.clone();
+                    move |_: &ScrollWheelEvent, _, _| {
+                        active_tooltip.borrow_mut().take();
+                    }
+                })
             }
 
             let active_state = element_state
