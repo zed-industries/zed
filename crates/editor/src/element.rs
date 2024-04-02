@@ -449,7 +449,8 @@ impl EditorElement {
                 },
                 cx,
             );
-        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
+        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary()
+        {
             editor.select(
                 SelectPhase::Extend {
                     position,
@@ -461,7 +462,7 @@ impl EditorElement {
             let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
             let multi_cursor_modifier = match multi_cursor_setting {
                 MultiCursorModifier::Alt => modifiers.alt,
-                MultiCursorModifier::Cmd => modifiers.command,
+                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
             };
             editor.select(
                 SelectPhase::Begin {
@@ -513,8 +514,8 @@ impl EditorElement {
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.command,
-            MultiCursorModifier::Cmd => event.modifiers.alt,
+            MultiCursorModifier::Alt => event.modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => event.modifiers.alt,
         };
 
         if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(cx) {
