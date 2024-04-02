@@ -179,8 +179,6 @@ impl TabSwitcherDelegate {
             },
         );
 
-        let preview_item_id = pane.preview_item_id();
-
         let items: Vec<Box<dyn ItemHandle>> = pane.items().map(|item| item.boxed_clone()).collect();
         items
             .iter()
@@ -190,7 +188,7 @@ impl TabSwitcherDelegate {
                 item_index,
                 item: item.boxed_clone(),
                 detail,
-                preview: preview_item_id == Some(item.item_id()),
+                preview: pane.is_active_preview_item(item.item_id()),
             })
             .for_each(|tab_match| self.matches.push(tab_match));
 

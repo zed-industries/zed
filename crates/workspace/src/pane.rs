@@ -521,6 +521,10 @@ impl Pane {
         self.preview_item_id
     }
 
+    pub fn is_active_preview_item(&self, item_id: EntityId) -> bool {
+        self.preview_item_id == Some(item_id)
+    }
+
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
     pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
@@ -1848,7 +1852,7 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane: &mut Self, _: &TogglePreviewTab, cx| {
                 if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                    if pane.preview_item_id() == Some(active_item_id) {
+                    if pane.is_active_preview_item(active_item_id) {
                         pane.set_preview_item_id(None, cx);
                     } else {
                         pane.set_preview_item_id(Some(active_item_id), cx);
