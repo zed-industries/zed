@@ -156,8 +156,13 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(DirectWriteTextSystem::new());
-        // let text_system = Arc::new(WindowsTextSystem::new());
+        let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
+            log::info!("Using direct write text system.");
+            Arc::new(direct_write) as Arc<dyn PlatformTextSystem>
+        } else {
+            log::info!("Using cosmic text system.");
+            Arc::new(WindowsTextSystem::new()) as Arc<dyn PlatformTextSystem>
+        };
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());

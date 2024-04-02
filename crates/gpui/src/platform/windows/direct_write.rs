@@ -48,21 +48,21 @@ struct DirectWriteState {
 }
 
 impl DirectWriteComponent {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         unsafe {
-            let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
-            let in_memory_loader = factory.CreateInMemoryFontFileLoader().unwrap();
-            factory.RegisterFontFileLoader(&in_memory_loader).unwrap();
-            let builder = factory.CreateFontSetBuilder2().unwrap();
+            let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+            let in_memory_loader = factory.CreateInMemoryFontFileLoader()?;
+            factory.RegisterFontFileLoader(&in_memory_loader)?;
+            let builder = factory.CreateFontSetBuilder2()?;
             let mut locale_vec = vec![0u16; LOCALE_NAME_MAX_LENGTH as usize];
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
-            let gdi = factory.GetGdiInterop().unwrap();
+            let gdi = factory.GetGdiInterop()?;
             let text_renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
             let text_renderer: IDWriteTextRenderer =
                 TextRenderer::new(text_renderer_inner.clone(), &locale).into();
 
-            DirectWriteComponent {
+            Ok(DirectWriteComponent {
                 locale,
                 factory,
                 in_memory_loader,
@@ -70,29 +70,23 @@ impl DirectWriteComponent {
                 gdi,
                 text_renderer_inner,
                 text_renderer,
-            }
+            })
         }
     }
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new() -> Self {
-        let components = DirectWriteComponent::new();
-        let system_set = unsafe { components.factory.GetSystemFontSet().unwrap() };
+    pub(crate) fn new() -> Result<Self> {
+        let components = DirectWriteComponent::new()?;
+        let system_set = unsafe { components.factory.GetSystemFontSet() }?;
 
-        Self(RwLock::new(DirectWriteState {
-            components: DirectWriteComponent::new(),
+        Ok(Self(RwLock::new(DirectWriteState {
+            components,
             font_sets: vec![system_set],
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_postscript_name: HashMap::default(),
-        }))
-    }
-}
-
-impl Default for DirectWriteTextSystem {
-    fn default() -> Self {
-        Self::new()
+        })))
     }
 }
 
