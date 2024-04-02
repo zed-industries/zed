@@ -26,7 +26,7 @@ use futures::{
         mpsc::{self, UnboundedReceiver},
         oneshot,
     },
-    future::{try_join_all, Shared},
+    future::{join_all, try_join_all, Shared},
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -5268,21 +5268,49 @@ impl Project {
                 }
                 hovers
             })
-        } else if self.is_remote() {
-            let request_task = self.request_lsp(
-                buffer.clone(),
-                LanguageServerToQuery::Primary,
-                GetHover { position },
-                cx,
-            );
-            cx.spawn(|_, _| async move {
-                request_task
-                    .await
-                    .log_err()
-                    .flatten()
-                    .and_then(remove_empty_hover_blocks)
-                    .map(|hover| vec![hover])
-                    .unwrap_or_default()
+        } else if let Some(project_id) = self.remote_id() {
+            // TODO kb add a handler
+            let request_task = self.client().request(proto::QueryAllLsp {
+                strategy: Some(proto::query_all_lsp::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::query_all_lsp::Request::GetHover(
+                    GetHover { position }.to_proto(project_id, buffer.read(cx)),
+                )),
+            });
+            let buffer = buffer.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Vec::new();
+                };
+                join_all(
+                    request_task
+                        .await
+                        .log_err()
+                        .map(|response| response.responses)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|lsp_response| lsp_response.get_hover_response)
+                        .map(|hover_response| {
+                            let response = GetHover { position }.response_from_proto(
+                                hover_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            );
+                            async move {
+                                response
+                                    .await
+                                    .log_err()
+                                    .flatten()
+                                    .and_then(remove_empty_hover_blocks)
+                            }
+                        }),
+                )
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
             })
         } else {
             log::error!("cannot show hovers: project does not have a remote id");
@@ -5655,7 +5683,7 @@ impl Project {
             let offset = range.start.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
 
-            let mut hover_responses = self
+            let mut code_action_responses = self
                 .language_servers_for_buffer(buffer_handle.read(cx), cx)
                 .filter(|(_, server)| GetCodeActions::supports_code_actions(server.capabilities()))
                 .filter(|(adapter, _)| {
@@ -5679,20 +5707,57 @@ impl Project {
                 .collect::<FuturesUnordered<_>>();
 
             cx.spawn(|_, _| async move {
-                let mut hovers = Vec::with_capacity(hover_responses.len());
-                while let Some(hover_response) = hover_responses.next().await {
-                    hovers.extend(hover_response.log_err().unwrap_or_default());
+                let mut code_actions = Vec::with_capacity(code_action_responses.len());
+                while let Some(code_action_response) = code_action_responses.next().await {
+                    code_actions.extend(code_action_response.log_err().unwrap_or_default());
                 }
-                hovers
+                code_actions
             })
-        } else if self.is_remote() {
-            let request_task = self.request_lsp(
-                buffer_handle.clone(),
-                LanguageServerToQuery::Primary,
-                GetCodeActions { range, kinds: None },
-                cx,
-            );
-            cx.spawn(|_, _| async move { request_task.await.log_err().unwrap_or_default() })
+        } else if let Some(project_id) = self.remote_id() {
+            let request_task = self.client().request(proto::QueryAllLsp {
+                strategy: Some(proto::query_all_lsp::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::query_all_lsp::Request::GetCodeActions(
+                    GetCodeActions {
+                        range: range.clone(),
+                        kinds: None,
+                    }
+                    .to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Vec::new();
+                };
+                join_all(
+                    request_task
+                        .await
+                        .log_err()
+                        .map(|response| response.responses)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|lsp_response| lsp_response.get_code_actions_response)
+                        .map(|code_actions_response| {
+                            let response = GetCodeActions {
+                                range: range.clone(),
+                                kinds: None,
+                            }
+                            .response_from_proto(
+                                code_actions_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            );
+                            async move { response.await.log_err().unwrap_or_default() }
+                        }),
+                )
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
+            })
         } else {
             log::error!("cannot fetch actions: project does not have a remote id");
             Task::ready(Vec::new())

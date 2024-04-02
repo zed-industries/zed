@@ -209,8 +209,11 @@ message Envelope {
 
         BlameBuffer blame_buffer = 172;
         BlameBufferResponse blame_buffer_response = 173;
-        
-        UpdateNotification update_notification = 174;  // current max
+
+        UpdateNotification update_notification = 174;
+
+        QueryAllLsp query_all_lsp = 175;
+        QueryAllLspResponse query_all_lsp_response = 176; // current max
     }
 
     reserved 158 to 161;
@@ -1837,4 +1840,25 @@ message BlameBufferResponse {
     repeated BlameEntry entries = 1;
     repeated CommitMessage messages = 2;
     repeated CommitPermalink permalinks = 3;
+}
+
+message QueryAllLsp {
+    oneof strategy {
+        AllLanguageServers all = 1;
+    }
+    oneof request {
+        GetHover get_hover = 2;
+        GetCodeActions get_code_actions = 3;
+    }
+}
+
+message AllLanguageServers {}
+
+message QueryAllLspResponse {
+    repeated LspResponse responses = 1;
+}
+
+message LspResponse {
+    GetHoverResponse get_hover_response = 1;
+    GetCodeActionsResponse get_code_actions_response = 2;
 }

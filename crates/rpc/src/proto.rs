@@ -299,6 +299,8 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
+    (QueryAllLsp, Background),
+    (QueryAllLspResponse, Background),
 );
 
 request_messages!(
@@ -390,6 +392,7 @@ request_messages!(
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
+    (QueryAllLsp, QueryAllLspResponse),
 );
 
 entity_messages!(
