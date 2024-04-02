@@ -56,7 +56,7 @@ struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
     font_set_index: usize,
-    features: Vec<DWRITE_FONT_FEATURE>,
+    features: IDWriteTypography,
     is_emoji: bool,
 }
 
@@ -266,7 +266,7 @@ impl DirectWriteState {
                     font_family: family_name,
                     font_face,
                     font_set_index: fontset_index,
-                    features: direct_write_features(features),
+                    features: direct_write_features(&self.components.factory, features),
                     is_emoji,
                 };
                 let font_id = FontId(self.fonts.len());
@@ -343,10 +343,7 @@ impl DirectWriteState {
                         locale_name,
                     )
                     .unwrap();
-                let features = self.components.factory.CreateTypography().unwrap();
-                for x in font_info.features.iter() {
-                    features.AddFontFeature(*x).unwrap();
-                }
+
                 let layout = self
                     .components
                     .factory
@@ -360,7 +357,7 @@ impl DirectWriteState {
                     startPosition: wstring_offset,
                     length: local_length,
                 };
-                layout.SetTypography(&features, text_range);
+                layout.SetTypography(&font_info.features, text_range);
                 wstring_offset += local_length;
                 (format, layout)
             };
@@ -395,11 +392,9 @@ impl DirectWriteState {
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)
                     .unwrap();
-                let features = self.components.factory.CreateTypography().unwrap();
-                for x in font_info.features.iter() {
-                    features.AddFontFeature(*x).unwrap();
-                }
-                text_layout.SetTypography(&features, text_range).unwrap();
+                text_layout
+                    .SetTypography(&font_info.features, text_range)
+                    .unwrap();
             }
 
             let renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
@@ -441,16 +436,14 @@ impl DirectWriteState {
             let ascent = px(metrics[0].baseline);
             let descent = px(metrics[0].height - metrics[0].baseline);
 
-            let result = LineLayout {
+            LineLayout {
                 font_size,
                 width: px(width),
                 ascent,
                 descent,
                 runs,
                 len: text.len(),
-            };
-            println!("Linelayout: {:#?}", result);
-            result
+            }
         }
     }
 
@@ -1119,40 +1112,51 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3) -> Option<String> {
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
-fn direct_write_features(features: &FontFeatures) -> Vec<DWRITE_FONT_FEATURE> {
-    let mut feature_list = Vec::new();
+fn direct_write_features(factory: &IDWriteFactory5, features: &FontFeatures) -> IDWriteTypography {
+    let result = unsafe { factory.CreateTypography().unwrap() };
     let tag_values = features.tag_value_list();
     if tag_values.is_empty() {
-        return feature_list;
+        return result;
     }
+
     // All of these features are enabled by default by DirectWrite.
     // If you want to (and can) peek into the source of DirectWrite
-    add_feature(&mut feature_list, "liga", true);
-    add_feature(&mut feature_list, "clig", true);
-    add_feature(&mut feature_list, "calt", true);
+    let mut feature_liga = make_direct_write_feature("liga", true);
+    let mut feature_clig = make_direct_write_feature("clig", true);
+    let mut feature_calt = make_direct_write_feature("calt", true);
 
     for (tag, enable) in tag_values {
         if tag == "liga".to_string() && !enable {
-            feature_list[0].parameter = 0;
+            feature_liga.parameter = 0;
             continue;
         }
         if tag == "clig".to_string() && !enable {
-            feature_list[1].parameter = 0;
+            feature_clig.parameter = 0;
             continue;
         }
         if tag == "calt".to_string() && !enable {
-            feature_list[2].parameter = 0;
+            feature_calt.parameter = 0;
             continue;
         }
-        add_feature(&mut feature_list, &tag, enable);
+        unsafe {
+            result
+                .AddFontFeature(make_direct_write_feature(&tag, enable))
+                .unwrap()
+        };
+    }
+    unsafe {
+        result.AddFontFeature(feature_liga).unwrap();
+        result.AddFontFeature(feature_clig).unwrap();
+        result.AddFontFeature(feature_calt).unwrap();
     }
 
-    feature_list
+    result
 }
 
-fn add_feature(feature_list: &mut Vec<DWRITE_FONT_FEATURE>, feature_name: &str, enable: bool) {
+#[inline]
+fn make_direct_write_feature(feature_name: &str, enable: bool) -> DWRITE_FONT_FEATURE {
     let tag = make_direct_write_tag(feature_name);
-    let font_feature = if enable {
+    if enable {
         DWRITE_FONT_FEATURE {
             nameTag: tag,
             parameter: 1,
@@ -1162,8 +1166,7 @@ fn add_feature(feature_list: &mut Vec<DWRITE_FONT_FEATURE>, feature_name: &str, 
             nameTag: tag,
             parameter: 0,
         }
-    };
-    feature_list.push(font_feature);
+    }
 }
 
 #[inline]
