@@ -7875,64 +7875,8 @@ impl Editor {
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         let open_task = cx.spawn(|editor, mut cx| async move {
             let mut locations = references.await?;
-            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-            let head_offset = text::ToOffset::to_offset(&head, &snapshot);
-
-            // LSP may return references that contain the item itself we requested `find_all_references` for (eg. rust-analyzer)
-            // So we will remove it from locations
-            // If there is only one reference, we will not do this filter cause it may make locations empty
-            if locations.len() > 1 {
-                cx.update(|cx| {
-                    locations.retain(|location| {
-                        // fn foo(x : i64) {
-                        //         ^
-                        //  println!(x);
-                        // }
-                        // It is ok to find reference when caret being at ^ (the end of the word)
-                        // So we turn offset into inclusive to include the end of the word
-                        !location
-                            .range
-                            .to_offset(location.buffer.read(cx))
-                            .to_inclusive()
-                            .contains(&head_offset)
-                    });
-                })?;
-            }
-
             if locations.is_empty() {
                 return Ok(());
-            }
-
-            // If there is one reference, just open it directly
-            if locations.len() == 1 {
-                let target = locations.pop().unwrap();
-
-                return editor.update(&mut cx, |editor, cx| {
-                    let range = target.range.to_offset(target.buffer.read(cx));
-                    let range = editor.range_for_match(&range);
-
-                    if Some(&target.buffer) == editor.buffer().read(cx).as_singleton().as_ref() {
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([range]);
-                        });
-                    } else {
-                        cx.window_context().defer(move |cx| {
-                            let target_editor: View<Self> =
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.open_project_item(
-                                        workspace.active_pane().clone(),
-                                        target.buffer.clone(),
-                                        cx,
-                                    )
-                                });
-                            target_editor.update(cx, |target_editor, cx| {
-                                target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                    s.select_ranges([range]);
-                                })
-                            })
-                        })
-                    }
-                });
             }
 
             workspace.update(&mut cx, |workspace, cx| {
