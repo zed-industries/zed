@@ -13,13 +13,13 @@ pub struct SystemSpecs {
     os_version: Option<String>,
     memory: u64,
     architecture: &'static str,
-    detail: Option<String>,
+    commit_sha: Option<String>,
 }
 
 impl SystemSpecs {
     pub fn new(cx: &AppContext) -> Self {
         let app_version = AppVersion::global(cx).to_string();
-        let release_channel = ReleaseChannel::global(cx).display_name();
+        let release_channel = ReleaseChannel::global(cx);
         let os_name = cx.app_metadata().os_name;
         let system = System::new_with_specifics(
             RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
@@ -30,7 +30,7 @@ impl SystemSpecs {
             .app_metadata()
             .os_version
             .map(|os_version| os_version.to_string());
-        let detail = match ReleaseChannel::global(cx) {
+        let commit_sha = match release_channel {
             ReleaseChannel::Dev | ReleaseChannel::Nightly => {
                 AppCommitSha::try_global(cx).map(|sha| sha.0.clone())
             }
@@ -39,12 +39,12 @@ impl SystemSpecs {
 
         SystemSpecs {
             app_version,
-            release_channel,
+            release_channel: release_channel.display_name(),
             os_name,
             os_version,
             memory,
             architecture,
-            detail,
+            commit_sha,
         }
     }
 }
@@ -58,8 +58,8 @@ impl Display for SystemSpecs {
         let app_version_information = format!(
             "Zed: v{} ({})",
             self.app_version,
-            match &self.detail {
-                Some(detail) => format!("{} {}", self.release_channel, detail),
+            match &self.commit_sha {
+                Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
                 None => self.release_channel.to_string(),
             }
         );
