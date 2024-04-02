@@ -26,7 +26,7 @@ mod wrap_map;
 use crate::EditorStyle;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
 pub use block_map::{BlockMap, BlockPoint};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
 use inlay_map::InlayMap;
@@ -63,7 +63,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
+type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -257,10 +257,9 @@ impl DisplayMap {
         style: HighlightStyle,
     ) {
         for highlight in highlights {
-            self.inlay_highlights
-                .entry(type_id)
-                .or_default()
-                .insert(highlight.inlay, (style, highlight));
+            self.inlay_highlights.update(&type_id, |highlights| {
+                highlights.insert(highlight.inlay, (style, highlight))
+            });
         }
     }
 
@@ -354,7 +353,6 @@ pub struct HighlightedChunk<'a> {
     pub is_tab: bool,
 }
 
-// todo!("ensure all fields are cheaply cloneable")
 #[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
