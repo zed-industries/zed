@@ -799,10 +799,9 @@ impl DirectWriteState {
                     m12: 0.0,
                     m21: 0.0,
                     m22: 1.0,
-                    dx: (-glyph_bounds.origin.x.0 as f32) / 4.0,
+                    dx: (-glyph_bounds.origin.x.0 as f32) / 2.0 - 1.0,
                     dy: ((glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) / 2) as f32,
                 };
-                println!("Trans: {:#?}", current_transform);
                 let bitmap_render_target = self
                     .components
                     .gdi
@@ -856,13 +855,13 @@ impl DirectWriteState {
                 let bitmap_data = bitmap_render_target.GetBitmapData().unwrap();
                 let raw_u32 = std::slice::from_raw_parts(bitmap_data.pixels, total_bytes / 4);
                 for (bytes, color) in raw_bytes.chunks_exact_mut(4).zip(raw_u32.iter()) {
+                    bytes[3] = 0xFF;
                     if *color == 0 {
                         continue;
                     }
                     bytes[0] = (color >> 16 & 0xFF) as u8;
                     bytes[1] = (color >> 8 & 0xFF) as u8;
                     bytes[2] = (color & 0xFF) as u8;
-                    bytes[3] = 0xFF;
                 }
                 Ok((bitmap_size, raw_bytes))
             } else {
@@ -1349,10 +1348,6 @@ fn translate_color(color: &DWRITE_COLOR_F) -> COLORREF {
     let b_int = (color.b * 255.0) as u32;
     let a_int = (color.a * 255.0) as u32;
 
-    let color_ref = (b_int << 16) | (g_int << 8) | r_int;
-    if color_ref != 0 {
-        println!("RGB {:?} => color {}", color, color_ref);
-    }
     COLORREF((a_int << 24) | (b_int << 16) | (g_int << 8) | r_int)
 }
 
