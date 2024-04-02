@@ -2372,10 +2372,12 @@ impl EditorElement {
                     cx.theme().colors().scrollbar_track_border,
                 ));
 
+                // Refresh scrollbar markers in the background. Below, we paint whatever markers have already been computed.
                 self.refresh_scrollbar_markers(layout, scrollbar_layout, cx);
 
-                // todo!("don't clone here")
-                for marker in self.editor.read(cx).scrollbar_markers.clone() {
+                for marker in self.editor.read(cx).scrollbar_markers.clone().iter() {
+                    let mut marker = marker.clone();
+                    marker.bounds.origin += scrollbar_layout.hitbox.origin;
                     cx.paint_quad(marker);
                 }
 
@@ -2616,7 +2618,7 @@ impl EditorElement {
                                 );
                             }
 
-                            marker_quads
+                            Arc::from(marker_quads)
                         })
                         .await;
 
@@ -3862,18 +3864,17 @@ impl ScrollbarLayout {
         row_ranges: impl IntoIterator<Item = ColoredRange<u32>>,
         column: usize,
     ) -> Vec<PaintQuad> {
-        let left = self.hitbox.left();
-        let right = self.hitbox.right();
-        let column_width = px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
+        let column_width =
+            px(((self.hitbox.size.width - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
 
-        let left_x = left + ScrollbarLayout::BORDER_WIDTH + (column as f32 * column_width);
+        let left_x = ScrollbarLayout::BORDER_WIDTH + (column as f32 * column_width);
         let right_x = left_x + column_width;
 
         let mut background_pixel_ranges = row_ranges
             .into_iter()
             .map(|range| {
-                let start_y = self.y_for_row(range.start as f32);
-                let mut end_y = self.y_for_row((range.end + 1) as f32);
+                let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
+                let mut end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
                 if end_y - start_y < Self::MIN_MARKER_HEIGHT {
                     end_y = start_y + Self::MIN_MARKER_HEIGHT;
                 }

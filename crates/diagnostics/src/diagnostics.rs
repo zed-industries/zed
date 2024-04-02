@@ -32,7 +32,6 @@ use std::{
     mem,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
