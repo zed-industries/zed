@@ -1,11 +1,11 @@
 mod connection_pool;
 
 use crate::{
-    auth::{self},
+    auth,
     db::{
         self, dev_server, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, Project, ProjectId, RemoveChannelMemberResult, ReplicaId,
+        CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
+        MessageId, NotificationId, Project, ProjectId, RemoveChannelMemberResult, ReplicaId,
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -328,6 +328,7 @@ impl Server {
             .add_message_handler(unshare_project)
             .add_request_handler(user_handler(join_project))
             .add_request_handler(user_handler(join_hosted_project))
+            .add_request_handler(user_handler(create_remote_project))
             .add_message_handler(user_message_handler(leave_project))
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -1977,6 +1978,38 @@ async fn join_hosted_project(
         .await?;
 
     join_project_internal(response, session, &mut project, &replica_id)
+}
+
+async fn create_remote_project(
+    request: proto::CreateRemoteProject,
+    response: Response<proto::CreateRemoteProject>,
+    session: UserSession,
+) -> Result<()> {
+    let (channel, remote_project) = session
+        .db()
+        .await
+        .create_remote_project(
+            ChannelId(request.channel_id as i32),
+            DevServerId(request.dev_server_id as i32),
+            &request.name,
+            &request.path,
+            session.user_id(),
+        )
+        .await?;
+
+    let update = proto::UpdateChannels {
+        remote_projects: vec![remote_project.to_proto(None)],
+        ..Default::default()
+    };
+    let connection_pool = session.connection_pool().await;
+    for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
+        if role.can_see_channel(channel.visibility) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
 }
 
 /// Updates other participants with changes to the project
@@ -4063,9 +4096,10 @@ fn build_channels_update(
     for channel in channel_invites {
         update.channel_invitations.push(channel.to_proto());
     }
-    for project in channels.hosted_projects {
-        update.hosted_projects.push(project);
-    }
+
+    update.hosted_projects = channels.hosted_projects;
+    update.dev_servers = channels.dev_servers;
+    update.remote_projects = channels.remote_projects;
 
     update
 }

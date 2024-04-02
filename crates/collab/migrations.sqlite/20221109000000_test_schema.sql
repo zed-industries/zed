@@ -397,7 +397,9 @@ CREATE TABLE hosted_projects (
     channel_id INTEGER NOT NULL REFERENCES channels(id),
     name TEXT NOT NULL,
     visibility TEXT NOT NULL,
-    deleted_at TIMESTAMP NULL
+    deleted_at TIMESTAMP NULL,
+    dev_server_id INTEGER REFERENCES dev_servers(id),
+    dev_server_path TEXT,
 );
 CREATE INDEX idx_hosted_projects_on_channel_id ON hosted_projects (channel_id);
 CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_projects (channel_id, name) WHERE (deleted_at IS NULL);
@@ -409,3 +411,13 @@ CREATE TABLE dev_servers (
     hashed_token TEXT NOT NULL
 );
 CREATE INDEX idx_dev_servers_on_channel_id ON dev_servers (channel_id);
+
+CREATE TABLE remote_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
+    name TEXT NOT NULL,
+    path TEXT NOT NULL
+);
+
+ALTER TABLE hosted_projects ADD COLUMN remote_project_id INTEGER REFERENCES remote_projects(id);

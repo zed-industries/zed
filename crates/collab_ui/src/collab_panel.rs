@@ -1,13 +1,15 @@
 mod channel_modal;
 mod contact_finder;
+mod dev_server_modal;
 
 use self::channel_modal::ChannelModal;
+use self::dev_server_modal::DevServerModal;
 use crate::{
     channel_view::ChannelView, chat_panel::ChatPanel, face_pile::FacePile,
     CollaborationPanelSettings,
 };
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelStore};
+use channel::{Channel, ChannelEvent, ChannelStore, RemoteProject};
 use client::{ChannelId, Client, Contact, ProjectId, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
@@ -188,6 +190,7 @@ enum ListEntry {
         id: ProjectId,
         name: SharedString,
     },
+    RemoteProject(channel::RemoteProject),
     Contact {
         contact: Arc<Contact>,
         calling: bool,
@@ -569,6 +572,7 @@ impl CollabPanel {
                 }
 
                 let hosted_projects = channel_store.projects_for_id(channel.id);
+                let remote_projects = channel_store.remote_projects_for_id(channel.id);
                 let has_children = channel_store
                     .channel_at_index(mat.candidate_id + 1)
                     .map_or(false, |next_channel| {
@@ -604,7 +608,12 @@ impl CollabPanel {
                 }
 
                 for (name, id) in hosted_projects {
-                    self.entries.push(ListEntry::HostedProject { id, name })
+                    self.entries.push(ListEntry::HostedProject { id, name });
+                }
+
+                for remote_project in remote_projects {
+                    dbg!("Pushing remote project entry", remote_project.id);
+                    self.entries.push(ListEntry::RemoteProject(remote_project));
                 }
             }
         }
@@ -1065,6 +1074,39 @@ impl CollabPanel {
         .tooltip(move |cx| Tooltip::text("Open Project", cx))
     }
 
+    fn render_remote_project(
+        &self,
+        remote_project: &RemoteProject,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let id = remote_project.id;
+        let name = remote_project.name.clone();
+        let maybe_project_id = remote_project.project_id.clone();
+        //TODO grey out if project is not hosted yet
+
+        ListItem::new(ElementId::NamedInteger(
+            "remote-project".into(),
+            id.0 as usize,
+        ))
+        .indent_level(2)
+        .indent_step_size(px(20.))
+        .selected(is_selected)
+        .on_click(cx.listener(move |this, _, cx| {
+            if let Some(project_id) = maybe_project_id {
+                this.join_remote_project(project_id, cx);
+            }
+        }))
+        .start_slot(
+            h_flex()
+                .relative()
+                .gap_1()
+                .child(IconButton::new(0, IconName::FileTree)),
+        )
+        .child(Label::new(name.clone()))
+        .tooltip(move |cx| Tooltip::text("Open Remote Project", cx))
+    }
+
     fn has_subchannels(&self, ix: usize) -> bool {
         self.entries.get(ix).map_or(false, |entry| {
             if let ListEntry::Channel { has_children, .. } = entry {
@@ -1266,11 +1308,22 @@ impl CollabPanel {
                 }
 
                 if self.channel_store.read(cx).is_root_channel(channel_id) {
-                    context_menu = context_menu.separator().entry(
-                        "Manage Members",
-                        None,
-                        cx.handler_for(&this, move |this, cx| this.manage_members(channel_id, cx)),
-                    )
+                    context_menu = context_menu
+                        .separator()
+                        .entry(
+                            "Manage Members",
+                            None,
+                            cx.handler_for(&this, move |this, cx| {
+                                this.manage_members(channel_id, cx)
+                            }),
+                        )
+                        .entry(
+                            "Manage Dev Servers",
+                            None,
+                            cx.handler_for(&this, move |this, cx| {
+                                this.manage_dev_servers(channel_id, cx)
+                            }),
+                        )
                 } else {
                     context_menu = context_menu.entry(
                         "Move this channel",
@@ -1534,6 +1587,11 @@ impl CollabPanel {
                     } => {
                         // todo()
                     }
+                    ListEntry::RemoteProject(project) => {
+                        if let Some(project_id) = project.project_id {
+                            self.join_remote_project(project_id, cx)
+                        }
+                    }
 
                     ListEntry::OutgoingRequest(_) => {}
                     ListEntry::ChannelEditor { .. } => {}
@@ -1704,6 +1762,18 @@ impl CollabPanel {
 
     fn manage_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
+    }
+
+    fn manage_dev_servers(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.clone();
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(cx, |cx| {
+                DevServerModal::new(channel_store.clone(), channel_id, cx)
+            });
+        });
     }
 
     fn remove_selected_channel(&mut self, _: &Remove, cx: &mut ViewContext<Self>) {
@@ -2006,6 +2076,18 @@ impl CollabPanel {
         .detach_and_prompt_err("Failed to join channel", cx, |_, _| None)
     }
 
+    fn join_remote_project(&mut self, project_id: ProjectId, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let app_state = workspace.read(cx).app_state().clone();
+        workspace::join_hosted_project(project_id, app_state, cx).detach_and_prompt_err(
+            "Failed to join project",
+            cx,
+            |_, _| None,
+        )
+    }
+
     fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -2140,6 +2222,9 @@ impl CollabPanel {
 
             ListEntry::HostedProject { id, name } => self
                 .render_channel_project(*id, name, is_selected, cx)
+                .into_any_element(),
+            ListEntry::RemoteProject(remote_project) => self
+                .render_remote_project(remote_project, is_selected, cx)
                 .into_any_element(),
         }
     }
@@ -2881,6 +2966,11 @@ impl PartialEq for ListEntry {
             ListEntry::HostedProject { id, .. } => {
                 if let ListEntry::HostedProject { id: other_id, .. } = other {
                     return id == other_id;
+                }
+            }
+            ListEntry::RemoteProject(project) => {
+                if let ListEntry::RemoteProject(other) = other {
+                    return project.id == other.id;
                 }
             }
             ListEntry::ChannelNotes { channel_id } => {

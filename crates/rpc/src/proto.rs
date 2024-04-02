@@ -298,6 +298,7 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
+    (CreateRemoteProject, Foreground),
 );
 
 request_messages!(
@@ -389,6 +390,7 @@ request_messages!(
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
+    (CreateRemoteProject, Ack),
 );
 
 entity_messages!(

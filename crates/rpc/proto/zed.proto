@@ -208,7 +208,9 @@ message Envelope {
         ChannelMessageUpdate channel_message_update = 171;
 
         BlameBuffer blame_buffer = 172;
-        BlameBufferResponse blame_buffer_response = 173; // Current max
+        BlameBufferResponse blame_buffer_response = 173;
+
+        CreateRemoteProject create_remote_project = 174; // Current max
     }
 
     reserved 158 to 161;
@@ -422,6 +424,13 @@ message JoinProject {
 
 message JoinHostedProject {
     uint64 project_id = 1;
+}
+
+message CreateRemoteProject {
+    uint64 channel_id = 1;
+    string name = 2;
+    uint64 dev_server_id = 3;
+    string path = 4;
 }
 
 message JoinProjectResponse {
@@ -1052,6 +1061,12 @@ message UpdateChannels {
 
     repeated HostedProject hosted_projects = 10;
     repeated uint64 deleted_hosted_projects = 11;
+
+    repeated DevServer dev_servers = 12;
+    repeated uint64 deleted_dev_servers = 13;
+
+    repeated RemoteProject remote_projects = 14;
+    repeated uint64 deleted_remote_projects = 15;
 }
 
 message UpdateUserChannels {
@@ -1085,6 +1100,26 @@ message HostedProject {
     uint64 channel_id = 2;
     string name = 3;
     ChannelVisibility visibility = 4;
+}
+
+message RemoteProject {
+    uint64 id = 1;
+    optional uint64 project_id = 2;
+    uint64 channel_id = 3;
+    string name = 4;
+    uint64 dev_server_id = 5;
+}
+
+message DevServer {
+    uint64 channel_id = 1;
+    uint64 dev_server_id = 2;
+    string name = 3;
+    DevServerStatus status = 4;
+}
+
+enum DevServerStatus {
+    Offline = 0;
+    Online = 1;
 }
 
 message JoinChannel {

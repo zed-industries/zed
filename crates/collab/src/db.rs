@@ -592,6 +592,8 @@ pub struct ChannelsForUser {
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub hosted_projects: Vec<proto::HostedProject>,
+    pub dev_servers: Vec<proto::DevServer>,
+    pub remote_projects: Vec<proto::RemoteProject>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
     pub observed_channel_messages: Vec<proto::ChannelMessageId>,

@@ -24,6 +24,7 @@ pub mod observed_channel_messages;
 pub mod project;
 pub mod project_collaborator;
 pub mod rate_buckets;
+pub mod remote_project;
 pub mod room;
 pub mod room_participant;
 pub mod server;

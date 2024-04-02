@@ -65,6 +65,7 @@ impl Database {
                 ))),
                 id: ActiveValue::NotSet,
                 hosted_project_id: ActiveValue::Set(None),
+                remote_project_id: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
