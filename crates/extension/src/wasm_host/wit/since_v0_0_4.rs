@@ -258,6 +258,8 @@ impl ExtensionImports for WasmState {
 
                     let unzip_status = std::process::Command::new("unzip")
                         .current_dir(&extension_work_dir)
+                        .arg("-d")
+                        .arg(&destination_path)
                         .arg(&zip_path)
                         .output()?
                         .status;
