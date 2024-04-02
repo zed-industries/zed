@@ -195,6 +195,7 @@ pub struct Pane {
 pub struct ItemNavHistory {
     history: NavHistory,
     item: Arc<dyn WeakItemHandle>,
+    is_preview: bool,
 }
 
 #[derive(Clone)]
@@ -230,6 +231,7 @@ pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any + Send>>,
     pub timestamp: usize,
+    pub is_preview: bool,
 }
 
 #[derive(Clone)]
@@ -461,6 +463,7 @@ impl Pane {
         ItemNavHistory {
             history: self.nav_history.clone(),
             item: Arc::new(item.downgrade()),
+            is_preview: self.preview_item_id == Some(item.item_id()),
         }
     }
 
@@ -571,17 +574,24 @@ impl Pane {
         } else {
             if allow_preview {
                 if let Some(preview_item_id) = self.preview_item_id {
-                    self.items.retain(|item| item.item_id() != preview_item_id);
+                    if let Some(item_idx) = self
+                        .items
+                        .iter()
+                        .position(|item| item.item_id() == preview_item_id)
+                    {
+                        self.remove_item(item_idx, false, cx);
+                    }
                 }
             }
 
             let new_item = build_item(cx);
-            self.add_item(new_item.clone(), true, focus_item, None, cx);
             if allow_preview {
                 self.set_preview_item_id(Some(new_item.item_id()), cx);
             } else {
                 self.set_preview_item_id(None, cx);
             }
+
+            self.add_item(new_item.clone(), true, focus_item, None, cx);
 
             new_item
         }
@@ -1125,9 +1135,10 @@ impl Pane {
             self.active_item_index -= 1;
         }
 
+        let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(cx);
-        self.nav_history.set_mode(NavigationMode::Normal);
+        self.nav_history.set_mode(mode);
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
@@ -2004,7 +2015,8 @@ impl Render for Pane {
 
 impl ItemNavHistory {
     pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
-        self.history.push(data, self.item.clone(), cx);
+        self.history
+            .push(data, self.item.clone(), self.is_preview, cx);
     }
 
     pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
@@ -2078,6 +2090,7 @@ impl NavHistory {
         &mut self,
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
+        is_preview: bool,
         cx: &mut WindowContext,
     ) {
         let state = &mut *self.0.lock();
@@ -2091,6 +2104,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
                 state.forward_stack.clear();
             }
@@ -2102,6 +2116,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
             }
             NavigationMode::GoingForward => {
@@ -2112,6 +2127,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
             }
             NavigationMode::ClosingItem => {
@@ -2122,6 +2138,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
             }
         }

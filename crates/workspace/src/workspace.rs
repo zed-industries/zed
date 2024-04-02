@@ -1107,7 +1107,13 @@ impl Workspace {
                     })?;
 
                     pane.update(&mut cx, |pane, cx| {
-                        let item = pane.open_item(project_entry_id, true, false, cx, build_item);
+                        let item = pane.open_item(
+                            project_entry_id,
+                            true,
+                            entry.is_preview,
+                            cx,
+                            build_item,
+                        );
                         navigated |= Some(item.item_id()) != prev_active_item_id;
                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                         if let Some(data) = entry.data {
