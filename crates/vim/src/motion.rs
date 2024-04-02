@@ -1354,6 +1354,7 @@ fn end_of_document(
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
+    let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
@@ -2106,6 +2107,25 @@ mod test {
           123 234 34ˇ5
           4;5.6 567 678
           789 890 901
+        "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_match_eol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            fn aˇ() {
+              return
+            }
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "$", "%"]).await;
+        cx.assert_shared_state(indoc! {"
+            fn a«() {
+              return
+            }ˇ»
         "})
             .await;
     }

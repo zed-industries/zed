@@ -1,3 +1,4 @@
+use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -6,6 +7,7 @@ use async_trait::async_trait;
 use futures::io::BufReader;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
+use std::path::Path;
 use std::{
     env,
     path::PathBuf,
@@ -14,11 +16,12 @@ use std::{
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 5);
 
 wasmtime::component::bindgen!({
     async: true,
-    path: "../extension_api/wit/0.0.4",
+    path: "../extension_api/wit/since_v0.0.4",
     with: {
          "worktree": ExtensionWorktree,
     },
@@ -74,37 +77,34 @@ impl HostWorktree for WasmState {
 #[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .binary_path()
-                .await
-                .map(|path| path.to_string_lossy().to_string()),
-        )
+        self.host
+            .node_runtime
+            .binary_path()
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+            .to_wasmtime_result()
     }
 
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .npm_package_latest_version(&package_name)
-                .await,
-        )
+        self.host
+            .node_runtime
+            .npm_package_latest_version(&package_name)
+            .await
+            .to_wasmtime_result()
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .npm_package_installed_version(&self.work_dir(), &package_name)
-                .await,
-        )
+        self.host
+            .node_runtime
+            .npm_package_installed_version(&self.work_dir(), &package_name)
+            .await
+            .to_wasmtime_result()
     }
 
     async fn npm_install_package(
@@ -112,12 +112,11 @@ impl ExtensionImports for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
-        convert_result(
-            self.host
-                .node_runtime
-                .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-                .await,
-        )
+        self.host
+            .node_runtime
+            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
+            .await
+            .to_wasmtime_result()
     }
 
     async fn latest_github_release(
@@ -125,29 +124,28 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        convert_result(
-            maybe!(async {
-                let release = util::github::latest_github_release(
-                    &repo,
-                    options.require_assets,
-                    options.pre_release,
-                    self.host.http_client.clone(),
-                )
-                .await?;
-                Ok(GithubRelease {
-                    version: release.tag_name,
-                    assets: release
-                        .assets
-                        .into_iter()
-                        .map(|asset| GithubReleaseAsset {
-                            name: asset.name,
-                            download_url: asset.browser_download_url,
-                        })
-                        .collect(),
-                })
+        maybe!(async {
+            let release = util::github::latest_github_release(
+                &repo,
+                options.require_assets,
+                options.pre_release,
+                self.host.http_client.clone(),
+            )
+            .await?;
+            Ok(GithubRelease {
+                version: release.tag_name,
+                assets: release
+                    .assets
+                    .into_iter()
+                    .map(|asset| GithubReleaseAsset {
+                        name: asset.name,
+                        download_url: asset.browser_download_url,
+                    })
+                    .collect(),
             })
-            .await,
-        )
+        })
+        .await
+        .to_wasmtime_result()
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
@@ -197,7 +195,7 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
-        let result = maybe!(async {
+        maybe!(async {
             let path = PathBuf::from(path);
             let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
 
@@ -260,6 +258,8 @@ impl ExtensionImports for WasmState {
 
                     let unzip_status = std::process::Command::new("unzip")
                         .current_dir(&extension_work_dir)
+                        .arg("-d")
+                        .arg(&destination_path)
                         .arg(&zip_path)
                         .output()?
                         .status;
@@ -271,11 +271,27 @@ impl ExtensionImports for WasmState {
 
             Ok(())
         })
-        .await;
-        convert_result(result)
+        .await
+        .to_wasmtime_result()
     }
-}
 
-fn convert_result<T>(result: Result<T>) -> wasmtime::Result<Result<T, String>> {
-    Ok(result.map_err(|error| error.to_string()))
+    async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
+        #[allow(unused)]
+        let path = self
+            .host
+            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+
+        #[cfg(unix)]
+        {
+            use std::fs::{self, Permissions};
+            use std::os::unix::fs::PermissionsExt;
+
+            return fs::set_permissions(&path, Permissions::from_mode(0o755))
+                .map_err(|error| anyhow!("failed to set permissions for path {path:?}: {error}"))
+                .to_wasmtime_result();
+        }
+
+        #[cfg(not(unix))]
+        Ok(Ok(()))
+    }
 }

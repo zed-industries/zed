@@ -419,6 +419,7 @@ impl Server {
                         session,
                         app_state.config.openai_api_key.clone(),
                         app_state.config.google_ai_api_key.clone(),
+                        app_state.config.anthropic_api_key.clone(),
                     )
                 }
             })
@@ -3506,6 +3507,7 @@ async fn complete_with_language_model(
     session: Session,
     open_ai_api_key: Option<Arc<str>>,
     google_ai_api_key: Option<Arc<str>>,
+    anthropic_api_key: Option<Arc<str>>,
 ) -> Result<()> {
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
@@ -3524,6 +3526,10 @@ async fn complete_with_language_model(
         let api_key = google_ai_api_key
             .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
         complete_with_google_ai(request, response, session, api_key).await?;
+    } else if request.model.starts_with("claude") {
+        let api_key = anthropic_api_key
+            .ok_or_else(|| anyhow!("no Anthropic AI API key configured on the server"))?;
+        complete_with_anthropic(request, response, session, api_key).await?;
     }
 
     Ok(())
@@ -3616,6 +3622,121 @@ async fn complete_with_google_ai(
                 })
                 .collect(),
         })?;
+    }
+
+    Ok(())
+}
+
+async fn complete_with_anthropic(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: UserSession,
+    api_key: Arc<str>,
+) -> Result<()> {
+    let model = anthropic::Model::from_id(&request.model)?;
+
+    let mut system_message = String::new();
+    let messages = request
+        .messages
+        .into_iter()
+        .filter_map(|message| match message.role() {
+            LanguageModelRole::LanguageModelUser => Some(anthropic::RequestMessage {
+                role: anthropic::Role::User,
+                content: message.content,
+            }),
+            LanguageModelRole::LanguageModelAssistant => Some(anthropic::RequestMessage {
+                role: anthropic::Role::Assistant,
+                content: message.content,
+            }),
+            // Anthropic's API breaks system instructions out as a separate field rather
+            // than having a system message role.
+            LanguageModelRole::LanguageModelSystem => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.content);
+
+                None
+            }
+        })
+        .collect();
+
+    let mut stream = anthropic::stream_completion(
+        &session.http_client,
+        "https://api.anthropic.com",
+        &api_key,
+        anthropic::Request {
+            model,
+            messages,
+            stream: true,
+            system: system_message,
+            max_tokens: 4092,
+        },
+    )
+    .await?;
+
+    let mut current_role = proto::LanguageModelRole::LanguageModelAssistant;
+
+    while let Some(event) = stream.next().await {
+        let event = event?;
+
+        match event {
+            anthropic::ResponseEvent::MessageStart { message } => {
+                if let Some(role) = message.role {
+                    if role == "assistant" {
+                        current_role = proto::LanguageModelRole::LanguageModelAssistant;
+                    } else if role == "user" {
+                        current_role = proto::LanguageModelRole::LanguageModelUser;
+                    }
+                }
+            }
+            anthropic::ResponseEvent::ContentBlockStart { content_block, .. } => {
+                match content_block {
+                    anthropic::ContentBlock::Text { text } => {
+                        if !text.is_empty() {
+                            response.send(proto::LanguageModelResponse {
+                                choices: vec![proto::LanguageModelChoiceDelta {
+                                    index: 0,
+                                    delta: Some(proto::LanguageModelResponseMessage {
+                                        role: Some(current_role as i32),
+                                        content: Some(text),
+                                    }),
+                                    finish_reason: None,
+                                }],
+                            })?;
+                        }
+                    }
+                }
+            }
+            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => match delta {
+                anthropic::TextDelta::TextDelta { text } => {
+                    response.send(proto::LanguageModelResponse {
+                        choices: vec![proto::LanguageModelChoiceDelta {
+                            index: 0,
+                            delta: Some(proto::LanguageModelResponseMessage {
+                                role: Some(current_role as i32),
+                                content: Some(text),
+                            }),
+                            finish_reason: None,
+                        }],
+                    })?;
+                }
+            },
+            anthropic::ResponseEvent::MessageDelta { delta, .. } => {
+                if let Some(stop_reason) = delta.stop_reason {
+                    response.send(proto::LanguageModelResponse {
+                        choices: vec![proto::LanguageModelChoiceDelta {
+                            index: 0,
+                            delta: None,
+                            finish_reason: Some(stop_reason),
+                        }],
+                    })?;
+                }
+            }
+            anthropic::ResponseEvent::ContentBlockStop { .. } => {}
+            anthropic::ResponseEvent::MessageStop {} => {}
+            anthropic::ResponseEvent::Ping {} => {}
+        }
     }
 
     Ok(())

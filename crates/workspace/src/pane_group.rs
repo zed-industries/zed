@@ -914,7 +914,7 @@ mod element {
                     cx.set_cursor_style(cursor_style, &handle.hitbox);
                     cx.paint_quad(gpui::fill(
                         handle.divider_bounds,
-                        cx.theme().colors().border,
+                        cx.theme().colors().pane_group_border,
                     ));
 
                     cx.on_mouse_event({

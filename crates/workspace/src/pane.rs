@@ -1562,16 +1562,14 @@ impl Pane {
     }
 
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
-        div()
-            .absolute()
-            .bottom_0()
-            .right_0()
-            .size_0()
-            .child(deferred(
+        div().absolute().bottom_0().right_0().size_0().child(
+            deferred(
                 anchored()
                     .anchor(AnchorCorner::TopRight)
                     .child(menu.clone()),
-            ))
+            )
+            .with_priority(1),
+        )
     }
 
     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {

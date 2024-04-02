@@ -127,6 +127,7 @@ impl LspAdapter for TailwindLspAdapter {
             ("HEEX".to_string(), "phoenix-heex".to_string()),
             ("ERB".to_string(), "erb".to_string()),
             ("PHP".to_string(), "php".to_string()),
+            ("Vue.js".to_string(), "vue".to_string()),
         ])
     }
 }

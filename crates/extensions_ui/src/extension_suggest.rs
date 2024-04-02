@@ -16,6 +16,11 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
         [
             ("astro", "astro"),
             ("beancount", "beancount"),
+            ("clojure", "bb"),
+            ("clojure", "clj"),
+            ("clojure", "cljc"),
+            ("clojure", "cljs"),
+            ("clojure", "edn"),
             ("csharp", "cs"),
             ("dockerfile", "Dockerfile"),
             ("elisp", "el"),

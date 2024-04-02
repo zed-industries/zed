@@ -1,8 +1,7 @@
 use crate::{
-    history::SearchHistory, mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode,
-    NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace,
-    ToggleWholeWord,
+    mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -20,7 +19,7 @@ use gpui::{
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
-use project::{search::SearchQuery, Project};
+use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -125,10 +124,11 @@ struct ProjectSearch {
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
+    last_search_query_text: Option<String>,
     search_id: usize,
-    search_history: SearchHistory,
     no_results: Option<bool>,
     limit_reached: bool,
+    search_history_cursor: SearchHistoryCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -180,10 +180,11 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
+            last_search_query_text: None,
             search_id: 0,
-            search_history: SearchHistory::default(),
             no_results: None,
             limit_reached: false,
+            search_history_cursor: Default::default(),
         }
     }
 
@@ -196,19 +197,23 @@ impl ProjectSearch {
             pending_search: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
+            last_search_query_text: self.last_search_query_text.clone(),
             search_id: self.search_id,
-            search_history: self.search_history.clone(),
             no_results: self.no_results,
             limit_reached: self.limit_reached,
+            search_history_cursor: self.search_history_cursor.clone(),
         })
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
-        let search = self
-            .project
-            .update(cx, |project, cx| project.search(query.clone(), cx));
+        let search = self.project.update(cx, |project, cx| {
+            project
+                .search_history_mut()
+                .add(&mut self.search_history_cursor, query.as_str().to_string());
+            project.search(query.clone(), cx)
+        });
+        self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;
-        self.search_history.add(query.as_str().to_string());
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
@@ -368,8 +373,7 @@ impl Item for ProjectSearchView {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
-            .search_history
-            .current()
+            .last_search_query_text
             .as_ref()
             .map(|query| {
                 let query = query.replace('\n', "");
@@ -1270,11 +1274,16 @@ impl ProjectSearchBar {
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.model.update(cx, |model, _| {
-                    if let Some(new_query) = model.search_history.next().map(str::to_string) {
+                let new_query = search_view.model.update(cx, |model, cx| {
+                    if let Some(new_query) = model.project.update(cx, |project, _| {
+                        project
+                            .search_history_mut()
+                            .next(&mut model.search_history_cursor)
+                            .map(str::to_string)
+                    }) {
                         new_query
                     } else {
-                        model.search_history.reset_selection();
+                        model.search_history_cursor.reset();
                         String::new()
                     }
                 });
@@ -1290,8 +1299,10 @@ impl ProjectSearchBar {
                     if let Some(new_query) = search_view
                         .model
                         .read(cx)
-                        .search_history
-                        .current()
+                        .project
+                        .read(cx)
+                        .search_history()
+                        .current(&search_view.model.read(cx).search_history_cursor)
                         .map(str::to_string)
                     {
                         search_view.set_query(&new_query, cx);
@@ -1299,8 +1310,13 @@ impl ProjectSearchBar {
                     }
                 }
 
-                if let Some(new_query) = search_view.model.update(cx, |model, _| {
-                    model.search_history.previous().map(str::to_string)
+                if let Some(new_query) = search_view.model.update(cx, |model, cx| {
+                    model.project.update(cx, |project, _| {
+                        project
+                            .search_history_mut()
+                            .previous(&mut model.search_history_cursor)
+                            .map(str::to_string)
+                    })
                 }) {
                     search_view.set_query(&new_query, cx);
                 }
@@ -2902,6 +2918,222 @@ pub mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_search_query_history_with_multiple_views(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let panes: Vec<_> = window
+            .update(cx, |this, _| this.panes().to_owned())
+            .unwrap();
+
+        let search_bar_1 = window.build_view(cx, |_| ProjectSearchBar::new());
+        let search_bar_2 = window.build_view(cx, |_| ProjectSearchBar::new());
+
+        assert_eq!(panes.len(), 1);
+        let first_pane = panes.get(0).cloned().unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 0);
+        window
+            .update(cx, |workspace, cx| {
+                workspace.open_path(
+                    (worktree_id, "one.rs"),
+                    Some(first_pane.downgrade()),
+                    true,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+
+        // Add a project search item to the first pane
+        window
+            .update(cx, {
+                let search_bar = search_bar_1.clone();
+                let pane = first_pane.clone();
+                move |workspace, cx| {
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+                }
+            })
+            .unwrap();
+        let search_view_1 = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        let second_pane = window
+            .update(cx, |workspace, cx| {
+                workspace.split_and_clone(first_pane.clone(), workspace::SplitDirection::Right, cx)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
+
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 2);
+
+        // Add a project search item to the second pane
+        window
+            .update(cx, {
+                let search_bar = search_bar_2.clone();
+                let pane = second_pane.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+                }
+            })
+            .unwrap();
+
+        let search_view_2 = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 2);
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 2);
+
+        let update_search_view =
+            |search_view: &View<ProjectSearchView>, query: &str, cx: &mut TestAppContext| {
+                window
+                    .update(cx, |_, cx| {
+                        search_view.update(cx, |search_view, cx| {
+                            search_view
+                                .query_editor
+                                .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
+                            search_view.search(cx);
+                        });
+                    })
+                    .unwrap();
+            };
+
+        let active_query =
+            |search_view: &View<ProjectSearchView>, cx: &mut TestAppContext| -> String {
+                window
+                    .update(cx, |_, cx| {
+                        search_view.update(cx, |search_view, cx| {
+                            search_view.query_editor.read(cx).text(cx).to_string()
+                        })
+                    })
+                    .unwrap()
+            };
+
+        let select_prev_history_item =
+            |search_bar: &View<ProjectSearchBar>, cx: &mut TestAppContext| {
+                window
+                    .update(cx, |_, cx| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                        })
+                    })
+                    .unwrap();
+            };
+
+        let select_next_history_item =
+            |search_bar: &View<ProjectSearchBar>, cx: &mut TestAppContext| {
+                window
+                    .update(cx, |_, cx| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            search_bar.next_history_query(&NextHistoryQuery, cx);
+                        })
+                    })
+                    .unwrap();
+            };
+
+        update_search_view(&search_view_1, "ONE", cx);
+        cx.background_executor.run_until_parked();
+
+        update_search_view(&search_view_2, "TWO", cx);
+        cx.background_executor.run_until_parked();
+
+        assert_eq!(active_query(&search_view_1, cx), "ONE");
+        assert_eq!(active_query(&search_view_2, cx), "TWO");
+
+        // Selecting previous history item should select the query from search view 1.
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "ONE");
+
+        // Selecting the previous history item should not change the query as it is already the first item.
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "ONE");
+
+        // Changing the query in search view 2 should not affect the history of search view 1.
+        assert_eq!(active_query(&search_view_1, cx), "ONE");
+
+        // Deploying a new search in search view 2
+        update_search_view(&search_view_2, "THREE", cx);
+        cx.background_executor.run_until_parked();
+
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "");
+
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "THREE");
+
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "TWO");
+
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "ONE");
+
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "ONE");
+
+        // Search view 1 should now see the query from search view 2.
+        assert_eq!(active_query(&search_view_1, cx), "ONE");
+
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "TWO");
+
+        // Here is the new query from search view 2
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "THREE");
+
+        select_next_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "");
+
+        select_next_history_item(&search_bar_1, cx);
+        assert_eq!(active_query(&search_view_1, cx), "TWO");
+
+        select_next_history_item(&search_bar_1, cx);
+        assert_eq!(active_query(&search_view_1, cx), "THREE");
+
+        select_next_history_item(&search_bar_1, cx);
+        assert_eq!(active_query(&search_view_1, cx), "");
     }
 
     #[gpui::test]
