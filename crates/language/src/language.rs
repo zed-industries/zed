@@ -205,17 +205,17 @@ impl CachedLspAdapter {
         self.adapter.process_diagnostics(params)
     }
 
-    pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
-        self.adapter.process_completion(completion_item).await
+    pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
+        self.adapter.process_completions(completion_items).await
     }
 
     pub async fn labels_for_completions(
         &self,
-        completion_item: &[lsp::CompletionItem],
+        completion_items: &[lsp::CompletionItem],
         language: &Arc<Language>,
     ) -> Vec<Option<CodeLabel>> {
         self.adapter
-            .labels_for_completions(completion_item, language)
+            .labels_for_completions(completion_items, language)
             .await
     }
 
@@ -392,10 +392,8 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    /// A callback called for each [`lsp::CompletionItem`] obtained from LSP server.
-    /// Some LspAdapter implementations might want to modify the obtained item to
-    /// change how it's displayed.
-    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
+    /// Post-processes completions provided by the language server.
+    async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
 
     async fn labels_for_completions(
         &self,
