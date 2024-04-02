@@ -82,6 +82,7 @@ impl Item for ImageView {
             } else {
                 Color::Muted
             })
+            .italic(params.preview)
             .into_any_element()
     }
 
