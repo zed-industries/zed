@@ -43,6 +43,13 @@ impl ScrollAnchor {
         }
     }
 
+    pub(crate) fn top_row_display_raw(&self, snapshot: &DisplaySnapshot) -> u32 {
+        if self.anchor != Anchor::min() {
+            self.anchor.to_display_point(snapshot).row()
+        } else {
+            0
+        }
+    }
     pub(crate) fn top_row_display(&self, snapshot: &DisplaySnapshot) -> u32 {
         if self.anchor != Anchor::min() {
             let row: i64 = self.anchor.to_display_point(snapshot).row() as _;

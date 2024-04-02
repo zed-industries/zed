@@ -3543,7 +3543,7 @@ impl Element for EditorElement {
                 };
                 let scroll_position = ScrollPosition {
                     x: scroll_position.offset.x * em_width,
-                    row: start_row,
+                    row: scroll_position.top_row_display_raw(&snapshot.display_snapshot),
                     y_offset,
                 };
                 cx.with_element_id(Some("blocks"), |cx| {
