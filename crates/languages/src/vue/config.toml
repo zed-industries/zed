@@ -14,4 +14,9 @@ brackets = [
     { start = "`", end = "`", close = true, newline = false, not_in = ["string"] },
 ]
 word_characters = ["-"]
+scope_opt_in_language_servers = ["tailwindcss-language-server"]
 prettier_parser_name = "vue"
+
+[overrides.string]
+word_characters = ["-"]
+opt_into_language_servers = ["tailwindcss-language-server"]
