@@ -219,7 +219,7 @@ impl Modifiers {
     pub fn secondary(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            return self.command;
+            return self.platform;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -246,7 +246,7 @@ impl Modifiers {
         #[cfg(target_os = "macos")]
         {
             Modifiers {
-                command: true,
+                platform: true,
                 ..Default::default()
             }
         }
