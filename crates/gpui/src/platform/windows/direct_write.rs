@@ -217,7 +217,7 @@ impl DirectWriteState {
                     &HSTRING::from(&family_name),
                     DWRITE_FONT_WEIGHT(font_weight.0 as i32),
                     DWRITE_FONT_STRETCH_NORMAL,
-                    DWRITE_FONT_STYLE_NORMAL,
+                    font_style.into(),
                 )
                 .unwrap();
             let total_number = font.GetFontCount();
@@ -458,11 +458,9 @@ impl DirectWriteState {
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
         let offset = [DWRITE_GLYPH_OFFSET::default()];
-        let glyph_run = DWRITE_GLYPH_RUN {
-            fontFace: ManuallyDrop::new(Some(
-                // TODO: remove this clone
-                <IDWriteFontFace3 as Clone>::clone(&font.font_face).into(),
-            )),
+        let mut glyph_run = DWRITE_GLYPH_RUN {
+            // TODO: can we remove this clone?
+            fontFace: ManuallyDrop::new(Some(font.font_face.clone().into())),
             fontEmSize: params.font_size.0,
             glyphCount: 1,
             glyphIndices: glyph_id.as_ptr(),
@@ -479,7 +477,7 @@ impl DirectWriteState {
             dx: 0.0,
             dy: 0.0,
         };
-        self.components.factory.CreateGlyphRunAnalysis(
+        let result = self.components.factory.CreateGlyphRunAnalysis(
             &glyph_run as _,
             1.0,
             Some(&transform as _),
@@ -488,7 +486,9 @@ impl DirectWriteState {
             DWRITE_MEASURING_MODE_NATURAL,
             0.0,
             0.0,
-        )
+        );
+        ManuallyDrop::drop(&mut glyph_run.fontFace);
+        result
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
@@ -538,11 +538,9 @@ impl DirectWriteState {
             advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
             ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
         }];
-        let glyph_run = DWRITE_GLYPH_RUN {
-            fontFace: ManuallyDrop::new(Some(
-                // TODO: remove this clone
-                <IDWriteFontFace3 as Clone>::clone(&font_info.font_face).into(),
-            )),
+        let mut glyph_run = DWRITE_GLYPH_RUN {
+            // TODO: can we remove this clone?
+            fontFace: ManuallyDrop::new(Some(font_info.font_face.clone().into())),
             fontEmSize: params.font_size.0,
             glyphCount: 1,
             glyphIndices: glyph_id.as_ptr(),
@@ -571,7 +569,7 @@ impl DirectWriteState {
             dy: 0.0,
         };
 
-        unsafe {
+        let result = unsafe {
             let bitmap_render_target = self.components.gdi.CreateBitmapRenderTarget(
                 None,
                 bitmap_size.width.0 as u32,
@@ -642,7 +640,7 @@ impl DirectWriteState {
                     bytes[2] = (color & 0xFF) as u8;
                     bytes[3] = 0xFF;
                 }
-                Ok((bitmap_size, raw_bytes))
+                (bitmap_size, raw_bytes)
             } else {
                 bitmap_render_target.DrawGlyphRun(
                     (subpixel_shift.x / params.scale_factor) as f32,
@@ -664,9 +662,11 @@ impl DirectWriteState {
                         (((color & 0xFF) + (color >> 8 & 0xFF) + (color >> 16 & 0xFF)) / 3) as u8;
                 }
 
-                Ok((bitmap_size, raw_bytes))
+                (bitmap_size, raw_bytes)
             }
-        }
+        };
+        unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
+        Ok(result)
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
@@ -1045,6 +1045,16 @@ impl<'a> StringIndexConverter<'a> {
             self.utf16_ix += c.len_utf16();
         }
         self.utf8_ix = self.text.len();
+    }
+}
+
+impl Into<DWRITE_FONT_STYLE> for FontStyle {
+    fn into(self) -> DWRITE_FONT_STYLE {
+        match self {
+            FontStyle::Normal => DWRITE_FONT_STYLE_NORMAL,
+            FontStyle::Italic => DWRITE_FONT_STYLE_ITALIC,
+            FontStyle::Oblique => DWRITE_FONT_STYLE_OBLIQUE,
+        }
     }
 }
 
