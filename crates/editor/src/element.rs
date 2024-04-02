@@ -2499,7 +2499,6 @@ impl EditorElement {
             }
 
             let scrollbar_layout = scrollbar_layout.clone();
-            // todo!("this is currently a btreemap, use a TreeMap")
             let background_highlights = editor.background_highlights.clone();
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
@@ -2549,9 +2548,9 @@ impl EditorElement {
                             }
 
                             for (background_highlight_id, (_, background_ranges)) in
-                                background_highlights
+                                background_highlights.iter()
                             {
-                                if (background_highlight_id
+                                if (*background_highlight_id
                                     == TypeId::of::<BufferSearchHighlights>()
                                     && scrollbar_settings.selections)
                                     || scrollbar_settings.symbols_selections

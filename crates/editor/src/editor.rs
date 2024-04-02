@@ -115,6 +115,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
+use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
     observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
@@ -354,7 +355,7 @@ type CompletionId = usize;
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
+type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -393,7 +394,7 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
-    background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
+    background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     scrollbar_markers_dirty: bool,
     scrollbar_markers: Arc<[PaintQuad]>,
     pending_scrollbar_markers_refresh: Option<Task<Result<()>>>,
@@ -8396,15 +8397,15 @@ impl Editor {
                         editor
                     });
 
-                    let ranges = this
-                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
-                        .into_iter()
-                        .flat_map(|(_, ranges)| ranges.into_iter())
-                        .chain(
-                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
-                                .into_iter()
-                                .flat_map(|(_, ranges)| ranges.into_iter()),
-                        )
+                    let write_highlights =
+                        this.clear_background_highlights::<DocumentHighlightWrite>(cx);
+                    let read_highlights =
+                        this.clear_background_highlights::<DocumentHighlightRead>(cx);
+                    let ranges = write_highlights
+                        .iter()
+                        .flat_map(|(_, ranges)| ranges.iter())
+                        .chain(read_highlights.iter().flat_map(|(_, ranges)| ranges.iter()))
+                        .cloned()
                         .collect();
 
                     this.highlight_text::<Rename>(
@@ -9370,7 +9371,7 @@ impl Editor {
         }
 
         self.background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
+            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
         self.scrollbar_markers_dirty = true;
         cx.notify();
     }
