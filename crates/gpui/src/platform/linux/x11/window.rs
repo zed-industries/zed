@@ -17,13 +17,7 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell,
-    ffi::c_void,
-    mem,
-    num::NonZeroU32,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{self, Arc},
+    borrow::Borrow, cell::RefCell, ffi::c_void, mem, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::{self, Arc}
 };
 
 use super::X11Display;
@@ -253,7 +247,7 @@ impl X11WindowState {
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
             }),
-            atoms: atoms.clone(),
+            atoms: *atoms,
         }
     }
 
