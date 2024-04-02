@@ -60,7 +60,7 @@ impl DirectWriteComponent {
             let gdi = factory.GetGdiInterop().unwrap();
             let text_renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
             let text_renderer: IDWriteTextRenderer =
-                TextRenderer::new(renderer_inner.clone(), locale_name).into();
+                TextRenderer::new(text_renderer_inner.clone(), &locale).into();
 
             DirectWriteComponent {
                 locale,
@@ -274,7 +274,8 @@ impl DirectWriteState {
             return LineLayout::default();
         }
         unsafe {
-            self.components.text_renderer_inner.write().reset();
+            let text_renderer_inner = self.components.text_renderer_inner.clone();
+            text_renderer_inner.write().reset();
             let locale_wide = self
                 .components
                 .locale
@@ -375,7 +376,7 @@ impl DirectWriteState {
             let mut ix_converter = StringIndexConverter::new(text);
             let runs = {
                 let mut vec = Vec::new();
-                for result in self.components.text_renderer_inner.read().runs.iter() {
+                for result in text_renderer_inner.read().runs.iter() {
                     let font_id;
                     if let Some(id) = self.font_id_by_postscript_name.get(&result.postscript) {
                         font_id = *id;
@@ -402,7 +403,7 @@ impl DirectWriteState {
             text_layout
                 .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
                 .unwrap();
-            let width = self.components.text_renderer_inner.read().width;
+            let width = text_renderer_inner.read().width;
             let ascent = px(metrics[0].baseline);
             let descent = px(metrics[0].height - metrics[0].baseline);
 
@@ -826,7 +827,11 @@ struct TextRenderer {
 }
 
 impl TextRenderer {
-    pub fn new(inner: Arc<RwLock<TextRendererInner>>, locale: PCWSTR) -> Self {
+    pub fn new(inner: Arc<RwLock<TextRendererInner>>, locale_str: &str) -> Self {
+        let locale_vec = locale_str.encode_utf16().chain(Some(0)).collect_vec();
+        let locale = PCWSTR::from_raw(locale_vec.as_ptr());
+        std::mem::forget(locale_vec); // give ownership to locale
+
         TextRenderer { inner, locale }
     }
 }
