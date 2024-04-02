@@ -179,12 +179,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        println!("===========================================================");
-        println!("fonts: {:?}", self.0.read().font_selections);
-        println!("fonts: {:?}", self.0.read().fonts);
-        println!("fonts: {:?}", self.0.read().font_id_by_postscript_name);
-        println!("fonts: {:?}", self.0.read().font_sets);
-        println!("===========================================================");
         self.0.write().layout_line(text, font_size, runs)
     }
 
@@ -357,7 +351,9 @@ impl DirectWriteState {
                     startPosition: wstring_offset,
                     length: local_length,
                 };
-                layout.SetTypography(&font_info.features, text_range);
+                layout
+                    .SetTypography(&font_info.features, text_range)
+                    .unwrap();
                 wstring_offset += local_length;
                 (format, layout)
             };
@@ -523,6 +519,9 @@ impl DirectWriteState {
         unsafe {
             let glyph_run_analysis = self.get_glyphrun_analysis(params)?;
             let bounds = glyph_run_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)?;
+            if params.is_emoji {
+                println!("Glyph bounds: {:?}\n => {:?}", params, bounds);
+            }
 
             Ok(Bounds {
                 origin: Point {
@@ -559,13 +558,12 @@ impl DirectWriteState {
             return Err(anyhow!("glyph bounds are empty"));
         }
         let font_info = &self.fonts[params.font_id.0];
-        println!(
-            "rastering: {}, is emoji {}",
-            font_info.font_family, params.is_emoji
-        );
         let glyph_id = [params.glyph_id.0 as u16];
-        let advance = [0.0f32];
-        let offset = [DWRITE_GLYPH_OFFSET::default()];
+        let advance = [glyph_bounds.size.width.0 as f32];
+        let offset = [DWRITE_GLYPH_OFFSET {
+            advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
+            ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
+        }];
         let glyph_run = DWRITE_GLYPH_RUN {
             fontFace: ManuallyDrop::new(Some(
                 // TODO: remove this clone😀
@@ -579,19 +577,21 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
-        let transform = DWRITE_MATRIX {
-            m11: params.scale_factor,
-            m12: 0.0,
-            m21: 0.0,
-            m22: params.scale_factor,
-            dx: 0.0,
-            dy: 0.0,
-        };
 
         unsafe {
             if params.is_emoji {
                 let bitmap_size = glyph_bounds.size;
                 let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
+
+                let transform = DWRITE_MATRIX {
+                    m11: params.scale_factor,
+                    m12: 0.0,
+                    m21: 0.0,
+                    m22: params.scale_factor,
+                    dx: 0.0,
+                    dy: 0.0,
+                };
+                println!("Rastering: {:?}", glyph_bounds);
 
                 let enumerator = self
                     .components
@@ -607,14 +607,16 @@ impl DirectWriteState {
                     )
                     .unwrap();
 
-                let current_transform = DWRITE_MATRIX {
-                    m11: 1.0,
-                    m12: 0.0,
-                    m21: 0.0,
-                    m22: 1.0,
-                    dx: (-glyph_bounds.origin.x.0 as f32) / 2.0 - 1.0,
-                    dy: ((glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) / 2) as f32,
-                };
+                // let current_transform = DWRITE_MATRIX {
+                //     m11: 1.0,
+                //     m12: 0.0,
+                //     m21: 0.0,
+                //     m22: 1.0,
+                //     dx: (-glyph_bounds.origin.x.0 as f32) / params.scale_factor,
+                //     // dy: ((glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) / 2) as f32,
+                //     dy: glyph_bounds.origin.y.0 as f32 / params.scale_factor
+                //         + glyph_bounds.size.height.0 as f32,
+                // };
                 let bitmap_render_target = self
                     .components
                     .gdi
@@ -626,9 +628,9 @@ impl DirectWriteState {
                     .unwrap();
                 let bitmap_render_target: IDWriteBitmapRenderTarget3 =
                     std::mem::transmute(bitmap_render_target);
-                bitmap_render_target
-                    .SetCurrentTransform(Some(&current_transform))
-                    .unwrap();
+                // bitmap_render_target
+                //     .SetCurrentTransform(Some(&current_transform))
+                //     .unwrap();
 
                 let render_params = self.components.factory.CreateRenderingParams()?;
                 // bitmap_render_target
@@ -646,15 +648,22 @@ impl DirectWriteState {
                 //         println!("Error: {}, msg: {}", e, std::io::Error::last_os_error())
                 //     });
 
+                let mut printed = true;
                 while enumerator.MoveNext().is_ok() {
                     let Ok(run) = enumerator.GetCurrentRun2() else {
                         break;
                     };
                     let emoji = &*run;
+                    if printed {
+                        printed = false;
+                        println!("Glyph advance: {:?}", *emoji.Base.glyphRun.glyphAdvances);
+                        println!("Glyph offset: {:?}", *emoji.Base.glyphRun.glyphOffsets);
+                    }
                     bitmap_render_target
                         .DrawGlyphRun(
                             0.0,
-                            (glyph_bounds.size.height.0 / 2) as f32,
+                            // glyph_bounds.size.height.0 as f32 / 2.0,
+                            0.0,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
