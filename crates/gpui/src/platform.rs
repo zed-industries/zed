@@ -4,6 +4,7 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
+mod common;
 mod keystroke;
 
 #[cfg(target_os = "linux")]
@@ -48,6 +49,7 @@ use std::{
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub(crate) use common::*;
 pub use keystroke::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
