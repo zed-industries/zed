@@ -551,14 +551,16 @@ impl DirectWriteState {
             let ascent = px(metrics[0].baseline);
             let descent = px(metrics[0].height - metrics[0].baseline);
 
-            LineLayout {
+            let result = LineLayout {
                 font_size,
                 width: px(width),
                 ascent,
                 descent,
                 runs,
                 len: text.len(),
-            }
+            };
+            println!("Linelayout: {:#?}", result);
+            result
         }
     }
 
