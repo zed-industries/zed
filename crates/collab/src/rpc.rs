@@ -734,7 +734,13 @@ impl Server {
         executor: Executor,
     ) -> impl Future<Output = ()> {
         let this = self.clone();
-        let span = info_span!("handle connection", %address, impersonator = field::Empty, connection_id = field::Empty);
+        let span = info_span!("handle connection", %address,
+            connection_id=field::Empty,
+            user_id=field::Empty,
+            login=field::Empty,
+            impersonator=field::Empty,
+            dev_server_id=field::Empty
+        );
         principal.update_span(&span);
 
         let mut teardown = self.teardown.subscribe();
@@ -812,7 +818,12 @@ impl Server {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name);
+                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name,
+                                user_id=field::Empty,
+                                login=field::Empty,
+                                impersonator=field::Empty,
+                                dev_server_id=field::Empty
+                            );
                             principal.update_span(&span);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
