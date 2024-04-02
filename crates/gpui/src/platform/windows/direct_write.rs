@@ -518,6 +518,8 @@ impl DirectWriteState {
             let renderer: IDWriteTextRenderer =
                 TextRenderer::new(renderer_inner.clone(), locale_name).into();
             text_layout.Draw(None, &renderer, 0.0, 0.0).unwrap();
+
+            let mut ix_converter = StringIndexConverter::new(text);
             let runs = {
                 let mut vec = Vec::new();
                 for result in renderer_inner.read().runs.iter() {
@@ -530,10 +532,11 @@ impl DirectWriteState {
                     let font_info = &self.fonts[font_id.0];
                     let mut glyphs = SmallVec::new();
                     for glyph in result.glyphs.iter() {
+                        ix_converter.advance_to_utf16_ix(glyph.index);
                         glyphs.push(ShapedGlyph {
                             id: glyph.id,
                             position: glyph.position,
-                            index: glyph.index,
+                            index: ix_converter.utf8_ix,
                             is_emoji: font_info.is_emoji,
                         });
                     }
@@ -1216,6 +1219,44 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             HRESULT(-1),
             "DrawInlineObject unimplemented",
         ))
+    }
+}
+
+struct StringIndexConverter<'a> {
+    text: &'a str,
+    utf8_ix: usize,
+    utf16_ix: usize,
+}
+
+impl<'a> StringIndexConverter<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            utf8_ix: 0,
+            utf16_ix: 0,
+        }
+    }
+
+    fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
+        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
+            if self.utf8_ix + ix >= utf8_target {
+                self.utf8_ix += ix;
+                return;
+            }
+            self.utf16_ix += c.len_utf16();
+        }
+        self.utf8_ix = self.text.len();
+    }
+
+    fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
+        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
+            if self.utf16_ix >= utf16_target {
+                self.utf8_ix += ix;
+                return;
+            }
+            self.utf16_ix += c.len_utf16();
+        }
+        self.utf8_ix = self.text.len();
     }
 }
 
