@@ -212,8 +212,8 @@ message Envelope {
 
         UpdateNotification update_notification = 174;
 
-        QueryAllLsp query_all_lsp = 175;
-        QueryAllLspResponse query_all_lsp_response = 176; // current max
+        MultiLspQuery multi_lsp_query = 175;
+        MultiLspQueryResponse multi_lsp_query_response = 176; // current max
     }
 
     reserved 158 to 161;
@@ -1842,23 +1842,28 @@ message BlameBufferResponse {
     repeated CommitPermalink permalinks = 3;
 }
 
-message QueryAllLsp {
+message MultiLspQuery {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
     oneof strategy {
-        AllLanguageServers all = 1;
+        AllLanguageServers all = 4;
     }
     oneof request {
-        GetHover get_hover = 2;
-        GetCodeActions get_code_actions = 3;
+        GetHover get_hover = 5;
+        GetCodeActions get_code_actions = 6;
     }
 }
 
 message AllLanguageServers {}
 
-message QueryAllLspResponse {
+message MultiLspQueryResponse {
     repeated LspResponse responses = 1;
 }
 
 message LspResponse {
-    GetHoverResponse get_hover_response = 1;
-    GetCodeActionsResponse get_code_actions_response = 2;
+    oneof response {
+        GetHoverResponse get_hover_response = 1;
+        GetCodeActionsResponse get_code_actions_response = 2;
+    }
 }

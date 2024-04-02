@@ -601,6 +601,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
+        client.add_model_request_handler(Self::handle_multi_lsp_query);
     }
 
     pub fn local(
@@ -5269,12 +5270,14 @@ impl Project {
                 hovers
             })
         } else if let Some(project_id) = self.remote_id() {
-            // TODO kb add a handler
-            let request_task = self.client().request(proto::QueryAllLsp {
-                strategy: Some(proto::query_all_lsp::Strategy::All(
+            let request_task = self.client().request(proto::MultiLspQuery {
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
-                request: Some(proto::query_all_lsp::Request::GetHover(
+                request: Some(proto::multi_lsp_query::Request::GetHover(
                     GetHover { position }.to_proto(project_id, buffer.read(cx)),
                 )),
             });
@@ -5290,7 +5293,15 @@ impl Project {
                         .map(|response| response.responses)
                         .unwrap_or_default()
                         .into_iter()
-                        .filter_map(|lsp_response| lsp_response.get_hover_response)
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetHoverResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
                         .map(|hover_response| {
                             let response = GetHover { position }.response_from_proto(
                                 hover_response,
@@ -5714,11 +5725,14 @@ impl Project {
                 code_actions
             })
         } else if let Some(project_id) = self.remote_id() {
-            let request_task = self.client().request(proto::QueryAllLsp {
-                strategy: Some(proto::query_all_lsp::Strategy::All(
+            let request_task = self.client().request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
-                request: Some(proto::query_all_lsp::Request::GetCodeActions(
+                request: Some(proto::multi_lsp_query::Request::GetCodeActions(
                     GetCodeActions {
                         range: range.clone(),
                         kinds: None,
@@ -5738,7 +5752,15 @@ impl Project {
                         .map(|response| response.responses)
                         .unwrap_or_default()
                         .into_iter()
-                        .filter_map(|lsp_response| lsp_response.get_code_actions_response)
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetCodeActionsResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
                         .map(|code_actions_response| {
                             let response = GetCodeActions {
                                 range: range.clone(),
@@ -7677,6 +7699,34 @@ impl Project {
             .await?;
 
         Ok(serialize_blame_buffer_response(blame))
+    }
+
+    async fn handle_multi_lsp_query(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::MultiLspQuery>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::MultiLspQueryResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+        let buffer = this.update(&mut cx, |this, _cx| {
+            this.opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
+        })??;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+
+        match envelope.payload.request {
+            Some(proto::multi_lsp_query::Request::GetHover(get_hover)) => {}
+            Some(proto::multi_lsp_query::Request::GetCodeActions(get_code_actions)) => {}
+            None => anyhow::bail!("empty multi lsp query request"),
+        }
+        todo!("TODO kb use something similar to what hovers and code actions use, deduplicate it")
     }
 
     async fn handle_unshare_project(

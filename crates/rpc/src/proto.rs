@@ -299,8 +299,8 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
-    (QueryAllLsp, Background),
-    (QueryAllLspResponse, Background),
+    (MultiLspQuery, Background),
+    (MultiLspQueryResponse, Background),
 );
 
 request_messages!(
@@ -392,7 +392,7 @@ request_messages!(
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
-    (QueryAllLsp, QueryAllLspResponse),
+    (MultiLspQuery, MultiLspQueryResponse),
 );
 
 entity_messages!(
@@ -421,6 +421,7 @@ entity_messages!(
     InlayHints,
     JoinProject,
     LeaveProject,
+    MultiLspQuery,
     OnTypeFormatting,
     OpenBufferById,
     OpenBufferByPath,
