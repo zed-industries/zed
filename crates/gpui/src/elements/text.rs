@@ -1,8 +1,8 @@
 use crate::{
     ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementContext, ElementId,
-    HighlightStyle, Hitbox, IntoElement, LayoutId, LineLayout, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext,
-    WrappedLine, TOOLTIP_DELAY,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
+    TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -118,12 +118,6 @@ impl StyledText {
         }
     }
 
-    /// Sets the text for this [`StyledText`].
-    pub fn with_text(mut self, text: impl Into<SharedString>) -> Self {
-        self.text = text.into();
-        self
-    }
-
     /// Set the styling attributes for the given text, as well as
     /// as any ranges of text that have had their style customized.
     pub fn with_highlights(
@@ -150,18 +144,6 @@ impl StyledText {
         }
         self.runs = Some(runs);
         self
-    }
-
-    /// Lays out this line of [`StyledText`] at the specified font size.
-    pub fn layout_line(
-        &self,
-        font_size: Pixels,
-        cx: &WindowContext,
-    ) -> anyhow::Result<Arc<LineLayout>> {
-        let Some(runs) = self.runs.as_ref() else {
-            return Err(anyhow!("must pass runs"));
-        };
-        cx.text_system().layout_line(&self.text, font_size, runs)
     }
 }
 
