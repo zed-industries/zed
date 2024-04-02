@@ -9377,12 +9377,14 @@ impl Editor {
 
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
-        _cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
-        let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
-        // todo!(should we notify here?)
-        self.scrollbar_markers_dirty = true;
-        text_highlights
+        let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
+        if !text_highlights.1.is_empty() {
+            self.scrollbar_markers_dirty = true;
+            cx.notify();
+        }
+        Some(text_highlights)
     }
 
     #[cfg(feature = "test-support")]
