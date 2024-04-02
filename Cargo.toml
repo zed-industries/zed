@@ -100,6 +100,7 @@ members = [
     "crates/zed_actions",
 
     "extensions/astro",
+    "extensions/clojure",
     "extensions/csharp",
     "extensions/erlang",
     "extensions/gleam",
@@ -302,7 +303,6 @@ tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
-tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts" }
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-dart = { git = "https://github.com/agent3bood/tree-sitter-dart", rev = "48934e3bf757a9b78f17bdfaa3e2b4284656fdc7" }
