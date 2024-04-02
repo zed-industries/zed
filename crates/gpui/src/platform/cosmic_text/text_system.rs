@@ -229,7 +229,7 @@ impl CosmicTextSystemState {
                 .ok_or_else(|| anyhow!("Could not load font"))?;
 
             // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
-            let allowed_bad_font_names = vec![
+            let allowed_bad_font_names = [
                 "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
                 "Segoe Fluent Icons",
             ];
