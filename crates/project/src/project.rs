@@ -4539,93 +4539,27 @@ impl Project {
                 buffer.end_transaction(cx)
             })?;
 
-            for (lsp_adapter, language_server) in adapters_and_servers.iter() {
-                // Apply the code actions on
-                let code_actions: Vec<lsp::CodeActionKind> = settings
-                    .code_actions_on_format
-                    .iter()
-                    .flat_map(|(kind, enabled)| {
-                        if *enabled {
-                            Some(kind.clone().into())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                #[allow(clippy::nonminimal_bool)]
-                if !code_actions.is_empty()
-                    && !(trigger == FormatTrigger::Save
-                        && settings.format_on_save == FormatOnSave::Off)
-                {
-                    let actions = project
-                        .update(&mut cx, |this, cx| {
-                            this.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(language_server.server_id()),
-                                GetCodeActions {
-                                    range: text::Anchor::MIN..text::Anchor::MAX,
-                                    kinds: Some(code_actions),
-                                },
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    for mut action in actions {
-                        Self::try_resolve_code_action(&language_server, &mut action)
-                            .await
-                            .context("resolving a formatting code action")?;
-                        if let Some(edit) = action.lsp_action.edit {
-                            if edit.changes.is_none() && edit.document_changes.is_none() {
-                                continue;
-                            }
-
-                            let new = Self::deserialize_workspace_edit(
-                                project
-                                    .upgrade()
-                                    .ok_or_else(|| anyhow!("project dropped"))?,
-                                edit,
-                                push_to_history,
-                                lsp_adapter.clone(),
-                                language_server.clone(),
-                                &mut cx,
-                            )
-                            .await?;
-                            project_transaction.0.extend(new.0);
-                        }
-
-                        if let Some(command) = action.lsp_action.command {
-                            project.update(&mut cx, |this, _| {
-                                this.last_workspace_edits_by_language_server
-                                    .remove(&language_server.server_id());
-                            })?;
-
-                            language_server
-                                .request::<lsp::request::ExecuteCommand>(
-                                    lsp::ExecuteCommandParams {
-                                        command: command.command,
-                                        arguments: command.arguments.unwrap_or_default(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .await?;
-
-                            project.update(&mut cx, |this, _| {
-                                project_transaction.0.extend(
-                                    this.last_workspace_edits_by_language_server
-                                        .remove(&language_server.server_id())
-                                        .unwrap_or_default()
-                                        .0,
-                                )
-                            })?;
-                        }
-                    }
-                }
+            // Apply the `code_actions_on_format` before we run the formatter.
+            let code_actions = deserialize_code_actions(&settings.code_actions_on_format);
+            #[allow(clippy::nonminimal_bool)]
+            if !code_actions.is_empty()
+                && !(trigger == FormatTrigger::Save && settings.format_on_save == FormatOnSave::Off)
+            {
+                Self::execute_code_actions_on_servers(
+                    &project,
+                    &adapters_and_servers,
+                    code_actions,
+                    buffer,
+                    push_to_history,
+                    &mut project_transaction,
+                    &mut cx,
+                )
+                .await?;
             }
 
             // Apply language-specific formatting using either the primary language server
             // or external command.
+            // Except for code actions, which are applied with all connected language servers.
             let primary_language_server = adapters_and_servers
                 .first()
                 .cloned()
@@ -4638,6 +4572,22 @@ impl Project {
             match (&settings.formatter, &settings.format_on_save) {
                 (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
+                (Formatter::CodeActions(code_actions), FormatOnSave::On | FormatOnSave::Off)
+                | (_, FormatOnSave::CodeActions(code_actions)) => {
+                    let code_actions = deserialize_code_actions(code_actions);
+                    if !code_actions.is_empty() {
+                        Self::execute_code_actions_on_servers(
+                            &project,
+                            &adapters_and_servers,
+                            code_actions,
+                            buffer,
+                            push_to_history,
+                            &mut project_transaction,
+                            &mut cx,
+                        )
+                        .await?;
+                    }
+                }
                 (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
                 | (_, FormatOnSave::LanguageServer) => {
                     if let Some((language_server, buffer_abs_path)) = server_and_buffer {
@@ -8832,6 +8782,82 @@ impl Project {
         anyhow::Ok(())
     }
 
+    async fn execute_code_actions_on_servers(
+        project: &WeakModel<Project>,
+        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        code_actions: Vec<lsp::CodeActionKind>,
+        buffer: &Model<Buffer>,
+        push_to_history: bool,
+        project_transaction: &mut ProjectTransaction,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(), anyhow::Error> {
+        for (lsp_adapter, language_server) in adapters_and_servers.iter() {
+            let code_actions = code_actions.clone();
+
+            let actions = project
+                .update(cx, move |this, cx| {
+                    let request = GetCodeActions {
+                        range: text::Anchor::MIN..text::Anchor::MAX,
+                        kinds: Some(code_actions),
+                    };
+                    let server = LanguageServerToQuery::Other(language_server.server_id());
+                    this.request_lsp(buffer.clone(), server, request, cx)
+                })?
+                .await?;
+
+            for mut action in actions {
+                Self::try_resolve_code_action(&language_server, &mut action)
+                    .await
+                    .context("resolving a formatting code action")?;
+
+                if let Some(edit) = action.lsp_action.edit {
+                    if edit.changes.is_none() && edit.document_changes.is_none() {
+                        continue;
+                    }
+
+                    let new = Self::deserialize_workspace_edit(
+                        project
+                            .upgrade()
+                            .ok_or_else(|| anyhow!("project dropped"))?,
+                        edit,
+                        push_to_history,
+                        lsp_adapter.clone(),
+                        language_server.clone(),
+                        cx,
+                    )
+                    .await?;
+                    project_transaction.0.extend(new.0);
+                }
+
+                if let Some(command) = action.lsp_action.command {
+                    project.update(cx, |this, _| {
+                        this.last_workspace_edits_by_language_server
+                            .remove(&language_server.server_id());
+                    })?;
+
+                    language_server
+                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                            command: command.command,
+                            arguments: command.arguments.unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .await?;
+
+                    project.update(cx, |this, _| {
+                        project_transaction.0.extend(
+                            this.last_workspace_edits_by_language_server
+                                .remove(&language_server.server_id())
+                                .unwrap_or_default()
+                                .0,
+                        )
+                    })?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn handle_refresh_inlay_hints(
         this: Model<Self>,
         _: TypedEnvelope<proto::RefreshInlayHints>,
@@ -9669,6 +9695,19 @@ impl Project {
             Vec::new()
         }
     }
+}
+
+fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
+    code_actions
+        .iter()
+        .flat_map(|(kind, enabled)| {
+            if *enabled {
+                Some(kind.clone().into())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
