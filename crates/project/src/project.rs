@@ -463,7 +463,7 @@ pub enum HoverBlockKind {
     Code { language: String },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,

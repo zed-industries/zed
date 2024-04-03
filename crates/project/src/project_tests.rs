@@ -4484,10 +4484,12 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
 
     let mut servers_with_hover_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_tsx_language_servers
-            .next()
-            .await
-            .unwrap_or_else(|| panic!("Failed to get language server #{i}"));
+        let new_server = fake_tsx_language_servers.next().await.unwrap_or_else(|| {
+            panic!(
+                "Failed to get language server #{i} with name {}",
+                &language_server_names[i]
+            )
+        });
         let new_server_name = new_server.server.name();
         assert!(
             !servers_with_hover_requests.contains_key(new_server_name),
@@ -4706,10 +4708,12 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
 
     let mut servers_with_actions_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_tsx_language_servers
-            .next()
-            .await
-            .unwrap_or_else(|| panic!("Failed to get language server #{i}"));
+        let new_server = fake_tsx_language_servers.next().await.unwrap_or_else(|| {
+            panic!(
+                "Failed to get language server #{i} with name {}",
+                &language_server_names[i]
+            )
+        });
         let new_server_name = new_server.server.name();
         assert!(
             !servers_with_actions_requests.contains_key(new_server_name),
