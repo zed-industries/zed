@@ -29,6 +29,7 @@ macro_rules! create_definitions {
 
             /// Get the tag name list of the font OpenType features
             /// only enabled or disabled features are returned
+            #[cfg(target_os = "windows")]
             pub fn tag_value_list(&self) -> Vec<(String, bool)> {
                 let mut result = Vec::new();
                 $(
@@ -186,10 +187,4 @@ create_definitions!(
     (titl, 31),
     (tnum, 32),
     (zero, 33),
-    (cv01, 34),
-    (cv02, 35),
-    (cv03, 36),
-    (cv04, 37),
-    (cv05, 38),
-    (cv06, 39)
 );
