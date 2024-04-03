@@ -888,9 +888,9 @@ impl ProjectPanel {
             let mut parent_path = entry.path.parent();
             while let Some(path) = parent_path {
                 if let Some(parent_entry) = worktree.entry_for_path(path) {
-                    let children_count = snapshot.child_entries(path).count();
+                    let mut children_iter = snapshot.child_entries(path);
 
-                    if children_count > 1 {
+                    if children_iter.by_ref().take(2).count() > 1 {
                         break;
                     }
 
@@ -1532,30 +1532,35 @@ impl ProjectPanel {
         entry: &Entry,
         visible_worktree_entries: &Vec<Entry>,
     ) -> (usize, usize) {
-        let entry_path_components_count = entry.path.components().count();
+        let visible_worktree_paths: HashSet<Arc<Path>> = visible_worktree_entries
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+
         let (depth, difference) = entry
             .path
             .ancestors()
             .skip(1) // Skip the entry itself
             .find_map(|ancestor| {
-                visible_worktree_entries
-                    .iter()
-                    .find(|&e| *e.path == *ancestor)
-                    .map(|parent_entry| {
-                        let parent_path_components_count = parent_entry.path.components().count();
-                        let difference = entry_path_components_count - parent_path_components_count;
-                        let depth = parent_entry
-                            .path
-                            .ancestors()
-                            .skip(1)
-                            .filter(|ancestor| {
-                                visible_worktree_entries
-                                    .iter()
-                                    .any(|e| *e.path == **ancestor)
-                            })
-                            .count();
-                        (depth + 1, difference)
-                    })
+                if visible_worktree_paths.contains(ancestor) {
+                    let parent_entry = visible_worktree_entries
+                        .iter()
+                        .find(|&e| &*e.path == ancestor)
+                        .unwrap();
+
+                    let entry_path_components_count = entry.path.components().count();
+                    let parent_path_components_count = parent_entry.path.components().count();
+                    let difference = entry_path_components_count - parent_path_components_count;
+                    let depth = parent_entry
+                        .path
+                        .ancestors()
+                        .skip(1)
+                        .filter(|ancestor| visible_worktree_paths.contains(*ancestor))
+                        .count();
+                    Some((depth + 1, difference))
+                } else {
+                    None
+                }
             })
             .unwrap_or((0, 0));
 
