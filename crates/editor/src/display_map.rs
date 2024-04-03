@@ -657,7 +657,7 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
-    pub fn chars_at(
+    pub fn display_chars_at(
         &self,
         mut point: DisplayPoint,
     ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
@@ -684,60 +684,24 @@ impl DisplaySnapshot {
             })
     }
 
-    pub fn reverse_chars_at(
+    pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {
+        self.buffer_snapshot.chars_at(offset).map(move |ch| {
+            let ret = (ch, offset);
+            offset += ch.len_utf8();
+            ret
+        })
+    }
+
+    pub fn reverse_buffer_chars_at(
         &self,
-        mut point: DisplayPoint,
-    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
-        point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
-        self.reverse_text_chunks(point.row())
-            .flat_map(|chunk| chunk.chars().rev())
-            .skip_while({
-                let mut column = self.line_len(point.row());
-                if self.max_point().row() > point.row() {
-                    column += 1;
-                }
-
-                move |char| {
-                    let at_point = column <= point.column();
-                    column = column.saturating_sub(char.len_utf8() as u32);
-                    !at_point
-                }
-            })
+        mut offset: usize,
+    ) -> impl Iterator<Item = (char, usize)> + '_ {
+        self.buffer_snapshot
+            .reversed_chars_at(offset)
             .map(move |ch| {
-                if ch == '\n' {
-                    *point.row_mut() -= 1;
-                    *point.column_mut() = self.line_len(point.row());
-                } else {
-                    *point.column_mut() = point.column().saturating_sub(ch.len_utf8() as u32);
-                }
-                (ch, point)
+                offset -= ch.len_utf8();
+                (ch, offset)
             })
-    }
-
-    pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
-        let mut count = 0;
-        let mut column = 0;
-        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
-            if column >= target {
-                break;
-            }
-            count += 1;
-            column += c.len_utf8() as u32;
-        }
-        count
-    }
-
-    pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
-        let mut column = 0;
-
-        for (count, (c, _)) in self.chars_at(DisplayPoint::new(display_row, 0)).enumerate() {
-            if c == '\n' || count >= char_count as usize {
-                break;
-            }
-            column += c.len_utf8() as u32;
-        }
-
-        column
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
@@ -806,20 +770,6 @@ impl DisplaySnapshot {
             }
         }
         result
-    }
-
-    pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
-        let mut indent = 0;
-        let mut is_blank = true;
-        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
-            if c == ' ' {
-                indent += 1;
-            } else {
-                is_blank = c == '\n';
-                break;
-            }
-        }
-        (indent, is_blank)
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: u32) -> (u32, bool) {

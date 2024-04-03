@@ -6,7 +6,10 @@ use crate::{
     Vim,
 };
 use editor::{
-    display_map::DisplaySnapshot, movement::TextLayoutDetails, scroll::Autoscroll, DisplayPoint,
+    display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement::TextLayoutDetails,
+    scroll::Autoscroll,
+    Bias, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
@@ -56,15 +59,17 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             &text_layout_details,
                         );
                         if let Motion::CurrentLine = motion {
+                            let mut start_offset = selection.start.to_offset(map, Bias::Left);
                             let scope = map
                                 .buffer_snapshot
                                 .language_scope_at(selection.start.to_point(&map));
-                            for (ch, _) in map.chars_at(selection.start) {
+                            for (ch, offset) in map.buffer_chars_at(start_offset) {
                                 if ch == '\n' || char_kind(&scope, ch) != CharKind::Whitespace {
                                     break;
                                 }
-                                *selection.start.column_mut() += 1;
+                                start_offset = offset + ch.len_utf8();
                             }
+                            selection.start = start_offset.to_display_point(map);
                         }
                         result
                     };
@@ -126,7 +131,7 @@ fn expand_changed_word_selection(
             .buffer_snapshot
             .language_scope_at(selection.start.to_point(map));
         let in_word = map
-            .chars_at(selection.head())
+            .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
             .next()
             .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
             .unwrap_or_default();

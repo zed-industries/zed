@@ -1283,21 +1283,21 @@ pub(crate) fn first_non_whitespace(
     display_lines: bool,
     from: DisplayPoint,
 ) -> DisplayPoint {
-    let mut last_point = start_of_line(map, display_lines, from);
+    let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
-    for (ch, point) in map.chars_at(last_point) {
+    for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
         }
 
-        last_point = point;
+        start_offset = offset;
 
         if char_kind(&scope, ch) != CharKind::Whitespace {
             break;
         }
     }
 
-    map.clip_point(last_point, Bias::Left)
+    start_offset.to_display_point(map)
 }
 
 pub(crate) fn start_of_line(
