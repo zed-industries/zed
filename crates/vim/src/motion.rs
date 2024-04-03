@@ -708,7 +708,7 @@ impl Motion {
         (new_point != point || infallible).then_some((new_point, goal))
     }
 
-    // Get the range value after if self is applied to the specified selection.
+    // Get the range value after self is applied to the specified selection.
     pub fn range(
         &self,
         map: &DisplaySnapshot,
