@@ -293,7 +293,7 @@ pub enum FormatOnSave {
         /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
-    // Files should be formatted using code actions executed by language servers.
+    /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),
 }
 
@@ -328,7 +328,7 @@ pub enum Formatter {
         /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
-    // Files should be formatted using code actions executed by language servers.
+    /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),
 }
 
