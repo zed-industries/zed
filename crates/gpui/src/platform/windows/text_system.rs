@@ -365,7 +365,7 @@ impl WindowsTextSystemState {
                 self.fonts
                     .iter()
                     .position(|font| font.id() == font_id)
-                    .unwrap(),
+                    .unwrap_or(0),
             );
             let mut glyphs = SmallVec::new();
             // todo(windows) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
