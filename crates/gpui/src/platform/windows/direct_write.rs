@@ -813,7 +813,7 @@ impl Drop for DirectWriteState {
 #[implement(IDWriteTextRenderer)]
 struct TextRenderer {
     inner: Arc<RwLock<TextRendererInner>>,
-    locale_vec: Vec<u16>,
+    _locale_vec: Vec<u16>,
     locale: PCWSTR,
 }
 
@@ -824,7 +824,7 @@ impl TextRenderer {
 
         TextRenderer {
             inner,
-            locale_vec,
+            _locale_vec: locale_vec,
             locale,
         }
     }
@@ -905,6 +905,7 @@ impl IDWritePixelSnapping_Impl for TextRenderer {
     }
 }
 
+#[allow(non_snake_case)]
 impl IDWriteTextRenderer_Impl for TextRenderer {
     fn DrawGlyphRun(
         &self,
