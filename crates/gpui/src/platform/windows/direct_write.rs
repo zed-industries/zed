@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Result};
@@ -452,9 +452,8 @@ impl DirectWriteState {
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
         let offset = [DWRITE_GLYPH_OFFSET::default()];
-        let mut glyph_run = DWRITE_GLYPH_RUN {
-            // TODO: can we remove this clone?
-            fontFace: ManuallyDrop::new(Some(font.font_face.clone().into())),
+        let glyph_run = DWRITE_GLYPH_RUN {
+            fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
             fontEmSize: params.font_size.0,
             glyphCount: 1,
             glyphIndices: glyph_id.as_ptr(),
@@ -471,7 +470,7 @@ impl DirectWriteState {
             dx: 0.0,
             dy: 0.0,
         };
-        let result = self.components.factory.CreateGlyphRunAnalysis(
+        self.components.factory.CreateGlyphRunAnalysis(
             &glyph_run as _,
             1.0,
             Some(&transform as _),
@@ -480,9 +479,7 @@ impl DirectWriteState {
             DWRITE_MEASURING_MODE_NATURAL,
             0.0,
             0.0,
-        );
-        ManuallyDrop::drop(&mut glyph_run.fontFace);
-        result
+        )
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
@@ -532,9 +529,8 @@ impl DirectWriteState {
             advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
             ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
         }];
-        let mut glyph_run = DWRITE_GLYPH_RUN {
-            // TODO: can we remove this clone?
-            fontFace: ManuallyDrop::new(Some(font_info.font_face.clone().into())),
+        let glyph_run = DWRITE_GLYPH_RUN {
+            fontFace: unsafe { std::mem::transmute_copy(&font_info.font_face) },
             fontEmSize: params.font_size.0,
             glyphCount: 1,
             glyphIndices: glyph_id.as_ptr(),
@@ -563,7 +559,7 @@ impl DirectWriteState {
             dy: 0.0,
         };
 
-        let result = unsafe {
+        unsafe {
             let bitmap_render_target = self.components.gdi.CreateBitmapRenderTarget(
                 None,
                 bitmap_size.width.0 as u32,
@@ -634,7 +630,7 @@ impl DirectWriteState {
                     bytes[2] = (color & 0xFF) as u8;
                     bytes[3] = 0xFF;
                 }
-                (bitmap_size, raw_bytes)
+                Ok((bitmap_size, raw_bytes))
             } else {
                 bitmap_render_target.DrawGlyphRun(
                     (subpixel_shift.x / params.scale_factor) as f32,
@@ -656,11 +652,9 @@ impl DirectWriteState {
                         (((color & 0xFF) + (color >> 8 & 0xFF) + (color >> 16 & 0xFF)) / 3) as u8;
                 }
 
-                (bitmap_size, raw_bytes)
+                Ok((bitmap_size, raw_bytes))
             }
-        };
-        unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
-        Ok(result)
+        }
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
