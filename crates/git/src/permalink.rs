@@ -111,7 +111,7 @@ pub(crate) fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url 
     } = remote;
 
     let path = match provider {
-        GitHostingProvider::Github => format!("{owner}/{repo}/commits/{sha}"),
+        GitHostingProvider::Github => format!("{owner}/{repo}/commit/{sha}"),
         GitHostingProvider::Gitlab => format!("{owner}/{repo}/-/commit/{sha}"),
         GitHostingProvider::Gitee => format!("{owner}/{repo}/commit/{sha}"),
         GitHostingProvider::Bitbucket => format!("{owner}/{repo}/commits/{sha}"),

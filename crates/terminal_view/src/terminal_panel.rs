@@ -591,6 +591,9 @@ impl TerminalPanel {
 
         Some(())
     }
+    pub fn pane(&self) -> &View<Pane> {
+        &self.pane
+    }
 }
 
 async fn wait_for_terminals_tasks(

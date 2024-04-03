@@ -12,27 +12,21 @@ use crate::{elixir::elixir_task_context, rust::RustContextProvider};
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
-mod clojure;
-mod csharp;
 mod css;
 mod dart;
 mod deno;
 mod elixir;
 mod elm;
-mod erlang;
 mod go;
-mod html;
 mod json;
 mod lua;
 mod nu;
 mod ocaml;
-mod php;
 mod python;
 mod ruby;
 mod rust;
 mod tailwind;
 mod terraform;
-mod toml;
 mod typescript;
 mod vue;
 mod yaml;
@@ -62,8 +56,6 @@ pub fn init(
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
-        ("c_sharp", tree_sitter_c_sharp::language()),
-        ("clojure", tree_sitter_clojure::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("elixir", tree_sitter_elixir::language()),
@@ -72,14 +64,12 @@ pub fn init(
             "embedded_template",
             tree_sitter_embedded_template::language(),
         ),
-        ("erlang", tree_sitter_erlang::language()),
         ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
-        ("html", tree_sitter_html::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
@@ -91,7 +81,6 @@ pub fn init(
             "ocaml_interface",
             tree_sitter_ocaml::language_ocaml_interface(),
         ),
-        ("php", tree_sitter_php::language_php()),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("racket", tree_sitter_racket::language()),
@@ -99,7 +88,6 @@ pub fn init(
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("scheme", tree_sitter_scheme::language()),
-        ("toml", tree_sitter_toml::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
@@ -166,9 +154,7 @@ pub fn init(
     }
     language!("bash");
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
-    language!("clojure", vec![Arc::new(clojure::ClojureLspAdapter)]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
-    language!("csharp", vec![Arc::new(csharp::OmniSharpAdapter {})]);
     language!(
         "css",
         vec![
@@ -206,7 +192,6 @@ pub fn init(
             );
         }
     }
-    language!("erlang", vec![Arc::new(erlang::ErlangLspAdapter)]);
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
@@ -236,7 +221,6 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
         RustContextProvider
     );
-    language!("toml", vec![Arc::new(toml::TaploLspAdapter)]);
     match &DenoSettings::get(None, cx).enable {
         true => {
             language!(
@@ -289,13 +273,6 @@ pub fn init(
         }
     }
 
-    language!(
-        "html",
-        vec![
-            Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
     language!(
         "erb",
@@ -313,13 +290,6 @@ pub fn init(
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
     language!(
-        "php",
-        vec![
-            Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
-    language!(
         "elm",
         vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
@@ -330,7 +300,10 @@ pub fn init(
     language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language!(
         "vue",
-        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))]
+        vec![
+            Arc::new(vue::VueLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ]
     );
     language!("proto");
     language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
@@ -343,6 +316,14 @@ pub fn init(
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "HTML".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "PHP".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
     languages.register_secondary_lsp_adapter(

@@ -25,12 +25,6 @@ body:
           required: true
     - type: textarea
       attributes:
-          label: If applicable, add mockups / screenshots to help explain present your vision of the feature
-          description: Drag issues into the text input below
-      validations:
-          required: false
-    - type: textarea
-      attributes:
           label: If applicable, attach your `~/Library/Logs/Zed/Zed.log` file to this issue.
           description: |
               Drag Zed.log into the text input below.

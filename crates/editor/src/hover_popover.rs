@@ -295,7 +295,7 @@ fn show_hover(
                     });
             })?;
 
-            let hovers_response = hover_request.await.ok().unwrap_or_default();
+            let hovers_response = hover_request.await;
             let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
             let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
@@ -342,7 +342,7 @@ fn show_hover(
                 } else {
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
-                        hover_highlights,
+                        &hover_highlights,
                         |theme| theme.element_hover, // todo update theme
                         cx,
                     );

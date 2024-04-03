@@ -6,9 +6,9 @@ Zed collects anonymous telemetry data to help the team understand how people are
 
 ## Dataflow
 
-Telemetry is sent from the application to zed.dev. Data is proxied through our servers to enable us to easily switch analytics services; we never store this data. The data is then sent off to various services:
+Telemetry is sent from the application to our servers. Data is proxied through our servers to enable us to easily switch analytics services. We currently use:
 
-- [Datadog](https://www.datadoghq.com): Cloud-monitoring service - stores diagnostic events
+- [Axiom](https://axiom.co): Cloud-monitoring service - stores diagnostic events
 - [Clickhouse](https://clickhouse.com): Business Intelligence platform - stores both diagnostic and metric events
 - [Metabase](https://www.metabase.com): Dashboards - dashboards built around data pulled from Clickhouse
 

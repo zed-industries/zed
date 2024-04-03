@@ -590,7 +590,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    async fn test_telemetry_flush_on_flush_interval(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let clock = Arc::new(FakeSystemClock::new(
             Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap(),

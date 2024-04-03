@@ -7,8 +7,8 @@ use crate::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render,
     ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance, WindowOptions,
-    WindowParams, WindowTextSystem,
+    TextStyle, TextStyleRefinement, View, VisualContext, WeakView, WindowAppearance,
+    WindowBackgroundAppearance, WindowOptions, WindowParams, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -398,6 +398,7 @@ impl Window {
             is_movable,
             display_id,
             fullscreen,
+            window_background,
         } = options;
 
         let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
@@ -411,6 +412,7 @@ impl Window {
                 focus,
                 show,
                 display_id,
+                window_background,
             },
         );
         let display_id = platform_window.display().id();
@@ -872,7 +874,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.bounds()
     }
 
-    /// Retusn whether or not the window is currently fullscreen
+    /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.window.platform_window.is_fullscreen()
     }
@@ -909,6 +911,13 @@ impl<'a> WindowContext<'a> {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
+    }
+
+    /// Sets the window background appearance.
+    pub fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        self.window
+            .platform_window
+            .set_background_appearance(background_appearance);
     }
 
     /// Mark the window as dirty at the platform level.
@@ -2844,11 +2853,16 @@ impl From<(&'static str, u64)> for ElementId {
 /// Passed as an argument [`ElementContext::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
-    bounds: Bounds<Pixels>,
-    corner_radii: Corners<Pixels>,
-    background: Hsla,
-    border_widths: Edges<Pixels>,
-    border_color: Hsla,
+    /// The bounds of the quad within the window.
+    pub bounds: Bounds<Pixels>,
+    /// The radii of the quad's corners.
+    pub corner_radii: Corners<Pixels>,
+    /// The background color of the quad.
+    pub background: Hsla,
+    /// The widths of the quad's borders.
+    pub border_widths: Edges<Pixels>,
+    /// The color of the quad's borders.
+    pub border_color: Hsla,
 }
 
 impl PaintQuad {

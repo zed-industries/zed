@@ -9,7 +9,7 @@ use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -69,6 +69,7 @@ impl TestPlatform {
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
+        self.background_executor().set_waiting_hint(None);
         tx.send(response_ix).ok();
     }
 
@@ -76,8 +77,10 @@ impl TestPlatform {
         !self.prompts.borrow().multiple_choice.is_empty()
     }
 
-    pub(crate) fn prompt(&self) -> oneshot::Receiver<usize> {
+    pub(crate) fn prompt(&self, msg: &str, detail: Option<&str>) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
+        self.background_executor()
+            .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts.borrow_mut().multiple_choice.push_back(tx);
         rx
     }
@@ -239,9 +242,7 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
-
-    fn clear_recent_documents(&self) {}
+    fn add_recent_document(&self, _paths: &Path) {}
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 

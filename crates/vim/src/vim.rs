@@ -23,8 +23,8 @@ use editor::{
     Editor, EditorEvent, EditorMode,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, Global, KeystrokeEvent, Subscription,
-    View, ViewContext, WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
+    Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -390,7 +390,7 @@ impl Vim {
             {
                 visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
             }
-            if last_mode == Mode::Insert {
+            if last_mode == Mode::Insert || last_mode == Mode::Replace {
                 if let Some(prior_tx) = prior_tx {
                     editor.group_until_transaction(prior_tx, cx)
                 }
@@ -502,7 +502,9 @@ impl Vim {
 
     fn transaction_begun(&mut self, transaction_id: TransactionId, _: &mut WindowContext) {
         self.update_state(|state| {
-            let mode = if (state.mode == Mode::Insert || state.mode == Mode::Normal)
+            let mode = if (state.mode == Mode::Insert
+                || state.mode == Mode::Replace
+                || state.mode == Mode::Normal)
                 && state.current_tx.is_none()
             {
                 state.current_tx = Some(transaction_id);
@@ -700,8 +702,10 @@ impl Vim {
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) {
                 editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
-            } else {
-                editor.remove_keymap_context_layer::<Self>(cx);
+            // disables vim if the rename editor is focused,
+            // but not if the command palette is open.
+            } else if editor.focus_handle(cx).contains_focused(cx) {
+                editor.remove_keymap_context_layer::<Self>(cx)
             }
         });
     }

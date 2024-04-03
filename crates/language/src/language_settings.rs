@@ -241,7 +241,8 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
-    /// Which code actions to run on save
+    /// Which code actions to run on save after the formatter.
+    /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
     pub code_actions_on_format: Option<HashMap<String, bool>>,
@@ -292,6 +293,8 @@ pub enum FormatOnSave {
         /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
+    /// Files should be formatted using code actions executed by language servers.
+    CodeActions(HashMap<String, bool>),
 }
 
 /// Controls how whitespace should be displayedin the editor.
@@ -325,6 +328,8 @@ pub enum Formatter {
         /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
+    /// Files should be formatted using code actions executed by language servers.
+    CodeActions(HashMap<String, bool>),
 }
 
 /// The settings for inlay hints.

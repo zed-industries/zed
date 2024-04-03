@@ -208,12 +208,21 @@ fn main() {
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
+
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
             let http = http.clone();
             let client = client.clone();
 
             move |cx| {
+                for &mut window in cx.windows().iter_mut() {
+                    let background_appearance = cx.theme().window_background_appearance();
+                    window
+                        .update(cx, |_, cx| {
+                            cx.set_background_appearance(background_appearance)
+                        })
+                        .ok();
+                }
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -897,7 +906,7 @@ async fn load_login_shell_environment() -> Result<()> {
     // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
     // do that, but it does, and `exit 0` helps.
     let shell_cmd = format!(
-        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        "{}printf '%s' {marker}; /usr/bin/env -0; exit 0;",
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
@@ -1073,7 +1082,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 cx.update_global(|file_types, _| {
-                    *file_types = project_panel::file_associations::FileAssociations::new(Assets);
+                    *file_types = file_icons::FileIcons::new(Assets);
                 });
             })
             .ok();
