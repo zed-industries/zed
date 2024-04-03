@@ -2007,7 +2007,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     });
 }
 
-async fn join_channel(
+pub(crate) async fn join_channel(
     channel_id: ChannelId,
     client: &TestClient,
     cx: &mut TestAppContext,

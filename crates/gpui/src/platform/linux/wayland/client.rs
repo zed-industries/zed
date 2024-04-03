@@ -190,7 +190,7 @@ impl WaylandClient {
                 control: false,
                 alt: false,
                 function: false,
-                command: false,
+                platform: false,
             },
             scroll_direction: -1.0,
             axis_source: AxisSource::Wheel,
@@ -692,6 +692,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 group,
                 ..
             } => {
+                let focused_window = state.keyboard_focused_window.clone();
+                let Some(focused_window) = focused_window else {
+                    return;
+                };
+
                 let keymap_state = state.keymap_state.as_mut().unwrap();
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
 
@@ -707,14 +712,22 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 state.modifiers.shift = shift;
                 state.modifiers.alt = alt;
                 state.modifiers.control = control;
-                state.modifiers.command = command;
+                state.modifiers.platform = command;
+
+                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers: state.modifiers,
+                });
+
+                drop(state);
+
+                focused_window.handle_input(input);
             }
             wl_keyboard::Event::Key {
                 key,
                 state: WEnum::Value(key_state),
                 ..
             } => {
-                let focused_window = &state.keyboard_focused_window;
+                let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
                 };
@@ -725,80 +738,56 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientState {
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
                 match key_state {
-                    wl_keyboard::KeyState::Pressed => {
-                        let input = if keysym.is_modifier_key() {
-                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                                modifiers: state.modifiers,
+                    wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
+                        let input = PlatformInput::KeyDown(KeyDownEvent {
+                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            is_held: false, // todo(linux)
+                        });
+
+                        state.repeat.current_id += 1;
+                        state.repeat.current_keysym = Some(keysym);
+
+                        let rate = state.repeat.characters_per_second;
+                        let delay = state.repeat.delay;
+                        let id = state.repeat.current_id;
+                        let this = this.clone();
+
+                        let timer = Timer::from_duration(delay);
+                        let state_ = Rc::clone(&this.client_state_inner);
+                        let input_ = input.clone();
+                        state
+                            .loop_handle
+                            .insert_source(timer, move |event, _metadata, shared_data| {
+                                let state_ = state_.borrow_mut();
+                                let is_repeating = id == state_.repeat.current_id
+                                    && state_.repeat.current_keysym.is_some()
+                                    && state_.keyboard_focused_window.is_some();
+
+                                if !is_repeating {
+                                    return TimeoutAction::Drop;
+                                }
+
+                                let focused_window =
+                                    state_.keyboard_focused_window.as_ref().unwrap().clone();
+
+                                drop(state_);
+
+                                focused_window.handle_input(input_.clone());
+
+                                TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
                             })
-                        } else {
-                            PlatformInput::KeyDown(KeyDownEvent {
-                                keystroke: Keystroke::from_xkb(
-                                    keymap_state,
-                                    state.modifiers,
-                                    keycode,
-                                ),
-                                is_held: false, // todo(linux)
-                            })
-                        };
-
-                        if !keysym.is_modifier_key() {
-                            state.repeat.current_id += 1;
-                            state.repeat.current_keysym = Some(keysym);
-
-                            let rate = state.repeat.characters_per_second;
-                            let delay = state.repeat.delay;
-                            let id = state.repeat.current_id;
-                            let this = this.clone();
-
-                            let timer = Timer::from_duration(delay);
-                            let state_ = Rc::clone(&this.client_state_inner);
-                            let input_ = input.clone();
-                            state
-                                .loop_handle
-                                .insert_source(timer, move |event, _metadata, shared_data| {
-                                    let state_ = state_.borrow_mut();
-                                    let is_repeating = id == state_.repeat.current_id
-                                        && state_.repeat.current_keysym.is_some()
-                                        && state_.keyboard_focused_window.is_some();
-
-                                    if !is_repeating {
-                                        return TimeoutAction::Drop;
-                                    }
-
-                                    let focused_window =
-                                        state_.keyboard_focused_window.as_ref().unwrap().clone();
-
-                                    drop(state_);
-
-                                    focused_window.handle_input(input_.clone());
-
-                                    TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
-                                })
-                                .unwrap();
-                        }
+                            .unwrap();
 
                         drop(state);
 
                         focused_window.handle_input(input);
                     }
-                    wl_keyboard::KeyState::Released => {
-                        let input = if keysym.is_modifier_key() {
-                            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                                modifiers: state.modifiers,
-                            })
-                        } else {
-                            PlatformInput::KeyUp(KeyUpEvent {
-                                keystroke: Keystroke::from_xkb(
-                                    keymap_state,
-                                    state.modifiers,
-                                    keycode,
-                                ),
-                            })
-                        };
+                    wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
+                        let input = PlatformInput::KeyUp(KeyUpEvent {
+                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                        });
 
-                        if !keysym.is_modifier_key() {
-                            state.repeat.current_keysym = None;
-                        }
+                        state.repeat.current_keysym = None;
 
                         drop(state);
 

@@ -219,7 +219,7 @@
     "context": "BufferSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "cmd-enter": "search::ReplaceAll"
+      "ctrl-enter": "search::ReplaceAll"
     }
   },
   {
@@ -258,7 +258,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
-      "cmd-shift-h": "search::ToggleReplace",
+      "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ActivateRegexMode",
       "alt-ctrl-x": "search::ActivateTextMode"
     }
@@ -304,8 +304,10 @@
         }
       ],
       "ctrl-alt-shift-down": "editor::DuplicateLine",
-      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
-      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
+      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
+      "ctrl-shift-right": "editor::SelectToNextWordEnd",
+      "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
+      "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
       "ctrl-d": [
         "editor::SelectNext",
         {
@@ -354,14 +356,14 @@
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "alt-cmd-r": "editor::RevealInFinder",
+      "alt-ctrl-r": "editor::RevealInFinder",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "cmd-shift-o": "outline::Toggle",
+      "ctrl-shift-o": "outline::Toggle",
       "ctrl-g": "go_to_line::Toggle"
     }
   },
@@ -419,7 +421,7 @@
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
-      "ctrl-t": "project_symbols::Toggle",
+      "ctrl-shift-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
       "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
@@ -549,7 +551,7 @@
       "delete": "project_panel::Delete",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
-      "alt-cmd-r": "project_panel::RevealInFinder",
+      "alt-ctrl-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
   },
@@ -610,7 +612,12 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+
+      // Some nice conveniences
+      "ctrl-backspace": ["terminal::SendText", "\u0015"],
+      "ctrl-right": ["terminal::SendText", "\u0005"],
+      "ctrl-left": ["terminal::SendText", "\u0001"]
     }
   }
 ]

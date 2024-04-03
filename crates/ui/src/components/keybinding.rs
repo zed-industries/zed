@@ -113,7 +113,7 @@ impl RenderOnce for KeyBinding {
                             el.child(Key::new("Alt")).child(Key::new("+"))
                         }
                     })
-                    .when(keystroke.modifiers.command, |el| {
+                    .when(keystroke.modifiers.platform, |el| {
                         match self.platform_style {
                             PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Command)),
                             PlatformStyle::Linux => {

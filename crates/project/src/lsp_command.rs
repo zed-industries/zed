@@ -116,6 +116,7 @@ pub(crate) struct GetDocumentHighlights {
     pub position: PointUtf16,
 }
 
+#[derive(Clone)]
 pub(crate) struct GetHover {
     pub position: PointUtf16,
 }
@@ -124,6 +125,7 @@ pub(crate) struct GetCompletions {
     pub position: PointUtf16,
 }
 
+#[derive(Clone)]
 pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
     pub kinds: Option<Vec<lsp::CodeActionKind>>,

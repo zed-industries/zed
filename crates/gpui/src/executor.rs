@@ -219,11 +219,17 @@ impl BackgroundExecutor {
                         if let Some(test) = self.dispatcher.as_test() {
                             if !test.parking_allowed() {
                                 let mut backtrace_message = String::new();
+                                let mut waiting_message = String::new();
                                 if let Some(backtrace) = test.waiting_backtrace() {
                                     backtrace_message =
                                         format!("\nbacktrace of waiting future:\n{:?}", backtrace);
                                 }
-                                panic!("parked with nothing left to run\n{:?}", backtrace_message)
+                                if let Some(waiting_hint) = test.waiting_hint() {
+                                    waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
+                                }
+                                panic!(
+                                    "parked with nothing left to run{waiting_message}{backtrace_message}",
+                                )
                             }
                         }
 
@@ -352,6 +358,12 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
         self.dispatcher.as_test().unwrap().forbid_parking();
+    }
+
+    /// adds detail to the "parked with nothing let to run" message.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_waiting_hint(&self, msg: Option<String>) {
+        self.dispatcher.as_test().unwrap().set_waiting_hint(msg);
     }
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable

@@ -330,7 +330,7 @@ impl Asset for Image {
             };
 
             let data = if let Ok(format) = image::guess_format(&bytes) {
-                let data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+                let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
                 ImageData::new(data)
             } else {
                 let pixmap =
@@ -369,7 +369,7 @@ pub enum ImageCacheError {
     Image(Arc<ImageError>),
     /// An error that occurred while processing an SVG.
     #[error("svg error: {0}")]
-    Usvg(Arc<resvg::usvg::Error>),
+    Usvg(Arc<usvg::Error>),
 }
 
 impl From<std::io::Error> for ImageCacheError {
@@ -384,8 +384,8 @@ impl From<ImageError> for ImageCacheError {
     }
 }
 
-impl From<resvg::usvg::Error> for ImageCacheError {
-    fn from(error: resvg::usvg::Error) -> Self {
+impl From<usvg::Error> for ImageCacheError {
+    fn from(error: usvg::Error) -> Self {
         Self::Usvg(Arc::new(error))
     }
 }
